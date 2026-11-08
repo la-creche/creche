@@ -9,6 +9,7 @@ from handover.catalog import CATALOG, CATALOG_BY_NAME, RETIRING
 from handover.discovery import (
     MAX_MANIFEST_FILES,
     discover,
+    read_named,
     read_one,
     releasable,
     require_complete,
@@ -26,6 +27,7 @@ CONTROL_NAMES = (
     "playpen",
     "handover",
     "memory",
+    "vmm",
 )
 
 
@@ -290,15 +292,37 @@ def test_releasable_drops_the_data_component(tmp_path: Path) -> None:
     assert set(releasable(discover([tmp_path]))) == {"noticeboard"}
 
 
-def test_a_creche_checkout_without_rust_component_toml_reads_complete(tmp_path: Path) -> None:
-    """`vmm` arrives one release before its manifest (CH7-5, CH76 rule 1).
-    A checkout of every other manifest, and none at `rust/`, is complete:
-    the installed requester plans over it and refuses nothing."""
-    roots = _all_five(tmp_path, CONTROL_NAMES)
+def test_a_creche_checkout_without_rust_component_toml_misses_the_vmm(tmp_path: Path) -> None:
+    """`vmm` arrived with `rust/component.toml` (CH7-5, CH76 rule 1), so it
+    left `catalog.ARRIVING`. A checkout with no manifest at `rust/` now
+    misses it, and the requester refuses to plan over it."""
+    kept = tuple(name for name in CONTROL_NAMES if name != "vmm")
+    roots = _all_five(tmp_path, kept)
 
     found = discover(roots)
 
     assert not (roots[0] / "rust").exists()
-    assert "vmm" not in found.manifests()
-    assert "vmm" not in found.missing
-    require_complete(found)
+    assert found.missing == ("vmm",)
+    with pytest.raises(Refusal) as caught:
+        require_complete(found)
+    assert caught.value.code is RefusalCode.CATALOG
+
+
+def test_read_named_reads_each_named_manifest_and_no_other(tmp_path: Path) -> None:
+    """The first root that holds a name wins. A name that no root holds is
+    left out. A broken manifest of another name is never read."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    write_manifest(second, "caregiver", manifest_text("caregiver"))
+    write_manifest(second, "noticeboard", manifest_text("noticeboard"))
+    write_manifest(
+        first,
+        "noticeboard",
+        manifest_text("noticeboard", requires="{ contract: channel, major: 1, min_minor: 3 }"),
+    )
+    write_manifest(first, "attendance", "not: [a manifest")
+
+    found = read_named([first, second], ("noticeboard", "caregiver", "memory"))
+
+    assert set(found) == {"noticeboard", "caregiver"}
+    assert [str(one.contract) for one in found["noticeboard"].requires] == ["channel"]

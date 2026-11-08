@@ -19,8 +19,11 @@
 #           │               code   the restart rule of the daemon units, on
 #           │                      the systemd of the runner, for a change
 #           │                      under systemd/. No such change: no proof
-#           └── kvm         code   the kvm_ tests of rust/, on the KVM of
-#                                  the runner
+#           ├── kvm         code   the kvm_ tests of rust/, on the KVM of
+#           │                      the runner
+#           └── vmm-archive code   the vmm archive, built unsigned, for a
+#                                  change of a file of the vmm build. No
+#                                  such change: no build
 #   lint ─────────────────────────┐   ruff, ruff format, pyright, and on a
 #                                 │   docs PR the tests marked `docs`
 #                                 └── gate   red unless every job passed
@@ -50,7 +53,9 @@
 # Actions are SHA-pinned with the tag as a comment, as agent-registry's
 # validate.yml does.
 # release.yml runs the same `tests`, `agent`, `facade`, `proc`, `suites`,
-# `rust`, `systemd-proof` and `kvm` jobs after the merge.
+# `rust`, `systemd-proof` and `kvm` jobs after the merge. `vmm-archive` is
+# the one job of this file alone: release.yml builds the archive in its
+# `artifacts` job.
 # agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
@@ -81,6 +86,7 @@ jobs:
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       systemd: ${{ steps.scope.outputs.systemd }}
+      vmm: ${{ steps.scope.outputs.vmm }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -536,10 +542,70 @@ jobs:
         env:
           CRECHE_KVM_DIR: ${{ runner.temp }}/kvm
 
+  # The vmm archive, built as the `artifacts` job of release.yml builds it,
+  # and signed by no one (decision CH76 rule 4). The release builds the
+  # archive only after the merge, so a broken build would fail the release
+  # run and mint no vmm tag. This job fails the PR first. It runs
+  # bin/build-artifacts.sh for the planned row `vmm`, with no step that the
+  # `artifacts` job lacks: so it also shows whether the CH build needs a
+  # package that the runner lacks. The script runs `handover check-tree`
+  # and holds the archive to the limits of its row. The last step holds each
+  # program of the archive static (bin/lib/elfstatic.sh). guest-init runs as
+  # the init of a guest that has no program interpreter.
+  #
+  # It runs on every code change, and on a change that touches no file of
+  # the vmm build its steps after the checkout are skipped, as in the
+  # `systemd-proof` job. The files of the build are the `vmm` answer of the
+  # scope. No job uploads the archive, and no job signs it.
+  #
+  # The time limit: the CH build took 131 to 152 s in the kvm job (fact
+  # 83), and the vmm and guest-init build after it. The `artifacts` job has
+  # the same 30 minutes.
+  vmm-archive:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        if: needs.scope.outputs.vmm != 'false'
+        with:
+          enable-cache: false
+
+      - name: build
+        if: needs.scope.outputs.vmm != 'false'
+        env:
+          ARTIFACT_REPO: creche
+          ARTIFACT_PLANNED: vmm
+          ARTIFACT_OUT: ${{ runner.temp }}/artifacts
+        run: bin/build-artifacts.sh
+
+      - name: static programs
+        if: needs.scope.outputs.vmm != 'false'
+        shell: bash
+        env:
+          ARCHIVE: ${{ runner.temp }}/artifacts/vmm-x86_64-unknown-linux-musl.tar.gz
+          TREE: ${{ runner.temp }}/vmm-tree
+        run: |
+          set -euo pipefail
+          . bin/lib/elfstatic.sh
+          elf_static_refuses_dynamic
+          mkdir -- "$TREE"
+          tar --extract --gzip --file "$ARCHIVE" --directory "$TREE"
+          for program in vmm guest-init cloud-hypervisor ch-remote; do
+            elf_static "$TREE/vmm/bin/$program"
+          done
+          echo "the four programs of the vmm archive are static"
+
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.
   gate:
-    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, kvm]
+    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, kvm, vmm-archive]
     if: always()
     runs-on: ubuntu-24.04
     steps:

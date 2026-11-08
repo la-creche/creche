@@ -265,6 +265,26 @@ def read_one(root: Path, name: str) -> FoundManifest:
     return found
 
 
+def read_named(roots: list[Path], names: Collection[str]) -> dict[str, ComponentManifest]:
+    """The manifest of each of `names`, read with `read_one` from the first
+    root whose catalog path has an entry of a manifest name. A name that no
+    root holds is not in the result.
+
+    No other manifest is read. CI reads the binary rows this way: a runner
+    has no site file, and a manifest of another component that names a
+    path under the operator's home (`~/`) needs one to parse."""
+    found: dict[str, ComponentManifest] = {}
+    for name in names:
+        row = CATALOG_BY_NAME[name]
+        for root in roots:
+            directory = root if row.path == REPO_ROOT_PATH else root / row.path
+            if _entries_of(directory):
+                found[name] = read_one(root, name).manifest
+                break
+
+    return found
+
+
 def discover(roots: list[Path]) -> ManifestSet:
     """Read every manifest under `roots` and match it to the catalog."""
     found: dict[str, FoundManifest] = {}

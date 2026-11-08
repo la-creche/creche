@@ -12,6 +12,12 @@
 # proof (`--unchanged`). The answer starts as `true`, so a script that fails,
 # or that is absent, runs the proof. The files of the proof are systemd/ and
 # the script.
+#
+# `vmm` is a third answer: `false` only when the change touches no file of
+# the vmm build (decision CH76 rule 4): rust/, bin/lib/chbuild.sh,
+# bin/build-artifacts.sh, bin/lib/artifactrows.sh and bin/lib/elfstatic.sh.
+# The answer starts as `true`, so a base that git cannot read runs the
+# build.
 name: scope
 description: Say whether the pull request changes docs only or code
 
@@ -22,6 +28,9 @@ outputs:
   systemd:
     description: true when the change touches a file of the systemd proof, false when it does not
     value: ${{ steps.scope.outputs.systemd }}
+  vmm:
+    description: true when the change touches a file of the vmm build, false when it does not
+    value: ${{ steps.scope.outputs.vmm }}
 
 runs:
   using: composite
@@ -51,3 +60,12 @@ runs:
         fi
         echo "systemd=$systemd" >> "$GITHUB_OUTPUT"
         echo "systemd: $systemd"
+
+        vmm=true
+        if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$base^{commit}" 2> /dev/null &&
+          git diff --quiet --no-renames "$base" HEAD -- rust bin/lib/chbuild.sh \
+            bin/build-artifacts.sh bin/lib/artifactrows.sh bin/lib/elfstatic.sh; then
+          vmm=false
+        fi
+        echo "vmm=$vmm" >> "$GITHUB_OUTPUT"
+        echo "vmm: $vmm"

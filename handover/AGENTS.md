@@ -325,8 +325,8 @@ has the name of the markup of the manifest: `.component.toml` or
      reads a checkout with no manifest for that name as complete, and the
      allocator tags no such row. `handover` releases with the new row. The
      second PR adds the manifest and takes the name out of `ARRIVING`.
-     `vmm` is in `ARRIVING` until `rust/component.toml` lands (CH7-5,
-     CH76 rule 1).
+     `vmm` came this way: the row first, then `rust/component.toml`
+     (CH7-5, CH76 rule 1).
 12. Check P6 (`executor/provenance.py`) starts the verifier, `cosign`, in
     two children. Each child runs in a transient unit of systemd, as a
     dynamic user with no privilege (`host.As.VERIFIER`). Child 1 loads the
@@ -429,6 +429,46 @@ steps:
 5. Set `AGENT_GITHUB_REPO_CHAPERONE` in the site file only when the
    repository has another name on GitHub.
 6. Release `handover` alone ("Binary builds", rule 10).
+
+## The vmm, a binary component of this repository
+
+The catalog row of `vmm` is `CatalogRow("vmm", Repo.CRECHE, "rust",
+Kind.BINARY, Releases.YES)` (CH7-5, CH9, item 12 (1)). Its manifest is
+`rust/component.toml`.
+
+1. The archive is `vmm-x86_64-unknown-linux-musl.tar.gz`. It holds four
+   members: `vmm/bin/vmm`, `vmm/bin/guest-init`,
+   `vmm/bin/cloud-hypervisor` and `vmm/bin/ch-remote`. guest-init has no
+   row of its own, so the vmm and its guest init come from one release
+   (CH7-6, CH62 rules 17 and 18).
+2. The manifest has three build argv lists: the vmm, guest-init, and the
+   13 words of `CH_BUILD` of `bin/lib/chbuild.sh` (CH35 (3)). The kvm job
+   builds CH with the same words (CH75).
+   `bin/tests/test_vmm_manifest.py` holds the third argv equal to
+   `CH_BUILD`.
+3. `runs_as` is `operator`, and `install.to` is `/opt/components/vmm`.
+   Root owns the tree, so the operator runs each program and changes none
+   (CH7-5). The unit is the user unit `creche-vmm.service` (CH36 G17).
+   The first release lists it under `manual`. The operator installs it once
+   (design section 6.2 step 3).
+4. `vmm verify --json --env-file /srv/agents/state/creche/vmm.env` checks
+   the four programs, the version that CH prints and a static guest-init.
+   It opens no socket and reads no disk (CH76 rule 2). `bin/fleet-up up`
+   writes `vmm.env` (CH59 rule 1). The file must exist before the first
+   vmm release.
+5. The manifest requires `family-file` 0.16, the first minor with the
+   reach files that the vmm reads (CH76 rule 3).
+6. The AppArmor slot profile does not ship in the archive. A change to
+   `rust/crates/vmm-confine/apparmor/cloud-hypervisor-slots.profile` is a
+   one-off sudo step on the host, which the PR names.
+   `bin/tests/test_vmm_manifest.py` pins its SHA-256, so no change is
+   silent (CH76 rule 9). A release never runs sudo (CH36 G20).
+7. The gate job `vmm-archive` builds the archive unsigned on each PR that
+   changes a file of the build (CH76 rule 4). A broken build then fails
+   the PR, not the release run.
+8. `handover artifacts --repo` reads only the manifest of each binary row
+   (`discovery.read_named`). A CI runner has no site file, and each other
+   manifest of this repository names a `~/` path, which needs one.
 
 ## The host component of creche-release
 
@@ -703,12 +743,6 @@ that wants a refusal changes one field.
   a path that it only prints. CI builds with a remap of the paths of the
   runner, and it runs the walk with those paths before it signs
   (`treewalk.py`).
-- `handover artifacts --repo` reads the manifests only when the catalog of
-  that repository holds a binary row. It then reads each manifest of its
-  roots, also the manifest of a venv component. Such a read needs the site
-  file for a `~/` path, and a CI runner has no site file. Only the row of
-  `chaperone` says `binary`, and the workflow of the chaperone repository
-  does not run this command (`cli.py`).
 - A run that ends in the way of a crash keeps `work/<id>`. No later run
   removes it. It holds root's copy of each archive of the release
   (`executor/steps.py`).

@@ -1,0 +1,62 @@
+# The vmm: the Rust workspace of this repository, at `rust/` (CH7-5, CH9,
+# item 12 (1)). One archive holds four programs: `vmm`, `guest-init`,
+# `cloud-hypervisor` and `ch-remote`. Root unpacks it into a root-owned
+# tree, so the operator runs each program and changes none (CH7-5).
+#
+# `build`: CI runs each argv in the repository root, with
+# CARGO_INSTALL_ROOT set (handover/AGENTS.md, Binary builds rule 2).
+#   1. The vmm.
+#   2. guest-init, the init of each guest. It ships with the vmm and has no
+#      row of its own, so the vmm and its guest init come from one release
+#      (CH7-6, CH62 rules 17 and 18).
+#   3. CH and ch-remote: the 13 words of CH_BUILD of bin/lib/chbuild.sh,
+#      the CH7-4 argv of CH35 (3). The kvm job builds CH with the same
+#      words (CH75). bin/tests/test_vmm_manifest.py holds this argv equal
+#      to CH_BUILD, so the two never differ.
+#
+# `unit`: creche-vmm.service, a user unit of the operator (CH36 G17). Its
+# ExecStart= and ExecStopPost= start programs of this tree. The release
+# lists the unit under `manual` until the operator installs it once
+# (design section 6.2 step 3).
+#
+# `verify`: `vmm verify` checks the four programs (root-owned, no group or
+# other write bit), the version that CH prints and a static guest-init. It
+# opens no socket and reads no disk, so it passes on the first release,
+# before the unit runs (CH76 rule 2). `--env-file` is the first
+# EnvironmentFile= of the unit (CH59 rule 1), pinned equal by
+# handover/tests/test_handover_r7r_verify_env.py.
+#
+# `requires`: the vmm reads config/, egress.json and repos.json of each
+# family, which caregiver writes from family-file 0.16 on (CH76 rule 3).
+#
+# `restore.keep = 1`: the host keeps one previous tree, and a value above 1
+# keeps no more (fact 51).
+#
+# The AppArmor slot profile does not ship here. A change to it is a
+# one-off sudo step, and its SHA-256 is pinned (CH76 rule 9).
+manifest_version = "0.22"
+name = "vmm"
+repo = "creche"
+path = "rust"
+kind = "binary"
+unit = "creche-vmm.service"
+runs_as = "operator"
+build = [
+  ["cargo", "install", "--locked", "--no-track", "--path", "rust/crates/vmm", "--bin", "vmm"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "rust/crates/guest-init", "--bin", "guest-init"],
+  [
+    "cargo", "install", "--locked", "--no-track",
+    "--git", "https://github.com/cloud-hypervisor/cloud-hypervisor",
+    "--rev", "038ce5a72d761380a02f714a4eb4ca63e0ea073d", "cloud-hypervisor",
+    "--bin", "cloud-hypervisor", "--bin", "ch-remote",
+  ],
+]
+install.to = "/opt/components/vmm"
+install.prev = "/opt/components/vmm.prev"
+requires = [{ contract = "family-file", major = 0, min_minor = 16 }]
+verify.command = ["/opt/components/vmm/bin/vmm", "verify", "--json", "--env-file", "/srv/agents/state/creche/vmm.env"]
+verify.user = "operator"
+verify.timeout_s = 60
+restore.mode = "automatic"
+restore.keep = 1
+release = true

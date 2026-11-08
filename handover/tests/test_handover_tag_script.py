@@ -39,6 +39,11 @@ COMPONENTS = tuple(
     row.name for row in CATALOG if row.repo is Repo.CRECHE and row.name not in RETIRING | ARRIVING
 )
 
+#: The binary row of this repository, at `rust` (CH7-5). A run that tags
+#: it needs its two assets, so each test of a run that tags it takes the
+#: `assets` fixture.
+VMM = "vmm"
+
 #: Every one of them at its first version, sorted as `_tags` returns them.
 FIRST_TAGS = sorted(f"{name}-v0.1.0" for name in COMPONENTS)
 
@@ -290,13 +295,13 @@ def _seed_first_tags(repo: Path) -> None:
 
 @pytest.mark.slow
 def test_a_first_run_tags_every_component_that_has_none(
-    repo: Path, shims: Path, tmp_path: Path
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
 ) -> None:
     """Item 1: a repository with no component tag gets them all at once, so
     the operator has a `noticeboard-v…` to name without waiting for a merge under `noticeboard/`."""
     _commit(repo, "caregiver/src/one.py")
 
-    done = _run(repo, shims, tmp_path)
+    done = _run(repo, shims, tmp_path, assets=assets)
 
     assert done.returncode == 0, done.stderr
     assert "released caregiver-v0.1.0" in done.stdout
@@ -305,12 +310,14 @@ def test_a_first_run_tags_every_component_that_has_none(
 
 
 @pytest.mark.slow
-def test_the_first_run_is_idempotent(repo: Path, shims: Path, tmp_path: Path) -> None:
+def test_the_first_run_is_idempotent(
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
+) -> None:
     """A second dispatch on the same commit is the safe thing to do."""
     _commit(repo, "caregiver/src/one.py")
-    assert _run(repo, shims, tmp_path).returncode == 0
+    assert _run(repo, shims, tmp_path, assets=assets).returncode == 0
 
-    done = _run(repo, shims, tmp_path)
+    done = _run(repo, shims, tmp_path, assets=assets)
 
     assert done.returncode == 0, done.stderr
     assert "allocate-tags: 0 created" in done.stdout
@@ -319,14 +326,14 @@ def test_the_first_run_is_idempotent(repo: Path, shims: Path, tmp_path: Path) ->
 
 @pytest.mark.slow
 def test_after_the_bootstrap_only_the_changed_component_moves(
-    repo: Path, shims: Path, tmp_path: Path
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
 ) -> None:
     """The rule extinguishes itself: one tag per component, once."""
     _commit(repo, "caregiver/src/one.py")
-    assert _run(repo, shims, tmp_path).returncode == 0
+    assert _run(repo, shims, tmp_path, assets=assets).returncode == 0
 
     _commit(repo, "caregiver/src/two.py")
-    assert _run(repo, shims, tmp_path).returncode == 0
+    assert _run(repo, shims, tmp_path, assets=assets).returncode == 0
 
     assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
 
@@ -341,17 +348,17 @@ QUOTE_PATH = 'caregiver/src/a"b.py'
 @pytest.mark.slow
 @pytest.mark.parametrize("path", [NOT_ASCII_PATH, QUOTE_PATH])
 def test_a_changed_path_that_git_would_quote_moves_its_component(
-    repo: Path, shims: Path, tmp_path: Path, path: str
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets, path: str
 ) -> None:
     """The script reads each changed path as git holds it. A quoted line
     starts with a double quote, so its first segment named no component and
     the merge made no tag."""
     _git(repo, "config", "core.quotePath", "true")
     _commit(repo, "caregiver/src/one.py")
-    assert _run(repo, shims, tmp_path).returncode == 0
+    assert _run(repo, shims, tmp_path, assets=assets).returncode == 0
 
     _commit(repo, path)
-    done = _run(repo, shims, tmp_path)
+    done = _run(repo, shims, tmp_path, assets=assets)
 
     assert done.returncode == 0, done.stderr
     assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
@@ -359,16 +366,16 @@ def test_a_changed_path_that_git_would_quote_moves_its_component(
 
 @pytest.mark.slow
 def test_a_label_counts_for_a_changed_path_that_git_would_quote(
-    repo: Path, shims: Path, tmp_path: Path
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
 ) -> None:
     """The label of a pull request counts for the components that its merge
     changed. The script reads those paths with a second `git diff`."""
     _git(repo, "config", "core.quotePath", "true")
     _commit(repo, "caregiver/src/one.py")
-    assert _run(repo, shims, tmp_path).returncode == 0
+    assert _run(repo, shims, tmp_path, assets=assets).returncode == 0
 
     _commit(repo, NOT_ASCII_PATH)
-    done = _run(repo, shims, tmp_path, labels="bump:minor")
+    done = _run(repo, shims, tmp_path, assets=assets, labels="bump:minor")
 
     assert done.returncode == 0, done.stderr
     assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.2.0"])
@@ -376,17 +383,17 @@ def test_a_label_counts_for_a_changed_path_that_git_would_quote(
 
 @pytest.mark.slow
 def test_a_directory_that_git_would_quote_does_not_stop_the_run(
-    repo: Path, shims: Path, tmp_path: Path
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
 ) -> None:
     """The script lists each directory of the tree for the planner. A
     quoted name is four characters for each byte, and the planner refuses
     a line of more than 512 characters."""
     _git(repo, "config", "core.quotePath", "true")
     _commit(repo, "caregiver/src/one.py")
-    assert _run(repo, shims, tmp_path).returncode == 0
+    assert _run(repo, shims, tmp_path, assets=assets).returncode == 0
 
     _commit(repo, f"caregiver/{'\u00e9' * 100}/two.py")
-    done = _run(repo, shims, tmp_path)
+    done = _run(repo, shims, tmp_path, assets=assets)
 
     assert done.returncode == 0, done.stderr
     assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
@@ -405,16 +412,16 @@ LINE_FEED_IN_CAREGIVER = "caregiver/src/one\ntwo.py"
     [(LINE_FEED_IN_DOCS, []), (LINE_FEED_IN_CAREGIVER, ["caregiver-v0.1.1"])],
 )
 def test_a_name_with_a_line_feed_stays_one_path(
-    repo: Path, shims: Path, tmp_path: Path, path: str, moved: list[str]
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets, path: str, moved: list[str]
 ) -> None:
     """The script gives the planner one line for each changed path. A name
     with a line feed is one line, and it moves the component of its own
     first segment and no other."""
     _commit(repo, "caregiver/src/one.py")
-    assert _run(repo, shims, tmp_path).returncode == 0
+    assert _run(repo, shims, tmp_path, assets=assets).returncode == 0
 
     _commit(repo, path)
-    done = _run(repo, shims, tmp_path)
+    done = _run(repo, shims, tmp_path, assets=assets)
 
     assert done.returncode == 0, done.stderr
     assert _tags(repo) == sorted([*FIRST_TAGS, *moved])
@@ -422,18 +429,18 @@ def test_a_name_with_a_line_feed_stays_one_path(
 
 @pytest.mark.slow
 def test_a_file_that_leaves_a_component_moves_that_component(
-    repo: Path, shims: Path, tmp_path: Path
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
 ) -> None:
     """git names a renamed file by its new path only, unless
     `--no-renames` says otherwise. The component that lost the file then
     had no changed path, and the merge made no tag for it."""
     _git(repo, "config", "diff.renames", "true")
     _commit(repo, "caregiver/src/one.py", "caregiver/src/two.py", "docs/guide.md")
-    assert _run(repo, shims, tmp_path).returncode == 0
+    assert _run(repo, shims, tmp_path, assets=assets).returncode == 0
 
     _git(repo, "mv", "caregiver/src/one.py", "docs/one.py")
     _git(repo, "commit", "-q", "-m", "move one file out")
-    done = _run(repo, shims, tmp_path, labels="bump:minor")
+    done = _run(repo, shims, tmp_path, assets=assets, labels="bump:minor")
 
     assert done.returncode == 0, done.stderr
     assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.2.0"])
@@ -594,11 +601,13 @@ def test_a_label_from_before_the_range_raises_nothing(
 
 
 @pytest.mark.slow
-def test_a_bump_label_never_raises_a_first_tag(repo: Path, shims: Path, tmp_path: Path) -> None:
+def test_a_bump_label_never_raises_a_first_tag(
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
+) -> None:
     """A component that has never released has no number to bump."""
     _commit(repo, "caregiver/src/one.py")
 
-    done = _run(repo, shims, tmp_path, labels="bump:major", pr="yes")
+    done = _run(repo, shims, tmp_path, assets=assets, labels="bump:major", pr="yes")
 
     assert done.returncode == 0, done.stderr
     assert _tags(repo) == FIRST_TAGS
@@ -777,12 +786,14 @@ def test_the_body_names_the_pull_requests_in_the_range(
 
 
 @pytest.mark.slow
-def test_a_first_tags_body_says_it_has_no_range(repo: Path, shims: Path, tmp_path: Path) -> None:
+def test_a_first_tags_body_says_it_has_no_range(
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
+) -> None:
     """A component with no tag has no window to measure, and the body must
     not imply one."""
     _commit(repo, "caregiver/src/one.py")
 
-    done = _run(repo, shims, tmp_path, pr="yes")
+    done = _run(repo, shims, tmp_path, assets=assets, pr="yes")
 
     assert done.returncode == 0, done.stderr
     log = (tmp_path / "gh.log").read_text(encoding="utf-8")
@@ -799,12 +810,14 @@ def test_a_first_tags_body_says_it_has_no_range(repo: Path, shims: Path, tmp_pat
 
 
 @pytest.mark.slow
-def test_a_run_in_creche_never_tags_mcp_servers(repo: Path, shims: Path, tmp_path: Path) -> None:
+def test_a_run_in_creche_never_tags_mcp_servers(
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
+) -> None:
     """The catalog's rule, seen from the script. `mcp-servers` lives in
     another repository, which this run cannot write and must not name."""
     _commit(repo, "src/agent_mcp/one.py")
 
-    done = _run(repo, shims, tmp_path)
+    done = _run(repo, shims, tmp_path, assets=assets)
 
     assert done.returncode == 0, done.stderr
     assert "mcp-servers" not in done.stdout
@@ -865,7 +878,7 @@ def test_a_repository_the_catalog_does_not_know_stops_the_run(
 
 @pytest.mark.slow
 def test_tag_repo_names_the_catalogs_repository_when_its_host_does_not(
-    repo: Path, shims: Path, tmp_path: Path
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
 ) -> None:
     """A repository may be hosted under a name the catalog does not hold.
     Its workflow then says which catalog repository it is, and GitHub is
@@ -876,6 +889,7 @@ def test_tag_repo_names_the_catalogs_repository_when_its_host_does_not(
         repo,
         shims,
         tmp_path,
+        assets=assets,
         repository="example-owner/some-product",
         tag_repo="creche",
         pr="yes",
@@ -987,7 +1001,7 @@ def test_a_tag_repo_root_that_is_not_a_directory_stops_the_run(
 
 @pytest.mark.slow
 def test_a_failed_pull_request_read_is_no_pull_request(
-    repo: Path, shims: Path, tmp_path: Path
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
 ) -> None:
     """`gh api` prints the error BODY on stdout and exits non-zero, and the
     script only swallowed the exit code. A token that cannot read pull
@@ -996,7 +1010,7 @@ def test_a_failed_pull_request_read_is_no_pull_request(
     PAT), so a read that failed must read as no pull request at all."""
     _commit(repo, "caregiver/src/one.py")
 
-    done = _run(repo, shims, tmp_path, labels="bump:minor", pr="yes", gh_reads=False)
+    done = _run(repo, shims, tmp_path, assets=assets, labels="bump:minor", pr="yes", gh_reads=False)
 
     assert done.returncode == 0, done.stderr
     assert "labels:  none" in done.stdout
@@ -1015,9 +1029,10 @@ NESTED_BUNDLE = "rust/crates/creche-contracts"
 BINARY_COMPONENT = "noticeboard"
 
 #: The planner, with `noticeboard` as a binary component that bundles one
-#: crate directory. The catalog holds no binary component and no nested
-#: directory, so the test gives the script a planner that holds both. The
-#: script asks the planner for every decision, so this is the whole change.
+#: crate directory. The catalog holds no nested directory, so the test
+#: gives the script a planner that holds one. The script asks the planner
+#: for every decision, so this is the whole change. The crate is under
+#: `rust/`, so a change to it moves `vmm` too.
 BINARY_PLANNER = f"""
 import sys
 from dataclasses import replace
@@ -1047,13 +1062,14 @@ def binary_cli(tmp_path: Path) -> str:
 
 @pytest.fixture
 def assets(tmp_path: Path) -> Assets:
-    """The two assets of the binary component, each within its limit, and
-    a verifier that passes each signature."""
+    """The two assets of the binary copy and of `vmm`, each within its
+    limit, and a verifier that passes each signature."""
     directory = tmp_path / "assets"
     directory.mkdir()
-    names = asset_names(BINARY_COMPONENT)
-    (directory / names.archive).write_bytes(b"an archive\n")
-    (directory / names.bundle).write_bytes(b"{}\n")
+    for component in (BINARY_COMPONENT, VMM):
+        names = asset_names(component)
+        (directory / names.archive).write_bytes(b"an archive\n")
+        (directory / names.bundle).write_bytes(b"{}\n")
     verifier = tmp_path / "verifier" / "cosign"
     verifier.parent.mkdir()
     verifier.write_text(COSIGN_FAKE, encoding="utf-8")
@@ -1068,21 +1084,23 @@ def test_a_change_under_a_nested_bundle_tags_its_component(
 ) -> None:
     """The script cut every changed path to its first segment, so a change
     under `rust/crates/<crate>/` reached the planner as `rust` and tagged
-    nothing. The planner makes the cut now, and it keeps a nested bundle."""
+    nothing. The planner makes the cut now, and it keeps a nested bundle.
+    The path is under `rust/`, so it moves `vmm` too."""
     _seed_first_tags(repo)
     _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
 
     done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1", "vmm-v0.1.1"])
 
 
 @pytest.mark.slow
-def test_a_change_beside_a_nested_bundle_tags_nothing(
+def test_a_change_beside_a_nested_bundle_tags_the_vmm_alone(
     repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
 ) -> None:
-    """A crate that no build installs is no component's path."""
+    """A crate that the copy does not bundle is no path of the copy. It is
+    under `rust/`, so it is a path of `vmm` (item 12 (1))."""
     _seed_first_tags(repo)
     _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
     assert _run(repo, shims, tmp_path, cli=binary_cli, assets=assets).returncode == 0
@@ -1091,8 +1109,8 @@ def test_a_change_beside_a_nested_bundle_tags_nothing(
     done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
 
     assert done.returncode == 0, done.stderr
-    assert "allocate-tags: 0 created" in done.stdout
-    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1"])
+    assert "allocate-tags: 1 created" in done.stdout
+    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1", "vmm-v0.1.1", "vmm-v0.1.2"])
 
 
 @pytest.mark.slow
@@ -1100,7 +1118,7 @@ def test_the_cargo_lock_file_tags_the_binary_component_alone(
     repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
 ) -> None:
     """`rust/Cargo.lock` is a file two segments deep. Cut to `rust`, it
-    moved nothing. It moves the binary component, and no venv component."""
+    moved nothing. It moves each binary component, and no venv component."""
     _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs", "caregiver/src/one.py")
     _seed_first_tags(repo)
     _commit(repo, "rust/Cargo.lock")
@@ -1108,7 +1126,7 @@ def test_the_cargo_lock_file_tags_the_binary_component_alone(
     done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.1.1", "vmm-v0.1.1"])
 
 
 @pytest.mark.slow
@@ -1116,32 +1134,33 @@ def test_a_label_counts_through_a_nested_bundle(
     repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
 ) -> None:
     """The level lines carry the same cut, so a labelled merge that changed
-    only a nested bundle raises its component."""
+    only a nested bundle raises its component, and `vmm`."""
     _seed_first_tags(repo)
     _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
 
     done = _run(repo, shims, tmp_path, labels="bump:minor", cli=binary_cli, assets=assets)
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.2.0"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "noticeboard-v0.2.0", "vmm-v0.2.0"])
 
 
 @pytest.mark.slow
-def test_the_cargo_workspace_tags_no_component_of_todays_catalog(
-    repo: Path, shims: Path, tmp_path: Path
+def test_the_cargo_workspace_tags_the_vmm_alone(
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
 ) -> None:
-    """The real planner, whose catalog holds no binary component: a merge
-    that changes the Cargo workspace and a crate moves no tag at all."""
+    """The real planner, whose one binary row of this repository is `vmm`
+    at `rust` (CH7-5): a merge that changes the Cargo workspace and a crate
+    moves the vmm tag and no other."""
     _commit(repo, "caregiver/src/one.py", "noticeboard/src/one.py")
     _seed_first_tags(repo)
     _commit(repo, "rust/Cargo.lock", "rust/Cargo.toml", "rust/rust-toolchain.toml")
     _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
 
-    done = _run(repo, shims, tmp_path)
+    done = _run(repo, shims, tmp_path, assets=assets)
 
     assert done.returncode == 0, done.stderr
-    assert "allocate-tags: 0 created" in done.stdout
-    assert _tags(repo) == FIRST_TAGS
+    assert "allocate-tags: 1 created" in done.stdout
+    assert _tags(repo) == sorted([*FIRST_TAGS, "vmm-v0.1.1"])
 
 
 # ---- the two assets of a binary component ----------------------------------
@@ -1149,10 +1168,11 @@ def test_the_cargo_workspace_tags_no_component_of_todays_catalog(
 
 def _binary_and_caregiver(repo: Path) -> str:
     """A merge that moves the binary component and `caregiver`, after the
-    first tags. The SHA of the merge."""
+    first tags. The SHA of the merge. The path of the copy is its own
+    directory, outside `rust/`, so the merge does not move `vmm`."""
     _seed_first_tags(repo)
 
-    return _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs", "caregiver/src/one.py")
+    return _commit(repo, "noticeboard/src/one.py", "caregiver/src/one.py")
 
 
 def _words(assets: Assets) -> list[str]:

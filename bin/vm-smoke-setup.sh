@@ -35,7 +35,8 @@
 #   6. It fetches the CH guest kernel (fact 53), checked by its sha256.
 #   7. It builds guest-init and the stand-in facade static for musl. It
 #      refuses a program with a PT_INTERP header, and first proves that the
-#      check refuses the runner's dynamic /bin/bash. The stand-in is a test
+#      check refuses the runner's dynamic /bin/bash (bin/lib/elfstatic.sh,
+#      the check of the vmm-archive job too). The stand-in is a test
 #      program in no release row (CH62 rule 12), and the guest-init kvm
 #      tests put it on their root disks (CH64 rule 2). It packs guest-init
 #      as /init in guest-init.cpio, with dev/console 5:1, and fails unless
@@ -81,6 +82,8 @@ export LC_ALL=C
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=lib/chbuild.sh
 . "$REPO/bin/lib/chbuild.sh"
+# shellcheck source=lib/elfstatic.sh
+. "$REPO/bin/lib/elfstatic.sh"
 INSTALLED_CH=/opt/components/vmm/bin/cloud-hypervisor
 PROFILE=/etc/apparmor.d/opt.components.vmm.bin.cloud-hypervisor
 SLOT_PROFILES=$REPO/rust/crates/vmm-confine/apparmor/cloud-hypervisor-slots.profile
@@ -212,21 +215,10 @@ built=$REPO/rust/target/$MUSL/release
 install -m 0755 "$built/guest-init" guest-init
 install -m 0755 "$built/examples/standin_facade" standin_facade
 # A static program has no PT_INTERP header. The guest has no loader.
-# require_static dies when the program names a program interpreter.
-require_static() {
-  local headers
-  headers=$(readelf -lW "$1") || die "readelf cannot read $1"
-  if grep -Eq '^[[:space:]]+INTERP[[:space:]]' <<< "$headers"; then
-    die "$1 names a program interpreter: it is not static"
-  fi
-}
-# The positive control: the check must refuse a dynamic program. A broken
-# pattern or a lost `die` makes the subshell pass, and this line fails.
-if (require_static /bin/bash) 2> /dev/null; then
-  die "the static check is broken: it passes the dynamic /bin/bash"
-fi
+# bin/lib/elfstatic.sh holds the check and its positive control.
+elf_static_refuses_dynamic || die "the static check is broken"
 for program in guest-init standin_facade; do
-  require_static "$program"
+  elf_static "$program" || die "$program is not static"
 done
 say "guest-init and standin_facade are static"
 work=$(mktemp -d "$dir/guest-init.XXXXXX")
@@ -310,7 +302,7 @@ install -m 0755 "$ch_work/root/bin/cloud-hypervisor" cloud-hypervisor
 install -m 0755 "$ch_work/root/bin/ch-remote" ch-remote
 rm -rf "$ch_work"
 for program in cloud-hypervisor ch-remote; do
-  require_static "$program"
+  elf_static "$program" || die "$program is not static"
 done
 version=$(./cloud-hypervisor --version) || die "cloud-hypervisor --version failed"
 [[ "$version" == "$CH_BUILD_VERSION" || "$version" == "cloud-hypervisor $CH_BUILD_VERSION" ]] ||

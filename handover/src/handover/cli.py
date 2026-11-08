@@ -93,7 +93,7 @@ from .corpus.artifacts import (
     prune_artifacts,
     ships_archive,
 )
-from .discovery import ManifestSet, discover, require_complete
+from .discovery import ManifestSet, discover, read_named, require_complete
 from .errors import Refusal, RefusalCode, safe_token
 from .follow import (
     NOTICE_SERVICE as FOLLOW_SERVICE,
@@ -541,15 +541,16 @@ def _print_lines(lines: tuple[str, ...]) -> None:
 
 
 def _run_artifact_rows(args: argparse.Namespace) -> int:
-    """One row for each binary component of `--repo`. The manifests are
-    read as `check --partial` reads them, and only when the catalog of that
-    repository holds a binary component: with none, nothing is read and
-    nothing is printed."""
+    """One row for each binary component of `--repo`. Only the manifests of
+    those components are read (`discovery.read_named`), so a runner needs
+    no site file. With no binary component, nothing is read and nothing is
+    printed."""
     repo = Repo(args.repo)
-    if not archive_components(repo):
+    names = archive_components(repo)
+    if not names:
         return EXIT_OK
 
-    manifests = discover(_roots(args.root)).manifests()
+    manifests = read_named(_roots(args.root), names)
     for row in rows(manifests, repo):
         _print_lines(row.lines())
 
