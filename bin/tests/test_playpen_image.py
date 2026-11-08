@@ -21,7 +21,7 @@ BUILD = REPO_ROOT / "playpen" / "bin" / "playpen-build"
 CI = REPO_ROOT / "playpen" / "bin" / "playpen-ci"
 DISK = REPO_ROOT / "playpen" / "bin" / "playpen-disk"
 GUEST_INIT_BOOT = REPO_ROOT / "rust" / "crates" / "guest-init" / "src" / "boot.rs"
-WIRE_GUEST = REPO_ROOT / "rust" / "crates" / "wire" / "src" / "guest.rs"
+GUEST_VECTORS = REPO_ROOT / "rust" / "crates" / "wire" / "vectors" / "guest.json"
 FACADE_PACKAGE = REPO_ROOT / "facade" / "package.json"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 UV_LOCK = REPO_ROOT / "uv.lock"
@@ -240,31 +240,47 @@ def test_no_flavor_sets_a_cmd() -> None:
     assert re.search(r"^CMD ", _text(), re.MULTILINE) is None
 
 
-def _mount_points() -> list[str]:
-    """The dirs the boot plan of guest init mounts on, read from its source:
-    the session mount of creche_wire::guest, the five tmpfs dirs and the
-    three kernel file systems (CH62 rules 4 and 5)."""
-    boot = GUEST_INIT_BOOT.read_text(encoding="utf-8")
-    session = re.search(r'SESSION_DISK_MOUNT: &str = "([^"]+)"', WIRE_GUEST.read_text("utf-8"))
-    tmpfs = re.search(r"const TMPFS: .*?= \[(.*?)\];", boot, re.DOTALL)
-    assert session is not None
-    assert tmpfs is not None
+def _session_mount() -> str:
+    """The session mount of creche_wire::guest, read from its vectors file,
+    the bridge to the other languages (CH62 rule 5)."""
+    vectors = cast("dict[str, object]", json.loads(GUEST_VECTORS.read_text(encoding="utf-8")))
+    session = vectors["session_disk_mount"]
+    assert isinstance(session, str)
 
-    return [
-        "/dev",
-        "/proc",
-        "/sys",
-        *re.findall(r'\("(/[^"]+)", c"mode=', tmpfs.group(1)),
-        session.group(1),
-    ]
+    return session
+
+
+def _tmpfs_points() -> list[str]:
+    """The tmpfs dirs of the boot plan of guest init, as many as the type
+    of TMPFS names (CH62 rule 4)."""
+    boot = GUEST_INIT_BOOT.read_text(encoding="utf-8")
+    tmpfs = re.search(r"const TMPFS: \[\(&str, &CStr\); (\d+)\] = \[(.*?)\];", boot, re.DOTALL)
+    assert tmpfs is not None
+    points = re.findall(r'\("(/[^"]+)", c"mode=', tmpfs.group(2))
+    assert len(points) == int(tmpfs.group(1))
+
+    return points
+
+
+def _kernel_points() -> list[str]:
+    """The kernel mount points that plan() puts on the root disk: proc,
+    sysfs and the move of /dev (CH62 rule 4)."""
+    boot = GUEST_INIT_BOOT.read_text(encoding="utf-8")
+    plan = re.search(r"pub fn plan\(\) -> Vec<Step> \{(.*?)\n\}\n", boot, re.DOTALL)
+    assert plan is not None
+
+    points = re.findall(r'staged\("(/[^"]+)"\)', plan.group(1))
+    assert points
+
+    return points
 
 
 def test_the_base_stage_makes_the_session_mount_point() -> None:
     """CH62 rule 5: guest init mounts the session disk and makes no dir, so
-    the root disk holds /var/lib/creche/session as root:root 0755. The
-    python and coding stages build on this stage, so each flavor holds it."""
+    the root disk holds the session mount as root:root 0755. The python
+    and coding stages build on this stage, so each flavor holds it."""
     stage = _stage("agent-sandbox")
-    session = "/var/lib/creche/session"
+    session = _session_mount()
     text = _text()
 
     assert f"RUN mkdir -p -m 0755 {session} \\\n" in stage
@@ -276,17 +292,17 @@ def test_the_base_stage_makes_the_session_mount_point() -> None:
 
 
 def test_each_mount_point_of_guest_init_is_named_in_the_image_and_the_disk_check() -> None:
-    """A mount point the boot plan adds fails here until the Dockerfile loop
-    and the playpen-disk loop list it. A missing dir on the read-only root
-    is a boot fault, so CI stops it before a release."""
-    points = _mount_points()
-    session = points[-1]
-    plain = [point for point in points if point != session]
+    """A mount point the boot plan adds fails here until the playpen-disk
+    loop lists it, and a tmpfs dir until the Dockerfile loop lists it too.
+    The build mounts /dev, /proc and /sys in each RUN step, so only the
+    disk check can see those. A missing dir on the read-only root is a
+    boot fault, so CI stops it before a release."""
+    tmpfs = _tmpfs_points()
+    kernel = _kernel_points()
     dockerfile_loop = re.search(r"for dir in ([^;]+); do", _stage("agent-sandbox"))
     disk_loop = re.search(r"for dir in ([^;]+); do", DISK.read_text(encoding="utf-8"))
 
-    assert session == "/var/lib/creche/session"
     assert dockerfile_loop is not None
     assert disk_loop is not None
-    assert dockerfile_loop.group(1).split() == plain
-    assert disk_loop.group(1).split() == [*plain, session]
+    assert dockerfile_loop.group(1).split() == tmpfs
+    assert sorted(disk_loop.group(1).split()) == sorted([*kernel, *tmpfs, _session_mount()])
