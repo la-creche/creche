@@ -11,7 +11,8 @@
 # The disk is made in the pinned trixie stage of playpen/disk/Dockerfile,
 # with no network: `mke2fs -d -` reads the tar on stdin, so each file keeps
 # its owner and mode and no step needs root on the host. `e2fsck -fn` then
-# reads the disk back, and `debugfs` reads `/etc/creche/env` from it. Only
+# reads the disk back, and `debugfs` reads `/etc/creche/env` and the mount
+# points of guest init from it (CH62 rules 4 and 5). Only
 # the digest line goes to stdout.
 #
 # THE SAME TAR GIVES THE SAME DISK. The UUID and the directory hash seed
@@ -70,6 +71,16 @@ docker run --rm -i --network none --platform "$PLATFORM" \
     e2fsck -fn "/out/$2.ext4" > /dev/null 2>&1 || { e2fsck -fn "/out/$2.ext4" >&2; exit 1; }
     debugfs -R "cat /etc/creche/env" "/out/$2.ext4" 2>/dev/null | grep -q "^PATH=" \
       || { echo "the disk holds no /etc/creche/env with a PATH line" >&2; exit 1; }
+    for dir in /dev /proc /sys /tmp /run /root /var/cache /var/tmp /var/lib/creche/session; do
+      debugfs -R "stat $dir" "/out/$2.ext4" 2>/dev/null | grep -q "^Inode: .*Type: directory" \
+        || { echo "the disk holds no mount point $dir" >&2; exit 1; }
+    done
+    debugfs -R "stat /var/lib/creche/session" "/out/$2.ext4" 2>/dev/null \
+      | grep -q "Mode:  0755 .*Flags" \
+      || { echo "/var/lib/creche/session is not mode 0755" >&2; exit 1; }
+    debugfs -R "stat /var/lib/creche/session" "/out/$2.ext4" 2>/dev/null \
+      | grep -q "User:     0   Group:     0" \
+      || { echo "/var/lib/creche/session is not owned by root" >&2; exit 1; }
     zstd -q -T0 -10 -o "/out/$2.ext4.zst" "/out/$2.ext4"
   ' disk "$UUID" "$name" "$size_mib" < "$tar" \
   || die "the disk of $name failed"
