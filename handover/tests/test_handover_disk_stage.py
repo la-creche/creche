@@ -38,9 +38,11 @@ from handover_disk_fixtures import (
     DISKS,
     HOOK_BYTES,
     LIVE_BYTES,
+    LIVE_VERSION,
     NEW_HOOK_BYTES,
     NEW_VERSION,
     VMM,
+    VMM_LIVE_VERSION,
     VMM_NEW_VERSION,
     DiskBench,
     disk_manifest_text,
@@ -468,6 +470,35 @@ def test_one_set_of_vmm_and_disks_runs_the_hook_from_the_new_vmm_tree(
     assert installed_version(bench.live) == NEW_VERSION
     for name, raw in DISK_BYTES.items():
         assert (bench.live / name).read_bytes() == raw
+
+
+def test_a_failed_vmm_verify_stops_the_set_before_the_disks(bench: DiskBench) -> None:
+    """CH78 rule 1: a failed vmm step fails the set before disks switches.
+
+    The first vmm verify fails. The restore runs it again on the old tree,
+    and that run passes. The disks hook never runs and no disks tree is
+    staged.
+    """
+    ran: list[str] = []
+    bench.run.hooks["check-images"] = lambda command: ran.append(command.argv[0])
+    calls = {"n": 0}
+    bench.run.fails["vmm-verify"] = 1
+
+    def pass_after_the_first_call(_: object) -> None:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            bench.run.fails.pop("vmm-verify", None)
+
+    bench.run.hooks["vmm-verify"] = pass_after_the_first_call
+    ledger = bench.release_with_vmm()
+    rows = cast("list[dict[str, object]]", ledger["verify"])
+
+    assert ledger["status"] == "restored", ledger.get("reason")
+    assert [(r["component"], r["status"]) for r in rows] == [(VMM, "failed"), (VMM, "ok")]
+    assert ran == []
+    assert installed_version(bench.components / VMM) == VMM_LIVE_VERSION
+    assert installed_version(bench.live) == LIVE_VERSION
+    assert not (bench.components / f"{DISKS}.new").exists()
 
 
 def test_the_release_removes_the_copies(bench: DiskBench, tmp_path: Path) -> None:
