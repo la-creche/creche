@@ -199,3 +199,19 @@ fn a_file_that_does_not_import_names_the_file() {
     assert_eq!(error.file, "base.ext4");
     assert!(matches!(error.source, ImportError::Io { .. }), "{error}");
 }
+
+/// The shared vector `rust/crates/wire/vectors/digests.json`: one good
+/// file in the shape that `disks/bin/playpen-release-disks` writes for the
+/// disks row (decisions CH58 rule 4, CH76 rule 5).
+/// `bin/tests/test_playpen_release_disks.py` holds the output of the
+/// script to the same keys and file names, so the two cannot drift apart.
+const SHARED_VECTOR: &str = include_str!("../../../wire/vectors/digests.json");
+
+#[test]
+fn the_shared_vector_reads() {
+    let manifest = parse(SHARED_VECTOR).unwrap();
+    assert_eq!(manifest.kernel.file.0, "vmlinux-x86_64.zst");
+    for (flavor, entry) in manifest.roots.iter() {
+        assert_eq!(entry.file.0, format!("{}.ext4.zst", flavor.name()));
+    }
+}

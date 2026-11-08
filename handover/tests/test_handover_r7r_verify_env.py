@@ -25,12 +25,15 @@ SYSTEMD_DIR = REPO_ROOT / "systemd"
 ENV_FILE_RE = re.compile(r"^EnvironmentFile=(\S+)$", re.MULTILINE)
 
 #: Component name -> the unit its verify hook's own user actually reads.
+#: `disks` has no unit: its hook is a program of the vmm tree, so it reads
+#: the env file of the vmm unit (contract 06 §4 rule 7, CH76 rule 6).
 UNIT_OF = {
     "noticeboard": "creche-noticeboard.service",
     "attendance": "creche-attendance.service",
     "caregiver": "creche-caregiver.service",
     "memory": "creche-memory.service",
     "vmm": "creche-vmm.service",
+    "disks": "creche-vmm.service",
 }
 
 
@@ -70,6 +73,7 @@ def test_noticeboard_attendance_and_caregiver_each_name_a_real_env_file() -> Non
         "caregiver": "/srv/agents/state/creche/caregiver.env",
         "memory": "/srv/agents/state/creche/memory.env",
         "vmm": "/srv/agents/state/creche/vmm.env",
+        "disks": "/srv/agents/state/creche/vmm.env",
     }
     for component, path in expected.items():
         manifest = read_one(REPO_ROOT, component).manifest

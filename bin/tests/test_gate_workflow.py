@@ -32,10 +32,14 @@ binary component that gets a tag in the run, from the dry run of the tag
 script. The `artifacts` job builds the archive of each such component
 (`bin/build-artifacts.sh`), in each scope. The tests run the text of the
 plan step against a stand-in dry run.
-The `sign` job signs each archive. It holds the identity token, and each
-word that it runs is in the workflow file. The `release` job takes both
-workflow artifacts and cosign, and the tag step gets `ASSET_DIR` and
-`COSIGN`. The tests run the text of the sign step and of the cosign step
+The `disks` job builds the files of the disks row
+(`disks/bin/playpen-release-disks`), only when the plan names `disks`
+(decision CH76 rule 5). The tests run the text of its build step against
+a stand-in script.
+The `sign` job signs each archive and each disk file. It holds the
+identity token, and each word that it runs is in the workflow file. The
+`release` job takes the three workflow artifacts and cosign, and the tag
+step gets `ASSET_DIR` and `COSIGN`. The tests run the text of the sign step and of the cosign step
 against a stand-in `curl`.
 
 The `proc` job runs the process-level suite (`integration/proc`), which is
@@ -96,7 +100,7 @@ from typing import Any
 
 import pytest
 import yaml
-from handover.artifacts import asset_names, disk_files
+from handover.artifacts import asset_names, disk_components, disk_files
 from handover.catalog import ARCHIVE_SUFFIX, BUNDLE_SUFFIX, DISK_FLAVORS, DISK_SUFFIX, Repo
 from handover.discovery import read_one
 
@@ -257,8 +261,12 @@ SIGN_JOB = "sign"
 #: tag.
 PLAN_JOB = "plan"
 
+#: The job of the release that builds the files of the disks row, and that
+#: row (decision CH76 rule 5).
+DISKS_JOB = "disks"
+
 #: The jobs that only the release has.
-RELEASE_ONLY = {PLAN_JOB, ARTIFACTS_JOB, SIGN_JOB}
+RELEASE_ONLY = {PLAN_JOB, ARTIFACTS_JOB, DISKS_JOB, SIGN_JOB}
 
 #: The jobs of each file with no rule of their own. The verdict needs a
 #: success from each of them in each scope.
@@ -307,6 +315,60 @@ ARTIFACTS_STEPS = [
             "path": ARTIFACT_DIR,
             "if-no-files-found": "error",
             "retention-days": RETENTION_DAYS,
+        },
+    },
+]
+
+#: Where the files of the disks row go on a runner.
+DISK_DIR = "${{ runner.temp }}/disks"
+
+#: Each key of the `disks` job. No `if`: the job runs in each scope, and
+#: with no planned disks row it builds nothing and passes. No
+#: `permissions`: it holds the read-only token of its file.
+DISKS_KEYS = {"needs", "runs-on", "timeout-minutes", "outputs", "steps"}
+
+#: The one output of the job: the step output of the build.
+DISKS_OUTPUTS = {"digests": "${{ steps.build.outputs.digests }}"}
+
+#: The build argv of `disks/component.toml`, as one line of the step.
+DISKS_ARGV = "/usr/bin/env bash disks/bin/playpen-release-disks"
+
+#: The whole text of the build step of the `disks` job.
+DISKS_RUN = f"""\
+set -euo pipefail
+if [[ " $PLANNED " == *" {DISKS_JOB} "* ]]; then
+  {DISKS_ARGV}
+else
+  echo "disks: no planned disk-image component"
+  mkdir -p "$DISK_OUT"
+  : > "$DISK_OUT/SHA256SUMS"
+fi
+{{
+  echo "digests<<END_OF_DIGESTS"
+  cat "$DISK_OUT/SHA256SUMS"
+  echo "END_OF_DIGESTS"
+}} >> "$GITHUB_OUTPUT"
+"""
+
+#: The steps of the `disks` job, as a whole. The checkout keeps no token in
+#: the clone, because a build script runs here. The upload does not
+#: compress: each file is a zstd file already.
+DISKS_STEPS = [
+    {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
+    {
+        "name": "build",
+        "id": "build",
+        "env": {"PLANNED": "${{ needs.plan.outputs.components }}", "DISK_OUT": DISK_DIR},
+        "run": DISKS_RUN,
+    },
+    {
+        "uses": UPLOAD_ACTION,
+        "with": {
+            "name": DISKS_JOB,
+            "path": DISK_DIR,
+            "if-no-files-found": "error",
+            "retention-days": RETENTION_DAYS,
+            "compression-level": 0,
         },
     },
 ]
@@ -478,6 +540,14 @@ assets="$RUNNER_TEMP/assets"
 bundles="$RUNNER_TEMP/bundles"
 mkdir -p "$bundles"
 """
+    + """\
+if [[ -n "$DISK_DIGESTS" ]]; then
+  if [[ -n "$DIGESTS" ]]; then
+    DIGESTS+=$'\\n'
+  fi
+  DIGESTS+="$DISK_DIGESTS"
+fi
+"""
     + f"asset='({SIGNED_REGEX})'\n"
     + """\
 line="^[0-9a-f]{64}  $asset\\$"
@@ -541,9 +611,13 @@ SIGN_PERMISSIONS = {"id-token": "write"}
 #: run step and the bundles. No checkout and no local action.
 SIGN_STEPS = [
     {"uses": DOWNLOAD_ACTION, "with": {"name": ARTIFACTS_JOB, "path": ASSET_DIR}},
+    {"uses": DOWNLOAD_ACTION, "with": {"name": DISKS_JOB, "path": ASSET_DIR}},
     {
         "name": SIGN_JOB,
-        "env": {"DIGESTS": "${{ needs.artifacts.outputs.digests }}"},
+        "env": {
+            "DIGESTS": "${{ needs.artifacts.outputs.digests }}",
+            "DISK_DIGESTS": "${{ needs.disks.outputs.digests }}",
+        },
         "run": SIGN_RUN,
     },
     {
@@ -567,9 +641,12 @@ COSIGN_STEP_MINUTES = 10
 COSIGN_STEP = {"name": "cosign", "timeout-minutes": COSIGN_STEP_MINUTES, "run": COSIGN_RUN}
 
 #: The steps of the `release` job between the verdict and the step that
-#: takes uv: the two workflow artifacts into one directory, then cosign.
+#: takes uv: the three workflow artifacts into one directory, then cosign.
+#: The `bundles` artifact comes last: its SHA256SUMS holds the lines of
+#: both build jobs.
 RELEASE_ASSET_STEPS = [
     {"uses": DOWNLOAD_ACTION, "with": {"name": ARTIFACTS_JOB, "path": ASSET_DIR}},
+    {"uses": DOWNLOAD_ACTION, "with": {"name": DISKS_JOB, "path": ASSET_DIR}},
     {"uses": DOWNLOAD_ACTION, "with": {"name": "bundles", "path": ASSET_DIR}},
     COSIGN_STEP,
 ]
@@ -927,6 +1004,85 @@ def test_the_artifacts_job_is_pinned_as_a_whole() -> None:
     assert (REPO / "bin" / "build-artifacts.sh").is_file()
 
 
+def test_the_disks_job_is_pinned_as_a_whole() -> None:
+    """Each key of the job and each step, in their order (decision CH76
+    rule 5). The job has no rule and no `permissions` key, so the verdict
+    needs its success in each scope."""
+    job = RELEASE_JOBS[DISKS_JOB]
+
+    assert set(job) == DISKS_KEYS
+    assert job["needs"] == ["scope", PLAN_JOB]
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert 0 < job["timeout-minutes"] <= 30
+    assert job["outputs"] == DISKS_OUTPUTS
+    assert job["steps"] == DISKS_STEPS
+    assert DISKS_JOB in RELEASE_JOBS[RELEASE_NAME]["needs"]
+
+
+def test_the_disks_job_runs_the_build_of_the_disks_manifest() -> None:
+    """One source for the build: the argv of `disks/component.toml`. The
+    job builds the one disk-image row of this repository."""
+    manifest = read_one(REPO, DISKS_JOB).manifest
+
+    assert disk_components(Repo.CRECHE) == (DISKS_JOB,)
+    assert manifest.build == (tuple(DISKS_ARGV.split()),)
+    assert f"\n  {DISKS_ARGV}\n" in DISKS_RUN
+    assert (REPO / manifest.build[0][-1]).is_file()
+
+
+#: A stand-in build script: it writes STUB_SUMS as SHA256SUMS into DISK_OUT,
+#: and one line with each word it got to STUB_LOG.
+DISK_BUILD_STUB = """#!/usr/bin/env bash
+mkdir -p "$DISK_OUT"
+printf '%s\\n' "$STUB_SUMS" > "$DISK_OUT/SHA256SUMS"
+echo "build $*" >> "$STUB_LOG"
+"""
+
+#: (the plan, whether the build runs, the output `digests`).
+DISK_PLANS = {
+    "no-plan": ("", False, ""),
+    "a-vmm-tag": ("vmm", False, ""),
+    "a-disks-tag": ("vmm disks", True, "a line"),
+    "a-name-that-holds-disks": ("disks-old", False, ""),
+}
+
+
+@pytest.mark.parametrize(("planned", "built", "digests"), DISK_PLANS.values(), ids=DISK_PLANS)
+def test_the_disks_step_builds_only_a_planned_disks_row(
+    tmp_path: Path, planned: str, built: bool, digests: str
+) -> None:
+    """The step runs the build only when the plan names `disks` as one
+    word. Else it writes an empty SHA256SUMS. The output `digests` holds
+    the text of SHA256SUMS."""
+    script = tmp_path / "disks" / "bin" / "playpen-release-disks"
+    script.parent.mkdir(parents=True)
+    script.write_text(DISK_BUILD_STUB, encoding="utf-8")
+    output = tmp_path / "output"
+    log = tmp_path / "log"
+    out = tmp_path / "temp" / "disks"
+    done = subprocess.run(
+        ["bash", "-c", DISKS_RUN],
+        cwd=tmp_path,
+        env={
+            "PATH": os.environ["PATH"],
+            "PLANNED": planned,
+            "DISK_OUT": str(out),
+            "GITHUB_OUTPUT": str(output),
+            "STUB_SUMS": "a line",
+            "STUB_LOG": str(log),
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert log.exists() == built
+    assert (out / "SHA256SUMS").read_text(encoding="utf-8") == (f"{digests}\n" if built else "")
+    body = f"{digests}\n" if digests else ""
+    assert output.read_text(encoding="utf-8") == f"digests<<END_OF_DIGESTS\n{body}END_OF_DIGESTS\n"
+
+
 def test_the_plan_job_is_pinned_as_a_whole() -> None:
     """The job holds the whole text of its run step. It needs no job, so
     no failed job before it can leave the plan out. The tag step and the
@@ -1073,7 +1229,7 @@ def test_the_sign_job_is_pinned_as_a_whole() -> None:
     (step,) = [one for one in job["steps"] if "run" in one]
 
     assert set(job) == SIGN_KEYS
-    assert job["needs"] == ARTIFACTS_JOB
+    assert job["needs"] == [ARTIFACTS_JOB, DISKS_JOB]
     assert 0 < job["timeout-minutes"] <= 15
     assert job["steps"] == SIGN_STEPS
     assert "bin/" not in step["run"]
@@ -1255,6 +1411,7 @@ class Fetch:
         files: dict[str, bytes],
         digests: str = "",
         sha256: str | None = None,
+        disk_digests: str = "",
     ) -> None:
         stubs = tmp_path / "stubs"
         stubs.mkdir()
@@ -1280,6 +1437,7 @@ class Fetch:
                 "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
                 "RUNNER_TEMP": str(self.temp),
                 "DIGESTS": digests,
+                "DISK_DIGESTS": disk_digests,
                 "COSIGN_VERSION": COSIGN_ENV["COSIGN_VERSION"],
                 "COSIGN_SHA256": sha256 or hashlib.sha256(FETCHED.encode()).hexdigest(),
                 "STUB_LOG": str(self.log),
@@ -1373,11 +1531,14 @@ REFUSED_SIGNS: dict[str, tuple[dict[str, bytes], str, str]] = {
 
 @needs_sha256sum_check
 def test_the_sign_job_takes_the_disk_file_names(tmp_path: Path) -> None:
-    """A run that ships the files of a disk-image row alone: the step
-    fetches cosign and signs each file into its own bundle (decision CH76
-    rule 5)."""
+    """A run that ships the files of a disk-image row alone: the output of
+    the `disks` job names them, and the step fetches cosign and signs each
+    file into its own bundle (decision CH76 rule 5)."""
     run = Fetch(
-        tmp_path, SIGN_RUN, {**DISK_BYTES, "SHA256SUMS": f"{DISK_LINES}\n".encode()}, DISK_LINES
+        tmp_path,
+        SIGN_RUN,
+        {**DISK_BYTES, "SHA256SUMS": f"{DISK_LINES}\n".encode()},
+        disk_digests=DISK_LINES,
     )
 
     assert run.done.returncode == 0, run.done.stdout + run.done.stderr
@@ -1393,6 +1554,46 @@ def test_the_sign_job_takes_the_disk_file_names(tmp_path: Path) -> None:
         ["SHA256SUMS", *(f"{name}{BUNDLE_SUFFIX}" for name in DISK_NAMES)]
     )
     assert (run.bundles / "SHA256SUMS").read_text(encoding="utf-8") == f"{DISK_LINES}\n"
+
+
+@needs_sha256sum_check
+def test_the_sign_step_signs_the_files_that_both_job_outputs_name(tmp_path: Path) -> None:
+    """The `artifacts` job names an archive and the `disks` job names the
+    disk files. The step signs each one, the archive first, and the
+    SHA256SUMS of the bundles holds the lines of both, which replaces the
+    two others in the `release` job."""
+    run = Fetch(
+        tmp_path,
+        SIGN_RUN,
+        {ONE: BYTES[ONE], **DISK_BYTES, "SHA256SUMS": b""},
+        LINES[ONE],
+        disk_digests=DISK_LINES,
+    )
+
+    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
+    assert run.fetches == 1
+    assert run.used.read_text(encoding="utf-8").splitlines() == [
+        "version",
+        *(
+            f"sign-blob --yes --bundle {run.bundles}/{name}{BUNDLE_SUFFIX} {run.assets}/{name}"
+            for name in (ONE, *DISK_NAMES)
+        ),
+    ]
+    assert (run.bundles / "SHA256SUMS").read_text(encoding="utf-8") == (
+        f"{LINES[ONE]}\n{DISK_LINES}\n"
+    )
+
+
+def test_a_disk_file_that_no_output_names_is_refused(tmp_path: Path) -> None:
+    """The `disks` artifact holds a file, and the `disks` job output names
+    none: the step stops before it fetches cosign."""
+    run = Fetch(tmp_path, SIGN_RUN, {**DISK_BYTES, "SHA256SUMS": b""})
+
+    assert run.done.returncode == 1
+    assert "sign: the archives are not the archives that the job artifacts named" in (
+        run.done.stderr
+    )
+    assert run.fetches == 0
 
 
 @pytest.mark.parametrize(("files", "digests", "fault"), REFUSED_SIGNS.values(), ids=REFUSED_SIGNS)

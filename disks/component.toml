@@ -1,0 +1,42 @@
+# The disks: the signed files that the vmm boots, at `disks/` (CH7-2,
+# CH35 (4), CH76 rule 5). One row holds the guest kernel, one root disk for
+# each flavor and `digests.json`. Root installs each file unchanged into a
+# root-owned tree, and the vmm decompresses each one into its own digest
+# store (CH35 (4), fact 56).
+#
+# `kind = "disk-image"`: no unit and runs_as none. Nothing runs the tree
+# (contract 06 §8.4 rule 5).
+#
+# `build`: only CI runs it. The job `disks` of release.yml starts it from
+# the repository root with DISK_OUT set, when the plan tags `disks`. Root
+# never runs it, and the host builds nothing (CH7-2). The script sits
+# under `disks/`, so a change to it moves the disks tag and no playpen
+# tag. The files come from playpen/Dockerfile and the playpen scripts, so
+# the catalog row bundles `playpen` (contract 06 §1 rule 15).
+#
+# `depends_on = ["vmm"]` and `verify`: the tree holds no program, so the
+# hook is `vmm check-images` of the vmm tree (CH76 rule 6). It decompresses
+# each file and checks each digest of `digests.json` with the reader of the
+# vmm. It runs as the operator. Its `--env-file` is the EnvironmentFile= of
+# creche-vmm.service (contract 06 §4 rule 7), pinned equal by
+# handover/tests/test_handover_r7r_verify_env.py. Timeout 300 s: the hook
+# decompresses about 2.5 GB, and nobody measured the time on the host.
+#
+# `restore.keep = 1`: about 1 GB a release, so the host keeps one previous
+# tree (fact 51).
+manifest_version = "0.23"
+name = "disks"
+repo = "creche"
+path = "disks"
+kind = "disk-image"
+runs_as = "none"
+build = [["/usr/bin/env", "bash", "disks/bin/playpen-release-disks"]]
+install.to = "/opt/components/disks"
+install.prev = "/opt/components/disks.prev"
+depends_on = ["vmm"]
+verify.command = ["/opt/components/vmm/bin/vmm", "check-images", "--json", "--env-file", "/srv/agents/state/creche/vmm.env"]
+verify.user = "operator"
+verify.timeout_s = 300
+restore.mode = "automatic"
+restore.keep = 1
+release = true

@@ -266,22 +266,24 @@ def test_the_lock_file_moves_every_venv_component_and_the_playpen_image() -> Non
 
     The playpen image moves with them: its test venv resolves the lock,
     so the wheels it pins are bytes of the image. It is the one image
-    component the lock moves."""
+    component the lock moves. The disks row moves with it: its root disks
+    come from the same image build (contract 06 §1 rule 15)."""
     plans = _plan(("uv.lock",), tags=ALL_TAGGED)
 
     ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in ARRIVING]
     venvs = {row.name for row in ours if row.kind is Kind.VENV and row.lock is Lock.WORKSPACE}
 
-    assert {plan.component for plan in plans} == venvs | {"playpen"}
+    assert {plan.component for plan in plans} == venvs | {"playpen", "disks"}
     assert "playpen" not in venvs
 
 
 def test_a_members_lock_file_is_not_the_roots() -> None:
     """Only the root `uv.lock` is read by every build. A file of that name
-    deeper in the tree belongs to whatever directory holds it."""
+    deeper in the tree belongs to whatever directory holds it. The disks
+    row bundles `playpen`, so the file moves it too."""
     plans = _plan(("playpen/uv.lock",), tags=ALL_TAGGED)
 
-    assert {plan.component for plan in plans} == {"playpen"}
+    assert {plan.component for plan in plans} == {"playpen", "disks"}
 
 
 #: A venv row with a lock of its own, beside the real rows (contract 06 §1
@@ -408,32 +410,17 @@ DISK_PATHS = (
 
 
 @pytest.mark.parametrize("path", DISK_PATHS)
-def test_a_change_that_moves_playpen_moves_disks(
-    monkeypatch: pytest.MonkeyPatch, path: str
-) -> None:
+def test_a_change_that_moves_playpen_moves_disks(path: str) -> None:
     """The disks come from `playpen/Dockerfile` and the playpen scripts, so
-    a change to a disk moves the disks tag. With `disks` out of `ARRIVING`,
-    as after its manifest PR."""
-    monkeypatch.setattr(allocate, "ARRIVING", ARRIVING - {"disks"})
-    tags = (*ALL_TAGGED, "disks-v0.1.0")
-
-    assert "disks" in {plan.component for plan in _plan((path,), tags=tags)}
+    a change to a disk moves the disks tag."""
+    assert "disks" in {plan.component for plan in _plan((path,), tags=ALL_TAGGED)}
 
 
-def test_a_change_to_the_disks_script_moves_only_disks(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_change_to_the_disks_script_moves_only_disks() -> None:
     """The build script sits under `disks/`, so it moves the disks tag
     only. The Cargo workspace moves no disk-image row."""
-    monkeypatch.setattr(allocate, "ARRIVING", ARRIVING - {"disks"})
-    tags = (*ALL_TAGGED, "disks-v0.1.0")
-
-    assert {plan.component for plan in _plan((DISK_PATHS[0],), tags=tags)} == {"disks"}
-    assert "disks" not in {plan.component for plan in _plan(("rust/Cargo.lock",), tags=tags)}
-
-
-def test_the_arriving_disks_row_gets_no_tag() -> None:
-    """In `ARRIVING`, a change to a disk tags no disks (CH76 rule 1)."""
-    assert "disks" in ARRIVING
-    assert "disks" not in {plan.component for plan in _plan(DISK_PATHS, tags=ALL_TAGGED)}
+    assert {plan.component for plan in _plan((DISK_PATHS[0],), tags=ALL_TAGGED)} == {"disks"}
+    assert "disks" not in {plan.component for plan in _plan(("rust/Cargo.lock",), tags=ALL_TAGGED)}
 
 
 def test_a_docs_only_merge_still_gives_an_untagged_component_its_first() -> None:

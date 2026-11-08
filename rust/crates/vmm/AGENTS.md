@@ -277,7 +277,10 @@ job it proves that a file the test user owns refuses and imports
 nothing. Its ignored `kvm_` tests make a root-owned file with the sudo
 of the runner (decision CH36 G20) and prove the accept path, a writable
 file, a file past the cap and a malformed one. `src/image_root/tests.rs`
-proves the parse and the import on the bytes, with no file check.
+proves the parse and the import on the bytes, with no file check. It also
+parses the shared vector `rust/crates/wire/vectors/digests.json`, the
+shape that `disks/bin/playpen-release-disks` writes for the disks row
+(decision CH76 rule 5).
 
 ## The server
 

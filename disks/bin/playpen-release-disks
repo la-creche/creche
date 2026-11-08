@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# CI — builds the files of the disks row (CH7-2, CH7-3, CH35 (4)):
+#   DISK_OUT=<dir> disks/bin/playpen-release-disks
+#
+# The `build` of disks/component.toml names this script. The job `disks` of
+# release.yml runs it from the repository root when the plan tags `disks`.
+# Root never runs it: the host installs the signed files unchanged
+# (contract 06 §8.4).
+#
+# DISK_OUT names a directory that is absent or empty. The script writes
+# these files into it:
+#   1. `<flavor>.ext4.zst` for each flavor of FLAVORS: playpen-rootfs
+#      exports the tar of the flavor's target, and playpen-disk makes the
+#      disk from it.
+#   2. `vmlinux-x86_64.zst`: playpen-kernel fetches the pinned kernel.
+#   3. `digests.json`: the digest line of each of those scripts, the
+#      SHA-256 of the decompressed bytes (CH41 rule 1). It holds `kernel`
+#      and one key for each flavor, each {file, sha256}, with the keys
+#      sorted and no other key (CH58 rule 4). The vmm reads it from
+#      VMM_IMAGE_ROOT (CH57 rule 1). rust/crates/wire/vectors/digests.json
+#      holds one good file of this shape, and the vmm parses it.
+#   4. `SHA256SUMS`: the SHA-256 of each of the four files above, as
+#      sha256sum prints it. The job hands it to the `sign` job, which signs
+#      each file as its own asset (CH35 (4)).
+#
+# FLAVORS holds `catalog.DISK_FLAVORS` with the target of each one in
+# playpen/Dockerfile. Coding joins at the cut, with the PR that adds it to
+# the wire enum (CH76 rule 7). bin/tests/test_playpen_release_disks.py
+# holds FLAVORS equal to DISK_FLAVORS and to the pairs of playpen-ci, and
+# the four files equal to the files of `handover disk-assets`.
+#
+# Exit 0 with each file written. Exit 1 when a step fails. A step that
+# fails before the last one leaves DISK_OUT empty.
+set -euo pipefail
+export LC_ALL=C
+
+die() { printf 'playpen-release-disks: %s\n' "$*" >&2; exit 1; }
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+PLAYPEN_BIN="$ROOT/playpen/bin"
+FLAVORS="base:agent-sandbox python:agent-sandbox-python"
+KERNEL=vmlinux-x86_64
+DIGESTS=digests.json
+SUMS=SHA256SUMS
+
+[[ -n "${DISK_OUT:-}" ]] || die "the variable DISK_OUT is not set"
+if [[ -e "$DISK_OUT" ]]; then
+  [[ -d "$DISK_OUT" && ! -L "$DISK_OUT" ]] || die "DISK_OUT names no directory"
+  [[ -z "$(ls -A -- "$DISK_OUT")" ]] || die "DISK_OUT is not empty"
+fi
+mkdir -p -- "$DISK_OUT" || die "cannot make DISK_OUT"
+
+# Each step writes into one work directory, and only the last step moves the
+# files into DISK_OUT. So a failed step leaves DISK_OUT empty.
+work="$(mktemp -d "$DISK_OUT/.playpen-release-disks.XXXXXX")" || die "cannot make a work directory"
+trap 'rm -rf -- "$work"' EXIT
+mkdir -- "$work/files"
+
+# digest_of LINES NAME: the SHA-256 of the last line of LINES, which must be
+# `<sha256>  NAME`, as playpen-disk and playpen-kernel print it.
+digest_of() {
+  local last="${1##*$'\n'}"
+
+  [[ "$last" =~ ^([0-9a-f]{64})\ \ (.+)$ && "${BASH_REMATCH[2]}" == "$2" ]] ||
+    die "no digest line of $2"
+  printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# entry KEY FILE SHA256: one line `KEY<tab>"KEY":{...}` for the sort.
+entry() {
+  printf '%s\t"%s":{"file":"%s","sha256":"%s"}\n' "$1" "$1" "$2" "$3"
+}
+
+entries=""
+names=("$DIGESTS" "$KERNEL.zst")
+
+for pair in $FLAVORS; do
+  flavor="${pair%%:*}"
+  target="${pair#*:}"
+  "$PLAYPEN_BIN/playpen-rootfs" "$target" "$work/$flavor.tar" || die "the $flavor tar failed"
+  line="$("$PLAYPEN_BIN/playpen-disk" "$work/$flavor.tar" "$work/files" "$flavor")" ||
+    die "the $flavor disk failed"
+  rm -f -- "$work/$flavor.tar"
+  sha="$(digest_of "$line" "$flavor.ext4")"
+  entries+="$(entry "$flavor" "$flavor.ext4.zst" "$sha")"$'\n'
+  names+=("$flavor.ext4.zst")
+done
+
+line="$("$PLAYPEN_BIN/playpen-kernel" "$work/files")" || die "the kernel failed"
+sha="$(digest_of "$line" "$KERNEL")"
+entries+="$(entry kernel "$KERNEL.zst" "$sha")"$'\n'
+
+# The keys sorted, one object, one line feed at the end.
+body="$(printf '%s' "$entries" | sort | cut -f 2- | paste -s -d , -)"
+printf '{%s}\n' "$body" > "$work/files/$DIGESTS"
+
+sums="$(cd -- "$work/files" &&
+  { sha256sum -- "${names[@]}" 2> /dev/null || shasum -a 256 -- "${names[@]}"; })" ||
+  die "cannot read the SHA-256 of the files"
+printf '%s\n' "$sums" > "$work/files/$SUMS"
+
+for name in "${names[@]}" "$SUMS"; do
+  mv -f -- "$work/files/$name" "$DISK_OUT/$name"
+done
+printf 'playpen-release-disks: %s files in %s\n' "${#names[@]}" "$DISK_OUT" >&2

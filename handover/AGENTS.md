@@ -328,7 +328,8 @@ has the name of the markup of the manifest: `.component.toml` or
      allocator tags no such row. `handover` releases with the new row. The
      second PR adds the manifest and takes the name out of `ARRIVING`.
      `vmm` came this way: the row first, then `rust/component.toml`
-     (CH7-5, CH76 rule 1).
+     (CH7-5, CH76 rule 1). `disks` came the same way, then
+     `disks/component.toml`.
 12. Check P6 (`executor/provenance.py`) starts the verifier, `cosign`, in
     two children. Each child runs in a transient unit of systemd, as a
     dynamic user with no privilege (`host.As.VERIFIER`). Child 1 loads the
@@ -476,9 +477,9 @@ Kind.BINARY, Releases.YES)` (CH7-5, CH9, item 12 (1)). Its manifest is
 
 The catalog row of `disks` is `CatalogRow("disks", Repo.CRECHE, "disks",
 Kind.DISK_IMAGE, Releases.YES, ("playpen", "agent", "facade",
-"pyproject.toml", "uv.lock"))`, in `ARRIVING` (contract 06 §1 rule 15,
-CH7-2, CH35 (4), CH76 rules 1 and 5). Its manifest is
-`disks/component.toml`, which a later PR adds.
+"pyproject.toml", "uv.lock"))` (contract 06 §1 rule 15, CH7-2, CH35 (4),
+CH76 rules 1 and 5). Its manifest is `disks/component.toml`, and
+`disks/AGENTS.md` says how CI builds its files.
 
 1. A `kind: disk-image` tree is a set of signed files at the root of
    `install.to`. CI builds and signs each file. Root checks each signature
@@ -541,6 +542,12 @@ CH7-2, CH35 (4), CH76 rules 1 and 5). Its manifest is
     (CH35 (2), CH76 rule 5). `bin/build-artifacts.sh` skips a planned
     disk-image row, and the `sign` job of `release.yml` signs each of the
     four files.
+15. The job `disks` of `release.yml` runs the build of the row,
+    `disks/bin/playpen-release-disks`, when the plan tags `disks`. It hands
+    its files and their `SHA256SUMS` to the `sign` job beside the archives
+    of the `artifacts` job. `tests/test_handover_repo_manifests.py` holds
+    the bundles of the row: what `playpen/Dockerfile` copies, and
+    `playpen`.
 
 ## The host component of creche-release
 

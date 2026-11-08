@@ -629,10 +629,8 @@ DISK_LINES = [
 ]
 
 
-def _disks_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, build: bool = True) -> Path:
-    """A root that holds a disks manifest and the real vmm manifest, with
-    `disks` out of `ARRIVING`, as after its manifest PR."""
-    monkeypatch.setattr(artifacts, "ARRIVING", artifacts.ARRIVING - {DISKS})
+def _disks_root(tmp_path: Path, *, build: bool = True) -> Path:
+    """A root that holds a disks manifest and the real vmm manifest."""
     words = ", ".join(f'"{word}"' for word in DISK_ARGV)
     text = manifest_toml(DISKS) + (f"build = [[{words}]]\n" if build else "")
     root = tmp_path / "root"
@@ -643,9 +641,9 @@ def _disks_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, build: bool 
 
 
 def test_disk_assets_prints_the_disk_rows(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    root = _disks_root(tmp_path, monkeypatch)
+    root = _disks_root(tmp_path)
 
     assert _out(capsys, "disk-assets", "--repo", "creche", "--root", str(root)) == (
         EXIT_OK,
@@ -653,11 +651,9 @@ def test_disk_assets_prints_the_disk_rows(
     )
 
 
-def test_artifacts_prints_no_disk_row(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_artifacts_prints_no_disk_row(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """`read_rows` of `bin/lib/artifactrows.sh` never meets a disk line."""
-    root = _disks_root(tmp_path, monkeypatch)
+    root = _disks_root(tmp_path)
 
     code, lines = _out(capsys, "artifacts", "--repo", "creche", "--root", str(root))
 
@@ -665,29 +661,29 @@ def test_artifacts_prints_no_disk_row(
     assert lines == _vmm_lines()
 
 
-def test_disk_assets_prints_no_row_while_the_disks_row_arrives(
+def test_disk_assets_prints_the_disks_row_of_this_checkout(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """`disks` is in `ARRIVING`, so this checkout has no disk row yet."""
-    assert DISKS in artifacts.ARRIVING
+    """The real `disks/component.toml`, in the line form that
+    `bin/build-artifacts.sh` reads to skip the row (CH76 rule 5)."""
+    assert DISKS not in artifacts.ARRIVING
     assert _out(capsys, "disk-assets", "--repo", "creche", "--root", str(REPO_ROOT)) == (
         EXIT_OK,
-        [],
+        DISK_LINES,
     )
 
 
 def test_another_repository_has_no_disk_row(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    root = _disks_root(tmp_path, monkeypatch)
+    root = _disks_root(tmp_path)
 
     assert _out(capsys, "disk-assets", "--repo", "mcp", "--root", str(root)) == (EXIT_OK, [])
 
 
 def test_a_disk_row_with_no_manifest_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(artifacts, "ARRIVING", artifacts.ARRIVING - {DISKS})
     root = tmp_path / "root"
     write_manifest(root, VMM, VMM_MANIFEST_TEXT, Markup.TOML)
 
@@ -698,9 +694,9 @@ def test_a_disk_row_with_no_manifest_is_refused(
 
 
 def test_a_disk_manifest_with_no_build_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    root = _disks_root(tmp_path, monkeypatch, build=False)
+    root = _disks_root(tmp_path, build=False)
 
     code = main(["disk-assets", "--repo", "creche", "--root", str(root)])
 
