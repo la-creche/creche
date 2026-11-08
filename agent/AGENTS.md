@@ -94,6 +94,27 @@ if (pulled.ok) {
 }
 ```
 
+Under CH the backend is `vmmBackend(FAMILY_STATE_SOCKET, …)` of
+`src/family-state.ts` (decisions CH5a, CH62 rule 13):
+
+1. Each pull dials the family-state socket of guest init, sends one
+   `FamilyStatePull` line and reads one `FamilyStateReply` line with
+   `read` and the cap `STATE_REPLY_CAP` (256 KiB). Nothing retries
+   (decision CH62 rule 14).
+2. A typed fault reply fails the prompt with the fault word of the file
+   backend: `creds_missing`, `config_missing`, `not_valid` or
+   `too_large`. The backend keeps no last good config (decision CH23
+   rule 2).
+3. A reply line over the cap is `too_large`, and the backend closes the
+   link before the rest. A reply that is not a `FamilyStateReply`, or
+   whose alias is the bare prefix `litellm/`, is `not_valid`.
+4. A link that closes with no line, or that gives no line in
+   `PULL_WAIT_MS` (20 s), is `not_valid`. The backend writes the cause
+   to stderr.
+
+`src/guest.ts` holds the socket path, and `test/guest.test.ts` holds it
+and `STATE_REPLY_CAP` equal to `rust/crates/wire/vectors/guest.json`.
+
 Each LiteLLM request and each `ch` request reads the creds of the latest
 pull. Each render of a session reads the config of that session's last
 pull. A creds fault fails the prompt. A config fault keeps the last good
@@ -174,10 +195,6 @@ file's line count. A new name fails CI until someone picks a list.
   128000-token window and stays cached until the next alias change, as
   at start. A short LiteLLM fault at the change pins the fallback for
   that alias until a restart or another edit (`src/litellm.ts`).
-- The wire `ModelAlias` pattern accepts `litellm/`, whose bare alias is
-  empty. The file backend refuses it as `not_valid`, so the last good
-  config stays. The vmm backend needs the same check, or the wire
-  pattern refuses it (`src/family-state.ts`).
 - Contract 03 §7 gives the two plane URLs as fixed values. The playpen
   takes the URL of its build for a plane variable that is absent or not
   valid. The agent has no build URL, so it refuses (`src/config.ts`).
