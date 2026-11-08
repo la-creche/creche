@@ -23,6 +23,10 @@ The second file has the table of the three vmm crates.
   `store/<sha256>` with an identity file, as an import does. When an
   identity for the digest exists, it writes no byte and returns the check
   of that copy, so a changed copy fails (CH44 rule 2).
+- Decision CH76 rule 6 (plan PR V0, `images.rs`): `hash_source` reads
+  a source as `ImageStore::import` reads it, through `zstd -d` for a
+  `.zst` file, and gives the SHA-256 of the bytes with no file written.
+  `vmm check-images` compares it with each entry of `digests.json`.
 - Decision CH44 rule 3 (PR D8, `ch_remote.rs`): the timeout of a
   `ch-remote` call comes from its caller. This crate names no value. A
   pause takes about 4 ms (fact 72) and a 16 GiB snapshot about 12 s

@@ -30,7 +30,11 @@ writes the real exec attribute (plan PR L16c, decisions CH55, CH58 rule
 CH63). It reads only `AGENT_SYSTEMCTL_PROGRAM` through
 `config::KillScopesConfig`, with the check of `Config`, and calls
 `creche_vmm_confine::leftovers::kill_all`. A bad key exits 78, and any
-other failure exits 1. `vmm serve` raises its soft `RLIMIT_NOFILE` to
+other failure exits 1. `vmm verify --json --env-file <path>` and `vmm
+check-images --json --env-file <path>` are the verify hooks of the vmm
+row and of the disks row (decision CH76 rules 2 and 6, see "The verify
+hooks"). Each takes exactly those three words, in that order, and a
+wrong list exits 78. `vmm serve` raises its soft `RLIMIT_NOFILE` to
 `planes::fd_need` plus `family_state::fd_need` plus `proxy::fd_need`
 in step 4 of the compose step, after the start checks and before the
 bind (decision CH67 rule 4 for the bridge need, Known gap 23 for the
@@ -50,8 +54,9 @@ family-state need).
    (see "The root-owned files", decision CH69 rule 17). Then `check_cloud_hypervisor` checks the CH
    version, and a failed check refuses the start (caller duty 4, gap G10
    option A). Then
-   `image_root::read` reads `digests.json`, and `ImageSet::import` puts
-   each file that it names into the digest store (see "The image root").
+   `image_root::read` reads `digests.json`, and `Follow::start` puts
+   each file that it names into the digest store with
+   `ImageSet::import` (see "The image root").
    Then `guest_init::write_initramfs` writes the one guest init
    initramfs of this vmm start (see "The guest init initramfs"). Then
    `FaultBook::start` clears every fault file (contract 05 §3.3.1 rule
@@ -71,7 +76,9 @@ family-state need).
    each listener and each CH gets the raised limit.
 5. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`,
    `Checks`) binds `vmm.sock` in the run root. `sleep::run` runs beside it (caller
-   duty 5), and so does `FaultBook::refresh` every `faults::REFRESH`.
+   duty 5), and so does `FaultBook::refresh` every `faults::REFRESH`,
+   and so does the digests follow (see "The digests follow"). SIGTERM
+   aborts the follow.
 6. At SIGTERM the sleep loop gets its stop, and `shutdown::shutdown`
    runs with the end of `sleep::run` as its `sleep` future. `src/main.rs`
    then ends the runtime with `shutdown_timeout(RUNTIME_END)`, 4 s of
@@ -254,6 +261,160 @@ nothing. Its ignored `kvm_` tests make a root-owned file with the sudo
 of the runner (decision CH36 G20) and prove the accept path, a writable
 file, a file past the cap and a malformed one. `src/image_root/tests.rs`
 proves the parse and the import on the bytes, with no file check.
+
+## The digests follow
+
+A disks release replaces `digests.json` and its files while the vmm
+runs, and the disks row has no unit to restart. So the vmm follows the
+file (plan PR V1, decisions CH76 rule 8, CH77 rules 2 and 3).
+`src/image_root/follow.rs` runs these steps:
+
+1. `Follow::start` imports the set of the vmm start and gives the
+   `watch::Receiver<Digests>` of `StartConfig::digests`. Each start
+   reads the set once, so its kernel and root disk come from one set.
+2. Every `follow::POLL` (5 s) it reads the bytes of the file with the
+   checks of `read`, in `spawn_blocking` (decision CH36 G21), as the
+   edit follow polls the reach files (decision CH69 rule 11). Bytes
+   equal to the bytes of the set of new starts import nothing and log
+   nothing.
+3. New bytes wait. The follow imports them only after they read the
+   same at each poll for `follow::HOOK_TIMEOUT` (300 s), the timeout of
+   the disks verify hook, plus one poll: `follow::SETTLE_POLLS` (61)
+   polls, 305 s (decision CH77 rule 2). Any other reading ends the
+   wait, and the next new bytes wait from the start. The start of a
+   wait logs one line.
+4. Settled bytes parse, and each entry goes into the digest store. Only
+   when every entry imports does the follow swap the set, and it logs
+   one line that names each digest. A parse or an import that fails
+   keeps the old set (decision CH58 rule 5).
+5. The follow tries the bytes of a failed parse or import again every
+   `follow::RETRY_POLLS` polls (12 polls, one minute, decision CH77 rule
+   3). So a fault that clears, such as a full state root or a killed
+   `zstd -d`, still swaps the set with no vmm restart (decisions CH48
+   (2), CH76 rule 8). The import skips each entry that the store holds,
+   so a retry rereads only the entries that did not import. A retry of
+   the same bytes needs no new wait.
+
+Each fault logs one line (decision CH77 rule 3). A fault logs again only
+when its reading or its text changes, and a read that takes no bytes is
+such a reading.
+
+A running VM keeps its store copies, since no step removes a store file.
+Its snapshot holds the key of its start, which holds the root disk
+digest (decisions CH7-6, CH62 rule 24). So after a swap the next start
+of an idle session drops that snapshot and cold-boots on the new disk.
+The follow is the only import after the vmm start, so the store still
+runs one import at a time. An import that runs at SIGTERM ends with the
+process, and its `<sha256>.tmp` file stays until the next import of that
+digest truncates it. The handover swap of the disks tree is two renames,
+so the follow may log one `is missing` line between them.
+
+handover swaps the disks tree first and runs `vmm check-images` after it
+for at most 300 s (decision CH76 rule 6, gap Q68-6). The wait of step 3
+is one poll longer than the hook timeout (decision CH77 rule 2). The
+first read of the new bytes comes no sooner than the rename. The extra
+poll covers the start of the hook after the rename, and the kill of a
+hook that times out and the restore after it. The wait assumes that
+these take 5 s at most. So the wait outlasts the hook, also a hook that
+times out, and the follow never decompresses a disk while the hook
+does. A failed hook restores the previous tree inside the wait, and the
+follow then reads the bytes of the set of new starts, which end the wait
+and import nothing. So a release that its hook rolls back never reaches
+a VM, and a disks release reaches new starts about 5 min after its
+install. A restart of the vmm inside the wait imports the file that it
+reads at once, as each vmm start does (decision CH58 rule 5).
+
+`src/image_root/follow/tests.rs` proves the steps on the bytes in the
+rust job, one `Follow::apply` for each poll: a swap only after every
+import, a failed import that keeps the old set, unchanged bytes that
+import nothing, and a failed import that tries again and swaps once its
+fault clears. For the wait (decision CH77 rule 2) it proves that bytes
+that stay the same for 61 polls import once, bytes that change inside
+the wait import nothing, and a rolled-back file imports nothing. Each of
+the three fails when the wait is removed. It also proves that bytes
+whose import failed wait again in full once other bytes come between.
+The ignored `kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk` of
+`tests/kvm_reach.rs` makes the new `digests.json` root-owned with the
+runner's sudo (decision CH36 G20). It runs the real `vmm serve`, as
+the E4 tests do, so it proves the compose path: `Vmm::run` swaps the
+set of new starts no sooner than `HOOK_TIMEOUT` plus one poll after the
+rename, and within four polls after `HOOK_TIMEOUT`. The vmm log line of
+the swap names the new set. The VM that started on the old disk sleeps
+on the idle timeout in the same wait, and the next start drops its
+snapshot and cold-boots on the new disk. This is the one 305 s wait of the kvm job
+(decision CH75 rule 2): the job takes about 5.5 min more.
+
+## The verify hooks
+
+`src/verify.rs` and `src/check_images.rs` are the two verify hooks of
+contract 06 §4 (decision CH76 rules 2 and 6). handover gives a hook a
+small fixed env, never the env of its unit (§4 rule 7). The vmm compiles
+in no default (decision CH59 rule 1). So each hook takes `--env-file
+<path>`, the `vmm.env` of `systemd/creche-vmm.service`, and reads it
+itself with `src/env_file.rs`. Each hook writes one `verify::Report` on
+stdout, one JSON line `{"ok", "checks": [{"name", "ok", "detail"}]}`, as
+`caregiver-verify --json` does. It exits 0 when every check passes, else
+1. A detail names a key or a path, never a value of another key.
+
+`src/env_file.rs` reads the form of §4 rule 7: one `KEY=value` per line,
+no shell, no quoting, no expansion. It also takes the `#` header line of
+`bin/fleet-up` and any key order. It refuses each value that systemd
+reads in another way: a leading quote, a backslash, a space or a tab at
+either end, a CR or a NUL. So the hook and the unit read one value. The
+guest init reader refuses a comment and an unsorted file, and a path
+edge to `creche-guest-init` is a lock-lane change, so the vmm holds its
+own reader. `tests/env_file.rs` proves the fleet-up file and each
+refusal.
+
+`vmm verify` (CH76 rule 2) runs these checks, in this order:
+
+1. `env-file`: the file reads, and `VerifyConfig` reads
+   `VMM_CH_PROGRAM`, `VMM_CH_REMOTE_PROGRAM` and
+   `VMM_GUEST_INIT_PROGRAM` from it with the checks of `Config`. A
+   failure ends the run with this one check.
+2. `vmm`: the vmm program itself, which has no key
+   (`std::env::current_exe`), gets the check of `root_owned::open`
+   (decision CH67 rule 1). Then each of the three keys gets the same
+   check.
+3. `ch-version`: `check_cloud_hypervisor` with `VERSION_WAIT` of the
+   compose step (gap G10). It runs only on a CH that passed its owner
+   check.
+4. `guest-init-static`: the open file of the owner check is a 64-bit
+   little-endian ELF program (`ET_EXEC`, or the `ET_DYN` of a static-pie
+   musl build) for x86_64 with no `PT_INTERP` header, the rule of
+   `bin/vm-smoke-setup.sh`. It runs only on a trusted guest init.
+
+It opens no socket, reads no disk, writes no file and starts no VM. So it
+passes on the first vmm release, when the unit is not installed and no
+disk exists. A serve fault that needs a disk or KVM shows in the unit
+journal, not in the hook.
+
+`vmm check-images` (CH76 rule 6) reads `VMM_IMAGE_ROOT` and
+`VMM_ZSTD_PROGRAM` with `CheckImagesConfig`, then `digests.json` with
+`image_root::read`, the one reader of the file (decisions CH57 rule 1,
+CH58 rules 4 and 5). `ImageSet::check` hashes each named file with
+`hash_source` of `creche-vmm-store`, through `zstd -d` for a `.zst` file,
+and compares the digest with its entry. It writes no file, also not in
+the state root. Each entry gets its own check, named by its key, and a
+failed entry names its file.
+
+handover runs check-images after it swaps the disks tree, so the hook
+does not run before the vmm reads the new files. The digests follow of
+a running vmm imports the new set only after the 300 s of the hook
+plus one 5 s poll (decision CH77 rule 2, see "The digests follow"). The
+extra poll covers the start of the hook and a restore after a timeout.
+A failed hook restores the previous tree before the follow imports it.
+
+`tests/verify.rs` and `tests/check_images.rs` run the program in the rust
+job. A test user owns each copy there, so they prove the refusals: an
+owner other than root, a missing key, a missing `digests.json`, a
+dynamic guest init, the JSON line and a wrong argument list.
+`src/image_root/tests.rs` proves the digest check of each entry on the
+bytes. The ignored `kvm_` tests of `tests/kvm_verify.rs` make root-owned
+copies with the runner's sudo (decision CH36 G20). They prove that
+verify passes on the CI build of CH (decision CH75), ch-remote, guest
+init and the vmm itself, and that check-images passes on root-owned
+`.zst` disks and fails on a changed one.
 
 ## The server
 
@@ -983,6 +1144,9 @@ still carries bytes (fact 43), an emptied list that refuses each new
 dial while an open tunnel still carries bytes (CH74 rule 2), a listed
 repo that clones and a repo outside `repos` that fails. The github.com
 tests need internet and DNS on the runner (plan risk 4).
+The kvm_ test of the digests follow (plan PR V1) sits in the same file
+and starts the same real `vmm serve`. Its `Served` sends each vmm log
+line on a channel too, so the test reads the line of the swap.
 
 ## The slots
 
@@ -1256,7 +1420,8 @@ the runner.
   and the owner check of CH and ch-remote (decision CH67 rule 1), as
   the compose step does. Then `check_cloud_hypervisor` checks the
   version of `VMM_CH_PROGRAM`, the CH that the kvm job builds (decisions
-  CH36 G19, CH75). It binds no `vmm.sock`. The test sends it one step per line: `start`,
+  CH36 G19, CH75). It runs no digests follow (plan PR V1). It binds
+  no `vmm.sock`. The test sends it one step per line: `start`,
   `facade`, `sleep` and `stop`.
 - The test runs it as a transient user service with
   `RuntimeDirectory=vmm` and `NoNewPrivileges=yes`, so each VM scope
@@ -1433,6 +1598,23 @@ the runner.
     file. Each open tunnel or clone runs to its own end in `Draining`,
     and a refill reopens with the same links (`Server::close`,
     `Draining::reopen`).
+32. Closed by decision CH77 rule 1: `systemd/creche-vmm.service` reads
+    one `EnvironmentFile=`, `vmm.env`, and no site file. The hooks take
+    one `--env-file`, the same `vmm.env` (contract 06 §4 rule 7). So a
+    hook checks the values that the unit runs. `bin/fleet-up up` writes
+    each key of `vmm.env` as `creche-env get` resolves it against the
+    site file, so a site edit reaches the vmm only after `fleet-up up`.
+    `bin/tests/test_vmm_unit.py` pins the one line.
+33. Closed by decision CH77 rule 2: the digests follow imports new
+    bytes of `digests.json` only after they stay the same for
+    `follow::HOOK_TIMEOUT`, the 300 s of the disks verify hook (gap
+    Q68-6), plus one 5 s poll. The extra poll covers the start of the
+    hook after the rename and a restore after a timeout, which the wait
+    assumes take 5 s at most. So the follow never decompresses a disk
+    while `vmm check-images` does, and a release that its hook rolls
+    back never reaches a VM. A disks release reaches new starts about
+    5 min after its install. Decision CH77 rule 3 sets the retry of a failed import
+    every 12 polls (1 min), with one log line per distinct fault.
 
 ## Caller duties
 
@@ -1507,3 +1689,7 @@ the runner.
     binds 1104 at each boot and each restore from the list of that time,
     and the follow binds or removes it after each edit on a running VM.
     Each CONNECT reads the list again, so a removal refuses at once.
+13. Decision CH77 rule 2: plan PR H4b sets the verify `timeout` of the
+    disks row to 300 s in `disks/component.toml`. It must equal
+    `follow::HOOK_TIMEOUT`, or a hook may still run when the follow
+    imports. H4b adds a test that holds the two equal.

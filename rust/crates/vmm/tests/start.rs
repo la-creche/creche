@@ -55,6 +55,7 @@ use creche_wire::{
     PerFlavor, SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
 };
 use tokio::runtime::{Builder, Runtime};
+use tokio::sync::watch;
 
 const A: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
 const B: &str = "1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d";
@@ -452,10 +453,11 @@ impl Test {
             families: FamilyRoot::new(dir.join("families")).unwrap(),
             images,
             disks: SessionDisks::new(&state, PathBuf::from("/usr/bin/true")),
-            digests: Digests {
+            digests: watch::channel(Digests {
                 kernel: empty,
                 roots: PerFlavor::every(|_| empty),
-            },
+            })
+            .1,
             initramfs: empty,
             ch: Program::new(PathBuf::from(CH)).unwrap(),
             systemd_run: Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap(),
@@ -764,13 +766,15 @@ fn each_flavor_boots_its_own_root_disk() {
             fs::write(&file, bytes).unwrap();
             config.images.import(&file, digest).unwrap();
         }
-        config.digests.roots = PerFlavor::every(|flavor| {
+        let kernel = config.digests.borrow().kernel;
+        let roots = PerFlavor::every(|flavor| {
             if flavor == SandboxFlavor::Python {
                 python
             } else {
                 other
             }
         });
+        config.digests = watch::channel(Digests { kernel, roots }).1;
     });
     let shape = test.dir.join("families/chat/config/shape.json");
     for (index, flavor, digest) in [(0, "python", python), (1, "base", other)] {

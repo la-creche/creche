@@ -34,9 +34,10 @@ installed unit file in place and never runs an installer.
   Environment=XDG_CONFIG_HOME=%h/.config
   ```
   `sbx` panics without them.
-- **Every unit reads the site file.** `EnvironmentFile=/etc/creche/site.env`
-  sets `AGENT_LAN_ADDRESS` and the other site values. No unit names an
-  address.
+- **Every user unit reads the site file, except `creche-vmm.service`.**
+  `EnvironmentFile=/etc/creche/site.env` sets `AGENT_LAN_ADDRESS` and the
+  other site values. No unit names an address. `creche-vmm.service` reads
+  `vmm.env` alone (Decided rule 1).
 - **Per-family timer units are generated, not stored here.**
   `caregiver/src/caregiver/timers.py` writes `creche-door-trigger-<family>-t<N>.timer`
   into the user's unit directory. Each carries a "do not hand-edit" header
@@ -74,11 +75,13 @@ file's removal is always a human verb.
 
 ## Decided
 
-1. The env file of `creche-vmm.service` is decision CH59 rule 1. The
-   unit reads `/srv/agents/state/creche/vmm.env`, then the site file, so
-   a site value wins. `bin/fleet-up up` writes `vmm.env` with
+1. The env file of `creche-vmm.service` is decisions CH59 rule 1 and
+   CH77 rule 1. The unit reads `/srv/agents/state/creche/vmm.env` alone,
+   never the site file. `bin/fleet-up up` writes `vmm.env` with
    `creche_env_get`: each key of `rust/crates/vmm/src/config.rs` except
-   `RUNTIME_DIRECTORY`.
+   `RUNTIME_DIRECTORY`, resolved against the site file. The verify hooks
+   of the vmm read the same file, so a hook checks the values that the
+   unit runs. A site edit reaches the vmm only after `fleet-up up`.
 2. The lifetime of `serial.log` is decision CH59 rule 2. The unit keeps
    `RuntimeDirectoryPreserve=no`, so systemd removes the run root at each
    stop and each restart. So each `serial.log` is in
