@@ -625,6 +625,32 @@ fn read_egress_refuses_a_symlink() {
     assert!(matches!(read, Err(ReachFault::NotDir)), "{read:?}");
 }
 
+/// The byte read takes the bytes of the file, so new bytes of the same
+/// list compare unequal, and an absent file compares equal to another
+/// absent file (decision CH69 rule 11). Bytes that do not read are bytes
+/// still, and `list` refuses them.
+#[test]
+fn read_egress_bytes_compares_bytes_not_lists() {
+    let root = Root::new("egress-bytes");
+    let families = root.families();
+    let absent = families.read_egress_bytes(&code()).unwrap();
+    assert_eq!(absent.list().unwrap().hosts, []);
+    let path = write_egress(&root, EGRESS);
+    let first = families.read_egress_bytes(&code()).unwrap();
+    assert_ne!(first, absent);
+    fs::write(&path, format!("{EGRESS}\n")).unwrap();
+    let second = families.read_egress_bytes(&code()).unwrap();
+    assert_ne!(second, first);
+    assert_eq!(second.list().unwrap(), first.list().unwrap());
+    fs::write(&path, "not json").unwrap();
+    let bad = families.read_egress_bytes(&code()).unwrap();
+    assert!(matches!(bad.list(), Err(ReachFault::NotValid)));
+    fs::write(&path, "still not json").unwrap();
+    assert_ne!(families.read_egress_bytes(&code()).unwrap(), bad);
+    fs::remove_file(&path).unwrap();
+    assert_eq!(families.read_egress_bytes(&code()).unwrap(), absent);
+}
+
 /// A FIFO with no writer: only `O_NONBLOCK` keeps the open from waiting.
 #[test]
 fn read_egress_refuses_a_fifo_at_once() {
@@ -749,6 +775,23 @@ fn an_absent_repos_file_reads_as_empty() {
             .names()
             .is_empty()
     );
+}
+
+/// The byte read of `repos.json` takes the bytes as the one of
+/// `egress.json` does, with the cap `REPOS_CAP` (decision CH69 rule 11).
+#[test]
+fn read_repos_bytes_compares_bytes_not_lists() {
+    let root = Root::new("repos-bytes");
+    let families = root.families();
+    let path = write_repos(&root, REPOS);
+    let first = families.read_repos_bytes(&code()).unwrap();
+    fs::write(&path, format!("{REPOS}\n")).unwrap();
+    let second = families.read_repos_bytes(&code()).unwrap();
+    assert_ne!(second, first);
+    assert_eq!(second.list().unwrap(), first.list().unwrap());
+    fs::write(&path, " ".repeat(usize::try_from(REPOS_CAP).unwrap() + 1)).unwrap();
+    let read = families.read_repos_bytes(&code());
+    assert!(matches!(read, Err(ReachFault::TooLarge)), "{read:?}");
 }
 
 /// A symlinked `repos.json`, a dir in its place and a symlinked family dir

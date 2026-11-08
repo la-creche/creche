@@ -35,7 +35,10 @@
 //! list `repos.json` (decisions CH10-10, CH69 rules 4 and 5). Each file
 //! sits in the family dir beside `config/`, and caregiver replaces it with
 //! one `rename`, so the read needs no retry. An absent family dir or file
-//! is the empty list: no egress or no clone, which fails closed.
+//! is the empty list: no egress or no clone, which fails closed. Each read
+//! takes the bytes first (`ReachBytes`), through the same checked open.
+//! The edit follow of the vmm compares those bytes every 2 s and reads
+//! the list only after a change (decision CH69 rule 11).
 //!
 //! Decision CH50 rule 9 sets the number of tries, the pause between two
 //! tries and the size cap of `shape.json`: `READ_TRIES` (5),
@@ -45,6 +48,7 @@
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read};
+use std::marker::PhantomData;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::path::{Component, Path, PathBuf};
 use std::thread;
@@ -162,6 +166,53 @@ pub enum ReachFault {
     NotValid,
     /// Any other error of the file system.
     Io(io::Error),
+}
+
+/// The bytes of one reach file of a family, as the checked read of
+/// `FamilyRoot` takes them: `egress.json` for `ReachBytes<FamilyEgress>`
+/// and `repos.json` for `ReachBytes<FamilyRepos>`. The edit follow of the
+/// vmm compares them every 2 s (decision CH69 rule 11), and `list` reads
+/// them with the strict reader (decision CH65 rule 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReachBytes<T> {
+    /// The bytes of the file, at most its cap. `None` is an absent family
+    /// dir or file.
+    bytes: Option<Vec<u8>>,
+    /// The list that the bytes read as.
+    list: PhantomData<fn() -> T>,
+}
+
+impl<T: DeserializeOwned> ReachBytes<T> {
+    /// The list of the bytes, or `empty` for an absent file.
+    fn read(&self, empty: T) -> Result<T, ReachFault> {
+        match &self.bytes {
+            Some(bytes) => strict_json(bytes).ok_or(ReachFault::NotValid),
+            None => Ok(empty),
+        }
+    }
+}
+
+impl ReachBytes<FamilyEgress> {
+    /// The egress allowlist of the bytes. An absent file is the empty
+    /// list.
+    ///
+    /// # Errors
+    ///
+    /// `NotValid` when the bytes are not one `FamilyEgress`.
+    pub fn list(&self) -> Result<FamilyEgress, ReachFault> {
+        self.read(FamilyEgress { hosts: Vec::new() })
+    }
+}
+
+impl ReachBytes<FamilyRepos> {
+    /// The clone list of the bytes. An absent file is the empty list.
+    ///
+    /// # Errors
+    ///
+    /// `NotValid` when the bytes are not one `FamilyRepos`.
+    pub fn list(&self) -> Result<FamilyRepos, ReachFault> {
+        self.read(FamilyRepos::default())
+    }
 }
 
 /// Why a pull gets no `state` reply (decisions CH23 rule 2, CH31 rules 3
@@ -373,56 +424,83 @@ impl FamilyRoot {
     }
 
     /// The egress allowlist of `family`, from `egress.json` in its family
-    /// dir (decisions CH6-4, CH69 rules 3 and 5). One `openat` of the file
-    /// with `O_NOFOLLOW` and `O_NONBLOCK`, a cap of `EGRESS_CAP` and the
-    /// strict reader (decision CH65 rule 2). An absent family dir or file
-    /// is the empty list.
+    /// dir (decisions CH6-4, CH69 rules 3 and 5): `read_egress_bytes`,
+    /// then `ReachBytes::list`. An absent family dir or file is the empty
+    /// list.
     ///
     /// # Errors
     ///
     /// A `ReachFault` when the family dir or the file is present and does
     /// not read.
     pub fn read_egress(&self, family: &FamilyName) -> Result<FamilyEgress, ReachFault> {
-        let empty = FamilyEgress { hosts: Vec::new() };
-        self.read_reach(family, FAMILY_EGRESS_FILE, EGRESS_CAP, empty)
+        self.read_egress_bytes(family)?.list()
+    }
+
+    /// The bytes of `egress.json` of `family`: one `openat` of the file
+    /// with `O_NOFOLLOW` and `O_NONBLOCK`, and a cap of `EGRESS_CAP`.
+    ///
+    /// # Errors
+    ///
+    /// `NotDir` for a family dir that is a symlink or not a dir,
+    /// `NotFile` for a file that is a symlink or not a regular file,
+    /// `TooLarge` past the cap, `Io` for any other error.
+    pub fn read_egress_bytes(
+        &self,
+        family: &FamilyName,
+    ) -> Result<ReachBytes<FamilyEgress>, ReachFault> {
+        self.read_reach(family, FAMILY_EGRESS_FILE, EGRESS_CAP)
     }
 
     /// The clone list of `family`, from `repos.json` in its family dir
-    /// (decisions CH10-10, CH69 rules 4 and 5), read as `read_egress`
-    /// reads `egress.json`, with a cap of `REPOS_CAP`. An absent family
-    /// dir or file is the empty list.
+    /// (decisions CH10-10, CH69 rules 4 and 5): `read_repos_bytes`, then
+    /// `ReachBytes::list`. An absent family dir or file is the empty list.
     ///
     /// # Errors
     ///
     /// A `ReachFault` when the family dir or the file is present and does
     /// not read.
     pub fn read_repos(&self, family: &FamilyName) -> Result<FamilyRepos, ReachFault> {
-        self.read_reach(family, FAMILY_REPOS_FILE, REPOS_CAP, FamilyRepos::default())
+        self.read_repos_bytes(family)?.list()
     }
 
-    /// The reach file `file` of `family`: one `openat` of the file with
-    /// `O_NOFOLLOW` and `O_NONBLOCK`, a cap of `cap` bytes and the strict
-    /// reader (decision CH65 rule 2). An absent family dir or file gives
-    /// `empty`.
-    fn read_reach<T: DeserializeOwned>(
+    /// The bytes of `repos.json` of `family`, read as `read_egress_bytes`
+    /// reads `egress.json`, with a cap of `REPOS_CAP`.
+    ///
+    /// # Errors
+    ///
+    /// The faults of `read_egress_bytes`.
+    pub fn read_repos_bytes(
+        &self,
+        family: &FamilyName,
+    ) -> Result<ReachBytes<FamilyRepos>, ReachFault> {
+        self.read_reach(family, FAMILY_REPOS_FILE, REPOS_CAP)
+    }
+
+    /// The bytes of the reach file `file` of `family`: one `openat` of the
+    /// file with `O_NOFOLLOW` and `O_NONBLOCK`, and a cap of `cap` bytes.
+    /// An absent family dir or file gives no bytes.
+    fn read_reach<T>(
         &self,
         family: &FamilyName,
         file: &str,
         cap: u64,
-        empty: T,
-    ) -> Result<T, ReachFault> {
+    ) -> Result<ReachBytes<T>, ReachFault> {
+        let found = |bytes| ReachBytes {
+            bytes,
+            list: PhantomData,
+        };
         // `ELOOP` is the refusal of `O_NOFOLLOW`, `ENOTDIR` the refusal of
         // `O_DIRECTORY`, as in `open_dir`.
         let path = self.0.join(family.as_str());
         let family_dir = match rustix::fs::open(path, DIR_FLAGS, Mode::empty()) {
             Ok(dir) => dir,
-            Err(Errno::NOENT) => return Ok(empty),
+            Err(Errno::NOENT) => return Ok(found(None)),
             Err(Errno::LOOP | Errno::NOTDIR) => return Err(ReachFault::NotDir),
             Err(errno) => return Err(ReachFault::Io(errno.into())),
         };
         match read_file(family_dir.as_fd(), file, cap) {
-            Ok(FileRead::Bytes(bytes)) => strict_json(&bytes).ok_or(ReachFault::NotValid),
-            Ok(FileRead::Absent) => Ok(empty),
+            Ok(FileRead::Bytes(bytes)) => Ok(found(Some(bytes))),
+            Ok(FileRead::Absent) => Ok(found(None)),
             Ok(FileRead::NotFile) => Err(ReachFault::NotFile),
             Ok(FileRead::OverCap) => Err(ReachFault::TooLarge),
             Err(error) => Err(ReachFault::Io(error)),

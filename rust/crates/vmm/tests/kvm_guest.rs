@@ -9,9 +9,10 @@
 //! `kvm_phase3_pulls_sleeps_restores_and_stops` is the phase 3 proof (plan
 //! PR V10, section 5 of the design): `examples/phase3_vm.rs` plays the vmm
 //! as a transient user service (decisions CH60 rule 1, CH62 rule 29), with
-//! the stand-in facade on the root disk (CH62 rule 12) and Rust stub
-//! planes in the test (CH62 rule 28). Its numbered steps name what each
-//! one proves.
+//! the stand-in facade in mode `linked-relay` on the root disk (CH62 rule
+//! 12) and Rust stub planes in the test (CH62 rule 28). Its numbered steps
+//! name what each one proves. The boot helpers sit in `tests/common/mod.rs`
+//! (plan PR E3), which `tests/kvm_reach.rs` shares.
 //!
 //! `#[ignore]`: only the job `kvm` runs them, after the setup script, with
 //! `cargo test --locked --no-fail-fast -- --ignored kvm_`. With no setup
@@ -20,62 +21,33 @@
 //! (decision CH36 G20).
 #![cfg(target_os = "linux")]
 
-use std::collections::BTreeSet;
-use std::ffi::{OsStr, OsString};
-use std::fs::{self, File};
+mod common;
+
+use std::fs;
 use std::io::{self, BufRead as _, BufReader, Write as _};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener};
-use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
-use std::thread::{self, sleep};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::Receiver;
+use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use creche_vmm::config;
 use creche_vmm::guest_init::write_initramfs;
 use creche_vmm_confine::command::CMDLINE;
-use creche_vmm_confine::slot_profile::CH_BINARY;
 use creche_vmm_store::claim::CONSUMED;
 use creche_vmm_store::images::ImageStore;
-use creche_vmm_store::key::{CH_VERSION, ChVersionError, check_cloud_hypervisor};
-use creche_vmm_store::layout::{RunRoot, StateRoot};
-use creche_wire::guest::{
-    CHAPERONE_PORT, FACADE_PROGRAM, FACADE_STOP_WAIT, LITELLM_PORT, SESSION_DISK_MOUNT,
-};
-use creche_wire::{FacadeState, GuestPort, SessionId};
+use creche_vmm_store::layout::StateRoot;
+use creche_wire::guest::{CHAPERONE_PORT, FACADE_STOP_WAIT, LITELLM_PORT, SESSION_DISK_MOUNT};
+use creche_wire::{FacadeState, GuestPort};
 
-/// The variable that names the files of the setup script.
-const DIR: &str = "CRECHE_KVM_DIR";
-
-/// The host `mke2fs` of the vmm (`VMM_MKE2FS_PROGRAM`).
-const MKE2FS: &str = "/usr/sbin/mke2fs";
-
-/// The size of each test disk.
-const DISK_BYTES: u64 = 16 << 20;
+use common::{BOOT, ROOT_DIRS, UP, boot, ext4, files, lines, stub_plane, sudo};
 
 /// The image env of the test root disk (decision CH7-7).
 const ENV: &[u8] = b"LANG=C.UTF-8\nPATH=/usr/bin:/bin\n";
 
-/// The dirs of the test root disk: each mount point of the guest init
-/// boot plan.
-const ROOT_DIRS: [&str; 8] = [
-    "dev",
-    "proc",
-    "sys",
-    "tmp",
-    "run",
-    "root",
-    "var/cache",
-    "var/tmp",
-];
-
-/// The line that guest init writes once it is up.
-const UP: &str = "guest-init: up";
-
-/// A boot takes about 0.6 s on the runner (fact 79).
-const BOOT: Duration = Duration::from_secs(30);
+/// The host programs that only the phase 3 proof runs.
+const E2FSCK: &str = "/usr/sbin/e2fsck";
+const DUMPE2FS: &str = "/usr/sbin/dumpe2fs";
 
 // Each helper with `cfg(test)` may unwrap (rust/clippy.toml).
 
@@ -87,59 +59,6 @@ impl Drop for Vm {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
-}
-
-/// The directory of the setup script.
-#[cfg(test)]
-fn files() -> PathBuf {
-    let dir = std::env::var_os(DIR)
-        .unwrap_or_else(|| panic!("{DIR} is not set: run bin/vm-smoke-setup.sh first"));
-    PathBuf::from(dir)
-}
-
-/// Runs `command` on `path` with the sudo of the runner. Decision CH36
-/// G20 allows sudo on GitHub's throwaway runners only, never on the host.
-#[cfg(test)]
-fn sudo(command: &[&str], path: &Path) {
-    assert_eq!(
-        std::env::var("GITHUB_ACTIONS").as_deref(),
-        Ok("true"),
-        "sudo runs only on a GitHub runner (decision CH36 G20)"
-    );
-    let status = Command::new("sudo")
-        .arg("-n")
-        .args(command)
-        .arg(path)
-        .status()
-        .unwrap();
-    assert!(status.success(), "sudo {command:?}: {status}");
-}
-
-/// Writes an ext4 disk at `disk`. With `tree`, the disk holds a copy of
-/// it. The root dir is owned by root, as on the session disk of the vmm.
-#[cfg(test)]
-fn ext4(disk: &Path, tree: Option<&Path>) {
-    File::create(disk).unwrap().set_len(DISK_BYTES).unwrap();
-    let mut command = Command::new(MKE2FS);
-    command.args(["-q", "-F", "-t", "ext4", "-E", "root_owner=0:0"]);
-    if let Some(tree) = tree {
-        command.arg("-d").arg(tree);
-    }
-    let output = command.arg("--").arg(disk).output().unwrap();
-    assert!(
-        output.status.success(),
-        "mke2fs failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-/// The serial lines, with the CR of each CRLF line end cut.
-fn lines(serial: &Path) -> Vec<String> {
-    fs::read_to_string(serial)
-        .unwrap_or_default()
-        .lines()
-        .map(|line| line.trim_end().to_owned())
-        .collect()
 }
 
 /// The vmm packs a root-owned guest init into `store/<sha256>`, and CH
@@ -217,166 +136,6 @@ fn kvm_guest_boots_the_vmm_initramfs() {
     fs::remove_dir_all(&work).unwrap();
 }
 
-/// The session and the family of the phase 3 proof.
-const SESSION: &str = "0123abcd-0000-4000-8000-0000000010a0";
-const FAMILY: &str = "proof";
-
-/// The host programs of the ubuntu-24.04 runner, as `kvm_vm.rs` names
-/// them. The vmm config passes each one (plan PR L20).
-const SYSTEMD_RUN: &str = "/usr/bin/systemd-run";
-const SYSTEMCTL: &str = "/usr/bin/systemctl";
-const ZSTD: &str = "/usr/bin/zstd";
-/// The git of the runner, which root owns, so the owner check of
-/// `VMM_GIT_PROGRAM` passes (decision CH69 rule 17).
-const HOST_GIT: &str = "/usr/bin/git";
-const FALLOCATE: &str = "/usr/bin/fallocate";
-const SHA256SUM: &str = "/usr/bin/sha256sum";
-const E2FSCK: &str = "/usr/sbin/e2fsck";
-const DUMPE2FS: &str = "/usr/sbin/dumpe2fs";
-
-/// The smallest family VM shape: 1 vCPU and 256 MiB.
-const SHAPE: &str = r#"{"cpus":1,"flavor":"base","memory_mib":256}"#;
-
-/// `creds.json` as caregiver writes it, as in `tests/family_state.rs`.
-const CREDS: &str = r#"{"epoch":3,"litellm_key":"sk-test-key","pep_token":"abababababababababababababababababababababababababababababababab","written_at":"2026-11-06T12:00:00Z"}"#;
-
-/// `runtime.json` with a past `model_live_at`, so the `state` reply
-/// waits for no hold (decisions CH23-1, CH31 rule 1).
-const RUNTIME: &str = r#"{"shell":true,"sandbox_tools":["read"],"model_alias":"litellm/test","model_live_at":"2026-01-01T00:00:00Z"}"#;
-
-/// The example `phase3_vm`. Cargo builds it next to the `deps` dir of
-/// the test binary.
-#[cfg(test)]
-fn example() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    let debug = exe.parent().and_then(|deps| deps.parent()).unwrap();
-    debug.join("examples").join("phase3_vm")
-}
-
-/// The program of the version check. The upstream CH of fact 71 may
-/// print its git tag, not the `CH_VERSION` of a `--rev` build (fact 78).
-/// Then a script that prints `CH_VERSION` stands in, as in `kvm_vm.rs`.
-/// Phase 4 brings the CI-built CH (decision CH36 G19).
-#[cfg(test)]
-fn version_program(work: &Path) -> PathBuf {
-    let ch = PathBuf::from(CH_BINARY);
-    match check_cloud_hypervisor(&ch, Duration::from_secs(10)) {
-        Ok(_) => ch,
-        Err(ChVersionError::Mismatch(text)) => {
-            assert!(text.contains("v54.0"), "not CH v54.0: {text}");
-            let stand_in = work.join("ch-version");
-            fs::write(&stand_in, format!("#!/bin/sh\necho {CH_VERSION}\n")).unwrap();
-            fs::set_permissions(&stand_in, fs::Permissions::from_mode(0o755)).unwrap();
-            stand_in
-        }
-        Err(error) => panic!("cloud-hypervisor --version: {error:?}"),
-    }
-}
-
-/// The SHA-256 of `path` in hex.
-#[cfg(test)]
-fn sha256(path: &Path) -> String {
-    let output = Command::new(SHA256SUM)
-        .arg("--")
-        .arg(path)
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "sha256sum: {output:?}");
-    let text = String::from_utf8(output.stdout).unwrap();
-    text.split_whitespace().next().unwrap().to_owned()
-}
-
-/// The image root (decision CH57 rule 1): the guest kernel and a root
-/// disk with the stand-in facade in mode `linked-relay` at
-/// `FACADE_PROGRAM` (decision CH62 rule 12). `/etc/creche/env` comes
-/// from `playpen/bin/creche-env-write` (decision CH7-7). Root owns
-/// `digests.json`, which names the one disk for each flavor.
-#[cfg(test)]
-fn image_root(work: &Path) -> PathBuf {
-    let files = files();
-    let tree = work.join("tree");
-    let session_dir = SESSION_DISK_MOUNT.trim_start_matches('/');
-    for dir in ROOT_DIRS
-        .into_iter()
-        .chain([session_dir, "etc/creche", "etc/creche-standin"])
-    {
-        fs::create_dir_all(tree.join(dir)).unwrap();
-    }
-    let facade = tree.join(FACADE_PROGRAM.trim_start_matches('/'));
-    fs::create_dir_all(facade.parent().unwrap()).unwrap();
-    fs::copy(files.join("standin_facade"), &facade).unwrap();
-    fs::write(tree.join("etc/creche-standin/mode"), "linked-relay\n").unwrap();
-    let script =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../playpen/bin/creche-env-write");
-    let env = Command::new("/bin/sh")
-        .arg(script)
-        .args(["LANG", "PATH"])
-        .env_clear()
-        .envs([("LANG", "C.UTF-8"), ("PATH", "/usr/bin:/bin")])
-        .output()
-        .unwrap();
-    assert!(env.status.success(), "creche-env-write: {env:?}");
-    fs::write(tree.join("etc/creche/env"), env.stdout).unwrap();
-
-    let root = work.join("image");
-    fs::create_dir(&root).unwrap();
-    ext4(&root.join("root.img"), Some(&tree));
-    fs::copy(files.join("vmlinux"), root.join("vmlinux")).unwrap();
-    let entry = |file: &str| {
-        format!(
-            r#"{{"file":"{file}","sha256":"{}"}}"#,
-            sha256(&root.join(file))
-        )
-    };
-    let disk = entry("root.img");
-    let digests = root.join("digests.json");
-    let text = format!(
-        r#"{{"kernel":{},"base":{disk},"python":{disk}}}"#,
-        entry("vmlinux")
-    );
-    fs::write(&digests, text).unwrap();
-    sudo(&["chown", "0:0"], &digests);
-    root
-}
-
-/// The family `FAMILY` with creds, a config and its VM shape (decisions
-/// CH5a, CH45 rule 2, CH47 rule 2).
-#[cfg(test)]
-fn family_root(work: &Path) -> PathBuf {
-    let root = work.join("families");
-    let family = root.join(FAMILY);
-    fs::create_dir_all(family.join("creds")).unwrap();
-    fs::create_dir_all(family.join("config")).unwrap();
-    fs::write(family.join("creds/creds.json"), CREDS).unwrap();
-    fs::write(family.join("config/runtime.json"), RUNTIME).unwrap();
-    fs::write(family.join("config/instructions.md"), "Be brief.").unwrap();
-    fs::write(family.join("config/shape.json"), SHAPE).unwrap();
-    root
-}
-
-/// One stub plane (decision CH62 rule 28, gap Q54-28 option A): a
-/// listener on 127.0.0.1 with a port from the kernel. Its thread answers
-/// each request with `200` and no body, and sends each request head on
-/// the channel.
-#[cfg(test)]
-fn stub_plane() -> (SocketAddr, Receiver<String>) {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-    let address = listener.local_addr().unwrap();
-    let (heads, received) = mpsc::channel();
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let stream = stream.unwrap();
-            let mut reader = BufReader::new(&stream);
-            let mut head = String::new();
-            while !head.ends_with("\r\n\r\n") && reader.read_line(&mut head).unwrap() > 0 {}
-            let ok = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            (&stream).write_all(ok).unwrap();
-            let _ = heads.send(head);
-        }
-    });
-    (address, received)
-}
-
 /// The stub `plane` got one request with the `Host` header of guest
 /// `port`, so the splice kept the bytes (decision CH6-2, fact 46).
 #[cfg(test)]
@@ -384,132 +143,6 @@ fn hit(plane: &Receiver<String>, port: u16) {
     let head = plane.recv_timeout(BOOT).unwrap();
     let host = format!("\r\nHost: 127.0.0.1:{port}\r\n");
     assert!(head.contains(&host), "no {host:?} in {head:?}");
-}
-
-/// What the proof writes in the state root of the runner, the default
-/// `~/.local/state/creche-vmm` that the slot profiles name (decision
-/// CH50 rule 11). A drop removes the session dir, the row, each store
-/// file that was not there before, and the work dir.
-struct Written {
-    state: StateRoot,
-    id: SessionId,
-    store: BTreeSet<OsString>,
-    work: PathBuf,
-}
-
-impl Drop for Written {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(self.state.session(&self.id).path());
-        let _ = fs::remove_file(self.state.row_file(&self.id));
-        for name in store_files(&self.state) {
-            if !self.store.contains(&name) {
-                let _ = fs::remove_file(self.state.store_dir().join(name));
-            }
-        }
-        let _ = fs::remove_dir_all(&self.work);
-    }
-}
-
-/// The names in the digest store of `state`.
-fn store_files(state: &StateRoot) -> BTreeSet<OsString> {
-    fs::read_dir(state.store_dir())
-        .map(|dir| dir.flatten().map(|entry| entry.file_name()).collect())
-        .unwrap_or_default()
-}
-
-/// The vmm of `examples/phase3_vm.rs` as a transient user service
-/// (decisions CH60 rule 1, CH62 rule 29). With `--pipe` it reads the
-/// stdin and writes the stdout of `systemd-run`, and its stderr, the vmm
-/// log, reaches the job log. The unit has the lines of
-/// `systemd/creche-vmm.service` that a VM start reads: the run root
-/// `RuntimeDirectory=vmm` (gap G5) and `NoNewPrivileges=yes`, so the
-/// launch stage writes the exec attribute under no_new_privs (decision
-/// CH55). A drop stops the unit, so `BindsTo=` stops each VM scope
-/// (decision CH61 rule 1), and reaps `systemd-run`.
-struct Vmm {
-    unit: String,
-    child: Child,
-    input: ChildStdin,
-    output: BufReader<ChildStdout>,
-}
-
-#[cfg(test)]
-impl Vmm {
-    /// Starts the unit with `env` and waits for `ready`.
-    fn start(env: &[(&str, &OsStr)], version: &Path) -> Self {
-        let unit = format!("kvm-vmm-phase3-{}.service", std::process::id());
-        let mut run = Command::new(SYSTEMD_RUN);
-        run.args(["--user", "--pipe", "--quiet", "--collect"])
-            .arg(format!("--unit={unit}"));
-        for line in [
-            "RuntimeDirectory=vmm",
-            "RuntimeDirectoryMode=0700",
-            "NoNewPrivileges=yes",
-        ] {
-            run.args(["-p", line]);
-        }
-        for (key, value) in env {
-            let mut arg = OsString::from(format!("--setenv={key}="));
-            arg.push(value);
-            run.arg(arg);
-        }
-        let mut child = run
-            .arg("--")
-            .arg(example())
-            .arg("serve")
-            .arg(version)
-            .args([SESSION, FAMILY])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let input = child.stdin.take().unwrap();
-        let output = BufReader::new(child.stdout.take().unwrap());
-        let mut vmm = Self {
-            unit,
-            child,
-            input,
-            output,
-        };
-        assert_eq!(vmm.line(), "ready");
-        vmm
-    }
-
-    /// Sends the step `step` and reads its answer.
-    fn ask(&mut self, step: &str) -> String {
-        writeln!(self.input, "{step}").unwrap();
-        self.line()
-    }
-
-    /// One answer line.
-    fn line(&mut self) -> String {
-        let mut line = String::new();
-        self.output.read_line(&mut line).unwrap();
-        assert!(line.ends_with('\n'), "the vmm stand-in ended: {line:?}");
-        line.trim_end().to_owned()
-    }
-
-    /// The start time and the facade state of the ready of a `start`.
-    /// A failed start fails the proof `step`.
-    fn start_vm(&mut self, step: &str) -> (u64, FacadeState) {
-        let answer = self.ask("start");
-        let rest = answer
-            .strip_prefix("started ")
-            .unwrap_or_else(|| panic!("{step}: {answer}"));
-        let (ms, ready) = rest.split_once(' ').unwrap();
-        (ms.parse().unwrap(), serde_json::from_str(ready).unwrap())
-    }
-}
-
-impl Drop for Vmm {
-    fn drop(&mut self) {
-        let _ = Command::new(SYSTEMCTL)
-            .args(["--user", "stop", "--"])
-            .arg(&self.unit)
-            .status();
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
 }
 
 /// Sends `pull` on a new link to guest port 1201: `CONNECT 1201` on the
@@ -547,85 +180,10 @@ fn pull(vsock: &Path, step: &str) -> Vec<String> {
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_phase3_pulls_sleeps_restores_and_stops() {
-    let files = files();
-    // The run root of `RuntimeDirectory=vmm`, which the slot profiles
-    // name (decision CH20, gap G5).
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-        .expect("systemd-run --user needs XDG_RUNTIME_DIR: bin/vm-smoke-setup.sh exports it");
-    let run = RunRoot::new(PathBuf::from(runtime).join("vmm")).unwrap();
-    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
-    let state = StateRoot::new(home.join(".local/state/creche-vmm")).unwrap();
-    let id: SessionId = SESSION.parse().unwrap();
-    let session = state.session(&id);
-    // A live vmm may own a path of the session, so the test stops at one
-    // that it did not make.
-    for path in [run.vm(&id).path(), session.path()] {
-        assert!(
-            fs::symlink_metadata(path).is_err(),
-            "{} exists",
-            path.display()
-        );
-    }
-    let work = files.join(format!("kvm-phase3-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&work);
-    fs::create_dir(&work).unwrap();
-    let written = Written {
-        store: store_files(&state),
-        state: state.clone(),
-        id: id.clone(),
-        work: work.clone(),
-    };
-
-    // The owner check of the vmm start refuses a program that root does
-    // not own (decisions CH62 rule 17, CH67 rule 1). The setup script
-    // installs CH with `sudo install`, so only these two need a chown.
-    let guest_init = work.join("guest-init");
-    fs::copy(files.join("guest-init"), &guest_init).unwrap();
-    sudo(&["chown", "0:0"], &guest_init);
-    let ch_remote = work.join("ch-remote");
-    fs::copy(files.join("ch-remote"), &ch_remote).unwrap();
-    sudo(&["chown", "0:0"], &ch_remote);
-    // `FaultDir::open` creates `<faults root>/vmm`, not the root itself.
-    let faults = work.join("faults");
-    fs::create_dir(&faults).unwrap();
     let (litellm, litellm_heads) = stub_plane();
     let (chaperone, chaperone_heads) = stub_plane();
-    let (litellm, chaperone) = (litellm.to_string(), chaperone.to_string());
-    let paths = [
-        (config::STATE_ROOT, state.path().to_owned()),
-        (config::FAMILY_ROOT, family_root(&work)),
-        (config::FAULTS_ROOT, faults),
-        (config::IMAGE_ROOT, image_root(&work)),
-        (config::CH, PathBuf::from(CH_BINARY)),
-        (config::CH_REMOTE, ch_remote),
-        (config::GUEST_INIT, guest_init),
-        (config::EGRESS_LOG, work.join("egress.jsonl")),
-        // The family of the proof has no `repos.json`, so no start opens
-        // the mirror root (decision CH69 rule 13).
-        (config::MIRROR_ROOT, work.join("mirror")),
-        (config::GIT, PathBuf::from(HOST_GIT)),
-    ];
-    let mut env: Vec<(&str, &OsStr)> = paths
-        .iter()
-        .map(|(key, path)| (*key, path.as_os_str()))
-        .collect();
-    env.extend(
-        [
-            (config::SYSTEMD_RUN, SYSTEMD_RUN),
-            (config::SYSTEMCTL, SYSTEMCTL),
-            (config::ZSTD, ZSTD),
-            (config::MKE2FS, MKE2FS),
-            (config::FALLOCATE, FALLOCATE),
-            (config::RAM_CAP, "1"),
-            (config::FREE_FLOOR, "0"),
-            (config::BUDGET, "1"),
-            (config::LITELLM, litellm.as_str()),
-            (config::CHAPERONE, chaperone.as_str()),
-        ]
-        .map(|(key, value)| (key, OsStr::new(value))),
-    );
-    let mut vmm = Vmm::start(&env, &version_program(&work));
-    let vsock = run.vm(&id).vsock_socket();
+    let booted = boot("phase3", "linked-relay", (litellm, chaperone));
+    let (mut vmm, vsock, session) = (booted.vmm, booted.vsock, booted.session);
 
     // 1. Cold boot: the start ends after the first ControlReady (G3). Its
     // facade is `starting` with start 1 (CH21-8, CH25 rule 2), or already
@@ -760,5 +318,4 @@ fn kvm_phase3_pulls_sleeps_restores_and_stops() {
     assert!(check.status.success(), "step 7 stop: e2fsck -fn: {check:?}");
 
     drop(vmm);
-    drop(written);
 }
