@@ -6,11 +6,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { EXIT_SESSION_ID } from "../src/family.js";
 import { readMode, SBX } from "../src/mode.js";
-import { EXIT_LOCAL_LINK } from "../src/supervisor.js";
-import { facadeEnv, startFacade } from "./facade-process.js";
+import { facadeEnv, shortTmp, startFacade } from "./facade-process.js";
 import type { FacadeProcess } from "./facade-process.js";
 
 const SESSION = "0123abcd-0000-4000-8000-00000000c7c7";
+
+/** How long the CH test watches the start: past two start pulls. */
+const START_WATCH_MS = 1000;
 
 /** Texts that are not a session id. Each one refuses the start. */
 const BAD = [
@@ -57,15 +59,20 @@ describe("the built facade", () => {
     expect(running.stderr()).toBe("creche-facade: CRECHE_SESSION_ID is not a session id\n");
   });
 
-  it("exits 18 in CH mode when no guest init listens, with one stderr line", async () => {
-    // No guest init listens at `LOCAL_LINK_SOCKET` here, so the link does
-    // not open, and the facade fails closed (decision CH67 rule 8).
-    // `test/sessions.test.ts` checks the host's id of CH mode.
-    running = startFacade({ ...facadeEnv(), CRECHE_SESSION_ID: SESSION });
+  it("in CH mode reads no AGENT_* variable and pulls the start state until the vmm answers", async () => {
+    // No guest init serves the family-state socket here, so each start
+    // pull gets no state. The facade never exits on it (decision CH23
+    // rule 2). With no `AGENT_*` variable, sbx would exit 7. In-process
+    // tests cover the local link: `test/local-link.test.ts`.
+    running = startFacade({ TMPDIR: shortTmp(), CRECHE_SESSION_ID: SESSION });
+    const exited = running.exited();
+    await new Promise((resolve) => setTimeout(resolve, START_WATCH_MS));
 
-    expect(await running.exited()).toBe(EXIT_LOCAL_LINK);
+    expect(await Promise.race([exited, Promise.resolve("running")])).toBe("running");
     expect(running.stdout().length).toBe(0);
-    expect(running.stderr()).toMatch(/creche-facade: the local link did not open: connect E[A-Z]+ \/run\/creche\/guest-init\.sock; the facade exits\n/);
+    expect(running.stderr()).toMatch(
+      /^creche-facade: the family-state pull got no state: the link closed with no reply: connect E[A-Z]+ \/run\/creche\/family-state\.sock\ncreche-facade: the start pull of the family state failed \(not_valid\); the next pull is in 250 ms\n/,
+    );
   });
 
   it("mints a fresh id on sbx", async () => {

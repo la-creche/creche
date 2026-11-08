@@ -23,10 +23,16 @@ const PLANE_ENV = { pep: "AGENT_PEP_URL", litellm: "AGENT_LITELLM_BASE_URL" } as
 /** Contract 03 §3: a family name, `-s`, and a number. */
 const SANDBOX_ID_RE = /^[a-z][a-z0-9-]{1,30}-s[0-9]+$/;
 
+/** The two planes of the host: the chaperone and LiteLLM. */
+export interface Planes {
+  readonly pep: PlaneUrl;
+  readonly litellm: PlaneUrl;
+}
+
 export interface FamilyConfig {
   readonly sandbox: string;
   readonly mounts: MountDirs;
-  readonly planes: { readonly pep: PlaneUrl; readonly litellm: PlaneUrl };
+  readonly planes: Planes;
   readonly creds: FamilyCreds;
   readonly runtime: RuntimeConfig;
   /** The names the agent adds to each tool's env (`src/tool-env.ts`). */

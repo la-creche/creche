@@ -1,14 +1,18 @@
 # facade
 
-The ACP facade: the ACP v1 agent of one family sandbox. attendance starts
-one `creche-facade` per sandbox with `sbx exec` and speaks ACP over its
-stdio. The root `AGENTS.md` applies here too.
+The ACP facade: the ACP v1 agent of one family sandbox. On sbx attendance
+starts one `creche-facade` per sandbox with `sbx exec` and speaks ACP over
+its stdio. Under CH guest init starts it, and ACP comes only on the relay
+socket (decision CH80). The root `AGENTS.md` applies here too.
 
 The package has two bins:
 
-- `creche-facade`: the one process of a sandbox that owns Flue. It holds
-  the lock, the beat and the stop. It serves ACP on stdio and on a Unix
-  socket in the VM, `$TMPDIR/creche-facade/acp.sock`.
+- `creche-facade`: the one process of a sandbox that owns Flue. On sbx it
+  holds the lock, the beat and the stop. It serves ACP on stdio and on a
+  Unix socket in the VM, `$TMPDIR/creche-facade/acp.sock`. Under CH it
+  takes no lock, keeps no beat deadline and serves no ACP on stdio. It
+  serves ACP on `RELAY_SOCKET`, `/tmp/creche-facade/acp.sock`, and guest
+  init holds its stop (decisions CH5d, CH19).
 - `acp-relay`: one per door connection. It pipes its stdio to the
   facade's socket, byte for byte. It parses nothing and adds nothing.
 
@@ -67,39 +71,55 @@ wire `SessionId` refuses the start with status 17. `src/guest.ts` holds the
 variable name, and `test/guest.test.ts` holds it equal to
 `rust/crates/wire/vectors/guest.json`.
 
-`src/family.ts` reads the family config one time at process start, with
-the agent module's `readFamilyConfig`. `agent/AGENTS.md` names each
-variable. The agent's store and the facade's `creche_sessions` share
+On sbx `src/family.ts` reads the family config one time at process
+start, with the agent module's `readFamilyConfig`. `agent/AGENTS.md` names
+each variable. The agent's store and the facade's `creche_sessions` share
 `$AGENT_SESSIONS_DIR/flue.db`. Flue starts only after the facade holds the
 lock.
 
-Before each `session/prompt`, the facade pulls the family state from the
-mounts into the agent (`src/turns.ts`, decision CH5a). A rotated key or
+Under CH the facade reads no `AGENT_*` variable (decisions CH5e, CH80).
+`readGuestStart` of the agent module gives the start: the fixed guest
+paths `FLUE_DB` and `WORKSPACE`, the planes at `127.0.0.1:4000` and
+`127.0.0.1:8300`, and the state of one pull on the family-state socket. The
+start pulls until the vmm gives a state, with one stderr line for each
+fault, and never exits on a fault (decision CH23 rule 2). So the facade
+stays `starting` for guest init until the pull gives a state. The image
+env gives only the tool env (`MPLBACKEND` and `CRECHE_TOOL_HTTPS_PROXY`).
+
+Before each `session/prompt`, the facade pulls the family state into the
+agent (`src/turns.ts`, decision CH5a): on sbx from the mounts, under CH
+from the vmm on the family-state socket. A rotated key or
 token and an edited config reach that prompt. A new `model_alias` reaches
 it too, with one stderr line that gives the new alias's limits (decisions
 CH5c, CH5c-2). When `creds.json` does not read, the prompt fails and the
-facade serves on. When `config/` does not read, the last good config
-stays, with one stderr line.
+facade serves on. On sbx, when `config/` does not read, the last good
+config stays, with one stderr line. Under CH each fault reply of the vmm
+fails the prompt, and the facade serves on (decisions CH23 rule 2, CH53
+rule 2).
 
 The workspace of the granted sandbox tools is
-`$AGENT_SESSIONS_DIR/workspace`: the one writable mount for the agent's
-files, with `flue.db` kept out of the listing that Flue puts in the prompt.
+`$AGENT_SESSIONS_DIR/workspace` on sbx and `WORKSPACE` under CH: the one
+writable place for the agent's files, with `flue.db` kept out of the
+listing that Flue puts in the prompt.
 
 ## Exit status
 
 | Status | Cause |
 |---|---|
-| 0 | `_creche/shutdown`, stdin closed, or the stop line of the local link |
-| 2 | no `AGENT_SANDBOX` |
-| 3 | a live facade holds the lock |
-| 5 | no `_creche/beat` for three beat windows (90 s) |
-| 6 | the control mount cannot be written |
-| 7 | a mount variable is unset. The facade reads the mounts first |
+| 0 | sbx: `_creche/shutdown` or stdin closed. CH: the stop line of the local link |
+| 2 | sbx: no `AGENT_SANDBOX` |
+| 3 | sbx: a live facade holds the lock |
+| 5 | sbx: no `_creche/beat` for three beat windows (90 s) |
+| 6 | sbx: the control mount cannot be written |
+| 7 | sbx: a mount variable is unset. The facade reads the mounts first |
 | 8 | the relay socket cannot be made |
-| 9 to 15 | the agent module refuses the family config (`EXIT_BY_REFUSAL` in `src/family.ts`) |
+| 9 to 15 | the agent module refuses the family config (`EXIT_BY_REFUSAL` in `src/family.ts`). Under CH only 11 can occur, for a guest plane URL that does not parse |
 | 16 | Flue does not start |
 | 17 | `CRECHE_SESSION_ID` is set and is not a session id (`src/mode.ts`) |
-| 18 | under CH, the local link does not open, or closes or faults outside a stop (decision CH67 rule 8) |
+| 18 | CH: the local link does not open, or closes or faults outside a stop (decision CH67 rule 8) |
+
+Under CH only the stop line (0) and a lost local link (18) end a facade
+that serves (decisions CH66, CH67 rule 8, CH80).
 
 A refusal (2, 7, 9 to 15, 17) writes one stderr line: the reason, and the
 variable or the field, never a value.
@@ -165,22 +185,27 @@ position follow it.
    A Flue upgrade drops the patch. Check that Flue does both, or port the
    patch, before you move the pin. `agent/test/compaction.test.ts` fails
    when either part is missing.
-9. Never serve without the lock. `lock.ts` never throws. Keep its pid and
-   its beat: attendance reads the beat with its own clock.
-10. Never make stdin EOF the only way the process ends. A client-side kill
-   of `sbx exec` does not reach the VM. The beat deadline ends the process.
+9. On sbx, never serve without the lock. `lock.ts` never throws. Keep its
+   pid and its beat: attendance reads the beat with its own clock. Under
+   CH the facade takes no lock (decision CH19 rule 6): the session disk
+   OFD lock of CH stops a second VM on one disk, and guest init runs at
+   most one facade.
+10. On sbx, never make stdin EOF the only way the process ends. A
+   client-side kill of `sbx exec` does not reach the VM. The beat deadline
+   ends the process. Under CH stdin is `/dev/null`, and the local link
+   ends the process.
 
 ## The local link
 
 In CH mode the facade connects to guest init on the Unix socket
 `LOCAL_LINK_SOCKET` (`src/local-link.ts`, decisions CH21, CH62 rules 9 to
 11). On sbx it opens no link (decision CH10-4). `src/guest.ts` holds the
-socket path, the line cap and the stop wait, and `test/guest.test.ts`
-holds them equal to `rust/crates/wire/vectors/guest.json` (decision CH62
-rule 5).
+socket path, the line cap, the stop wait and `RELAY_SOCKET`, and
+`test/guest.test.ts` holds them equal to
+`rust/crates/wire/vectors/guest.json` (decision CH62 rule 5).
 
-1. The link opens after the relay socket listens and before stdio serves.
-   guest init then moves the facade from `starting` to `running`
+1. The link opens after the start pull, the Flue start and the relay
+   listen. guest init then moves the facade from `starting` to `running`
    (decision CH32 rule 6).
 2. Each turn sends `{"start":{}}` before Flue runs it, and
    `{"end":{"title":…,"updated_at":…}}` after its record. The end
@@ -195,7 +220,7 @@ rule 5).
    stderr line.
 4. A `{"stop":{}}` line down stops the facade: it closes the relay,
    stops Flue for at most `FLUE_STOP_MS` (the 25 s stop wait less 1 s),
-   releases the lock and exits 0 (decision CH62 rule 9). Flue 2.3.0 waits
+   and exits 0 (decision CH62 rule 9). Flue 2.3.0 waits
    up to 30 s for a running submission, so the facade bounds the wait.
 5. The facade never closes the link. guest init kills a facade whose link
    closes outside a stop (decision CH32 rule 7), so the exit of the
@@ -203,8 +228,8 @@ rule 5).
    start, so nothing dials again.
 6. The facade fails closed on its link (decision CH67 rule 8). When the
    link does not open, or closes or faults outside a stop, the facade
-   writes one stderr line, stops Flue for at most `FLUE_STOP_MS`,
-   releases the lock and exits 18. guest init starts it again after the
+   writes one stderr line, stops Flue for at most `FLUE_STOP_MS` and
+   exits 18. guest init starts it again after the
    1 s restart pause (decisions CH62 rule 8, CH66 rule 1). A close during
    a stop keeps the stop path (decision CH66 rule 5).
 7. The facade drops a down line that is not `stop` with one stderr line,

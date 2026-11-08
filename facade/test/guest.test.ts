@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { CONTROL_LINE_CAP, FACADE_STOP_WAIT_MS, LOCAL_LINK_SOCKET, SESSION_ID_ENV } from "../src/guest.js";
+import { CONTROL_LINE_CAP, FACADE_STOP_WAIT_MS, LOCAL_LINK_SOCKET, RELAY_SOCKET, SESSION_ID_ENV } from "../src/guest.js";
 
 const VECTOR_FILE = new URL("../../rust/crates/wire/vectors/guest.json", import.meta.url);
 
@@ -22,5 +22,9 @@ describe("the guest values", () => {
     expect(LOCAL_LINK_SOCKET).toBe(guest["local_link_socket"]);
     expect(CONTROL_LINE_CAP).toBe(guest["control_line_cap"]);
     expect(FACADE_STOP_WAIT_MS).toBe(guest["facade_stop_wait_ms"]);
+  });
+
+  it("name the relay socket as the wire crate does", () => {
+    expect(RELAY_SOCKET).toBe(guest["relay_socket"]);
   });
 });

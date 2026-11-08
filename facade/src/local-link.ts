@@ -34,7 +34,6 @@ import type { Wire } from "agent/wire-read";
 
 import { CONTROL_LINE_CAP, FACADE_STOP_WAIT_MS, LOCAL_LINK_SOCKET } from "./guest.js";
 import { describeRefusal, encodeLine } from "./line.js";
-import type { FacadeMode } from "./mode.js";
 import type { Say } from "./stdio.js";
 
 /**
@@ -182,7 +181,7 @@ export class LocalLink {
   }
 }
 
-/** The local link of the facade: one under CH, none on sbx (decision CH10-4). */
-export function localLinkOf(mode: FacadeMode, say: Say): LocalLink | null {
-  return mode.kind === "ch" ? new LocalLink(LOCAL_LINK_SOCKET, FLUE_STOP_MS, say) : null;
+/** The local link of the facade under CH. On sbx the facade opens none (decision CH10-4). */
+export function guestLink(say: Say): LocalLink {
+  return new LocalLink(LOCAL_LINK_SOCKET, FLUE_STOP_MS, say);
 }

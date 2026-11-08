@@ -3,8 +3,8 @@
 // the provider object, so no `models.json` exists and no credential lands on
 // a disk.
 //
-//   FamilyConfig.planes.litellm ──► baseUrl   (the OpenAI SDK appends
-//                                              `/chat/completions`)
+//   planes.litellm ──► baseUrl   (the OpenAI SDK appends `/chat/completions`).
+//                      sbx: `AGENT_LITELLM_BASE_URL`. CH: guest 127.0.0.1:4000
 //   creds().litellmKey ──► Authorization: Bearer, per request. The facade
 //                          pulls the creds before each prompt (decision CH5a).
 //   runtime.json model_alias ──► `litellm/<alias>`, the model of each
@@ -22,7 +22,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import { setProvider } from "@flue/runtime";
 import * as v from "valibot";
 
-import type { FamilyConfig } from "./config.js";
+import type { FamilyConfig, Planes } from "./config.js";
 import type { LiveCreds } from "./family-state.js";
 import { revealSecret } from "./secret.js";
 import type { Secret } from "./secret.js";
@@ -112,15 +112,11 @@ export function limitsOf(alias: string, body: unknown): LimitsRead {
 }
 
 /**
- * One GET of LiteLLM's model list with the family key. At start the alias
- * and the key are those of the start reads. At a model change they are the
- * pulled alias and the latest key.
+ * One GET of LiteLLM's model list on `planes` with the family key. At
+ * start the alias and the key are those of the start state. At a model
+ * change they are the pulled alias and the latest key.
  */
-export async function readModelLimits(
-  config: FamilyConfig,
-  modelAlias: string = config.runtime.modelAlias ?? "",
-  key: Secret = config.creds.litellmKey,
-): Promise<LimitsRead> {
+export async function readModelLimits(planes: Planes, modelAlias: string, key: Secret): Promise<LimitsRead> {
   const alias = bareAlias(modelAlias);
   if (alias.length === 0) {
     return fallback("model_alias_unset");
@@ -128,7 +124,7 @@ export async function readModelLimits(
 
   let body: unknown;
   try {
-    const response = await fetch(`${config.planes.litellm.text}${MODEL_INFO_PATH}`, {
+    const response = await fetch(`${planes.litellm.text}${MODEL_INFO_PATH}`, {
       headers: { authorization: `Bearer ${revealSecret(key)}` },
       signal: AbortSignal.timeout(MODEL_INFO_TIMEOUT_MS),
     });
@@ -175,7 +171,7 @@ export function specOf(alias: string): string {
 }
 
 /** One provider with one model for each alias of `models`. */
-function providerOf(config: FamilyConfig, models: ReadonlyMap<string, ModelLimits>, creds: () => LiveCreds): Provider {
+function providerOf(planes: Planes, models: ReadonlyMap<string, ModelLimits>, creds: () => LiveCreds): Provider {
   return createProvider({
     id: LITELLM_PROVIDER,
     auth: {
@@ -189,7 +185,7 @@ function providerOf(config: FamilyConfig, models: ReadonlyMap<string, ModelLimit
       name: `${alias} (LiteLLM)`,
       api: PROVIDER_API,
       provider: LITELLM_PROVIDER,
-      baseUrl: config.planes.litellm.text,
+      baseUrl: planes.litellm.text,
       reasoning: false,
       input: ["text"],
       cost: NO_COST,
@@ -211,7 +207,7 @@ export function litellmModel(
     return { ok: false, reason: "model_alias_unset" };
   }
 
-  return { ok: true, model: { provider: providerOf(config, new Map([[alias, limits]]), creds), spec: specOf(alias) } };
+  return { ok: true, model: { provider: providerOf(config.planes, new Map([[alias, limits]]), creds), spec: specOf(alias) } };
 }
 
 /**
@@ -239,14 +235,14 @@ export class LiveModel {
   private latest: Provider;
 
   public constructor(
-    private readonly config: FamilyConfig,
+    private readonly planes: Planes,
     alias: string,
     limits: ModelLimits,
     private readonly creds: () => LiveCreds,
   ) {
     this.current = alias;
     this.served.set(alias, limits);
-    this.latest = providerOf(config, this.served, creds);
+    this.latest = providerOf(planes, this.served, creds);
   }
 
   /** The provider of every alias served so far, for `start()`. */
@@ -273,11 +269,11 @@ export class LiveModel {
       return null;
     }
 
-    const read = await readModelLimits(this.config, alias, key);
+    const read = await readModelLimits(this.planes, alias, key);
     // The state changes only once the new provider is in Flue. A throw
     // leaves the old alias current, so the next pull tries again.
     const served = new Map(this.served).set(alias, read.limits);
-    const provider = providerOf(this.config, served, this.creds);
+    const provider = providerOf(this.planes, served, this.creds);
     setProvider(provider);
     this.served = served;
     this.latest = provider;

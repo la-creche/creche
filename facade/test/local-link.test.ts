@@ -5,7 +5,6 @@
 
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { PassThrough } from "node:stream";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { read } from "agent/wire-read";
@@ -14,9 +13,8 @@ import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { facadeApp } from "../src/acp.js";
 
 import { CONTROL_LINE_CAP, FACADE_STOP_WAIT_MS, LOCAL_LINK_SOCKET } from "../src/guest.js";
-import { FLUE_STOP_MS, LocalLink, localLinkOf, turnLine } from "../src/local-link.js";
+import { FLUE_STOP_MS, guestLink, LocalLink, turnLine } from "../src/local-link.js";
 import type { LinkHandlers } from "../src/local-link.js";
-import { SupervisorLock } from "../src/lock.js";
 import { SBX } from "../src/mode.js";
 import { sessionService } from "../src/service.js";
 import { SessionIndex } from "../src/session-index.js";
@@ -29,6 +27,9 @@ import { closeGuestInits, guestInit, NO_HANDLERS, until, WAIT_MS } from "./guest
 import type { GuestInit } from "./guest-init.js";
 
 const STOP = '{"stop":{}}\n';
+
+/** A beat deadline that a CH supervisor must not keep. */
+const SHORT_DEADLINE_MS = 30;
 
 const flue = await startFlue();
 afterAll(() => flue.stop());
@@ -257,13 +258,12 @@ describe("a lost link", () => {
   });
 });
 
-describe("localLinkOf", () => {
-  it("opens no link on sbx, and the guest socket under CH", () => {
-    const ch = localLinkOf({ kind: "ch", sessionId: "0123abcd-0000-4000-8000-00000000c7c7" }, () => undefined);
+describe("guestLink", () => {
+  it("dials the guest socket, with a stop under the stop wait", () => {
+    const ch = guestLink(() => undefined);
 
-    expect(localLinkOf(SBX, () => undefined)).toBeNull();
-    expect(ch?.path).toBe(LOCAL_LINK_SOCKET);
-    expect(ch?.stopMs).toBe(FLUE_STOP_MS);
+    expect(ch.path).toBe(LOCAL_LINK_SOCKET);
+    expect(ch.stopMs).toBe(FLUE_STOP_MS);
     expect(FLUE_STOP_MS).toBeLessThan(FACADE_STOP_WAIT_MS);
   });
 });
@@ -274,17 +274,15 @@ describe("the supervisor", () => {
     const facade = link(guest.path, []);
     const served = new Promise<LocalLink | null>((resolve) => {
       void runSupervisor({
-        input: new PassThrough(),
+        supervision: { kind: "ch", link: facade },
         stdout: { writeLine: () => undefined, exit: () => undefined },
         say: () => undefined,
-        lock: new SupervisorLock(shortTmp(), "chat-s1"),
         deadlineMs: 60_000,
         serve: async (given) => {
           resolve(given);
           return { ok: false, detail: "FIXTURE-NO-FLUE" };
         },
         socketPath: null,
-        link: facade,
       });
     });
 
@@ -304,11 +302,10 @@ async function supervise(
   const guest = await guestInit();
   const events: string[] = [];
   const said: string[] = [];
-  const lock = new SupervisorLock(shortTmp(), "chat-s1");
   const facade = link(path ?? guest.path, said, stopMs);
   const exited = new Promise<number>((resolve) => {
     void runSupervisor({
-      input: new PassThrough(),
+      supervision: { kind: "ch", link: facade },
       stdout: {
         writeLine: () => undefined,
         exit: (code) => {
@@ -317,16 +314,48 @@ async function supervise(
         },
       },
       say: (text) => said.push(text),
-      lock,
       deadlineMs: 60_000,
       serve: async () => ({ ok: true, serving: { runtime, sessions: null } }),
       socketPath: null,
-      link: facade,
     });
   });
 
   return { guest, facade, events, said, exited };
 }
+
+// Decisions CH5d, CH19, CH80: under CH no beat deadline runs and no stdio
+// serves, so only the stop line and a lost link end the facade.
+describe("the CH supervisor", () => {
+  it("keeps serving past the beat deadline, then exits 0 at the stop line", async () => {
+    const guest = await guestInit();
+    const said: string[] = [];
+    const events: string[] = [];
+    const exited = new Promise<number>((resolve) => {
+      void runSupervisor({
+        supervision: { kind: "ch", link: link(guest.path, said) },
+        stdout: {
+          writeLine: (line) => events.push(`stdout ${line}`),
+          exit: (code) => {
+            events.push(`exit ${code}`);
+            resolve(code);
+          },
+        },
+        say: (text) => said.push(text),
+        deadlineMs: SHORT_DEADLINE_MS,
+        serve: async () => ({ ok: true, serving: { runtime: null, sessions: null } }),
+        socketPath: null,
+      });
+    });
+    const peer = await guest.peer();
+    await new Promise((resolve) => setTimeout(resolve, SHORT_DEADLINE_MS * 5));
+
+    expect(events).toEqual([]);
+    peer.write(STOP);
+    expect(await exited).toBe(EXIT_OK);
+    expect(events).toEqual([`exit ${EXIT_OK}`]);
+    expect(said).toEqual(["serving ACP v1 on the relay socket", "the stop line of guest init"]);
+  });
+});
 
 describe("the stop line", () => {
   it("stops Flue, then exits 0", async () => {
@@ -429,6 +458,6 @@ describe("a lost link at the supervisor", () => {
     expect(await run.exited).toBe(EXIT_OK);
     expect(run.events).toEqual([`exit ${EXIT_OK}`]);
     expect(stops).toBe(1);
-    expect(run.said).toEqual(["serving ACP v1 on stdio", "the stop line of guest init"]);
+    expect(run.said).toEqual(["serving ACP v1 on the relay socket", "the stop line of guest init"]);
   });
 });

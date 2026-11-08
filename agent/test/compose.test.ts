@@ -13,10 +13,10 @@ import type { ConversationStreamChunk } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { AGENT_NAME, composeAgent } from "../src/agent.js";
+import { AGENT_NAME, startOf } from "../src/agent.js";
 import { FakeCh, SEARCH_RESULT, SEARCH_TOOL } from "./fake-ch.js";
 import { FakeModel } from "./fake-model.js";
-import { familyConfig, FIXTURE_TOKEN } from "./family.js";
+import { composeFamily, familyConfig, FIXTURE_TOKEN } from "./family.js";
 
 const SEARCH = `mcp__ch__${SEARCH_TOOL}`;
 const ARGS = { text: "weather" };
@@ -52,12 +52,7 @@ const config = await familyConfig({
   },
 });
 
-const read = composeAgent(config, mkdtempSync(join(tmpdir(), "agent-workspace-")));
-if (!read.ok) {
-  throw new Error(read.reason);
-}
-
-const { composed } = read;
+const composed = composeFamily(config);
 const flue = await start({ agents: [composed.agent], db: composed.db, providers: composed.providers });
 afterAll(async () => {
   await flue.stop();
@@ -80,7 +75,7 @@ describe("composeAgent", () => {
   it("refuses a family with no model_alias", async () => {
     const bare = await familyConfig({ runtime: {} });
 
-    expect(composeAgent(bare, tmpdir())).toEqual({ ok: false, reason: "model_alias_unset" });
+    expect(startOf(bare)).toEqual({ ok: false, reason: "model_alias_unset" });
   });
 
   it("runs a ch tool call under start(): tool-input, then tool-output", async () => {

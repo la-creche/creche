@@ -64,7 +64,7 @@ async function facade(): Promise<Facade> {
 
   const exited = new Promise<number>((resolve) => {
     void runSupervisor({
-      input,
+      supervision: { kind: "sbx", input, lock: new SupervisorLock(mkdtempSync(join(tmpdir(), "relay-control-")), "chat-s1") },
       stdout: { writeLine: () => undefined, exit: resolve },
       say: (text) => {
         said.push(text);
@@ -72,14 +72,12 @@ async function facade(): Promise<Facade> {
           listening();
         }
       },
-      lock: new SupervisorLock(mkdtempSync(join(tmpdir(), "relay-control-")), "chat-s1"),
       deadlineMs: DEADLINE_MS,
       serve: async () => ({
         ok: true,
         serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, link: null, store: flue.store }) },
       }),
       socketPath: socket,
-      link: null,
     });
   });
   void exited.then(() => clearInterval(beating));

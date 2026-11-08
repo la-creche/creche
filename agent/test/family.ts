@@ -7,6 +7,8 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { composeAgent, startOf } from "../src/agent.js";
+import type { ComposedAgent } from "../src/agent.js";
 import { readFamilyConfig } from "../src/config.js";
 import type { FamilyConfig } from "../src/config.js";
 
@@ -77,4 +79,14 @@ export async function familyConfig(fixture: FamilyFixture): Promise<FamilyConfig
   }
 
   return read.config;
+}
+
+/** The agent of the sbx start of `config`, with a workspace of its own in a temporary directory. */
+export function composeFamily(config: FamilyConfig): ComposedAgent {
+  const read = startOf(config);
+  if (!read.ok) {
+    throw new Error(`fixture refused: ${read.reason}`);
+  }
+
+  return composeAgent({ ...read.start, workspace: mkdtempSync(join(tmpdir(), "agent-workspace-")) });
 }

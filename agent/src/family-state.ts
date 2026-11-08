@@ -335,13 +335,17 @@ function pullLine(path: string, waitMs: number): Promise<LineRead> {
   });
 }
 
+/** The wire state of one pull, or its fault. */
+export type WirePull =
+  | { readonly ok: true; readonly state: Wire<"FamilyState"> }
+  | { readonly ok: false; readonly fault: PullFault };
+
 /**
- * The state of one reply line. `previous` gives the skills that keep
- * their value (`liveConfig`). The wire pattern of `ModelAlias` takes
- * `litellm/`, which names no model, so a reply with it is `not_valid`,
- * as in the file backend.
+ * The wire state of one reply line. The wire pattern of `ModelAlias`
+ * takes `litellm/`, which names no model, so a reply with it is
+ * `not_valid`, as in the file backend.
  */
-function stateOf(line: Buffer, previous: readonly LiveSkill[]): StatePull {
+function wireStateOf(line: Buffer): WirePull {
   const reply = read("FamilyStateReply", line, { cap: STATE_REPLY_CAP });
   if (!reply.ok) {
     return { ok: false, fault: reply.rule === "too_large" ? "too_large" : "not_valid" };
@@ -352,19 +356,11 @@ function stateOf(line: Buffer, previous: readonly LiveSkill[]): StatePull {
     return { ok: false, fault: faultOf(value) };
   }
 
-  const { config, creds } = value.state;
-  if (bareAlias(config.model_alias).length === 0) {
+  if (bareAlias(value.state.config.model_alias).length === 0) {
     return { ok: false, fault: "not_valid" };
   }
 
-  return {
-    ok: true,
-    state: {
-      creds: { litellmKey: Secret.of(creds.litellm_key), pepToken: Secret.of(creds.pep_token) },
-      config: liveConfig(config, previous),
-    },
-    stale: null,
-  };
+  return { ok: true, state: value.state };
 }
 
 /** The fault word of a typed fault reply: its one key. The map is total. */
@@ -385,22 +381,42 @@ function faultOf(reply: Exclude<Wire<"FamilyStateReply">, { readonly state: unkn
 }
 
 /**
- * One pull of the family state on the socket `path`. A link that gives no
+ * The live state of a wire state. Each credential becomes a `Secret`.
+ * `previous` gives the skills that keep their value (`liveConfig`).
+ */
+export function liveStateOf(state: Wire<"FamilyState">, previous: readonly LiveSkill[]): LiveState {
+  const { config, creds } = state;
+
+  return {
+    creds: { litellmKey: Secret.of(creds.litellm_key), pepToken: Secret.of(creds.pep_token) },
+    config: liveConfig(config, previous),
+  };
+}
+
+/**
+ * One pull of the wire state on the socket `path`. A link that gives no
  * line writes its cause to `say` and is `not_valid`.
  */
-export async function pullState(
-  path: string,
-  previous: readonly LiveSkill[],
-  say: Say,
-  waitMs: number = PULL_WAIT_MS,
-): Promise<StatePull> {
+export async function pullWire(path: string, say: Say, waitMs: number = PULL_WAIT_MS): Promise<WirePull> {
   const line = await pullLine(path, waitMs);
   if (!line.ok) {
     say(`the family-state pull got no state: ${line.detail}`);
     return { ok: false, fault: line.fault };
   }
 
-  return stateOf(line.line, previous);
+  return wireStateOf(line.line);
+}
+
+/** One pull of the live state on the socket `path` (`pullWire`, then `liveStateOf`). */
+export async function pullState(
+  path: string,
+  previous: readonly LiveSkill[],
+  say: Say,
+  waitMs: number = PULL_WAIT_MS,
+): Promise<StatePull> {
+  const pulled = await pullWire(path, say, waitMs);
+
+  return pulled.ok ? { ok: true, state: liveStateOf(pulled.state, previous), stale: null } : pulled;
 }
 
 /**
