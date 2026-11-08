@@ -924,7 +924,7 @@ fn kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk() {
         "vmm: new starts use the new {DIGESTS_FILE}: kernel {kernel}, base {new}, python {new}"
     );
     let slept = format!("vmm: the VM of {SESSION} sleeps");
-    let settle = HOOK_TIMEOUT + POLL..HOOK_TIMEOUT + POLL * 4 + BOOT;
+    let settle = HOOK_TIMEOUT + POLL..HOOK_TIMEOUT + POLL * 4;
     let deadline = (renamed + settle.end).max(closed + IDLE_TIMEOUT + IDLE_CHECK + BOOT);
     let (mut waited, mut asleep) = (None, false);
     while waited.is_none() || !asleep {

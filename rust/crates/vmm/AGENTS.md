@@ -338,10 +338,10 @@ The ignored `kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk` of
 runner's sudo (decision CH36 G20). It runs the real `vmm serve`, as
 the E4 tests do, so it proves the compose path: `Vmm::run` swaps the
 set of new starts no sooner than `HOOK_TIMEOUT` plus one poll after the
-rename, and within four polls after that. The vmm log line of the swap
-names the new set. The VM that started on the old disk sleeps on the
-idle timeout in the same wait, and the next start drops its snapshot and
-cold-boots on the new disk. This is the one 305 s wait of the kvm job
+rename, and within four polls after `HOOK_TIMEOUT`. The vmm log line of
+the swap names the new set. The VM that started on the old disk sleeps
+on the idle timeout in the same wait, and the next start drops its
+snapshot and cold-boots on the new disk. This is the one 305 s wait of the kvm job
 (decision CH75 rule 2): the job takes about 5.5 min more.
 
 ## The verify hooks
