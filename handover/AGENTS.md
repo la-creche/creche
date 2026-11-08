@@ -529,10 +529,11 @@ CH7-2, CH35 (4), CH76 rules 1 and 5). Its manifest is
     from the approval digest fail the stage. Root runs no build, unpacks
     nothing and decompresses nothing. The walk of contract 06 §8.2 does not
     run (`Installer.stage_files`, `install.py` rule 11).
-13. The verify program sits in the tree of the `depends_on` component that
-    `manifest.hook_holder` names: its staged tree when the same release
-    stages it, else its live tree. It must be a regular file inside that
-    tree, owned by root, and no group or other account may write it. A
+13. The verify program sits in the live tree of the `depends_on`
+    component that `manifest.hook_holder` names. A set that stages that
+    component too fails step 8 before any swap. The program must be a
+    regular file inside that tree, owned by root, and no group or other
+    account may write it. A
     disk-image row names no unit, so step 9 restarts nothing, and a failed
     hook puts the previous tree back (contract 06 §8.4 rules 5 and 6).
 
@@ -703,12 +704,17 @@ that wants a refusal changes one field.
   1.9 MiB/s in one run. Not checked: the rate from the host to the code
   host (plan risk 10).
 - Contract 06 §4 rule 6 says the verify program of a disk-image component
-  sits in the live tree of its `depends_on` component. CONTRACT-QUESTION:
-  when the same release stages that component, step 8 checks the program
-  in its `<install.to>.new`. Its switch comes first and makes that tree
-  live before the hook runs. The other reading refuses a set that releases
-  the `vmm` and `disks` together, and costs one request for each, in order
-  (`executor/install.py`).
+  sits in the live tree of its `depends_on` component. Step 8 reads that
+  rule narrowly: a set that stages that component too fails before any
+  swap, so the `vmm` and `disks` go out in two requests, the `vmm` first.
+  CONTRACT-QUESTION: may one set check the program in the
+  `<install.to>.new` of that component, which its switch makes live
+  first? (`executor/steps.py`, `Release._hook_holder_tree`).
+- Child 2 of check P6 for one disk file runs with `MemoryMax=` 2.5 GiB
+  (`provenance.DISK_CHECK_MEMORY_BYTES`): cosign v3.1.3 `verify-blob`
+  reads the whole file into memory. Not measured: one real `verify-blob`
+  of a file of about 500 MiB in the verifier unit on the host. A spike
+  measures it before the first disks release (`executor/provenance.py`).
 - The follower does not ask again for a request that root never ledgered.
   A newer tag or a request by hand recovers (`follow/`).
 - The follower reads tags out of the corpus. Root refuses a tag that has no

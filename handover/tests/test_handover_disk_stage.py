@@ -8,11 +8,13 @@ tests:
 
 1. The approval digest: the hash of the sorted sum lines of the files.
 2. `Installer.stage_files` and the borrowed hook, on a fake host.
-3. A whole release of `disks`, with the stand-in verifier.
+3. Where step 8 looks for the hook: the live tree of the holder alone.
+4. A whole release of `disks`, with the stand-in verifier.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 from pathlib import Path
@@ -22,9 +24,13 @@ import pytest
 from handover.artifacts import sum_lines_digest
 from handover.catalog import BUNDLE_SUFFIX
 from handover.executor import install
-from handover.executor.install import BorrowedHook, Installer, StepFailed, paths_of
+from handover.executor.install import Installer, StepFailed, paths_of
 from handover.executor.live_state import installed_version
+from handover.executor.request import parse_request
+from handover.executor.spool import Spool
+from handover.executor.steps import DISK_IMAGE_HOLDER_STAGED, Plan, Release
 from handover.manifest import ComponentManifest, Markup, parse_manifest
+from handover.resolve import Resolution
 from handover_disk_fixtures import (
     DISK_BYTES,
     DISKS,
@@ -39,7 +45,7 @@ from handover_disk_fixtures import (
     verified_files,
     write_hook,
 )
-from handover_executor_fixtures import REQUEST_ID, FakeRun, fake_host
+from handover_executor_fixtures import REQUEST_ID, FakeRun, fake_host, request_body, this_uid
 
 #: `shasum -a 256 <the four files of DISK_BYTES> | LC_ALL=C sort | shasum -a
 #: 256`, run once by hand. A change of the rule or of the line form moves
@@ -85,12 +91,13 @@ def _installer(tmp_path: Path, run: FakeRun | None = None) -> Installer:
     return Installer(fake_host(tmp_path, run if run is not None else FakeRun()))
 
 
-def _live_hook(components: Path) -> BorrowedHook:
-    """The hook in the live `vmm` tree, which this release does not stage."""
+def _live_hook(components: Path) -> Path:
+    """The hook in the live `vmm` tree, which this release does not stage.
+    The answer is that tree."""
     live = components / VMM
     write_hook(live)
 
-    return BorrowedHook(to=live, tree=live)
+    return live
 
 
 def test_the_staged_tree_holds_each_file_root_owned_0644(tmp_path: Path) -> None:
@@ -164,6 +171,21 @@ def test_no_verified_files_is_a_failed_stage(tmp_path: Path) -> None:
     assert not paths.new.exists()
 
 
+def test_files_that_p6_verified_for_another_component_fail_the_stage(tmp_path: Path) -> None:
+    """Step 8 of `disks` stages only the files that check P6 verified for
+    `disks`."""
+    components = tmp_path / "components"
+    manifest = _manifest(components)
+    paths = paths_of(manifest, (components,))
+    other = verified_files(tmp_path / "copy", component=VMM)
+
+    with pytest.raises(StepFailed, match="no files that check P6 verified"):
+        _installer(tmp_path).stage_files(manifest, paths, other, _live_hook(components))
+
+    assert other.component == VMM
+    assert not paths.new.exists()
+
+
 def test_a_copy_that_changed_after_the_check_fails_the_stage(tmp_path: Path) -> None:
     """The stage hashes what it writes. Other bytes give other sum lines,
     and the tap bound the first ones."""
@@ -192,24 +214,7 @@ def test_the_verify_program_comes_from_the_live_vmm_tree(tmp_path: Path) -> None
     assert not (paths.new / "bin").exists()
 
 
-def test_a_vmm_staged_in_the_same_release_holds_the_hook_in_its_new_tree(
-    tmp_path: Path,
-) -> None:
-    """The vmm switches first, so its staged tree is the live one when the
-    hook runs. No live vmm tree is there yet."""
-    components = tmp_path / "components"
-    manifest = _manifest(components)
-    paths = paths_of(manifest, (components,))
-    staged = components / f"{VMM}.new"
-    write_hook(staged)
-    hook = BorrowedHook(to=components / VMM, tree=staged)
-
-    _installer(tmp_path).stage_files(manifest, paths, verified_files(tmp_path / "copy"), hook)
-
-    assert not (components / VMM).exists()
-
-
-def _refused(tmp_path: Path, hook: BorrowedHook, match: str) -> None:
+def _refused(tmp_path: Path, hook: Path, match: str) -> None:
     components = tmp_path / "components"
     manifest = _manifest(components)
     paths = paths_of(manifest, (components,))
@@ -222,7 +227,7 @@ def test_an_absent_verify_program_fails_the_stage(tmp_path: Path) -> None:
     live = tmp_path / "components" / VMM
     live.mkdir(parents=True)
 
-    _refused(tmp_path, BorrowedHook(to=live, tree=live), "missing or escapes")
+    _refused(tmp_path, live, "missing or escapes")
 
 
 @pytest.mark.parametrize("mode", [0o775, 0o757], ids=["group", "other"])
@@ -230,7 +235,19 @@ def test_a_verify_program_that_others_can_write_fails_the_stage(tmp_path: Path, 
     live = tmp_path / "components" / VMM
     write_hook(live, mode)
 
-    _refused(tmp_path, BorrowedHook(to=live, tree=live), "not root's alone")
+    _refused(tmp_path, live, "not root's alone")
+
+
+def test_a_verify_program_that_root_does_not_own_fails_the_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mode is 0755, so only the owner half of the rule refuses: root
+    is now another uid than the owner of the file."""
+    live = tmp_path / "components" / VMM
+    owner = write_hook(live).stat().st_uid
+    monkeypatch.setattr(install.os, "geteuid", lambda: owner + 1)
+
+    _refused(tmp_path, live, "not root's alone")
 
 
 def test_a_verify_program_that_links_out_of_its_tree_fails_the_stage(tmp_path: Path) -> None:
@@ -239,22 +256,63 @@ def test_a_verify_program_that_links_out_of_its_tree_fails_the_stage(tmp_path: P
     (live / "bin").mkdir(parents=True)
     (live / "bin" / VMM).symlink_to(elsewhere)
 
-    _refused(tmp_path, BorrowedHook(to=live, tree=live), "missing or escapes")
+    _refused(tmp_path, live, "missing or escapes")
 
 
 def test_a_hook_outside_the_tree_it_borrows_fails_the_stage(tmp_path: Path) -> None:
     other = tmp_path / "components" / "caregiver"
     write_hook(other)
 
-    _refused(tmp_path, BorrowedHook(to=other, tree=other), "in no tree of depends_on")
+    _refused(tmp_path, other, "in no tree of depends_on")
 
 
-# ---- 3. a whole release --------------------------------------------------------
+# ---- 3. where step 8 looks for the hook ------------------------------------------
 
 
 @pytest.fixture
 def bench(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DiskBench:
     return make_disk_bench(tmp_path, monkeypatch)
+
+
+def _holder_tree(bench: DiskBench, order: tuple[str, ...]) -> Path:
+    """`Release._hook_holder_tree` for the `disks` manifest, in a plan that
+    deploys `order`."""
+    manifests = {
+        name: parse_manifest(
+            disk_manifest_text(bench.components, name), f"{name}/component.yaml", Markup.YAML
+        )
+        for name in (VMM, DISKS)
+    }
+    plan = Plan(Resolution((), order, (), frozenset(order)), manifests, {}, order)
+    raw = request_body(dict.fromkeys(order, NEW_VERSION))
+    spool = Spool(str(bench.spool_root), this_uid())
+    try:
+        release = Release(
+            parse_request(json.dumps(raw).encode("utf-8"), REQUEST_ID), bench.wiring(), spool
+        )
+
+        return release._hook_holder_tree(plan, manifests[DISKS])  # pyright: ignore[reportPrivateUsage]
+    finally:
+        spool.close()
+
+
+def test_a_set_of_disks_alone_reads_the_hook_in_the_live_vmm_tree(bench: DiskBench) -> None:
+    assert _holder_tree(bench, (DISKS,)) == bench.components / VMM
+
+
+def test_a_set_that_stages_the_vmm_too_fails_the_stage(bench: DiskBench) -> None:
+    """Contract 06 §4 rule 6, read narrowly: the hook sits in the live
+    tree of the holder. A set of the `vmm` and `disks` stages a new vmm
+    tree, so step 8 refuses before any swap. The live vmm tree holds a good
+    program, and the answer is still a refusal (CONTRACT-QUESTION of
+    `Release._hook_holder_tree`)."""
+    assert (bench.components / VMM / "bin" / VMM).read_bytes() == HOOK_BYTES
+
+    with pytest.raises(StepFailed, match=DISK_IMAGE_HOLDER_STAGED):
+        _holder_tree(bench, (VMM, DISKS))
+
+
+# ---- 4. a whole release --------------------------------------------------------
 
 
 def _row(ledger: dict[str, object]) -> dict[str, object]:
