@@ -25,7 +25,7 @@ Environment=XDG_CONFIG_HOME=%h/.config
 # Decision CH59 rule 1: the vmm compiles in no default
 # (rust/crates/vmm/AGENTS.md, "The config"), and the site file holds only
 # the overrides of the catalog (env/AGENTS.md, "The files" rule 4). So the
-# unit reads `vmm.env` first. It holds each key of
+# unit reads `vmm.env`. It holds each key of
 # `rust/crates/vmm/src/config.rs` except RUNTIME_DIRECTORY, as `creche-env
 # get` resolves it against the site file: paths and sizes, no secret.
 # `bin/fleet-up up` writes it with `creche_env_get`, as it writes

@@ -34,7 +34,7 @@ installed unit file in place and never runs an installer.
   Environment=XDG_CONFIG_HOME=%h/.config
   ```
   `sbx` panics without them.
-- **Every unit reads the site file, except `creche-vmm.service`.**
+- **Every user unit reads the site file, except `creche-vmm.service`.**
   `EnvironmentFile=/etc/creche/site.env` sets `AGENT_LAN_ADDRESS` and the
   other site values. No unit names an address. `creche-vmm.service` reads
   `vmm.env` alone (Decided rule 1).
