@@ -446,7 +446,7 @@ def test_a_0_22_reader_refuses_kind_disk_image(monkeypatch: pytest.MonkeyPatch) 
     the kind (H3b) releases before the first disks manifest (contract 06
     §8.4, plan risk 6)."""
     monkeypatch.setattr(manifest, "MANIFEST_CONTRACT_MINOR", 22)
-    declared = f'manifest_version = "{MANIFEST_CONTRACT_MAJOR}.{MANIFEST_CONTRACT_MINOR}"'
+    declared = 'manifest_version = "0.23"'
 
     refusal = _disks_refusal({'manifest_version = "0.4"': declared})
 
