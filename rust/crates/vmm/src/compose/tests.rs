@@ -40,7 +40,7 @@ use super::{Checked, StartError, VERSION_WAIT, Vmm, build, parts};
 use crate::ServeError;
 use crate::config::{CH, CH_REMOTE, Config, GIT, GUEST_INIT as GUEST_INIT_KEY};
 use crate::guest_init::GuestInitError;
-use crate::image_root::follow::{Follow, POLL};
+use crate::image_root::follow::{Follow, HOOK_TIMEOUT, POLL};
 use crate::image_root::{DIGESTS_FILE, DigestsError, parse};
 use crate::root_owned::{OwnerError, ProgramError};
 use crate::start::Digests;
@@ -355,9 +355,11 @@ fn kvm_build_wires_each_key_to_its_part() {
 
 /// Decision CH76 rule 8: `Vmm::run` runs the digests follow, so a new
 /// root-owned `digests.json` reaches the set of new starts with no vmm
-/// restart. A compose step that never runs the follow fails here. The
-/// `kvm_` test of `tests/image_follow.rs` boots `examples/phase3_vm.rs`,
-/// which runs its own follow, so only this test proves the compose path.
+/// restart. A compose step that never runs the follow fails here.
+/// Decision CH77 rule 2: the swap comes no sooner than `HOOK_TIMEOUT`
+/// after the rename, and within a few polls after it. The `kvm_` test of
+/// `tests/image_follow.rs` boots `examples/phase3_vm.rs`, which runs its
+/// own follow, so only this test proves the compose path.
 #[test]
 #[ignore = "needs runner sudo for a root-owned file: the job kvm runs it"]
 fn kvm_serve_follows_a_new_digests_file() {
@@ -380,6 +382,7 @@ fn kvm_serve_follows_a_new_digests_file() {
     let staged = scratch.dir.join("images/next.json");
     fs::write(&staged, next.to_string()).unwrap();
     sudo(&["chown", "0:0"], &staged);
+    let renamed = Instant::now();
     fs::rename(&staged, scratch.dir.join("images").join(DIGESTS_FILE)).unwrap();
 
     let [kernel, _, python] = IMAGES.map(|(_, _, sha256)| sha256.parse().unwrap());
@@ -388,11 +391,16 @@ fn kvm_serve_follows_a_new_digests_file() {
         roots: PerFlavor::every(|_| python),
     };
     let swapped = runtime.block_on(async {
-        tokio::time::timeout(POLL * 3, digests.wait_for(|set| *set == want))
-            .await
-            .is_ok_and(|seen| seen.is_ok())
+        tokio::time::timeout(
+            HOOK_TIMEOUT + POLL * 3,
+            digests.wait_for(|set| *set == want),
+        )
+        .await
+        .is_ok_and(|seen| seen.is_ok())
     });
     assert!(swapped, "{:?}", *digests.borrow());
+    let waited = renamed.elapsed();
+    assert!(waited >= HOOK_TIMEOUT, "the swap came after {waited:?}");
 
     term.send(()).unwrap();
     let ended = runtime.block_on(async { tokio::time::timeout(WAIT, run).await });

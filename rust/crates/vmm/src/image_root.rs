@@ -32,12 +32,10 @@
 //! A disks release changes the file while the vmm runs. `follow` reads it
 //! every 5 s with the same checks, imports each new entry and then swaps
 //! the `Digests` of each new start (decision CH76 rule 8). handover runs
-//! the hook after it swaps the tree, so the follow may import and swap
-//! to the new set while the hook runs. Each import checks each digest
-//! itself (decision CH58 rule 5). A failed hook restores the previous
-//! tree, and the follow then swaps back to its set. CONTRACT-QUESTION
-//! (vmm AGENTS.md Known gaps 33): no row says whether the follow must
-//! wait for the end of the hook.
+//! the hook after it swaps the tree. The follow imports new bytes only
+//! after they stay the same for the 300 s of the hook (decision CH77 rule
+//! 2), so it never imports while the hook runs. A failed hook restores
+//! the previous tree inside that wait, and the follow imports nothing.
 
 use std::fmt;
 use std::io::{self, Read};

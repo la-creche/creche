@@ -1,17 +1,18 @@
 //! The digests follow on the bytes (plan PR V1, decisions CH58 rule 5,
-//! CH76 rule 8). `read_bytes` trusts only a root-owned file, and a test of
+//! CH76 rule 8, CH77 rules 2 and 3). `read_bytes` trusts only a root-owned file, and a test of
 //! the rust job cannot make one. So these tests give `Follow::apply` each
-//! read as `read_bytes` gives it. The kvm_ test of `tests/image_follow.rs`
+//! read as `read_bytes` gives it, one call for each poll. The kvm_ test of `tests/image_follow.rs`
 //! proves the poll on a root-owned file and a cold boot on the new disk.
 
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::layout::StateRoot;
 use creche_wire::{PerFlavor, SandboxFlavor};
 
-use super::{Follow, RETRY_POLLS};
+use super::{Follow, HOOK_TIMEOUT, POLL, RETRY_POLLS, SETTLE_POLLS};
 use crate::image_root::{DigestsError, KERNEL_KEY, parse};
 use crate::start::Digests;
 
@@ -91,8 +92,27 @@ fn digest(text: &str) -> ImageDigest {
     text.parse().unwrap()
 }
 
-/// Decision CH76 rule 8: new bytes import each entry, and then new starts
-/// read the new set. The swap logs one line that names each digest.
+/// The first line of the wait of decision CH77 rule 2.
+const WAITS: &str = "a new digests.json imports once its bytes stay the same for 300 s";
+
+/// Reads `bytes` at each poll of the wait of decision CH77 rule 2: the
+/// first read logs the wait, and each later read imports nothing. It
+/// gives the line of the poll after the wait, the first that may import.
+fn settle(follow: &mut Follow, bytes: &[u8]) -> Option<String> {
+    let first = follow.apply(Ok(bytes.to_vec()));
+    assert!(
+        first.as_deref().is_some_and(|line| line.starts_with(WAITS)),
+        "{first:?}"
+    );
+    for _ in 1..SETTLE_POLLS {
+        assert_eq!(follow.apply(Ok(bytes.to_vec())), None);
+    }
+    follow.apply(Ok(bytes.to_vec()))
+}
+
+/// Decision CH76 rule 8: new bytes import each entry after their wait,
+/// and then new starts read the new set. The swap logs one line that
+/// names each digest.
 #[test]
 fn a_new_digests_file_switches_new_boots_after_every_import() {
     let root = Root::new("switch");
@@ -100,9 +120,11 @@ fn a_new_digests_file_switches_new_boots_after_every_import() {
     assert_eq!(*current.borrow(), set(EMPTY, ABC));
     assert!(root.store().check(digest(HELLO)).is_err());
 
-    let line = follow
-        .apply(Ok(digests(("vmlinux", EMPTY), ("hello.ext4", HELLO))))
-        .unwrap();
+    let line = settle(
+        &mut follow,
+        &digests(("vmlinux", EMPTY), ("hello.ext4", HELLO)),
+    )
+    .unwrap();
     assert!(
         line.starts_with("new starts use the new digests.json: "),
         "{line}"
@@ -122,9 +144,11 @@ fn a_failed_import_keeps_the_old_set() {
     fs::write(root.images().join("kernel2"), "hello world").unwrap();
 
     // The new kernel imports, then the root disk has another digest.
-    let line = follow
-        .apply(Ok(digests(("kernel2", HELLO), ("abc.ext4", NONE))))
-        .unwrap();
+    let line = settle(
+        &mut follow,
+        &digests(("kernel2", HELLO), ("abc.ext4", NONE)),
+    )
+    .unwrap();
     assert!(line.contains("cannot import abc.ext4"), "{line}");
     assert!(
         line.ends_with(", so new starts keep the last set"),
@@ -133,7 +157,7 @@ fn a_failed_import_keeps_the_old_set() {
     assert_eq!(*current.borrow(), set(EMPTY, ABC));
     root.store().check(digest(HELLO)).unwrap();
 
-    let line = follow.apply(Ok(b"{".to_vec())).unwrap();
+    let line = settle(&mut follow, b"{").unwrap();
     assert!(line.contains("is malformed"), "{line}");
     assert_eq!(*current.borrow(), set(EMPTY, ABC));
 
@@ -164,8 +188,9 @@ fn an_unchanged_file_imports_nothing() {
     assert_eq!(follow.apply(Ok(start)), None);
 }
 
-/// Decisions CH48 (2) and CH76 rule 8: an import that fails tries the
-/// same bytes again every `RETRY_POLLS` polls. A try that fails with the
+/// Decisions CH48 (2), CH76 rule 8 and CH77 rule 3: an import that fails
+/// tries the same bytes again every `RETRY_POLLS` polls, one minute. The
+/// tries need no new wait, since the bytes stay the same. A try that fails with the
 /// same fault logs nothing. Once the fault clears, the next try swaps the
 /// set with no vmm restart.
 #[test]
@@ -176,7 +201,7 @@ fn a_failed_import_tries_again_until_it_swaps() {
     // `hello.ext4` is missing, so the import fails.
     fs::remove_file(root.images().join("hello.ext4")).unwrap();
     let next = digests(("vmlinux", EMPTY), ("hello.ext4", HELLO));
-    let line = follow.apply(Ok(next.clone())).unwrap();
+    let line = settle(&mut follow, &next).unwrap();
     assert!(line.contains("cannot import hello.ext4"), "{line}");
 
     // The polls before the next try import nothing. The try fails with
@@ -199,4 +224,106 @@ fn a_failed_import_tries_again_until_it_swaps() {
     assert_eq!(*current.borrow(), set(EMPTY, HELLO));
     root.store().check(digest(HELLO)).unwrap();
     assert_eq!(follow.apply(Ok(next)), None);
+}
+
+/// Decision CH77 rule 2: the wait is the 300 s of the disks verify hook,
+/// and its polls span at least that long. Decision CH77 rule 3: a retry
+/// comes every 12 polls, one minute.
+#[test]
+fn the_wait_outlasts_the_hook_and_a_retry_comes_each_minute() {
+    assert_eq!(HOOK_TIMEOUT, Duration::from_secs(300));
+    assert_eq!(SETTLE_POLLS, 60);
+    assert!(POLL * u32::try_from(SETTLE_POLLS).unwrap() >= HOOK_TIMEOUT);
+    assert_eq!(RETRY_POLLS, 12);
+    assert_eq!(POLL * RETRY_POLLS, Duration::from_secs(60));
+}
+
+/// Decision CH77 rule 2: new bytes import nothing for `SETTLE_POLLS`
+/// polls, then import once. The store holds no new digest and new
+/// starts read the old set until then.
+#[test]
+fn bytes_that_stay_the_same_for_the_hook_timeout_import_once() {
+    let root = Root::new("settle");
+    let (mut follow, current) = root.follow(&digests(("vmlinux", EMPTY), ("abc.ext4", ABC)));
+    let next = digests(("vmlinux", EMPTY), ("hello.ext4", HELLO));
+
+    let line = follow.apply(Ok(next.clone())).unwrap();
+    assert!(line.starts_with(WAITS), "{line}");
+    for _ in 1..SETTLE_POLLS {
+        assert_eq!(follow.apply(Ok(next.clone())), None);
+        assert_eq!(*current.borrow(), set(EMPTY, ABC));
+        assert!(root.store().check(digest(HELLO)).is_err());
+    }
+
+    let line = follow.apply(Ok(next.clone())).unwrap();
+    assert!(line.starts_with("new starts use the new "), "{line}");
+    assert_eq!(*current.borrow(), set(EMPTY, HELLO));
+    root.store().check(digest(HELLO)).unwrap();
+    for _ in 0..SETTLE_POLLS + u64::from(RETRY_POLLS) {
+        assert_eq!(follow.apply(Ok(next.clone())), None);
+    }
+}
+
+/// Decision CH77 rule 2: new bytes that change again inside the wait
+/// import nothing. The newest bytes start their own wait, and only they
+/// import once it ends.
+#[test]
+fn bytes_that_change_inside_the_wait_import_nothing() {
+    let root = Root::new("change");
+    let (mut follow, current) = root.follow(&digests(("vmlinux", EMPTY), ("abc.ext4", ABC)));
+    let first = digests(("vmlinux", EMPTY), ("hello.ext4", HELLO));
+    let second = digests(("abc.ext4", ABC), ("abc.ext4", ABC));
+
+    // `first` reads the same for each poll of the wait but its last.
+    assert!(follow.apply(Ok(first.clone())).is_some());
+    for _ in 1..SETTLE_POLLS {
+        assert_eq!(follow.apply(Ok(first.clone())), None);
+    }
+
+    // `second` ends the wait of `first` and starts its own.
+    let line = settle(&mut follow, &second).unwrap();
+    assert!(line.contains(&format!("kernel {ABC}")), "{line}");
+    assert_eq!(*current.borrow(), set(ABC, ABC));
+    assert!(root.store().check(digest(HELLO)).is_err());
+
+    // A read that takes no bytes ends a wait too.
+    assert!(follow.apply(Ok(first.clone())).is_some());
+    assert!(follow.apply(Err(DigestsError::Missing)).is_some());
+    let line = follow.apply(Ok(first)).unwrap();
+    assert!(line.starts_with(WAITS), "{line}");
+    assert!(root.store().check(digest(HELLO)).is_err());
+}
+
+/// Decision CH77 rule 2: a file that its failed hook rolls back to the
+/// bytes of the set of new starts inside the wait imports nothing, also
+/// after the wait would have ended. The same new bytes later start a
+/// new wait.
+#[test]
+fn a_rolled_back_file_imports_nothing() {
+    let root = Root::new("rollback");
+    let start = digests(("vmlinux", EMPTY), ("abc.ext4", ABC));
+    let (mut follow, current) = root.follow(&start);
+    let next = digests(("vmlinux", EMPTY), ("hello.ext4", HELLO));
+
+    assert!(follow.apply(Ok(next.clone())).is_some());
+    for _ in 1..SETTLE_POLLS / 2 {
+        assert_eq!(follow.apply(Ok(next.clone())), None);
+    }
+
+    // The rollback puts the old bytes back.
+    for _ in 0..SETTLE_POLLS + u64::from(RETRY_POLLS) {
+        assert_eq!(follow.apply(Ok(start.clone())), None);
+    }
+    assert_eq!(*current.borrow(), set(EMPTY, ABC));
+    assert!(root.store().check(digest(HELLO)).is_err());
+
+    // The same new bytes again wait from the start.
+    let line = follow.apply(Ok(next.clone())).unwrap();
+    assert!(line.starts_with(WAITS), "{line}");
+    for _ in 1..SETTLE_POLLS {
+        assert_eq!(follow.apply(Ok(next.clone())), None);
+    }
+    assert!(root.store().check(digest(HELLO)).is_err());
+    assert!(follow.apply(Ok(next)).is_some());
+    assert_eq!(*current.borrow(), set(EMPTY, HELLO));
 }
