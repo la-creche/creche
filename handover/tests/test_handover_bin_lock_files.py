@@ -58,7 +58,10 @@ def _moved(paths: tuple[str, ...]) -> set[str]:
     return {plan.component for plan in _plan(paths)}
 
 
-# -- the catalog as it is: no binary component ------------------------------
+# -- the catalog as it is: `vmm` is the binary component of this repo -------
+
+#: The one binary row of this repository, at `rust` (CH7-5).
+VMM = "vmm"
 
 
 def test_the_workspace_files_are_the_three_under_rust() -> None:
@@ -69,17 +72,20 @@ def test_the_workspace_files_are_the_three_under_rust() -> None:
     )
 
 
-def test_the_workspace_files_move_no_component_of_todays_catalog() -> None:
-    """No row is a binary component, so a change to the Cargo workspace
-    files is a merge that tags nothing."""
-    assert touched(WORKSPACE_FILES, Repo.CRECHE) == ()
-    assert _plan(WORKSPACE_FILES) == ()
+def test_the_workspace_files_reach_the_vmm_alone() -> None:
+    """`vmm` is the one binary row of this repository, so a change to the
+    Cargo workspace files reaches it and no other row. While it arrives
+    (`catalog.ARRIVING`), the run tags nothing."""
+    assert touched(WORKSPACE_FILES, Repo.CRECHE) == (VMM,)
+    assert _moved(WORKSPACE_FILES) == {VMM} - ARRIVING
 
 
-def test_a_change_under_rust_moves_no_component_of_todays_catalog() -> None:
+def test_a_change_under_rust_reaches_the_vmm_alone() -> None:
+    """The row's path is `rust` (item 12 (1)), so each crate of the
+    workspace is a path of the vmm."""
     changed = (f"{NESTED_BUNDLE}/src/lib.rs", "rust/crates/other/Cargo.toml", "rust/deny.toml")
 
-    assert touched(changed, Repo.CRECHE) == ()
+    assert touched(changed, Repo.CRECHE) == (VMM,)
 
 
 def test_each_manifest_declares_the_kind_of_its_catalog_row() -> None:
@@ -116,7 +122,7 @@ def test_the_workspace_files_move_no_venv_component(monkeypatch: pytest.MonkeyPa
     venvs = {row.name for row in CATALOG if row.kind is Kind.VENV} - {BINARY_NAME}
 
     assert venvs
-    assert touched(WORKSPACE_FILES, Repo.CRECHE) == (BINARY_NAME,)
+    assert touched(WORKSPACE_FILES, Repo.CRECHE) == (BINARY_NAME, VMM)
     assert not venvs & set(touched(WORKSPACE_FILES, Repo.CRECHE))
 
 
@@ -199,7 +205,8 @@ def test_every_other_kind_keeps_its_digest_paths() -> None:
     """The digest of every component of today's catalog is over the same
     paths as before: its subtree and `uv.lock`, or the whole repository.
     `registry-data` is the one exception: its row's digest is over `mcp`
-    alone (contract 06 §9)."""
+    alone (contract 06 §9). The `vmm` binary row's digest is over its
+    subtree and the Cargo workspace files."""
     for row in CATALOG:
         if row.name == "registry-data":
             assert digest_paths(row.name) == ("mcp",)
@@ -207,6 +214,8 @@ def test_every_other_kind_keeps_its_digest_paths() -> None:
 
         if row.path == ".":
             expected: tuple[str, ...] = (".",)
+        elif row.kind is Kind.BINARY:
+            expected = tuple(sorted((row.path, *WORKSPACE_FILES)))
         elif row.lock is Lock.OWN:
             expected = (row.path,)
         else:

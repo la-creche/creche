@@ -320,6 +320,13 @@ has the name of the markup of the manifest: `.component.toml` or
 11. File the request for that release from a checkout that holds the new
     catalog, with `uv run handover request handover`. The `release` verb
     of the chaperone reads no manifest, so it can file the request too.
+11a. A new row lands in two PRs, so rule 10 never refuses. The first PR
+     adds the row and puts its name in `catalog.ARRIVING`. Discovery then
+     reads a checkout with no manifest for that name as complete, and the
+     allocator tags no such row. `handover` releases with the new row. The
+     second PR adds the manifest and takes the name out of `ARRIVING`.
+     `vmm` is in `ARRIVING` until `rust/component.toml` lands (CH7-5,
+     CH76 rule 1).
 12. Check P6 (`executor/provenance.py`) starts the verifier, `cosign`, in
     two children. Each child runs in a transient unit of systemd, as a
     dynamic user with no privilege (`host.As.VERIFIER`). Child 1 loads the

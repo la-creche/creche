@@ -130,6 +130,7 @@ ARGUMENT_SETS: tuple[tuple[str, dict[str, str]], ...] = (
     ("playpen", {}),
     ("registry-data", {}),
     ("registry-data", {"release": "yes"}),
+    ("vmm", {}),
 )
 
 SUBJECT = "chaperone/component.toml"

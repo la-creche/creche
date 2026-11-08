@@ -288,3 +288,17 @@ def test_releasable_drops_the_data_component(tmp_path: Path) -> None:
     write_manifest(tmp_path, "noticeboard", manifest_text("noticeboard"))
 
     assert set(releasable(discover([tmp_path]))) == {"noticeboard"}
+
+
+def test_a_creche_checkout_without_rust_component_toml_reads_complete(tmp_path: Path) -> None:
+    """`vmm` arrives one release before its manifest (CH7-5, CH76 rule 1).
+    A checkout of every other manifest, and none at `rust/`, is complete:
+    the installed requester plans over it and refuses nothing."""
+    roots = _all_five(tmp_path, CONTROL_NAMES)
+
+    found = discover(roots)
+
+    assert not (roots[0] / "rust").exists()
+    assert "vmm" not in found.manifests()
+    assert "vmm" not in found.missing
+    require_complete(found)

@@ -29,6 +29,10 @@ CONTROL = Repo.CRECHE
 #: The Cargo workspace files of this repository.
 WORKSPACE_FILES = BINARY_BUILD_FILES[CONTROL]
 
+#: The binary row of this repository. Its path is `rust`, so each path
+#: under `rust/` reaches it (CH7-5, item 12 (1)).
+VMM = "vmm"
+
 #: Changed paths of every shape a range can hold: under a component, under
 #: a bundle, under the Cargo workspace, a root file and a document.
 SAMPLES = (
@@ -61,8 +65,11 @@ def _reached(path: str) -> tuple[str, ...]:
 @pytest.mark.parametrize("path", SAMPLES)
 def test_todays_catalog_cuts_to_the_first_segment(path: str) -> None:
     """No row of today's catalog names a nested directory, so the cut is
-    the one the script made before."""
-    assert cut_path(path, CONTROL) == path.split("/", 1)[0]
+    the one the script made before. The workspace files are the exception:
+    `vmm` is a binary row, so each workspace file is a path of its own."""
+    expected = path if path in WORKSPACE_FILES else path.split("/", 1)[0]
+
+    assert cut_path(path, CONTROL) == expected
 
 
 @pytest.mark.parametrize("path", SAMPLES)
@@ -89,19 +96,20 @@ def test_a_path_under_a_nested_bundle_is_cut_to_the_bundle(
     path = f"{NESTED_BUNDLE}/src/lib.rs"
 
     assert cut_path(path, CONTROL) == NESTED_BUNDLE
-    assert _reached(path) == (BINARY_NAME,)
+    assert _reached(path) == (BINARY_NAME, VMM)
 
 
 def test_a_path_beside_a_nested_bundle_is_cut_to_the_first_segment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A crate that no build bundles moves no tag, and its line stays one
-    short line however many of its files changed."""
+    """A crate that the binary copy does not bundle reaches only `vmm`, the
+    row at `rust`. Its line stays one short line however many of its files
+    changed."""
     use_binary_catalog(monkeypatch)
 
     assert cut_path("rust/crates/other/src/lib.rs", CONTROL) == "rust"
     assert cut_path("rust/crates/creche-contracts-extra/src/lib.rs", CONTROL) == "rust"
-    assert _reached("rust/crates/other/src/lib.rs") == ()
+    assert _reached("rust/crates/other/src/lib.rs") == (VMM,)
 
 
 @pytest.mark.parametrize("path", WORKSPACE_FILES)
@@ -111,7 +119,7 @@ def test_a_workspace_file_is_not_cut(monkeypatch: pytest.MonkeyPatch, path: str)
     use_binary_catalog(monkeypatch)
 
     assert cut_path(path, CONTROL) == path
-    assert _reached(path) == (BINARY_NAME,)
+    assert _reached(path) == (BINARY_NAME, VMM)
 
 
 def test_the_longest_holding_path_wins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,7 +132,7 @@ def test_the_longest_holding_path_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     path = f"{NESTED_BUNDLE}/src/lib.rs"
 
     assert cut_path(path, CONTROL) == NESTED_BUNDLE
-    assert _reached(cut_path(path, CONTROL)) == _reached(path) == ("caregiver", BINARY_NAME)
+    assert _reached(cut_path(path, CONTROL)) == _reached(path) == ("caregiver", BINARY_NAME, VMM)
     assert cut_path("rust/crates/other/src/lib.rs", CONTROL) == "rust/crates"
 
 
@@ -135,7 +143,7 @@ def test_a_nested_component_path_is_reached(monkeypatch: pytest.MonkeyPatch) -> 
     path = "rust/crates/noticeboard/src/main.rs"
 
     assert cut_path(path, CONTROL) == "rust/crates/noticeboard"
-    assert _reached(cut_path(path, CONTROL)) == _reached(path) == (BINARY_NAME,)
+    assert _reached(cut_path(path, CONTROL)) == _reached(path) == (BINARY_NAME, VMM)
 
 
 def test_another_repositorys_nested_path_does_not_shape_the_cut(

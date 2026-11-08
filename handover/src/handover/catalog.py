@@ -139,6 +139,10 @@ class CatalogRow:
 #: `chaperone` is the Rust program of the chaperone repository, and its
 #: manifest is at the root of that repository. Its row replaced the row of
 #: the Python `chaperone` of this repository.
+#:
+#: `vmm` is the Rust workspace of this repository, at `rust/`: four
+#: programs, `vmm`, `guest-init`, `cloud-hypervisor` and `ch-remote`, in one
+#: archive (CH7-5, CH9, item 12 (1)). It is the last row.
 CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("chaperone", Repo.CHAPERONE, ".", Kind.BINARY, Releases.YES),
     CatalogRow(
@@ -164,6 +168,7 @@ CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("registry-data", Repo.REGISTRY, ".", Kind.DATA, Releases.NO),
     CatalogRow("host", Repo.CRECHE_RELEASE, ".", Kind.UNITS, Releases.YES),
     CatalogRow("memory", Repo.CRECHE, "memory", Kind.VENV, Releases.YES, (), Lock.OWN),
+    CatalogRow("vmm", Repo.CRECHE, "rust", Kind.BINARY, Releases.YES),
 )
 
 CATALOG_BY_NAME: dict[str, CatalogRow] = {row.name: row for row in CATALOG}
@@ -236,8 +241,12 @@ RETIRING: frozenset[str] = frozenset()
 #: and both read. Discovery tolerates the absent file and the allocator tags
 #: none of them: a tag is a version somebody can release, and there is no
 #: tree to release yet. A name leaves this set in the commit that adds its
-#: directory. Empty now: `handover` arrived with its directory.
-ARRIVING: frozenset[str] = frozenset()
+#: directory.
+#:
+#: `vmm` arrives here one release before `rust/component.toml`, so the
+#: installed handover holds the row before any checkout holds the manifest
+#: (CH7-5, CH76 rule 1). The manifest PR takes it out again.
+ARRIVING: frozenset[str] = frozenset({"vmm"})
 
 #: Repositories that a host may not have cloned yet. Discovery tolerates the
 #: absent manifest of each component of such a repository, as it does for a
@@ -269,8 +278,8 @@ MANIFEST_CONTRACT_MINOR = 22
 LAST_IN_ORDER = "handover"
 
 #: spec §9: at most ten entries. The catalog minus `registry-data`, which
-#: never releases, is nine rows with the coming `memory` row, and ten with
-#: the `vmm` row (CH7-5).
+#: never releases, is ten rows with the `vmm` row, at the cap (CH7-5).
+#: `tests/test_handover_catalog_cap.py` fails when a releasing row passes it.
 MAX_REQUEST_COMPONENTS = 10
 
 #: The limits of the two assets of a binary component. CI refuses an
