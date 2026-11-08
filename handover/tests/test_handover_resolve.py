@@ -37,6 +37,7 @@ EDGES: dict[str, tuple[str, str, str]] = {
     "registry-data": ("", "", ""),
     "host": ("", "", ""),
     "memory": ("", "", ""),
+    "vmm": ("", "", ""),
 }
 
 LIVE = {
@@ -260,8 +261,8 @@ def test_the_document_has_contract_06_paragraph_9_fields() -> None:
 #: text of the manifest contract, 0.22, so a new version moves both hashes.
 #: Each document also lists every row of the catalog, so a row that leaves
 #: or arrives moves both hashes too.
-HASH_OF_TWO = "sha256:8637002b97a1d26905b9e6df36834772613d0fdb456f3c2a67946a5aa3072ab5"
-HASH_OF_A_FRACTION = "sha256:79b806c9801f16093cde09e0bcd225a0d702bc41b60b20ecac947fdec4cfafe1"
+HASH_OF_TWO = "sha256:f3e39e4d57ec9d0925f51f7c1f52adb9e16ddcf9f041d94679612a1f5b227a68"
+HASH_OF_A_FRACTION = "sha256:a8e227591361b74f9b3bd003eeff3fa4570830ea3e41043369d39a2aee413638"
 
 
 def test_the_hash_of_a_document_is_the_hash_of_before() -> None:

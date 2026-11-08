@@ -369,26 +369,30 @@ def test_an_arriving_component_reads_absent_and_is_never_tagged(
 ) -> None:
     """A row may land one release before its directory, because an
     installed executor learns a name only from its own release. `handover`
-    came that way. A tree with no directory for an arriving name reads
-    complete, and no run tags it: not a first tag, and not a bump. The set
-    is empty today, so the test fills it."""
-    assert frozenset() == ARRIVING
-    arriving = "handover"
-    monkeypatch.setattr(allocate, "ARRIVING", frozenset({arriving}))
-    monkeypatch.setattr(discovery, "ARRIVING", frozenset({arriving}))
-    row = CATALOG_BY_NAME[arriving]
-    present = tuple(one.name for one in CATALOG if one.repo is Repo.CRECHE and one.name != arriving)
+    came that way, and `vmm` after it (CH7-5). A tree with no
+    directory for an arriving name reads complete, and no run tags it: not
+    a first tag, and not a bump. The test reads the real set and adds
+    `handover`, so it proves the rule whatever the real set holds."""
+    arriving = ARRIVING | {"handover"}
+    monkeypatch.setattr(allocate, "ARRIVING", arriving)
+    monkeypatch.setattr(discovery, "ARRIVING", arriving)
+    rows = [CATALOG_BY_NAME[name] for name in sorted(arriving)]
+    present = tuple(
+        one.name for one in CATALOG if one.repo is Repo.CRECHE and one.name not in arriving
+    )
     for name in present:
         write_manifest(tmp_path, name, manifest_text(name))
 
     found = discover([tmp_path])
     first = _plan(("pyproject.toml",), tags=OLD_TAGS)
-    bumped = _plan((f"{row.path}/component.yaml", "uv.lock"), tags=ALL_TAGGED)
+    changed = tuple(f"{row.path}/component.yaml" for row in rows)
+    bumped = _plan((*changed, "uv.lock", "rust/Cargo.lock"), tags=ALL_TAGGED)
 
-    assert not (tmp_path / row.path).exists()
-    assert arriving not in found.missing
-    assert arriving not in {item.component for item in first}
-    assert arriving not in {item.component for item in bumped}
+    for row in rows:
+        assert not (tmp_path / row.path).exists()
+    assert not arriving & set(found.missing)
+    assert not arriving & {item.component for item in first}
+    assert not arriving & {item.component for item in bumped}
 
 
 def test_a_docs_only_merge_still_gives_an_untagged_component_its_first() -> None:

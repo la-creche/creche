@@ -169,10 +169,10 @@ def test_the_kinds_are_the_old_ones_binary_and_units() -> None:
     assert {str(one) for one in Kind} == expected
 
 
-def test_only_chaperone_is_binary() -> None:
-    """The Rust chaperone of the chaperone repository is the one binary
-    component."""
-    assert [row.name for row in CATALOG if row.kind is Kind.BINARY] == ["chaperone"]
+def test_the_binary_rows_are_chaperone_and_vmm() -> None:
+    """The Rust chaperone of the chaperone repository, and the `vmm` of this
+    repository's Rust workspace (CH7-5)."""
+    assert [row.name for row in CATALOG if row.kind is Kind.BINARY] == ["chaperone", "vmm"]
 
 
 def test_an_uninstalled_component_never_reads_as_binary() -> None:
