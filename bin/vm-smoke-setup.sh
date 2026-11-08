@@ -27,8 +27,10 @@
 #      hard RLIMIT_NOFILE of Hyperion's user manager, 1048576. The runner
 #      gives 65536, and `vmm serve` exits 78 below its need of 102720
 #      (decision CH67 rule 4, which keeps the vmm unit free of a
-#      LimitNOFILE= line). The script fails unless a unit of the user
-#      manager gets that hard limit.
+#      LimitNOFILE= line). fs.nr_open must hold that limit. A user manager
+#      that runs before the drop-ins gets the limit in place, by root, and
+#      a re-exec. The script fails unless a unit of the user manager gets
+#      that hard limit, and then prints each limit on the way.
 #   6. It fetches the CH guest kernel (fact 53), checked by its sha256.
 #   7. It builds guest-init and the stand-in facade static for musl. It
 #      refuses a program with a PT_INTERP header, and first proves that the
@@ -146,6 +148,12 @@ for node in /dev/kvm /dev/vhost-vsock; do
 done
 
 say "give the user manager the hard RLIMIT_NOFILE of Hyperion, $NOFILE_HARD"
+# No process gets a hard limit above fs.nr_open, so it must hold the limit.
+nr_open=$(cat /proc/sys/fs/nr_open)
+say "fs.nr_open is $nr_open"
+if ((nr_open < NOFILE_HARD)); then
+  sudo sysctl -q -w "fs.nr_open=$NOFILE_HARD"
+fi
 sudo mkdir -p /etc/systemd/system/user@.service.d /etc/systemd/user.conf.d
 printf '[Service]\nLimitNOFILE=%s\n' "$NOFILE_HARD" |
   sudo tee /etc/systemd/system/user@.service.d/90-creche-nofile.conf > /dev/null
@@ -165,9 +173,28 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 [[ -S "$bus" ]] || die "no user manager: $bus is missing"
-echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "${GITHUB_ENV:?GITHUB_ENV names the env file of the job}"
-hard=$(XDG_RUNTIME_DIR=/run/user/$(id -u) systemd-run --user --pipe --quiet --collect sh -c 'ulimit -Hn')
-[[ "$hard" == "$NOFILE_HARD" ]] || die "a user unit gets the hard RLIMIT_NOFILE $hard, not $NOFILE_HARD"
+XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export XDG_RUNTIME_DIR
+echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "${GITHUB_ENV:?GITHUB_ENV names the env file of the job}"
+manager=$(systemctl show -p MainPID --value "user@$(id -u).service")
+manager_hard() { awk '/^Max open files/ { print $5 }' "/proc/$manager/limits"; }
+say "the user manager (pid $manager) has the hard RLIMIT_NOFILE $(manager_hard)"
+# A user manager that started before the drop-ins keeps its old limit.
+# Root raises it in place, and a re-exec makes the manager read
+# DefaultLimitNOFILE of user.conf.d again for its new units.
+if (($(manager_hard) < NOFILE_HARD)); then
+  soft=$(awk '/^Max open files/ { print $4 }' "/proc/$manager/limits")
+  sudo prlimit --pid "$manager" --nofile="$soft:$NOFILE_HARD"
+  systemctl --user daemon-reexec
+  say "raised the user manager to the hard RLIMIT_NOFILE $(manager_hard)"
+fi
+hard=$(systemd-run --user --pipe --quiet --collect sh -c 'ulimit -Hn')
+if [[ "$hard" != "$NOFILE_HARD" ]]; then
+  systemctl show -p LimitNOFILE "user@$(id -u).service" >&2
+  systemctl --user show -p DefaultLimitNOFILE >&2
+  grep '^Max open files' "/proc/$manager/limits" >&2
+  die "a user unit gets the hard RLIMIT_NOFILE $hard, not $NOFILE_HARD"
+fi
 
 cd "$dir"
 
