@@ -357,7 +357,7 @@ fn kvm_build_wires_each_key_to_its_part() {
 /// root-owned `digests.json` reaches the set of new starts with no vmm
 /// restart. A compose step that never runs the follow fails here.
 /// Decision CH77 rule 2: the swap comes no sooner than `HOOK_TIMEOUT`
-/// after the rename, and within a few polls after it. The `kvm_` test of
+/// plus one `POLL` after the rename, and within a few polls after it. The `kvm_` test of
 /// `tests/image_follow.rs` boots `examples/phase3_vm.rs`, which runs its
 /// own follow, so only this test proves the compose path.
 #[test]
@@ -392,7 +392,7 @@ fn kvm_serve_follows_a_new_digests_file() {
     };
     let swapped = runtime.block_on(async {
         tokio::time::timeout(
-            HOOK_TIMEOUT + POLL * 3,
+            HOOK_TIMEOUT + POLL * 4,
             digests.wait_for(|set| *set == want),
         )
         .await
@@ -400,7 +400,10 @@ fn kvm_serve_follows_a_new_digests_file() {
     });
     assert!(swapped, "{:?}", *digests.borrow());
     let waited = renamed.elapsed();
-    assert!(waited >= HOOK_TIMEOUT, "the swap came after {waited:?}");
+    assert!(
+        waited >= HOOK_TIMEOUT + POLL,
+        "the swap came after {waited:?}"
+    );
 
     term.send(()).unwrap();
     let ended = runtime.block_on(async { tokio::time::timeout(WAIT, run).await });

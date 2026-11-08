@@ -279,9 +279,10 @@ file (plan PR V1, decisions CH76 rule 8, CH77 rules 2 and 3).
    nothing.
 3. New bytes wait. The follow imports them only after they read the
    same at each poll for `follow::HOOK_TIMEOUT` (300 s), the timeout of
-   the disks verify hook: `follow::SETTLE_POLLS` (60) polls (decision
-   CH77 rule 2). Any other reading ends the wait, and the next new bytes
-   wait from the start. The start of a wait logs one line.
+   the disks verify hook, plus one poll: `follow::SETTLE_POLLS` (61)
+   polls, 305 s (decision CH77 rule 2). Any other reading ends the
+   wait, and the next new bytes wait from the start. The start of a
+   wait logs one line.
 4. Settled bytes parse, and each entry goes into the digest store. Only
    when every entry imports does the follow swap the set, and it logs
    one line that names each digest. A parse or an import that fails
@@ -310,21 +311,25 @@ so the follow may log one `is missing` line between them.
 
 handover swaps the disks tree first and runs `vmm check-images` after it
 for at most 300 s (decision CH76 rule 6, gap Q68-6). The wait of step 3
-outlasts the hook (decision CH77 rule 2). So the follow never
-decompresses a disk while the hook does. A failed hook restores the
-previous tree inside the wait, and the follow then reads the bytes of
-the set of new starts, which end the wait and import nothing. So a
-release that its hook rolls back never reaches a VM, and a disks
-release reaches new starts about 5 min after its install. A restart of
-the vmm inside the wait imports the file that it reads at once, as each
-vmm start does (decision CH58 rule 5).
+is one poll longer than the hook timeout (decision CH77 rule 2). The
+first read of the new bytes comes no sooner than the rename. The extra
+poll covers the start of the hook after the rename, and the kill of a
+hook that times out and the restore after it. The wait assumes that
+these take 5 s at most. So the wait outlasts the hook, also a hook that
+times out, and the follow never decompresses a disk while the hook
+does. A failed hook restores the previous tree inside the wait, and the
+follow then reads the bytes of the set of new starts, which end the wait
+and import nothing. So a release that its hook rolls back never reaches
+a VM, and a disks release reaches new starts about 5 min after its
+install. A restart of the vmm inside the wait imports the file that it
+reads at once, as each vmm start does (decision CH58 rule 5).
 
 `src/image_root/follow/tests.rs` proves the steps on the bytes in the
 rust job, one `Follow::apply` for each poll: a swap only after every
 import, a failed import that keeps the old set, unchanged bytes that
 import nothing, and a failed import that tries again and swaps once its
 fault clears. For the wait (decision CH77 rule 2) it proves that bytes
-that stay the same for 60 polls import once, bytes that change inside
+that stay the same for 61 polls import once, bytes that change inside
 the wait import nothing, and a rolled-back file imports nothing. Each of
 the three fails when the wait is removed. It also proves that bytes
 whose import failed wait again in full once other bytes come between.
@@ -336,8 +341,9 @@ slept on the old disk cold-boots on the new one. That test boots
 `kvm_serve_follows_a_new_digests_file` of `src/compose/tests.rs` proves
 the compose path: `Vmm::run` of `build` sees a new root-owned
 `digests.json` and swaps the set of new starts no sooner than
-`HOOK_TIMEOUT` after the rename and within three polls after it. Each of
-the two kvm_ tests waits 300 s, so the kvm job takes about 10 min more.
+`HOOK_TIMEOUT` plus one poll after the rename, and within four polls
+after `HOOK_TIMEOUT`. Each of the two kvm_ tests waits about 305 s, so
+the kvm job takes about 10 min more.
 
 ## The verify hooks
 
@@ -396,8 +402,9 @@ failed entry names its file.
 handover runs check-images after it swaps the disks tree, so the hook
 does not run before the vmm reads the new files. The digests follow of
 a running vmm imports the new set only after the 300 s of the hook
-(decision CH77 rule 2, see "The digests follow"). A failed hook
-restores the previous tree before the follow imports it.
+plus one 5 s poll (decision CH77 rule 2, see "The digests follow"). The
+extra poll covers the start of the hook and a restore after a timeout.
+A failed hook restores the previous tree before the follow imports it.
 
 `tests/verify.rs` and `tests/check_images.rs` run the program in the rust
 job. A test user owns each copy there, so they prove the refusals: an
@@ -1599,10 +1606,12 @@ the runner.
 33. Closed by decision CH77 rule 2: the digests follow imports new
     bytes of `digests.json` only after they stay the same for
     `follow::HOOK_TIMEOUT`, the 300 s of the disks verify hook (gap
-    Q68-6). So the follow never decompresses a disk while `vmm
-    check-images` does, and a release that its hook rolls back never
-    reaches a VM. A disks release reaches new starts about 5 min after
-    its install. Decision CH77 rule 3 sets the retry of a failed import
+    Q68-6), plus one 5 s poll. The extra poll covers the start of the
+    hook after the rename and a restore after a timeout, which the wait
+    assumes take 5 s at most. So the follow never decompresses a disk
+    while `vmm check-images` does, and a release that its hook rolls
+    back never reaches a VM. A disks release reaches new starts about
+    5 min after its install. Decision CH77 rule 3 sets the retry of a failed import
     every 12 polls (1 min), with one log line per distinct fault.
 
 ## Caller duties

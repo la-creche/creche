@@ -33,8 +33,10 @@
 //! every 5 s with the same checks, imports each new entry and then swaps
 //! the `Digests` of each new start (decision CH76 rule 8). handover runs
 //! the hook after it swaps the tree. The follow imports new bytes only
-//! after they stay the same for the 300 s of the hook (decision CH77 rule
-//! 2), so it never imports while the hook runs. A failed hook restores
+//! after they stay the same for the 300 s of the hook plus one 5 s poll
+//! (decision CH77 rule 2). The extra poll covers the start of the hook
+//! and a restore after a timeout, so the follow never imports while the
+//! hook runs. A failed hook restores
 //! the previous tree inside that wait, and the follow imports nothing.
 
 use std::fmt;

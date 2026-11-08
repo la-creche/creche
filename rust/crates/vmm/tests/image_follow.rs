@@ -1,10 +1,10 @@
 //! The kvm_ test of the digests follow (plan PR V1, decisions CH7-6,
 //! CH58 rule 5, CH76 rule 8, CH77 rule 2). A disks release replaces
 //! `digests.json` while the vmm runs. The follow reads the root-owned
-//! file, waits `HOOK_TIMEOUT`, imports the new root disk and swaps the
-//! set of new starts. A snapshot of a VM on
-//! the old disk holds the old key, so the next start drops it and
-//! cold-boots on the new disk.
+//! file, waits `HOOK_TIMEOUT` plus one `POLL`, imports the new root disk
+//! and swaps the set of new starts. A snapshot of a VM on the old disk
+//! holds the old key, so the next start drops it and cold-boots on the
+//! new disk.
 //!
 //! The test boots `examples/phase3_vm.rs` with the helpers of
 //! `tests/common/mod.rs`, which runs the follow as `vmm serve` does. Its
@@ -77,15 +77,15 @@ fn kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk() {
     let renamed = Instant::now();
     fs::rename(&staged, image.join(DIGESTS_FILE)).unwrap();
 
-    // 3. New starts read the old disk for `HOOK_TIMEOUT` (decision CH77
-    // rule 2), then the new disk within a few polls.
-    let deadline = renamed + HOOK_TIMEOUT + POLL * 3 + BOOT;
+    // 3. New starts read the old disk for `HOOK_TIMEOUT` plus one `POLL`
+    // (decision CH77 rule 2), then the new disk within a few polls.
+    let deadline = renamed + HOOK_TIMEOUT + POLL * 4 + BOOT;
     loop {
         let answer = vmm.ask("root");
         if answer == format!("root {new}") {
             let waited = renamed.elapsed();
             assert!(
-                waited >= HOOK_TIMEOUT,
+                waited >= HOOK_TIMEOUT + POLL,
                 "step 3: the swap came after {waited:?}"
             );
             break;

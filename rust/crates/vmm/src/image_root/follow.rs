@@ -9,11 +9,11 @@
 //!    the edit follow polls the reach files (decision CH69 rule 11).
 //!    Bytes equal to the bytes of the set of new starts import nothing.
 //! 2. New bytes wait: the follow imports them only after they read the
-//!    same at each poll for `HOOK_TIMEOUT`, the timeout of the disks
-//!    verify hook (decision CH77 rule 2). Any other reading ends the
-//!    wait. So a release that its hook rolls back never reaches a new
-//!    start, and the import never decompresses a disk while the hook
-//!    does.
+//!    same at each poll for `SETTLE_POLLS` polls, 305 s. That is
+//!    `HOOK_TIMEOUT`, the timeout of the disks verify hook, plus one poll
+//!    (decision CH77 rule 2). Any other reading ends the wait. So a
+//!    release that its hook rolls back never reaches a new start, and the
+//!    import never decompresses a disk while the hook does.
 //! 3. Settled bytes parse with `image_root::parse`, and
 //!    `ImageSet::import` puts each entry into the digest store, one file
 //!    at a time.
@@ -46,12 +46,17 @@
 //!
 //! handover swaps the tree first and runs `vmm check-images` after it
 //! for at most `HOOK_TIMEOUT` (decision CH76 rule 6, gap Q68-6). The wait
-//! of step 2 outlasts the hook (decision CH77 rule 2). A failed hook puts
-//! the previous tree back inside the wait, and the follow then reads the
-//! bytes of the set of new starts again, which end the wait and import
-//! nothing. So a disks release reaches new starts about 5 min after its
-//! install. A restart of the vmm inside the wait imports the file that it
-//! reads at once, as each vmm start does (decision CH58 rule 5).
+//! of step 2 is one poll longer than the hook timeout (decision CH77 rule
+//! 2). The first read of the new bytes comes no sooner than the rename.
+//! The extra poll covers the start of the hook after the rename, and the
+//! kill of a hook that times out and the restore after it. The wait
+//! assumes that these take 5 s at most. So the wait outlasts the hook,
+//! also a hook that times out. A failed hook puts the previous tree back
+//! inside the wait, and the follow then reads the bytes of the set of new
+//! starts again, which end the wait and import nothing. So a disks
+//! release reaches new starts about 5 min after its install. A restart of
+//! the vmm inside the wait imports the file that it reads at once, as each
+//! vmm start does (decision CH58 rule 5).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -86,10 +91,13 @@ pub const RETRY_POLLS: u32 = 12;
 pub const HOOK_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The polls that new bytes must wait before their import: `HOOK_TIMEOUT`
-/// over `POLL`, rounded up, so 60 (decision CH77 rule 2). Each poll
-/// sleeps `POLL` before its read, so these polls span at least
-/// `HOOK_TIMEOUT`.
-pub const SETTLE_POLLS: u64 = HOOK_TIMEOUT.as_secs().div_ceil(POLL.as_secs());
+/// over `POLL`, rounded up, plus one poll, so 61 (decision CH77 rule 2).
+/// Each poll sleeps `POLL` before its read, so these polls span at least
+/// `HOOK_TIMEOUT` plus one `POLL`, 305 s. The first read comes no sooner
+/// than the rename of handover. The extra poll covers the time from that
+/// rename to the start of the hook, and after a timeout the kill of the
+/// hook and the restore of the previous tree, up to 5 s in all.
+pub const SETTLE_POLLS: u64 = HOOK_TIMEOUT.as_secs().div_ceil(POLL.as_secs()) + 1;
 
 /// One read of `digests.json`: its bytes, or the text of a read that took
 /// no bytes.
@@ -99,8 +107,8 @@ enum Reading {
     Unread(String),
 }
 
-/// New bytes that wait to stay the same for `HOOK_TIMEOUT` (decision
-/// CH77 rule 2).
+/// New bytes that wait to stay the same for `SETTLE_POLLS` polls
+/// (decision CH77 rule 2).
 #[derive(Debug)]
 struct Pending {
     bytes: Vec<u8>,
@@ -228,7 +236,7 @@ impl Follow {
                         return Some(format!(
                             "a new {DIGESTS_FILE} imports once its bytes stay the same for {} s, \
                              so new starts keep the last set until then",
-                            HOOK_TIMEOUT.as_secs()
+                            POLL.as_secs() * SETTLE_POLLS
                         ));
                     }
                 }

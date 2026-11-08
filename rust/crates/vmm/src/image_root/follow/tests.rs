@@ -93,7 +93,7 @@ fn digest(text: &str) -> ImageDigest {
 }
 
 /// The first line of the wait of decision CH77 rule 2.
-const WAITS: &str = "a new digests.json imports once its bytes stay the same for 300 s";
+const WAITS: &str = "a new digests.json imports once its bytes stay the same for 305 s";
 
 /// Reads `bytes` at each poll of the wait of decision CH77 rule 2: the
 /// first read logs the wait, and each later read imports nothing. It
@@ -226,14 +226,15 @@ fn a_failed_import_tries_again_until_it_swaps() {
     assert_eq!(follow.apply(Ok(next)), None);
 }
 
-/// Decision CH77 rule 2: the wait is the 300 s of the disks verify hook,
-/// and its polls span at least that long. Decision CH77 rule 3: a retry
-/// comes every 12 polls, one minute.
+/// Decision CH77 rule 2: the wait is the 300 s of the disks verify hook
+/// plus one poll, and its polls span at least that long. The extra poll
+/// covers the hook start after the rename and a restore after a timeout.
+/// Decision CH77 rule 3: a retry comes every 12 polls, one minute.
 #[test]
 fn the_wait_outlasts_the_hook_and_a_retry_comes_each_minute() {
     assert_eq!(HOOK_TIMEOUT, Duration::from_secs(300));
-    assert_eq!(SETTLE_POLLS, 60);
-    assert!(POLL * u32::try_from(SETTLE_POLLS).unwrap() >= HOOK_TIMEOUT);
+    assert_eq!(SETTLE_POLLS, 61);
+    assert!(POLL * u32::try_from(SETTLE_POLLS).unwrap() >= HOOK_TIMEOUT + POLL);
     assert_eq!(RETRY_POLLS, 12);
     assert_eq!(POLL * RETRY_POLLS, Duration::from_secs(60));
 }
