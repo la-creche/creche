@@ -4,19 +4,17 @@
 //! each VM scope binds to its unit, as `launch_chain` runs in
 //! `creche-vmm-confine/tests/kvm_vm.rs` (decision CH60 rule 1).
 //!
-//! `serve <version program> <session> <family>` reads the vmm config from
-//! its env with `Config::read`, as `vmm serve` does. It composes the parts
-//! of the compose step: `guest_init::write_initramfs`, `image_root::read`,
-//! the fault book, the rows, the spawner, `ChTools` and one `ColdBoot`
-//! with its plane bridges, family-state reply, retire and restore. It
-//! creates the row of `<session>` in `<family>` with origin `door`. Like
-//! the compose step, it first runs the leftover sweep (decision CH19 (4))
-//! and the owner check of CH, ch-remote and git (decisions CH67 rule 1,
-//! CH69 rule 17). The
-//! version check runs `<version program>`, not `VMM_CH_PROGRAM`: the
-//! upstream CH of the runner may print its git tag, and the CI-built CH
-//! with the `CH_VERSION` string comes in phase 4 (decision CH7-4, fact
-//! 78). It binds no `vmm.sock`.
+//! `serve <session> <family>` reads the vmm config from its env with
+//! `Config::read`, as `vmm serve` does. It composes the parts of the
+//! compose step: `guest_init::write_initramfs`, `image_root::read`, the
+//! fault book, the rows, the spawner, `ChTools` and one `ColdBoot` with
+//! its plane bridges, family-state reply, retire and restore. It creates
+//! the row of `<session>` in `<family>` with origin `door`. Like the
+//! compose step, it first runs the leftover sweep (decision CH19 (4)) and
+//! the owner check of CH, ch-remote and git (decisions CH67 rule 1, CH69
+//! rule 17). Then `check_cloud_hypervisor` checks the version of
+//! `VMM_CH_PROGRAM`, the CH that the kvm job builds (decisions CH36 G19,
+//! CH75). It binds no `vmm.sock`.
 //!
 //! It prints `ready`, then reads one step per stdin line and answers one
 //! stdout line:
@@ -37,7 +35,7 @@
 
 use std::ffi::OsString;
 use std::io::{self, BufRead as _, Write as _};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
@@ -90,13 +88,8 @@ fn main() -> ExitCode {
         [mode, plan] if mode == stage::MODE => stage::run(std::slice::from_ref(plan))
             .map(|never| match never {})
             .map_err(Failure::from),
-        [mode, version, session, family] if mode == "serve" => {
-            serve(Path::new(version), session, family)
-        }
-        _ => Err(
-            "usage: phase3_vm launch | launch-stage <plan> | serve <version program> <session> <family>"
-                .into(),
-        ),
+        [mode, session, family] if mode == "serve" => serve(session, family),
+        _ => Err("usage: phase3_vm launch | launch-stage <plan> | serve <session> <family>".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -108,7 +101,7 @@ fn main() -> ExitCode {
 }
 
 /// The serve role. It returns at the end of stdin.
-fn serve(version: &Path, session: &OsString, family: &OsString) -> Result<(), Failure> {
+fn serve(session: &OsString, family: &OsString) -> Result<(), Failure> {
     let config = Config::read()?;
     for unit in stop_all(&config.systemctl)? {
         eprintln!("phase3_vm: stopped the leftover unit {unit}");
@@ -116,7 +109,7 @@ fn serve(version: &Path, session: &OsString, family: &OsString) -> Result<(), Fa
     check_program(CH, config.ch.path())?;
     check_program(CH_REMOTE, config.ch_remote.path())?;
     check_program(GIT, config.git.path())?;
-    let ch_version = check_cloud_hypervisor(version, VERSION_WAIT)?;
+    let ch_version = check_cloud_hypervisor(config.ch.path(), VERSION_WAIT)?;
     let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
     let digests = image_root::read(&config.image_root)?.import(&images)?;
     let initramfs = write_initramfs(config.guest_init.path(), &images)?.digest();
