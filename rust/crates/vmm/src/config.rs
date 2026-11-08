@@ -14,6 +14,13 @@
 //! `KillScopesConfig::read` is the config of `vmm kill-scopes`, the
 //! `ExecStopPost=` step of the unit (decision CH63). It reads only
 //! `AGENT_SYSTEMCTL_PROGRAM`, with the same check as `Config`.
+//!
+//! `VerifyConfig` and `CheckImagesConfig` are the configs of the two
+//! verify hooks, `vmm verify` and `vmm check-images` (decision CH76 rules
+//! 2 and 6). handover gives a hook no unit env (contract 06 §4 rule 7), so
+//! each hook reads its keys from the env file of the unit
+//! (`crate::env_file`) and passes its lookup here. Each key gets the check
+//! of `Config`.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -263,6 +270,57 @@ impl KillScopesConfig {
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, ConfigError> {
         Ok(Self {
             systemctl: program(&lookup, SYSTEMCTL)?,
+        })
+    }
+}
+
+/// What `vmm verify` reads from the env file of the unit (decision CH76
+/// rule 2): the three program keys. The vmm program itself has no key.
+#[derive(Debug)]
+pub struct VerifyConfig {
+    /// `VMM_CH_PROGRAM`.
+    pub ch: Program,
+    /// `VMM_CH_REMOTE_PROGRAM`.
+    pub ch_remote: Program,
+    /// `VMM_GUEST_INIT_PROGRAM`.
+    pub guest_init: Program,
+}
+
+impl VerifyConfig {
+    /// Reads each key through `lookup`, the lookup of the env file.
+    ///
+    /// # Errors
+    ///
+    /// The first key that is missing or bad, in the order of the struct.
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, ConfigError> {
+        Ok(Self {
+            ch: program(&lookup, CH)?,
+            ch_remote: program(&lookup, CH_REMOTE)?,
+            guest_init: program(&lookup, GUEST_INIT)?,
+        })
+    }
+}
+
+/// What `vmm check-images` reads from the env file of the vmm unit
+/// (decision CH76 rule 6): the image root and the `zstd` of the import.
+#[derive(Debug)]
+pub struct CheckImagesConfig {
+    /// `VMM_IMAGE_ROOT`.
+    pub image_root: PathBuf,
+    /// `VMM_ZSTD_PROGRAM`.
+    pub zstd: Program,
+}
+
+impl CheckImagesConfig {
+    /// Reads each key through `lookup`, the lookup of the env file.
+    ///
+    /// # Errors
+    ///
+    /// The first key that is missing or bad, in the order of the struct.
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, ConfigError> {
+        Ok(Self {
+            image_root: path(&lookup, IMAGE_ROOT)?,
+            zstd: program(&lookup, ZSTD)?,
         })
     }
 }
