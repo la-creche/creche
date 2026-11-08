@@ -42,6 +42,10 @@
 //!    one is bound, as the bound set (decisions CH49 rule 3, CH69 rule
 //!    13).
 //! 7. The dial of guest port 1201 (decision CH50 rule 2).
+//! 8. The VM joins the table, and the follow of its reach files starts
+//!    (`egress::watch`, plan PR E3, decisions CH49 rule 3, CH69 rules 11
+//!    to 13). A failed deny check after an edit writes
+//!    `egress_assert_failed` and stops the VM (decision CH69 rule 12).
 //!
 //! Each fault but `host_full` goes to the fault file of the family
 //! (decisions CH21-1, CH6-3). A fault after the launch stops the VM.
@@ -72,7 +76,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use creche_vmm_confine::admission::{Admission, Gate, Limits, Running, decide, free_bytes};
 use creche_vmm_confine::command::{Boot, ChCommand, DiskLimit};
-use creche_vmm_confine::deny::{check, cmdline_of};
+use creche_vmm_confine::deny::cmdline_of;
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::faults::{FaultBook, FaultCode};
 use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
@@ -91,9 +95,7 @@ use creche_vmm_store::serial_log::SerialLog;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
-use creche_wire::{
-    FamilyName, FamilyShape, GuestEvent, HostPort, PerFlavor, SessionId, SessionRow,
-};
+use creche_wire::{FamilyName, FamilyShape, GuestEvent, PerFlavor, SessionId, SessionRow};
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
@@ -104,6 +106,7 @@ use crate::control::{
 };
 use crate::egress::log::Log;
 use crate::egress::proxy;
+use crate::egress::watch::{Follow, Reach, Served, Watch};
 use crate::family_state::{self, Server};
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
@@ -232,8 +235,8 @@ struct Vm<P> {
     link_id: Option<LinkId>,
     /// The snapshot key of the VM. `None` after a failed stop.
     key: Option<SnapshotKey>,
-    /// The host listeners of the VM (plan PRs V6, V8, M1 and E2). They go
-    /// with the entry, so the listeners close when the VM leaves the
+    /// The host listeners of the VM (plan PRs V6, V8, M1, E2 and E3). They
+    /// go with the entry, so the listeners close when the VM leaves the
     /// table. `None` once the vmm killed the VM. The box keeps each entry
     /// of the table small.
     listeners: Option<Box<Listeners>>,
@@ -242,15 +245,15 @@ struct Vm<P> {
 }
 
 /// The served host listeners of one VM: the plane bridges (plan PR V6),
-/// the family-state reply (plan PR V8), the mirror of a family with a
-/// clone list (plan PR M1) and the egress proxy of a family with a list
-/// (plan PR E2). The drop closes each one.
+/// the family-state reply (plan PR V8), and the follow of the reach files
+/// (plan PR E3), which holds the mirror of a family with a clone list
+/// (plan PR M1) and the egress proxy of a family with a list (plan PR
+/// E2). The drop closes each one.
 #[derive(Debug)]
 struct Listeners {
     _planes: Planes,
     _family_state: Server,
-    _mirror: Option<mirror::Server>,
-    _egress: Option<proxy::Server>,
+    _reach: Watch,
 }
 
 /// What the table holds for a session. Each entry holds its pool slot
@@ -464,6 +467,14 @@ impl<P: VmProcess> Eviction<P> {
         if let Some(vm) = self.vm.take() {
             lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
         }
+    }
+
+    /// Whether the CH of the VM exited. A failed status check counts as a
+    /// CH that runs.
+    fn exited(&mut self) -> bool {
+        self.vm
+            .as_mut()
+            .is_some_and(|vm| matches!(vm.process.exited(), Ok(true)))
     }
 
     /// Removes the stopped VM from the table and from `in_use`, and frees
@@ -1033,23 +1044,13 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
-    /// Runs `change` on the fault book for `family` in `spawn_blocking`.
-    /// A failed write is logged: the book keeps the faults, and its next
-    /// refresh writes them again.
+    /// Runs `change` on the fault book for `family` (`write_book`).
     async fn book(
         &self,
         family: &FamilyName,
         change: impl FnOnce(&mut FaultBook, &FamilyName, SystemTime) -> io::Result<()> + Send + 'static,
     ) {
-        let (faults, name) = (Arc::clone(&self.faults), family.clone());
-        let written = spawn_blocking(move || {
-            let mut book = faults.lock().unwrap_or_else(PoisonError::into_inner);
-            change(&mut book, &name, SystemTime::now())
-        })
-        .await;
-        if !matches!(written, Ok(Ok(()))) {
-            eprintln!("vmm: the fault file of {family} was not written");
-        }
+        write_book(&self.faults, family, change).await;
     }
 
     /// Writes the fault, then stops the VM of `pending`. After
@@ -1128,6 +1129,75 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         blocking(move || api.resume(&vm))
             .await
             .map_err(|error| (sandbox, format!("resuming the VM: {error}")))
+    }
+}
+
+/// Runs `change` on the fault book `faults` for `family` in
+/// `spawn_blocking`. A failed write is logged: the book keeps the faults,
+/// and its next refresh writes them again.
+async fn write_book(
+    faults: &Arc<Mutex<FaultBook>>,
+    family: &FamilyName,
+    change: impl FnOnce(&mut FaultBook, &FamilyName, SystemTime) -> io::Result<()> + Send + 'static,
+) {
+    let (faults, name) = (Arc::clone(faults), family.clone());
+    let written = spawn_blocking(move || {
+        let mut book = faults.lock().unwrap_or_else(PoisonError::into_inner);
+        change(&mut book, &name, SystemTime::now())
+    })
+    .await;
+    if !matches!(written, Ok(Ok(()))) {
+        eprintln!("vmm: the fault file of {family} was not written");
+    }
+}
+
+/// The end of the follow of the VM of `id` on the control link `link`: a
+/// bind or a deny check after an edit of a reach file failed with
+/// `message`. It takes the VM out of the table, writes
+/// `egress_assert_failed` to the fault file of `family` and stops the VM
+/// of that link (decisions CH21-1, CH69 rule 12). The stop sends the
+/// graceful stop first (decision CH19 (3)), and a later VM of the session
+/// has another link, so the stop leaves it alone (decision CH54 rule 6).
+///
+/// The VM entry, and so the follow, lives on while a stop or a retire
+/// ends its CH. A check in that window reads the command line of a CH
+/// that exited, so it fails with no fault in the VM. So the fault goes
+/// to the book only when this task takes the VM and its CH runs, or when
+/// the stop that it joined failed, so the VM may still run. A stop that
+/// ends the VM, a retire that ends it and a CH that exited on its own
+/// write no fault.
+async fn reach_failed<P: VmProcess>(
+    (stopper, faults): (Stopper<P>, Arc<Mutex<FaultBook>>),
+    family: FamilyName,
+    (id, link): (SessionId, LinkId),
+    message: String,
+) {
+    eprintln!("vmm: the deny check of {id} failed after an edit: {message}");
+    let raise = |message| {
+        write_book(&faults, &family, move |book, family, now| {
+            book.raise(family, FaultCode::EgressAssertFailed, message, now)
+        })
+    };
+    match stopper.take(&id, Some(link)).await {
+        Claim::Took(mut eviction, sender) => {
+            if eviction.exited() {
+                eprintln!("vmm: the CH of {id} exited before the check, so no fault is written");
+            } else {
+                raise(message).await;
+            }
+            if let Err(VmStopFailed { pid, error }) = stopper.finish(*eviction, sender).await {
+                eprintln!(
+                    "vmm: the VM of {id} (pid {pid}) did not stop after a failed check: {error}"
+                );
+            }
+        }
+        Claim::Ended(Ok(())) => {
+            eprintln!("vmm: a stop or a retire ended the VM of {id}, so no fault is written");
+        }
+        Claim::Ended(Err(VmStopFailed { pid, error })) => {
+            raise(message).await;
+            eprintln!("vmm: the VM of {id} (pid {pid}) did not stop after a failed check: {error}");
+        }
     }
 }
 
@@ -1298,26 +1368,57 @@ impl<P: VmProcess> Stopper<P> {
     // polls a `Starting` slot until the launch output kills the VM and
     // puts it in the table.
     async fn stop(&self, id: &SessionId, link: Option<LinkId>) -> Result<(), VmStopFailed> {
+        match self.take(id, link).await {
+            Claim::Took(eviction, sender) => self.finish(*eviction, sender).await,
+            Claim::Ended(result) => result,
+        }
+    }
+
+    /// Takes the VM of `id` for a stop, as `stop` does: a start or a
+    /// retire that holds the slot ends first. With `Some(link)`, only the
+    /// VM of the control link `link` counts (decision CH54 rule 6).
+    async fn take(&self, id: &SessionId, link: Option<LinkId>) -> Claim<P> {
         loop {
             match self.hold(id, link) {
-                Held::Free => return Ok(()),
+                Held::Free => return Claim::Ended(Ok(())),
                 Held::Busy => sleep(SLOT_POLL).await,
                 Held::Joins(mut outcome) => {
                     // A stop whose future was dropped sends no outcome. Its
                     // `Eviction` put the VM back, so the slot is read again.
                     let done = outcome.wait_for(Option::is_some).await;
                     if let Some(result) = done.ok().and_then(|done| done.clone()) {
-                        return result;
+                        return Claim::Ended(result);
                     }
                 }
-                Held::Takes(eviction, sender) => {
-                    let result = self.stop_taken(*eviction).await;
-                    sender.send_replace(Some(result.clone()));
-                    return result;
-                }
+                Held::Takes(eviction, sender) => return Claim::Took(eviction, sender),
             }
         }
     }
+
+    /// Stops the VM of `eviction`, which `take` took, and sends the
+    /// outcome to each stop that joined it.
+    async fn finish(
+        &self,
+        eviction: Eviction<P>,
+        sender: watch::Sender<Option<Result<(), VmStopFailed>>>,
+    ) -> Result<(), VmStopFailed> {
+        let result = self.stop_taken(eviction).await;
+        sender.send_replace(Some(result.clone()));
+        result
+    }
+}
+
+/// What `Stopper::take` found for a stop.
+enum Claim<P: VmProcess> {
+    /// This stop took the VM out of the table under a `Stopping` slot,
+    /// with the sender of its outcome.
+    Took(
+        Box<Eviction<P>>,
+        watch::Sender<Option<Result<(), VmStopFailed>>>,
+    ),
+    /// No VM of the link was there (`Ok`), or another stop of the VM
+    /// ended with this outcome.
+    Ended(Result<(), VmStopFailed>),
 }
 
 impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
@@ -1393,7 +1494,7 @@ fn dial_text(error: ControlError) -> String {
 }
 
 /// Runs `step` in `spawn_blocking` (decision CH36 G21).
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     step: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     spawn_blocking(step)
@@ -1480,12 +1581,16 @@ struct Booted<P> {
     planes: Bound,
     /// The family-state listener, bound before CH started.
     family_state: family_state::Bound,
+    /// The reach files at the launch, which the follow starts from (plan
+    /// PR E3).
+    reach: Reach,
     /// The mirror listener, bound before CH started for a family whose
     /// clone list holds a repo or does not read (decisions CH69 rule 13,
     /// CH73 rule 1).
     mirror: Option<mirror::Bound>,
     /// The egress proxy listener, bound before CH started for a family
-    /// whose list holds a host (decision CH49 rule 3).
+    /// whose list holds a host or does not read (decisions CH49 rule 3,
+    /// CH72 rule 3).
     egress: Option<proxy::Bound>,
 }
 
@@ -1520,14 +1625,16 @@ fn launch<L: Launcher>(
         family_state::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
     // Plan PR M1: the mirror listener has the same lifecycle, for a family
     // whose clone list holds a repo or does not read (decisions CH69 rule
-    // 13, CH73 rule 1).
-    let mirror = if binds_mirror(config, family) {
+    // 13, CH73 rule 1). So does the egress proxy listener (plan PR E2,
+    // decisions CH49 rule 3, CH72 rule 3).
+    let reach = Reach::read(&config.families, family);
+    let mirror = if reach.mirror() {
         let bound = mirror::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
         Some(bound)
     } else {
         None
     };
-    let egress = if binds_egress(config, family) {
+    let egress = if reach.egress() {
         let bound = proxy::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
         Some(bound)
     } else {
@@ -1607,35 +1714,10 @@ fn launch<L: Launcher>(
         restore,
         planes,
         family_state,
+        reach,
         mirror,
         egress,
     })
-}
-
-/// Whether the VM of `family` gets the mirror listener. It blocks. A clone
-/// list that holds a repo binds 1103 (decision CH69 rule 13). A present
-/// `repos.json` that does not read binds it too, so each clone is refused
-/// with `mirror::DENIED` and one stderr line that names `not_valid`
-/// (decision CH73 rule 1). An absent file or an empty list binds no 1103.
-/// A zero-byte file does not read, so it binds 1103 (CH73 rule 1).
-fn binds_mirror(config: &StartConfig, family: &FamilyName) -> bool {
-    match config.families.read_repos(family) {
-        Ok(list) => !list.repos.names().is_empty(),
-        Err(_) => true,
-    }
-}
-
-/// Whether the VM of `family` gets the egress proxy listener. It blocks.
-/// A list that holds a host binds 1104 (decision CH49 rule 3). A present
-/// `egress.json` that does not read binds it too, so each CONNECT is
-/// refused 403 with a `not_valid` log line (decision CH72 rule 3). An
-/// absent file or an empty list binds no 1104. A zero-byte file does not
-/// read, so it binds 1104 (decision CH72 rule 3).
-fn binds_egress(config: &StartConfig, family: &FamilyName) -> bool {
-    match config.families.read_egress(family) {
-        Ok(list) => !list.hosts.is_empty(),
-        Err(_) => true,
-    }
 }
 
 impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
@@ -1699,6 +1781,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
                 (
                     booted.planes,
                     booted.family_state,
+                    booted.reach,
                     booted.mirror,
                     booted.egress,
                 ),
@@ -1712,13 +1795,9 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
 
         let vsock = pending.run.vsock_socket();
         let link = self.control().replace(id);
-        // A fault from here on drops `listeners`, which closes the
-        // bridges, the family-state listener, the mirror and the egress
-        // proxy.
-        let (planes, state, mirror, egress) = bound;
-        // Decisions CH49 rule 3 and CH69 rule 13: the bound set of the deny
-        // check follows the listeners that the launch bound from the lists.
-        let (mirrored, proxied) = (mirror.is_some(), egress.is_some());
+        // A fault from here on drops `served`, which closes the bridges,
+        // the family-state listener, the mirror and the egress proxy.
+        let (planes, state, reach, mirror, egress) = bound;
         let families = &self.config.families;
         let served = planes.serve().and_then(|planes| {
             let family_state = state.serve(families.clone(), family.clone(), id.clone())?;
@@ -1732,15 +1811,17 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             let egress = egress
                 .map(|bound| bound.serve(families.clone(), family.clone(), id.clone(), log))
                 .transpose()?;
-            Ok(Listeners {
-                _planes: planes,
-                _family_state: family_state,
-                _mirror: mirror,
-                _egress: egress,
-            })
+            Ok((
+                planes,
+                family_state,
+                Served {
+                    mirror: mirror.into(),
+                    egress: egress.into(),
+                },
+            ))
         });
-        let listeners = match served {
-            Ok(listeners) => listeners,
+        let (planes, family_state, reached) = match served {
+            Ok(served) => served,
             Err(error) => {
                 let message = format!("serving the host listeners: {error}");
                 return Err(self
@@ -1766,6 +1847,19 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         turn_end(&self.rows, id, change).await;
         self.book(family, FaultBook::clear).await;
 
+        // The follow of plan PR E3 runs the same deny check after each edit.
+        let follow = Follow {
+            families: families.clone(),
+            family: family.clone(),
+            session: id.clone(),
+            run: pending.run.clone(),
+            planes: self.config.planes,
+            mirror: self.config.mirror.clone(),
+            log: Arc::clone(&self.config.egress_log),
+            cmdline,
+            ch: self.config.ch.clone(),
+            start,
+        };
         // Decision CH54 rule 2: the deny check runs after `ControlReady`
         // and before the dial of 1201 and the 101. Before CH execs, the
         // command line is the one of the launch step, and the check fails
@@ -1774,22 +1868,10 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // The bound set is the family-state port 1100 (plan PR V8), the
         // plane ports 1101 and 1102 (plan PR V6), 1103 for a family whose
         // clone list holds a repo or does not read (plan PR M1, decisions
-        // CH69 rule 13, CH73 rule 1), and
-        // 1104 for a family whose list holds a host or does not read (plan
-        // PR E2, decisions CH49 rule 3, CH72 rule 3).
-        let (ch, run) = (self.config.ch.clone(), pending.run.clone());
-        let [litellm, chaperone] = self.config.planes.rows().map(|(port, _)| port);
-        let mut ports = vec![HostPort::FamilyState, litellm, chaperone];
-        if mirrored {
-            ports.push(HostPort::GitMirror);
-        }
-        if proxied {
-            ports.push(HostPort::Egress);
-        }
-        let denied = blocking(move || {
-            check(&cmdline, &ch, &start, &run, &ports).map_err(|error| error.to_string())
-        })
-        .await;
+        // CH69 rule 13, CH73 rule 1), and 1104 for a family whose list
+        // holds a host or does not read (plan PR E2, decisions CH49 rule
+        // 3, CH72 rule 3).
+        let denied = follow.check(&reach).await;
         if let Err(message) = denied {
             let egress = FaultCode::EgressAssertFailed;
             let control = Some(&control);
@@ -1812,6 +1894,20 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let (sender, events) = control.split();
         let (stopper, rows) = (self.stopper(), Arc::clone(&self.rows));
         tokio::spawn(read_guest(events, (id.clone(), link), stopper, rows));
+        // Plan PR E3: the follow starts from the reading of the launch, so
+        // an edit since the launch moves the listeners at its first poll.
+        // Its fault stops the VM in a task of its own, because the stop
+        // drops the VM entry, which ends the follow (decision CH69 rule 12).
+        let parts = (self.stopper(), Arc::clone(&self.faults));
+        let (name, session) = (family.clone(), (id.clone(), link));
+        let failed = move |message| {
+            tokio::spawn(reach_failed(parts, name, session, message));
+        };
+        let listeners = Listeners {
+            _planes: planes,
+            _family_state: family_state,
+            _reach: follow.spawn(reach, reached, failed),
+        };
         pending.commit(sender, link, listeners);
         Ok(acp)
     }
