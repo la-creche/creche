@@ -58,6 +58,7 @@ impl Root {
         ImageSet {
             root: self.images(),
             manifest: parse(text).unwrap(),
+            bytes: text.as_bytes().to_vec(),
         }
     }
 
@@ -214,4 +215,53 @@ fn the_shared_vector_reads() {
     for (flavor, entry) in manifest.roots.iter() {
         assert_eq!(entry.file.0, format!("{}.ext4.zst", flavor.name()));
     }
+}
+
+/// Decision CH76 rule 6: `check` hashes each entry, passes each good one,
+/// and writes no file: no store dir appears.
+#[test]
+fn a_good_set_checks_and_writes_no_file() {
+    let root = Root::new("check");
+    let checks = root.set(&good()).check(&PathBuf::from("/usr/bin/zstd"));
+    let keys: Vec<&str> = checks.iter().map(|check| check.key).collect();
+    let expected: Vec<&str> = std::iter::once(KERNEL_KEY)
+        .chain(
+            PerFlavor::every(SandboxFlavor::name)
+                .iter()
+                .map(|(_, &name)| name),
+        )
+        .collect();
+    assert_eq!(keys, expected);
+    for check in &checks {
+        assert!(check.result.is_ok(), "{check:?}");
+    }
+    assert!(!root.0.join("state").exists());
+}
+
+/// A wrong digest fails its entry and names it, and the check goes on to
+/// each later entry. A missing file fails its entry too.
+#[test]
+fn a_wrong_digest_fails_and_names_the_entry() {
+    let root = Root::new("check-wrong");
+    fs::remove_file(root.images().join("vmlinux")).unwrap();
+    let checks = root
+        .set(&other_sha("base", HELLO))
+        .check(&PathBuf::from("/usr/bin/zstd"));
+    let failed: Vec<(&str, &str)> = checks
+        .iter()
+        .filter(|check| check.result.is_err())
+        .map(|check| (check.key, check.file.as_str()))
+        .collect();
+    assert_eq!(failed, [(KERNEL_KEY, "vmlinux"), ("base", "base.ext4")]);
+    let base = checks.iter().find(|check| check.key == "base").unwrap();
+    assert!(
+        matches!(base.result, Err(ImportError::Mismatch { .. })),
+        "{base:?}"
+    );
+    let kernel = checks.first().unwrap();
+    assert!(
+        matches!(kernel.result, Err(ImportError::Io { .. })),
+        "{kernel:?}"
+    );
+    assert_eq!(checks.len(), 1 + PerFlavor::every(|_| ()).iter().count());
 }

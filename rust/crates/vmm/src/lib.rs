@@ -4,10 +4,12 @@
 
 use std::{fmt, io};
 
+pub mod check_images;
 mod compose;
 pub mod config;
 pub mod control;
 pub mod egress;
+pub mod env_file;
 pub mod family_state;
 pub mod guest_init;
 pub mod handlers;
@@ -23,6 +25,7 @@ pub mod shutdown;
 pub mod sleep;
 pub mod start;
 pub mod stop;
+pub mod verify;
 
 pub use compose::{StartError, serve};
 

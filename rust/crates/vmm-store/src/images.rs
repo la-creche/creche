@@ -19,7 +19,9 @@
 //! decision CH36 item 35, and it waited on a read-only check that Hyperion
 //! has zstd. The check ran on 2026-11-03 as david, under the G31 standing
 //! go: `/usr/bin/zstd`, Zstandard CLI v1.5.5, from the Ubuntu package
-//! `zstd`. So the vmm config passes `/usr/bin/zstd`.
+//! `zstd`. So the vmm config passes `/usr/bin/zstd`. `hash_source` reads
+//! a file the same way and writes no file, for `vmm check-images`, the
+//! verify hook of the disks row (decision CH76 rule 6).
 //!
 //! The vmm also makes one file itself: the guest init initramfs, which it
 //! writes once at its own start (decisions CH7-6, CH62 rule 18).
@@ -550,12 +552,7 @@ impl ImageStore {
             .mode(0o600)
             .open(temp)
             .map_err(io_at(temp))?;
-        let actual = if source.extension().is_some_and(|ext| ext == "zst") {
-            self.decompress(source, &mut out, temp)?
-        } else {
-            let mut input = File::open(source).map_err(io_at(source))?;
-            hash_copy(&mut input, &mut out, source, temp)?
-        };
+        let actual = read_source(&self.zstd, source, &mut out, temp)?;
         if actual != expected {
             return Err(ImportError::Mismatch { expected, actual });
         }
@@ -587,47 +584,78 @@ impl ImageStore {
         sync_dir(&self.dir).map_err(step_at(&self.dir))?;
         Ok(identity)
     }
+}
 
-    /// Runs `zstd -d` on `source` and copies its output into `out`. The
-    /// host zstd is v1.5.5 at `/usr/bin/zstd` (the G9 check of 2026-11-03,
-    /// decision CH36). `-d -c -q` and `--` are in that version.
-    fn decompress(
-        &self,
-        source: &Path,
-        out: &mut File,
-        temp: &Path,
-    ) -> Result<ImageDigest, ImportError> {
-        let mut child = Command::new(&self.zstd)
-            .args(["-d", "-c", "-q", "--"])
-            .arg(source)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(io_at(&self.zstd))?;
-        let copied = match child.stdout.take() {
-            Some(mut stdout) => hash_copy(&mut stdout, out, source, temp),
-            None => Err(io_at(&self.zstd)(io::ErrorKind::BrokenPipe.into())),
-        };
-        if copied.is_err() {
-            let _ = child.kill();
-        }
-        let output = child.wait_with_output().map_err(io_at(&self.zstd))?;
-        let digest = copied?;
-        if !output.status.success() {
-            return Err(ImportError::Decompress {
-                status: output.status,
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            });
-        }
-        Ok(digest)
+/// Hashes the bytes of `source` as `ImageStore::import` reads them and
+/// writes no file. A `.zst` source goes through `zstd -d`, and the digest
+/// is the digest of the decompressed bytes (decision CH41 rule 1). `vmm
+/// check-images`, the verify hook of the disks row, runs it on each file
+/// of a release before the vmm reads one (decision CH76 rule 6). Blocks.
+///
+/// # Errors
+///
+/// `Decompress` when `zstd` fails, `Io` on a failed read. It never gives
+/// `Parse` or `Mismatch`: the caller compares the digest.
+pub fn hash_source(zstd: &Path, source: &Path) -> Result<ImageDigest, ImportError> {
+    read_source(zstd, source, &mut io::sink(), source)
+}
+
+/// Copies the bytes of `source` into `out` and returns their SHA-256. A
+/// source whose name ends in `.zst` goes through `zstd -d` first. `to`
+/// names `out` in an error.
+fn read_source(
+    zstd: &Path,
+    source: &Path,
+    out: &mut impl Write,
+    to: &Path,
+) -> Result<ImageDigest, ImportError> {
+    if source.extension().is_some_and(|ext| ext == "zst") {
+        decompress(zstd, source, out, to)
+    } else {
+        let mut input = File::open(source).map_err(io_at(source))?;
+        hash_copy(&mut input, out, source, to)
     }
+}
+
+/// Runs `zstd -d` on `source` and copies its output into `out`. The
+/// host zstd is v1.5.5 at `/usr/bin/zstd` (the G9 check of 2026-11-03,
+/// decision CH36). `-d -c -q` and `--` are in that version.
+fn decompress(
+    zstd: &Path,
+    source: &Path,
+    out: &mut impl Write,
+    to: &Path,
+) -> Result<ImageDigest, ImportError> {
+    let mut child = Command::new(zstd)
+        .args(["-d", "-c", "-q", "--"])
+        .arg(source)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(io_at(zstd))?;
+    let copied = match child.stdout.take() {
+        Some(mut stdout) => hash_copy(&mut stdout, out, source, to),
+        None => Err(io_at(zstd)(io::ErrorKind::BrokenPipe.into())),
+    };
+    if copied.is_err() {
+        let _ = child.kill();
+    }
+    let output = child.wait_with_output().map_err(io_at(zstd))?;
+    let digest = copied?;
+    if !output.status.success() {
+        return Err(ImportError::Decompress {
+            status: output.status,
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+    Ok(digest)
 }
 
 /// Copies `input` into `out` and returns the SHA-256 of the bytes.
 fn hash_copy(
     input: &mut impl Read,
-    out: &mut File,
+    out: &mut impl Write,
     from: &Path,
     to: &Path,
 ) -> Result<ImageDigest, ImportError> {
