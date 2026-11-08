@@ -707,6 +707,9 @@ that wants a refusal changes one field.
   sits in the live tree of its `depends_on` component. Step 8 reads that
   rule narrowly: a set that stages that component too fails before any
   swap, so the `vmm` and `disks` go out in two requests, the `vmm` first.
+  One merge that tags both makes the follower file one set of the two.
+  That set fails at step 8 and is held (rule 4 of `follow/`), so the
+  operator then files the `vmm` and then `disks` by hand.
   CONTRACT-QUESTION: may one set check the program in the
   `<install.to>.new` of that component, which its switch makes live
   first? (`executor/steps.py`, `Release._hook_holder_tree`).
