@@ -478,22 +478,30 @@ jobs:
   # test whose name holds `kvm_` and that is `#[ignore]`d, in any crate of
   # rust/, so a new kvm_ test needs no edit here. bin/vm-smoke-setup.sh
   # first opens /dev/kvm and /dev/vhost-vsock with the runner's own sudo,
-  # starts the user manager, and fetches CH v54.0 and the guest kernel by
-  # their digests (facts 53, 71) and busybox from apt. It also installs the
-  # toolchain and the musl target and builds guest-init, about 1 to 2
-  # minutes more cold. The method is the one the C0 spike proved (fact 79).
+  # starts the user manager, fetches the guest kernel by its digest (fact
+  # 53) and busybox from apt. It installs the toolchain and the musl
+  # target, builds guest-init and builds the test programs. The method is
+  # the one the C0 spike proved (fact 79).
+  #
+  # CH and ch-remote: the script builds both on every run, with the CH7-4
+  # argv at the rev of fact 78 and no cache (decision CH75). The build
+  # starts first and runs in the background of the same script, beside
+  # the rest of the setup and the build of the test programs. The script
+  # waits for it before it ends, so each test runs the built CH. A second
+  # job for the build would hand its programs to this job only at its end,
+  # so the rest of the setup would wait for the whole build.
   #
   # No KVM on the runner fails the job. It never skips: a job skipped on a
   # code change reads as red in the verdict.
   #
-  # The time limit: the fetch takes under a minute, the toolchain install
-  # and the guest-init build add about 1 to 2 minutes cold, and the build
-  # of the tests takes about as long as the rust job.
+  # The time limit: the CH build takes about 6 minutes, with a limit of 12
+  # minutes in the script. The rest of the setup and the build of the
+  # tests run beside it, and the tests take about 2 minutes after it.
   kvm:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       CARGO_INCREMENTAL: 0
     steps:

@@ -392,11 +392,10 @@ table of the three vmm crates.
   dir). The ruleset grants no right to make a dir, so the vmm must also
   make each `snapshots/<generation>/` before CH writes a snapshot there.
   Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.
-- The upstream CH asset of fact 71 may print its git tag to `--version`,
-  not the `v54.0.0` of a `--rev` build (fact 78). `tests/kvm_vm.rs` then
-  makes the `CheckedCh` of the key from a stand-in that prints
-  `CH_VERSION`, after it checks that the asset names v54.0. The CI-built
-  CH of phase 4 ends the stand-in (decision CH36 G19).
+- The kvm job builds CH and ch-remote on every run with the CH7-4 argv,
+  and `bin/vm-smoke-setup.sh` fails unless CH prints `v54.0.0` (decision
+  CH75, fact 78). `tests/kvm_vm.rs` makes the `CheckedCh` of the key from
+  that CH, with no stand-in (decision CH36 G19).
 - Decisions CH42 rule 2 and CH50 rule 10: on a restore the CH command
   line shows no device, so `deny::check` cannot see a device that the
   snapshot holds. The restore runs with `resume=false`. Plan PR L17

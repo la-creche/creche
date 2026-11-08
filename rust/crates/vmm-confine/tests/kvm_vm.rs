@@ -54,7 +54,6 @@ mod scope_guard;
 mod stand_in;
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread::sleep;
@@ -70,8 +69,7 @@ use creche_vmm_store::ch_remote::{ChRemote, VmState};
 use creche_vmm_store::claim::{ClaimedSnapshot, claim};
 use creche_vmm_store::images::{CheckedImage, ImageDigest, ImageStore};
 use creche_vmm_store::key::{
-    CH_VERSION, ChVersionError, CheckedCh, KeyCheck, SnapshotKey, check_cloud_hypervisor,
-    check_newest,
+    CheckedCh, KeyCheck, SnapshotKey, check_cloud_hypervisor, check_newest,
 };
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot, StateRoot, VmRunDir, scope_unit};
 use creche_vmm_store::serial_log::SerialLog;
@@ -188,26 +186,6 @@ fn ticked(serial: &Path) -> bool {
     fs::read_to_string(serial).is_ok_and(|text| text.lines().any(|line| line.trim_end() == "tick"))
 }
 
-/// The CH key check of gap G10. The upstream asset of fact 71 may print
-/// its git tag, not the `CH_VERSION` of a `--rev` build (fact 78). Then
-/// the test keys with a stand-in that prints `CH_VERSION`, so the key and
-/// the claim still run. Phase 4 brings the CI-built CH (decision CH36
-/// G19).
-#[cfg(test)]
-fn checked_ch(ch: &Path, work: &Path) -> CheckedCh {
-    match check_cloud_hypervisor(ch, CALL) {
-        Ok(checked) => checked,
-        Err(ChVersionError::Mismatch(text)) => {
-            assert!(text.contains("v54.0"), "not CH v54.0: {text}");
-            let stand_in = work.join("ch-version");
-            fs::write(&stand_in, format!("#!/bin/sh\necho {CH_VERSION}\n")).unwrap();
-            fs::set_permissions(&stand_in, fs::Permissions::from_mode(0o755)).unwrap();
-            check_cloud_hypervisor(&stand_in, CALL).unwrap()
-        }
-        Err(error) => panic!("cloud-hypervisor --version: {error:?}"),
-    }
-}
-
 /// A vmm stand-in that holds one CH. A drop stops the unit of the
 /// stand-in, then kills the scope of the VM with CH in it. Each test
 /// takes it after its `Setup`, so it drops first.
@@ -293,8 +271,10 @@ impl Setup {
         // The ruleset opens the snapshot dir, so it exists before a launch.
         fs::create_dir_all(session.snapshots()).unwrap();
 
+        // The CH key check of gap G10, on the CH that the kvm job builds
+        // (decisions CH36 G19, CH75).
         let ch = PathBuf::from(CH_BINARY);
-        let checked_ch = checked_ch(&ch, &work);
+        let checked_ch = check_cloud_hypervisor(&ch, CALL).unwrap();
         let shape: FamilyShape = serde_json::from_str(SHAPE).unwrap();
         Self {
             id,
