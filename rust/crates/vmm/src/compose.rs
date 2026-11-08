@@ -11,7 +11,7 @@
 //!    (caller duty 4, gap G10 option A). Then `image_root::read` reads
 //!    the `digests.json` of the image root, and a missing, malformed or
 //!    writable file refuses the start (decision CH57 rule 1). Each file that it names goes into
-//!    the digest store. Then `guest_init::write_initramfs` packs the
+//!    the digest store (`Follow::start`). Then `guest_init::write_initramfs` packs the
 //!    guest init program into the one initramfs of this vmm start, in the
 //!    digest store, and each VM start names it (decisions CH62 rules 17
 //!    and 18). Then the fault book starts, which clears every fault file
@@ -27,8 +27,9 @@
 //!    limit. It runs before the bind and the first VM, so each listener
 //!    and each CH gets the raised limit.
 //! 5. The handler set of `routes!` binds `vmm.sock` in the run root.
-//!    `sleep::run` and the refresh of the fault book run beside it
-//!    (caller duty 5).
+//!    `sleep::run`, the refresh of the fault book and the digests follow
+//!    (`image_root::follow`, decision CH76 rule 8) run beside it (caller
+//!    duty 5).
 //! 6. At SIGTERM, the sleep loop gets its stop, and `shutdown::shutdown`
 //!    runs with the end of `sleep::run` as its `sleep` future. `main.rs`
 //!    then ends the runtime with `shutdown_timeout` (caller duty 8).
@@ -61,7 +62,7 @@ use creche_wire::{
     CreateSession, DropError, DropRoute, DropTarget, Dropped, ListError, ListRoute, ListSessions,
     OpenAcp, Serve, ServeUpgrade, SessionId, SessionPage, SessionRow,
 };
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::task::{JoinHandle, spawn_blocking};
 use tokio::time::{MissedTickBehavior, interval};
 
@@ -76,6 +77,7 @@ use crate::handlers::check::Checks;
 use crate::handlers::create::Creates;
 use crate::handlers::drop::{Drops, StopVm, VmStopFailed};
 use crate::handlers::list::Lists;
+use crate::image_root::follow::Follow;
 use crate::image_root::{self, DigestsError, ImageImportError};
 use crate::mirror::{self, Mirror};
 use crate::relay::{AcpLink, AcpRelay, Relays};
@@ -226,6 +228,7 @@ struct Vmm {
     handlers: Handlers,
     hook: Shared,
     faults: Arc<Mutex<FaultBook>>,
+    follow: Follow,
 }
 
 /// Builds the vmm from `config`, then serves until SIGTERM and shuts
@@ -267,7 +270,8 @@ fn build(config: Config) -> Result<Vmm, StartError> {
 struct Checked {
     ch_version: CheckedCh,
     images: ImageStore,
-    digests: Digests,
+    digests: watch::Receiver<Digests>,
+    follow: Follow,
     /// The guest init initramfs of this vmm start (CH62 rule 18).
     initramfs: ImageDigest,
 }
@@ -290,11 +294,10 @@ fn check(config: &Config) -> Result<Checked, StartError> {
     let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
     // Decision CH57 rule 1 refuses the start for a bad `digests.json`, and
     // decision CH58 rule 5 for an entry that does not import: a missing
-    // disk, a digest mismatch or a failed `zstd -d`.
-    let digests = image_root::read(&config.image_root)
-        .map_err(StartError::Digests)?
-        .import(&images)
-        .map_err(StartError::Import)?;
+    // disk, a digest mismatch or a failed `zstd -d`. The follow of the
+    // file then swaps the set of new starts (decision CH76 rule 8).
+    let set = image_root::read(&config.image_root).map_err(StartError::Digests)?;
+    let (follow, digests) = Follow::start(set, images.clone()).map_err(StartError::Import)?;
     // Decision CH62 rule 18: one initramfs per vmm start. A program that
     // root does not own, or that others may write, refuses the start
     // (CH62 rule 17).
@@ -305,6 +308,7 @@ fn check(config: &Config) -> Result<Checked, StartError> {
         ch_version,
         images,
         digests,
+        follow,
         initramfs,
     })
 }
@@ -316,6 +320,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         ch_version,
         images,
         digests,
+        follow,
         initramfs,
     } = checked;
     let faults = FaultDir::open(&config.faults_root)
@@ -383,6 +388,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         handlers,
         hook,
         faults,
+        follow,
     })
 }
 
@@ -394,6 +400,7 @@ impl Vmm {
             handlers,
             hook,
             faults,
+            follow,
         } = self;
         let (stop, signal) = Stop::pair();
         let mut server = tokio::spawn(async move { run_routes(&socket, signal, handlers).await });
@@ -406,9 +413,15 @@ impl Vmm {
             }
         });
         let refresh = tokio::spawn(refresh_faults(faults));
+        let follow = tokio::spawn(follow.run());
 
         let early = first_of(&mut server, sigterm).await;
         let _ = sleep_stop.send(());
+        // The shutdown refuses each new start, so the set of new starts
+        // has no reader now. An import that still runs in its blocking
+        // thread ends with the process. Its temp file stays until the
+        // next import of that digest truncates it.
+        follow.abort();
         if let Some(ended) = early {
             refresh.abort();
             return Err(match ended {

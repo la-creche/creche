@@ -54,8 +54,9 @@ family-state need).
    (see "The root-owned files", decision CH69 rule 17). Then `check_cloud_hypervisor` checks the CH
    version, and a failed check refuses the start (caller duty 4, gap G10
    option A). Then
-   `image_root::read` reads `digests.json`, and `ImageSet::import` puts
-   each file that it names into the digest store (see "The image root").
+   `image_root::read` reads `digests.json`, and `Follow::start` puts
+   each file that it names into the digest store with
+   `ImageSet::import` (see "The image root").
    Then `guest_init::write_initramfs` writes the one guest init
    initramfs of this vmm start (see "The guest init initramfs"). Then
    `FaultBook::start` clears every fault file (contract 05 §3.3.1 rule
@@ -75,7 +76,9 @@ family-state need).
    each listener and each CH gets the raised limit.
 5. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`,
    `Checks`) binds `vmm.sock` in the run root. `sleep::run` runs beside it (caller
-   duty 5), and so does `FaultBook::refresh` every `faults::REFRESH`.
+   duty 5), and so does `FaultBook::refresh` every `faults::REFRESH`,
+   and so does the digests follow (see "The digests follow"). SIGTERM
+   aborts the follow.
 6. At SIGTERM the sleep loop gets its stop, and `shutdown::shutdown`
    runs with the end of `sleep::run` as its `sleep` future. `src/main.rs`
    then ends the runtime with `shutdown_timeout(RUNTIME_END)`, 4 s of
@@ -258,6 +261,45 @@ nothing. Its ignored `kvm_` tests make a root-owned file with the sudo
 of the runner (decision CH36 G20) and prove the accept path, a writable
 file, a file past the cap and a malformed one. `src/image_root/tests.rs`
 proves the parse and the import on the bytes, with no file check.
+
+## The digests follow
+
+A disks release replaces `digests.json` and its files while the vmm
+runs, and the disks row has no unit to restart. So the vmm follows the
+file (plan PR V1, decision CH76 rule 8). `src/image_root/follow.rs`
+runs these steps:
+
+1. `Follow::start` imports the set of the vmm start and gives the
+   `watch::Receiver<Digests>` of `StartConfig::digests`. Each start
+   reads the set once, so its kernel and root disk come from one set.
+2. Every `follow::POLL` (5 s) it reads the bytes of the file with the
+   checks of `read`, in `spawn_blocking` (decision CH36 G21), as the
+   edit follow polls the reach files (decision CH69 rule 11). Bytes
+   equal to the last reading import nothing and log nothing. A read
+   that takes no bytes is a new reading only when its fault text
+   changes.
+3. New bytes parse, and each entry goes into the digest store. Only
+   when every entry imports does the follow swap the set, and it logs
+   one line that names each digest. A parse or an import that fails
+   keeps the old set and logs one line (decision CH58 rule 5). The
+   follow tries those bytes again only after they change.
+
+A running VM keeps its store copies, since no step removes a store file.
+Its snapshot holds the key of its start, which holds the root disk
+digest (decisions CH7-6, CH62 rule 24). So after a swap the next start
+of an idle session drops that snapshot and cold-boots on the new disk.
+The follow is the only import after the vmm start, so the store still
+runs one import at a time. An import that runs at SIGTERM ends with the
+process, and its `<sha256>.tmp` file stays until the next import of that
+digest truncates it. The handover swap of the disks tree is two renames,
+so the follow may log one `is missing` line between them.
+
+`src/image_root/follow/tests.rs` proves the steps on the bytes in the
+rust job: a swap only after every import, a failed import that keeps the
+old set, and unchanged bytes that import nothing. The ignored `kvm_`
+test of `tests/image_follow.rs` makes the new `digests.json` root-owned
+with the runner's sudo (decision CH36 G20). It proves that a VM that
+slept on the old disk cold-boots on the new one.
 
 ## The verify hooks
 
@@ -1325,8 +1367,9 @@ the runner.
   and the owner check of CH and ch-remote (decision CH67 rule 1), as
   the compose step does. Then `check_cloud_hypervisor` checks the
   version of `VMM_CH_PROGRAM`, the CH that the kvm job builds (decisions
-  CH36 G19, CH75). It binds no `vmm.sock`. The test sends it one step per line: `start`,
-  `facade`, `sleep` and `stop`.
+  CH36 G19, CH75). It runs the digests follow (plan PR V1). It binds
+  no `vmm.sock`. The test sends it one step per line: `start`,
+  `facade`, `sleep`, `stop` and `root`, the root disk of a new start.
 - The test runs it as a transient user service with
   `RuntimeDirectory=vmm` and `NoNewPrivileges=yes`, so each VM scope
   binds to its unit (decisions CH55, CH60 rule 1). The env holds each

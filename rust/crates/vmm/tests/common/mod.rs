@@ -5,7 +5,7 @@
 //! rule 28), and the vmm of `examples/phase3_vm.rs` as a transient user
 //! service (decisions CH60 rule 1, CH62 rule 29). Plan PR E3 moved them
 //! here from `tests/kvm_guest.rs`, so `tests/kvm_reach.rs` boots the same
-//! vmm.
+//! vmm, and so does `tests/image_follow.rs` (plan PR V1).
 #![cfg(test)]
 
 use std::collections::BTreeSet;
@@ -143,7 +143,7 @@ fn example() -> PathBuf {
 }
 
 /// The SHA-256 of `path` in hex.
-fn sha256(path: &Path) -> String {
+pub fn sha256(path: &Path) -> String {
     let output = Command::new(SHA256SUM)
         .arg("--")
         .arg(path)

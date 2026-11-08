@@ -19,8 +19,8 @@
 //! no name.
 //!
 //! The compose step then imports each named file into the digest store of
-//! the state root (`ImageStore::import`) and gives the `Digests` of
-//! `StartConfig`. An import reads no byte when the store already holds the
+//! the state root (`ImageStore::import`, through `follow::Follow::start`)
+//! and gives the `Digests` of `StartConfig`. An import reads no byte when the store already holds the
 //! digest with its identity. An entry that does not import refuses the
 //! start of the vmm (decision CH58 rule 5).
 //!
@@ -28,6 +28,10 @@
 //! with the same `read` and runs `ImageSet::check` (decision CH76 rule 6).
 //! The check hashes each named file as the import reads it and writes no
 //! file, so a bad release fails before a vmm start reads it.
+//!
+//! A disks release changes the file while the vmm runs. `follow` reads it
+//! every 5 s with the same checks, imports each new entry and then swaps
+//! the `Digests` of each new start (decision CH76 rule 8).
 
 use std::fmt;
 use std::io::{self, Read};
@@ -218,11 +222,15 @@ impl<'de> Visitor<'de> for ManifestVisitor {
     }
 }
 
-/// The files that a trusted `digests.json` names. Only `read` makes one.
+/// The files that a trusted `digests.json` names. Only `read` and `parse`
+/// make one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageSet {
     root: PathBuf,
     manifest: Manifest,
+    /// The bytes that `manifest` parsed from. `follow` compares each new
+    /// reading with them (decision CH76 rule 8).
+    bytes: Vec<u8>,
 }
 
 /// Reads `digests.json` in `root` after the checks of `root_owned::open`:
@@ -233,6 +241,28 @@ pub struct ImageSet {
 ///
 /// A `DigestsError`. Each one refuses the start of the vmm.
 pub fn read(root: &Path) -> Result<ImageSet, DigestsError> {
+    parse(root, read_bytes(root)?)
+}
+
+/// The image set of `bytes` in `root`, with the strict parse of the
+/// module doc. The caller read `bytes` with `read_bytes`, so root owns
+/// their file. Only `read`, `follow` and the tests of the crate call it.
+///
+/// # Errors
+///
+/// `DigestsError::Malformed`.
+pub(crate) fn parse(root: &Path, bytes: Vec<u8>) -> Result<ImageSet, DigestsError> {
+    let manifest = serde_json::from_slice(&bytes).map_err(DigestsError::Malformed)?;
+    Ok(ImageSet {
+        root: root.to_owned(),
+        manifest,
+        bytes,
+    })
+}
+
+/// The bytes of `digests.json` in `root` after the checks of `read`, at
+/// most `DIGESTS_CAP`.
+fn read_bytes(root: &Path) -> Result<Vec<u8>, DigestsError> {
     let file = root_owned::open(&root.join(DIGESTS_FILE)).map_err(|fault| match fault {
         OwnerError::Io(error) if error.kind() == io::ErrorKind::NotFound => DigestsError::Missing,
         fault => DigestsError::Owner(fault),
@@ -244,11 +274,7 @@ pub fn read(root: &Path) -> Result<ImageSet, DigestsError> {
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > DIGESTS_CAP {
         return Err(DigestsError::TooLarge);
     }
-    let manifest = serde_json::from_slice(&bytes).map_err(DigestsError::Malformed)?;
-    Ok(ImageSet {
-        root: root.to_owned(),
-        manifest,
-    })
+    Ok(bytes)
 }
 
 impl ImageSet {
@@ -308,6 +334,8 @@ impl ImageSet {
             .collect()
     }
 }
+
+pub mod follow;
 
 #[cfg(test)]
 mod tests;
