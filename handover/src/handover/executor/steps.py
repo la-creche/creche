@@ -1254,7 +1254,9 @@ class Release:
         CONTRACT-QUESTION: §4 rule 6 says the program sits in the live tree
         of that component. This reads the rule narrowly. A set that also
         stages that component fails here, before any swap, so the `vmm` and
-        the `disks` go out in two requests, the `vmm` first. Ask David
+        the `disks` go out in two requests, the `vmm` first. A set that the
+        follower files for one merge that tags both fails here too, and is
+        held until the operator files the two by hand. Ask David
         whether one set may check the program in the `<install.to>.new` of
         that component, which its switch makes live first."""
         holder = hook_holder(manifest, plan.manifests)
