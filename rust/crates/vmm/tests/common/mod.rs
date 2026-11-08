@@ -1,52 +1,36 @@
 //! The helpers of the kvm_ tests of the vmm (plan PRs V10 and E3): the
 //! files of `bin/vm-smoke-setup.sh`, the root-owned copies of the runner,
-//! the ext4 disks, an image root with the stand-in facade in one mode
-//! (decision CH62 rule 12), a family root, the stub planes (decision CH62
-//! rule 28), and the vmm of `examples/phase3_vm.rs` as a transient user
-//! service (decisions CH60 rule 1, CH62 rule 29). Plan PR E3 moved them
-//! here from `tests/kvm_guest.rs`, so `tests/kvm_reach.rs` boots the same
-//! vmm.
+//! an image root with the root disk that the caller places in it, a
+//! family root with a VM shape, and the vmm of `examples/phase3_vm.rs` as
+//! a transient user service (decisions CH60 rule 1, CH62 rule 29). Plan
+//! PR E3 moved them here from `tests/kvm_guest.rs`, so
+//! `tests/kvm_reach.rs` boots the same vmm, and `tests/kvm_facade.rs`
+//! boots it with the base disk of the setup script (decision CH80).
+//! `tests/stand_in/mod.rs` holds the stand-in disk, the ext4 disks and the
+//! plain stub planes, which only the stand-in proofs use: each test binary
+//! uses each item of a module that it declares.
 #![cfg(test)]
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, File};
+use std::fs;
 use std::io::{BufRead as _, BufReader, Write as _};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
 use std::sync::{Mutex, MutexGuard, PoisonError};
-use std::thread;
 use std::time::Duration;
 
 use creche_vmm::config;
 use creche_vmm_confine::slot_profile::CH_BINARY;
 use creche_vmm_store::layout::{RunRoot, SessionDir, StateRoot};
-use creche_wire::guest::{FACADE_PROGRAM, SESSION_DISK_MOUNT};
 use creche_wire::{FacadeState, SessionId};
 
 /// The variable that names the files of the setup script.
 const DIR: &str = "CRECHE_KVM_DIR";
 
 /// The host `mke2fs` of the vmm (`VMM_MKE2FS_PROGRAM`).
-const MKE2FS: &str = "/usr/sbin/mke2fs";
-
-/// The size of each test disk.
-const DISK_BYTES: u64 = 16 << 20;
-
-/// The dirs of the test root disk: each mount point of the guest init
-/// boot plan.
-pub const ROOT_DIRS: [&str; 8] = [
-    "dev",
-    "proc",
-    "sys",
-    "tmp",
-    "run",
-    "root",
-    "var/cache",
-    "var/tmp",
-];
+pub const MKE2FS: &str = "/usr/sbin/mke2fs";
 
 /// The line that guest init writes once it is up.
 pub const UP: &str = "guest-init: up";
@@ -69,11 +53,53 @@ pub const HOST_GIT: &str = "/usr/bin/git";
 const FALLOCATE: &str = "/usr/bin/fallocate";
 const SHA256SUM: &str = "/usr/bin/sha256sum";
 
-/// The smallest family VM shape: 1 vCPU and 256 MiB.
-const SHAPE: &str = r#"{"cpus":1,"flavor":"base","memory_mib":256}"#;
+/// A root disk in the image root: its file name there and the SHA-256 of
+/// the bytes that CH reads, the decompressed bytes of a `.zst` file
+/// (decision CH41 rule 1).
+#[derive(Debug)]
+pub struct RootDisk {
+    pub file: String,
+    pub sha256: String,
+}
+
+/// The VM shape of the family of a proof: 1 vCPU, the base flavor and
+/// `memory_mib` of guest RAM (decision CH8-5).
+#[derive(Debug, Clone, Copy)]
+pub struct Shape {
+    pub memory_mib: u32,
+}
+
+impl Shape {
+    /// The text of `shape.json`.
+    fn json(self) -> String {
+        format!(
+            r#"{{"cpus":1,"flavor":"base","memory_mib":{}}}"#,
+            self.memory_mib
+        )
+    }
+
+    /// The RAM cap of the vmm in GiB: the guest RAM, rounded up.
+    fn ram_cap_gib(self) -> String {
+        self.memory_mib.div_ceil(1024).to_string()
+    }
+
+    /// The snapshot budget of the vmm in GiB: twice the guest RAM, rounded
+    /// up, so the retention sweep keeps the one snapshot of the proof.
+    fn budget_gib(self) -> String {
+        self.memory_mib.saturating_mul(2).div_ceil(1024).to_string()
+    }
+}
+
+/// The LiteLLM key and the chaperone token of the family of each proof.
+pub const LITELLM_KEY: &str = "sk-test-key";
+pub const PEP_TOKEN: &str = "abababababababababababababababababababababababababababababababab";
 
 /// `creds.json` as caregiver writes it, as in `tests/family_state.rs`.
-const CREDS: &str = r#"{"epoch":3,"litellm_key":"sk-test-key","pep_token":"abababababababababababababababababababababababababababababababab","written_at":"2026-11-06T12:00:00Z"}"#;
+fn creds() -> String {
+    format!(
+        r#"{{"epoch":3,"litellm_key":"{LITELLM_KEY}","pep_token":"{PEP_TOKEN}","written_at":"2026-11-06T12:00:00Z"}}"#
+    )
+}
 
 /// `runtime.json` with a past `model_live_at`, so the `state` reply
 /// waits for no hold (decisions CH23-1, CH31 rule 1).
@@ -108,23 +134,6 @@ pub fn sudo(command: &[&str], path: &Path) {
     assert!(status.success(), "sudo {command:?}: {status}");
 }
 
-/// Writes an ext4 disk at `disk`. With `tree`, the disk holds a copy of
-/// it. The root dir is owned by root, as on the session disk of the vmm.
-pub fn ext4(disk: &Path, tree: Option<&Path>) {
-    File::create(disk).unwrap().set_len(DISK_BYTES).unwrap();
-    let mut command = Command::new(MKE2FS);
-    command.args(["-q", "-F", "-t", "ext4", "-E", "root_owner=0:0"]);
-    if let Some(tree) = tree {
-        command.arg("-d").arg(tree);
-    }
-    let output = command.arg("--").arg(disk).output().unwrap();
-    assert!(
-        output.status.success(),
-        "mke2fs failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
 /// The serial lines, with the CR of each CRLF line end cut.
 pub fn lines(serial: &Path) -> Vec<String> {
     fs::read_to_string(serial)
@@ -154,52 +163,20 @@ pub fn sha256(path: &Path) -> String {
     text.split_whitespace().next().unwrap().to_owned()
 }
 
-/// The image root (decision CH57 rule 1): the guest kernel and a root
-/// disk with the stand-in facade in mode `mode` at `FACADE_PROGRAM`
-/// (decision CH62 rule 12). `/etc/creche/env` comes from
-/// `playpen/bin/creche-env-write` (decision CH7-7). Root owns
-/// `digests.json`, which names the one disk for each flavor.
-fn image_root(work: &Path, mode: &str) -> PathBuf {
-    let files = files();
-    let tree = work.join("tree");
-    let session_dir = SESSION_DISK_MOUNT.trim_start_matches('/');
-    for dir in ROOT_DIRS
-        .into_iter()
-        .chain([session_dir, "etc/creche", "etc/creche-standin"])
-    {
-        fs::create_dir_all(tree.join(dir)).unwrap();
-    }
-    let facade = tree.join(FACADE_PROGRAM.trim_start_matches('/'));
-    fs::create_dir_all(facade.parent().unwrap()).unwrap();
-    fs::copy(files.join("standin_facade"), &facade).unwrap();
-    fs::write(tree.join("etc/creche-standin/mode"), format!("{mode}\n")).unwrap();
-    let script =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../playpen/bin/creche-env-write");
-    let env = Command::new("/bin/sh")
-        .arg(script)
-        .args(["LANG", "PATH"])
-        .env_clear()
-        .envs([("LANG", "C.UTF-8"), ("PATH", "/usr/bin:/bin")])
-        .output()
-        .unwrap();
-    assert!(env.status.success(), "creche-env-write: {env:?}");
-    fs::write(tree.join("etc/creche/env"), env.stdout).unwrap();
-
+/// The image root (decision CH57 rule 1): the guest kernel and the root
+/// disk that `disk` places in it. Root owns `digests.json`, which names
+/// that one disk for each flavor.
+fn image_root(work: &Path, disk: impl FnOnce(&Path, &Path) -> RootDisk) -> PathBuf {
     let root = work.join("image");
     fs::create_dir(&root).unwrap();
-    ext4(&root.join("root.img"), Some(&tree));
-    fs::copy(files.join("vmlinux"), root.join("vmlinux")).unwrap();
-    let entry = |file: &str| {
-        format!(
-            r#"{{"file":"{file}","sha256":"{}"}}"#,
-            sha256(&root.join(file))
-        )
-    };
-    let disk = entry("root.img");
+    fs::copy(files().join("vmlinux"), root.join("vmlinux")).unwrap();
+    let entry = |file: &str, sha256: &str| format!(r#"{{"file":"{file}","sha256":"{sha256}"}}"#);
+    let placed = disk(work, &root);
+    let disk = entry(&placed.file, &placed.sha256);
     let digests = root.join("digests.json");
     let text = format!(
         r#"{{"kernel":{},"base":{disk},"python":{disk}}}"#,
-        entry("vmlinux")
+        entry("vmlinux", &sha256(&root.join("vmlinux")))
     );
     fs::write(&digests, text).unwrap();
     sudo(&["chown", "0:0"], &digests);
@@ -212,39 +189,18 @@ pub fn family_root(work: &Path) -> PathBuf {
     work.join("families")
 }
 
-/// Writes the family `FAMILY` in `family_root(work)`.
-fn write_family(work: &Path) -> PathBuf {
+/// Writes the family `FAMILY` with the VM shape `shape` in
+/// `family_root(work)`.
+fn write_family(work: &Path, shape: Shape) -> PathBuf {
     let root = family_root(work);
     let family = root.join(FAMILY);
     fs::create_dir_all(family.join("creds")).unwrap();
     fs::create_dir_all(family.join("config")).unwrap();
-    fs::write(family.join("creds/creds.json"), CREDS).unwrap();
+    fs::write(family.join("creds/creds.json"), creds()).unwrap();
     fs::write(family.join("config/runtime.json"), RUNTIME).unwrap();
     fs::write(family.join("config/instructions.md"), "Be brief.").unwrap();
-    fs::write(family.join("config/shape.json"), SHAPE).unwrap();
+    fs::write(family.join("config/shape.json"), shape.json()).unwrap();
     root
-}
-
-/// One stub plane (decision CH62 rule 28, gap Q54-28 option A): a
-/// listener on 127.0.0.1 with a port from the kernel. Its thread answers
-/// each request with `200` and no body, and sends each request head on
-/// the channel.
-pub fn stub_plane() -> (SocketAddr, Receiver<String>) {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-    let address = listener.local_addr().unwrap();
-    let (heads, received) = mpsc::channel();
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let stream = stream.unwrap();
-            let mut reader = BufReader::new(&stream);
-            let mut head = String::new();
-            while !head.ends_with("\r\n\r\n") && reader.read_line(&mut head).unwrap() > 0 {}
-            let ok = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            (&stream).write_all(ok).unwrap();
-            let _ = heads.send(head);
-        }
-    });
-    (address, received)
 }
 
 /// What a proof writes in the state root of the runner, the default
@@ -297,7 +253,7 @@ pub struct Vmm {
 impl Vmm {
     /// Starts the unit of the proof `name` with `env` and waits for
     /// `ready`.
-    fn start(name: &str, env: &[(&str, &OsStr)]) -> Self {
+    pub fn start(name: &str, env: &[(&str, &OsStr)]) -> Self {
         let unit = format!("kvm-vmm-{name}-{}.service", std::process::id());
         let mut child = transient(&unit, env)
             .arg(example())
@@ -375,21 +331,14 @@ pub struct Booted<V = Vmm> {
     _one: MutexGuard<'static, ()>,
 }
 
-/// Starts the vmm of the proof `name` with the env of each key of the
-/// vmm config (decisions CH59 rule 1, CH62 rule 29): the state root of
-/// the runner, a scratch family root, root-owned copies of guest init and
-/// ch-remote (decision CH36 G20), an image root with the stand-in facade
-/// in mode `mode`, and the planes `litellm` and `chaperone`. The family of
-/// the proof has no `egress.json` and no `repos.json`.
-pub fn boot(name: &str, mode: &str, planes: (SocketAddr, SocketAddr)) -> Booted {
-    boot_with(name, mode, planes, |name, env, _| Vmm::start(name, env))
-}
-
-/// `boot` with the vmm that `start` starts from the name of the proof,
-/// the env and the run root (plan PR E4).
+/// `boot` with the root disk that `disk` places in the image root from
+/// the work dir, the VM shape `shape`, and the vmm that `start` starts
+/// from the name of the proof, the env and the run root (plan PR E4). The
+/// RAM cap and the snapshot budget of the vmm follow the shape.
 pub fn boot_with<V>(
     name: &str,
-    mode: &str,
+    disk: impl FnOnce(&Path, &Path) -> RootDisk,
+    shape: Shape,
     (litellm, chaperone): (SocketAddr, SocketAddr),
     start: impl FnOnce(&str, &[(&str, &OsStr)], &RunRoot) -> V,
 ) -> Booted<V> {
@@ -436,11 +385,12 @@ pub fn boot_with<V>(
     let faults = work.join("faults");
     fs::create_dir(&faults).unwrap();
     let (litellm, chaperone) = (litellm.to_string(), chaperone.to_string());
+    let (ram_cap, budget) = (shape.ram_cap_gib(), shape.budget_gib());
     let paths = [
         (config::STATE_ROOT, state.path().to_owned()),
-        (config::FAMILY_ROOT, write_family(&work)),
+        (config::FAMILY_ROOT, write_family(&work, shape)),
         (config::FAULTS_ROOT, faults),
-        (config::IMAGE_ROOT, image_root(&work, mode)),
+        (config::IMAGE_ROOT, image_root(&work, disk)),
         (config::CH, PathBuf::from(CH_BINARY)),
         (config::CH_REMOTE, ch_remote),
         (config::GUEST_INIT, guest_init),
@@ -461,9 +411,9 @@ pub fn boot_with<V>(
             (config::ZSTD, ZSTD),
             (config::MKE2FS, MKE2FS),
             (config::FALLOCATE, FALLOCATE),
-            (config::RAM_CAP, "1"),
+            (config::RAM_CAP, ram_cap.as_str()),
             (config::FREE_FLOOR, "0"),
-            (config::BUDGET, "1"),
+            (config::BUDGET, budget.as_str()),
             (config::LITELLM, litellm.as_str()),
             (config::CHAPERONE, chaperone.as_str()),
         ]

@@ -16,7 +16,12 @@
 #      the rev of fact 78, with no cache. The build has its own
 #      CARGO_TARGET_DIR, so no other build of the job waits for its lock.
 #      `timeout` bounds it at CH_BUILD_LIMIT, so the wait in step 11
-#      cannot hang. Steps 4 to 10 run beside it.
+#      cannot hang. Steps 4 to 10 run beside it. The build of the base
+#      disk starts next, in the background too (decisions CH75 rule 2,
+#      CH80): `playpen-rootfs agent-sandbox` of the tree of the run, then
+#      `playpen-disk`, then the tar goes. So the real facade test of
+#      rust/crates/vmm/tests/kvm_facade.rs boots the facade of this tree.
+#      `timeout` bounds each of its two steps at DISK_BUILD_LIMIT.
 #   4. A udev rule with MODE 0666 opens /dev/kvm and /dev/vhost-vsock to the
 #      runner user, who is not in the group kvm. `modprobe vhost_vsock`
 #      makes the second node.
@@ -54,8 +59,9 @@
 #      no launch stage starts runs unconfined.
 #  10. It builds the test programs of rust/ with `cargo test --no-run`, so
 #      the steps of the job after it build nothing.
-#  11. It waits for the CH build. A failed build prints its log and fails
-#      the run. The install root must hold the two programs alone. Each is
+#  11. It waits for the build of the base disk, then for the CH build. A
+#      failed build prints its log and fails the run. The disk must hold
+#      the digest line of playpen-disk. The install root must hold the two programs alone. Each is
 #      static, and `cloud-hypervisor --version` must print CH_BUILD_VERSION
 #      (fact 78), alone or after the program name, as the key check of the
 #      vmm reads it (gap G10). Then it installs CH at
@@ -71,7 +77,9 @@
 #
 # The files land in CRECHE_KVM_DIR, which is absent or empty:
 #   cloud-hypervisor  ch-remote  vmlinux  initramfs.cpio  busybox
-#   guest-init  standin_facade  guest-init.cpio
+#   guest-init  standin_facade  guest-init.cpio  base.ext4.zst  base.sha256
+# base.sha256 holds the one digest line of playpen-disk:
+# `<sha256>  base.ext4`, the SHA-256 of the decompressed disk.
 # The kvm_ tests read the same variable.
 #
 # `set -euo pipefail`: the first fault stops the run.
@@ -91,6 +99,10 @@ MUSL=x86_64-unknown-linux-musl
 NOFILE_HARD=1048576
 # About twice the 5 min 34 s of fact 78.
 CH_BUILD_LIMIT=12m
+# Each step of the base disk build: about 50 s for the tar and 30 s for
+# the disk on the playpen-image runner (run 42495776553), with margin for
+# the CPUs that the CH build takes and for the pull from Docker Hub.
+DISK_BUILD_LIMIT=8m
 
 say() { printf 'vm-smoke-setup: %s\n' "$*"; }
 die() {
@@ -131,8 +143,21 @@ ch_start=$SECONDS
   exec timeout --kill-after=30s "$CH_BUILD_LIMIT" "${CH_BUILD[@]}"
 ) < /dev/null > "$ch_log" 2>&1 &
 ch_pid=$!
-# A fault in steps 4 to 10 stops the build too.
-trap 'kill "$ch_pid" 2> /dev/null || true' EXIT
+
+say "start the build of the base disk, at most $DISK_BUILD_LIMIT for each step"
+disk_work=$(mktemp -d "$dir/disk-build.XXXXXX")
+disk_log=$disk_work/build.log
+(
+  tar=$disk_work/base.tar
+  timeout --kill-after=30s "$DISK_BUILD_LIMIT" \
+    "$REPO/playpen/bin/playpen-rootfs" agent-sandbox "$tar"
+  timeout --kill-after=30s "$DISK_BUILD_LIMIT" \
+    "$REPO/playpen/bin/playpen-disk" "$tar" "$disk_work" base > "$disk_work/base.sha256"
+  rm -f -- "$tar"
+) < /dev/null > "$disk_log" 2>&1 &
+disk_pid=$!
+# A fault in steps 4 to 10 stops both builds too.
+trap 'kill "$ch_pid" "$disk_pid" 2> /dev/null || true' EXIT
 
 say "open /dev/kvm and /dev/vhost-vsock to the runner user"
 printf '%s\n' \
@@ -285,6 +310,24 @@ say "${#labels[@]} slot labels in enforce mode"
 
 say "build the test programs of rust/"
 (cd "$REPO/rust" && nice -n 19 cargo test --locked --no-run)
+
+say "wait for the build of the base disk"
+disk_status=0
+wait "$disk_pid" || disk_status=$?
+if ((disk_status != 0)); then
+  cat "$disk_log" >&2
+  die "the build of the base disk failed with status $disk_status"
+fi
+echo "::group::the log of the base disk build"
+cat "$disk_log"
+echo "::endgroup::"
+digest_line=$(cat "$disk_work/base.sha256")
+[[ "$digest_line" =~ ^[0-9a-f]{64}\ \ base\.ext4$ ]] ||
+  die "playpen-disk printed no digest line of base.ext4: $digest_line"
+mv -- "$disk_work/base.ext4.zst" base.ext4.zst
+mv -- "$disk_work/base.sha256" base.sha256
+rm -rf -- "$disk_work"
+say "the base disk is $(wc -c < base.ext4.zst) bytes compressed: $digest_line"
 
 say "wait for the build of CH and ch-remote"
 wait_start=$SECONDS

@@ -12,7 +12,8 @@
 //! the stand-in facade in mode `linked-relay` on the root disk (CH62 rule
 //! 12) and Rust stub planes in the test (CH62 rule 28). Its numbered steps
 //! name what each one proves. The boot helpers sit in `tests/common/mod.rs`
-//! (plan PR E3), which `tests/kvm_reach.rs` shares.
+//! and `tests/stand_in/mod.rs` (plan PR E3), which `tests/kvm_reach.rs`
+//! shares.
 //!
 //! `#[ignore]`: only the job `kvm` runs them, after the setup script, with
 //! `cargo test --locked --no-fail-fast -- --ignored kvm_`. With no setup
@@ -22,6 +23,7 @@
 #![cfg(target_os = "linux")]
 
 mod common;
+mod stand_in;
 
 use std::fs;
 use std::io::{self, BufRead as _, BufReader, Write as _};
@@ -40,7 +42,8 @@ use creche_vmm_store::layout::StateRoot;
 use creche_wire::guest::{CHAPERONE_PORT, FACADE_STOP_WAIT, LITELLM_PORT, SESSION_DISK_MOUNT};
 use creche_wire::{FacadeState, GuestPort};
 
-use common::{BOOT, ROOT_DIRS, UP, boot, ext4, files, lines, stub_plane, sudo};
+use common::{BOOT, UP, files, lines, sudo};
+use stand_in::{ROOT_DIRS, boot, ext4, stub_plane};
 
 /// The image env of the test root disk (decision CH7-7).
 const ENV: &[u8] = b"LANG=C.UTF-8\nPATH=/usr/bin:/bin\n";

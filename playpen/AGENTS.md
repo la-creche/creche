@@ -57,6 +57,12 @@ that drops one. `bin/playpen-disk` reads all nine back from the disk with
 `debugfs`, and `bin/tests/test_playpen_image.py` holds both lists equal to
 the boot plan of guest init. sbx ignores the extra empty dir.
 
+The kvm job builds the base disk from the tree of each run
+(`bin/vm-smoke-setup.sh`), and `rust/crates/vmm/tests/kvm_facade.rs` boots
+it under guest init. So a change to the facade, the agent or this image
+gets one real facade proof on its own build (decisions CH62 rule 12,
+CH80).
+
 The image holds no pi, no fd, no playpen bundle, no PEP bridge, no
 `agent-pi-launch`. Only the `coding` flavor holds a package installer.
 

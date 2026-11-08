@@ -1431,11 +1431,15 @@ and the graceful stop of a VM with no `synced`.
 job kvm runs it. Its boot helpers and the env of each config key sit in
 `tests/common/mod.rs` (plan PR E3), and the E3 tests of
 `tests/kvm_reach.rs` boot the same vmm. `common::boot_with` takes the
-start of the vmm, so the E4 tests start the real `vmm serve` in its
-place. `common::boot` takes the mode of the stand-in and holds a lock,
-so one vmm of the test binary runs at a time: each proof uses one
-session, the run root of `RuntimeDirectory=vmm` and the state root of
-the runner.
+root disk, the VM shape and the start of the vmm, so the E4 tests start
+the real `vmm serve` in its place. The RAM cap and the snapshot budget
+of the vmm follow the shape. `stand_in::boot` of `tests/stand_in/mod.rs`
+takes the mode of the stand-in and the 256 MiB shape. `boot_with` holds
+a lock, so one vmm of the test binary runs at a time: each proof uses
+one session, the run root of `RuntimeDirectory=vmm` and the state root
+of the runner. The stand-in helpers sit in a module of their own,
+because each test binary must use each item of each module that it
+declares.
 
 - `examples/phase3_vm.rs` plays the vmm (decision CH62 rule 29). It is
   an example in no release row (decision CH58 rule 1). It reads the vmm
@@ -1471,6 +1475,37 @@ the runner.
   no signal. The test dials 1201 itself, as
   `AcpLink::dial` does, because only the door relay of phase 6 carries
   the bytes of an `AcpLink`. It writes both pull times to the job log
+  (decision CH23).
+
+## The real facade proof
+
+`tests/kvm_facade.rs` holds `kvm_real_facade_prompts_sleeps_restores_and_stops`:
+the steps of the phase 3 proof with the real facade (decisions CH62 rule
+12, CH80). Only the job kvm runs it.
+
+- The root disk is the base disk that `bin/vm-smoke-setup.sh` builds from
+  the tree of the run, in the background beside the CH build (decision
+  CH75 rule 2): `base.ext4.zst` and its digest line `base.sha256`. The
+  test links the `.zst` file into the image root, and the vmm import
+  decompresses it and checks its SHA-256 (decision CH41 rule 1). So a
+  facade change is tested on its own build.
+- The family shape has 1024 MiB, because Node and Flue need more than the
+  256 MiB of the stand-in.
+- The stub planes are Rust listeners in the test (decision CH62 rule 28).
+  LiteLLM answers `GET /v1/model/info` and an OpenAI SSE stream for each
+  `POST /chat/completions`. The chaperone answers MCP streamable HTTP on
+  `/mcp` with one tool. Flue keeps one MCP connection for the life of a
+  session, so the second prompt calls that tool, and its `tools/call`
+  hits the chaperone after the restore.
+- The steps: a cold boot with start 1, `running` with the same pid within
+  120 s, then on 1201 `initialize`, `session/new` with the host's id and a
+  prompt that ends with `end_turn` and the stub text. Each stub gets a
+  request through the guest splice with the bearer of `creds.json`. Then
+  a sleep with one snapshot, a restore with the same pid and start 1 and
+  no `up` line, and a fresh 1201 link with `session/load`, which replays
+  the first turn, and a second prompt. A stop inside `FACADE_STOP_WAIT`
+  then holds the facade's stop line, no signal, a clean session disk and
+  `flue.db` on it. The test writes both prompt times to the job log
   (decision CH23).
 
 ## Rules

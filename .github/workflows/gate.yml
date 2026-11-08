@@ -500,9 +500,17 @@ jobs:
   # No KVM on the runner fails the job. It never skips: a job skipped on a
   # code change reads as red in the verdict.
   #
+  # The base disk: the script also builds the base flavor disk from the
+  # tree of the run in the background, beside the CH build, so the real
+  # facade test of rust/crates/vmm/tests/kvm_facade.rs boots the facade of
+  # this change (decisions CH75 rule 2, CH80). It needs no step here.
+  #
   # The time limit: the CH build takes about 6 minutes, with a limit of 12
-  # minutes in the script. The rest of the setup and the build of the
-  # tests run beside it, and the tests take about 2 minutes after it.
+  # minutes in the script. The rest of the setup, the base disk build
+  # (about 80 s, 8 minutes for each of its steps at most) and the build of
+  # the tests run beside it. The tests take about 2 minutes after it, and
+  # the real facade test adds about 1.5 to 2 minutes, so the job takes
+  # about 12 to 12.5 of its 25 minutes.
   kvm:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
