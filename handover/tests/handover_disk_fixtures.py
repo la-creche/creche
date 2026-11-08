@@ -11,7 +11,9 @@ This module holds:
 2. `verified_files`: a `VerifiedFiles`, from check P6 itself.
 3. `DiskBench`: a whole release of `disks`, from the request to the
    ledger, with the stand-in verifier of `handover_bin_fixtures.py` and the
-   verify program in the live `vmm` tree.
+   verify program in the live `vmm` tree. `release_with_vmm` files one set
+   of `vmm` and `disks`, and the vmm archive of the store holds a new
+   verify program (CH78 rule 1).
 """
 
 from __future__ import annotations
@@ -24,7 +26,13 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from handover.artifacts import asset_limits, disk_files, signer_policy, sum_lines_digest
+from handover.artifacts import (
+    asset_limits,
+    disk_files,
+    signer_policy,
+    sum_lines_digest,
+)
+from handover.artifacts import asset_names as archive_names
 from handover.catalog import BUNDLE_SUFFIX, CATALOG, CATALOG_BY_NAME, Kind
 from handover.executor.artifact import CopiedFiles, SignedCopy
 from handover.executor.drain import Counter, handle
@@ -40,6 +48,7 @@ from handover_bin_fixtures import (
     STORE_DIR_MODE,
     STORE_FILE_MODE,
     StandIn,
+    archive_bytes,
     signed_bundle,
     site_text,
 )
@@ -81,6 +90,21 @@ LIVE_BYTES: dict[str, bytes] = {name: f"the old bytes of {name}\n".encode() for 
 #: The program of the vmm tree that the hook of the `disks` row names.
 HOOK_BYTES = b"\x7fELF a vmm\n"
 
+#: The `vmm` release that `release_with_vmm` files beside `disks`.
+VMM_LIVE_VERSION = "0.1.0"
+VMM_NEW_VERSION = "0.3.0"
+VMM_TAG = f"{VMM}-v{VMM_NEW_VERSION}"
+
+#: The same program in the vmm archive of `VMM_TAG`.
+NEW_HOOK_BYTES = b"\x7fELF the new vmm\n"
+
+#: The build of the vmm manifest. The fixture manifests carry no `build`,
+#: and a binary row needs one. Root runs none of it: it unpacks the archive.
+VMM_BUILD_LINE = (
+    'build:\n  - ["cargo", "install", "--locked", "--no-track",'
+    f' "--path", "rust/crates/{VMM}"]\ninstall:'
+)
+
 
 def asset_names() -> list[str]:
     """Each asset of the row, each file before its bundle."""
@@ -114,6 +138,27 @@ def stock_disk_store(
         for path, body in ((directory / name, raw), (directory / f"{name}{BUNDLE_SUFFIX}", bundle)):
             path.write_bytes(body)
             path.chmod(STORE_FILE_MODE)
+
+    return directory
+
+
+def stock_vmm_store(home: Path) -> Path:
+    """The archive of `VMM_TAG` and its bundle in the store below `home`.
+    The archive holds the verify program of the vmm and `NEW_HOOK_BYTES` as
+    the program that the hook of `disks` names."""
+    programs = {f"{VMM}-verify": b"\x7fELF the vmm verify\n", VMM: NEW_HOOK_BYTES}
+    archive = archive_bytes(VMM, programs)
+    directory = home
+    for part in (*artifact_store().relative_to(home).parts, REPO, VMM_TAG):
+        directory = directory / part
+        directory.mkdir(exist_ok=True)
+        directory.chmod(STORE_DIR_MODE)
+
+    names = archive_names(VMM)
+    bundle = signed_bundle(archive, commit=SHA_OF[VMM])
+    for name, raw in ((names.archive, archive), (names.bundle, bundle)):
+        (directory / name).write_bytes(raw)
+        (directory / name).chmod(STORE_FILE_MODE)
 
     return directory
 
@@ -177,18 +222,32 @@ class DiskBench:
         return self.components / DISKS
 
     def wiring(self) -> Wiring:
-        """What the release of `disks` reads off the host and GitHub."""
+        """What the release of `disks` reads off the host and GitHub. The
+        tag `VMM_TAG` is green too, for `release_with_vmm`."""
+        api = green_api(REPO, TAG, SHA_OF[DISKS])
+        api.bodies.update(green_api(REPO, VMM_TAG, SHA_OF[VMM]).bodies)
+
         return Wiring(
             host=self.host,
             transport=grant_transport(),
-            readers=fake_readers(latest={DISKS: NEW_VERSION}),
-            api=green_api(REPO, TAG, SHA_OF[DISKS]),
+            readers=fake_readers(latest={DISKS: NEW_VERSION, VMM: VMM_NEW_VERSION}),
+            api=api,
         )
 
     def release(self) -> dict[str, object]:
-        """Run the release. The answer is the ledger entry."""
+        """Run the release of `disks` alone. The answer is the ledger
+        entry."""
+        return self._release({DISKS: NEW_VERSION})
+
+    def release_with_vmm(self) -> dict[str, object]:
+        """Run one release of `vmm` and `disks`, as the follower files for
+        one merge that tags both (CH78 rule 1). The answer is the ledger
+        entry."""
+        return self._release({VMM: VMM_NEW_VERSION, DISKS: NEW_VERSION})
+
+    def _release(self, wanted: dict[str, str]) -> dict[str, object]:
         wiring = self.wiring()
-        write_request(self.spool_root, REQUEST_ID, request_body({DISKS: NEW_VERSION}))
+        write_request(self.spool_root, REQUEST_ID, request_body(wanted))
         spool = Spool(str(self.spool_root), this_uid())
         try:
             handle(spool, f"{REQUEST_ID}.json", wiring, Counter())
@@ -203,8 +262,13 @@ class DiskBench:
 
 
 def disk_manifest_text(components: Path, name: str) -> str:
-    """The fixture manifest of `name`, with its tree under `components`."""
-    return manifest_text(name).replace("/opt/components", str(components))
+    """The fixture manifest of `name`, with its tree under `components`.
+    The vmm manifest gets `VMM_BUILD_LINE`."""
+    text = manifest_text(name).replace("/opt/components", str(components))
+    if name == VMM:
+        text = text.replace("install:", VMM_BUILD_LINE, 1)
+
+    return text
 
 
 def make_disk_bench(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DiskBench:
@@ -214,10 +278,11 @@ def make_disk_bench(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DiskBenc
     home.mkdir()
     use_site(home, tmp_path, monkeypatch)
     stock_disk_store(home)
+    stock_vmm_store(home)
     components = tmp_path / "components"
     run = FakeRun(answers=git_host_answers())
     host = replace(fake_host(tmp_path, run), run=StandIn(run))
-    for name, version in ((VMM, "0.1.0"), (DISKS, LIVE_VERSION)):
+    for name, version in ((VMM, VMM_LIVE_VERSION), (DISKS, LIVE_VERSION)):
         tree = components / name
         tree.mkdir(parents=True)
         write_stamp(tree, version)

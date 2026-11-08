@@ -533,13 +533,26 @@ CH7-2, CH35 (4), CH76 rules 1 and 5). Its manifest is
     from the approval digest fail the stage. Root runs no build, unpacks
     nothing and decompresses nothing. The walk of contract 06 §8.2 does not
     run (`Installer.stage_files`, `install.py` rule 11).
-13. The verify program sits in the live tree of the `depends_on`
-    component that `manifest.hook_holder` names. A set that stages that
-    component too fails step 8 before any swap. The program must be a
-    regular file inside that tree, owned by root, and no group or other
-    account may write it. A
-    disk-image row names no unit, so step 9 restarts nothing, and a failed
-    hook puts the previous tree back (contract 06 §8.4 rules 5 and 6).
+13. The verify program sits in the tree of the `depends_on` component
+    that `manifest.hook_holder` names. The program must be a regular file
+    inside the checked tree, owned by root, and no group or other account
+    may write it. A disk-image row names no unit, so step 9 restarts
+    nothing, and a failed hook puts the previous tree back (contract 06
+    §8.4 rules 5 and 6).
+14. One set may hold the `vmm` and `disks` (CH78 rule 1). Step 9 switches
+    and verifies the `vmm` first, so the disks hook runs from the vmm tree
+    that the same set installs. Step 8 checks the program in the
+    `<install.to>.new` of the `vmm`, and a set of `disks` alone checks the
+    live vmm tree. Step 8 stages in `plan.order`, and step 9 switches in
+    `steps._switch_order`. A holder that does not come before the
+    disk-image component there fails step 8 before any swap
+    (`Release._hook_holder_tree`). A restore runs in reverse order, so
+    `disks` goes back while the new `vmm` is still live.
+15. Child 2 of check P6 for one disk file runs with `MemoryMax=` 2.5 GiB
+    (`provenance.DISK_CHECK_MEMORY_BYTES`): cosign `verify-blob` reads the
+    whole file into memory. Fact 84 (CH78 rule 4) measured cosign v3.1.4
+    on the host: a peak of the file size plus about 60 MiB, so a file at
+    the 2 GiB - 1 cap needs about 2.06 GiB.
 
 ## The host component of creche-release
 
@@ -707,21 +720,6 @@ that wants a refusal changes one field.
   with 600 seconds (`cli.py`). A disk file of 415 to 506 MiB needs about
   1.9 MiB/s in one run. Not checked: the rate from the host to the code
   host (plan risk 10).
-- Contract 06 §4 rule 6 says the verify program of a disk-image component
-  sits in the live tree of its `depends_on` component. Step 8 reads that
-  rule narrowly: a set that stages that component too fails before any
-  swap, so the `vmm` and `disks` go out in two requests, the `vmm` first.
-  One merge that tags both makes the follower file one set of the two.
-  That set fails at step 8 and is held (rule 4 of `follow/`), so the
-  operator then files the `vmm` and then `disks` by hand.
-  CONTRACT-QUESTION: may one set check the program in the
-  `<install.to>.new` of that component, which its switch makes live
-  first? (`executor/steps.py`, `Release._hook_holder_tree`).
-- Child 2 of check P6 for one disk file runs with `MemoryMax=` 2.5 GiB
-  (`provenance.DISK_CHECK_MEMORY_BYTES`): cosign v3.1.3 `verify-blob`
-  reads the whole file into memory. Not measured: one real `verify-blob`
-  of a file of about 500 MiB in the verifier unit on the host. A spike
-  measures it before the first disks release (`executor/provenance.py`).
 - The follower does not ask again for a request that root never ledgered.
   A newer tag or a request by hand recovers (`follow/`).
 - The follower reads tags out of the corpus. Root refuses a tag that has no
