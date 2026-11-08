@@ -284,7 +284,10 @@ job it proves that a file the test user owns refuses and imports
 nothing. Its ignored `kvm_` tests make a root-owned file with the sudo
 of the runner (decision CH36 G20) and prove the accept path, a writable
 file, a file past the cap and a malformed one. `src/image_root/tests.rs`
-proves the parse and the import on the bytes, with no file check.
+proves the parse and the import on the bytes, with no file check. It also
+parses the shared vector `rust/crates/wire/vectors/digests.json`, the
+shape that `disks/bin/playpen-release-disks` writes for the disks row
+(decision CH76 rule 5).
 
 ## The digests follow
 
@@ -1713,7 +1716,7 @@ the runner.
     binds 1104 at each boot and each restore from the list of that time,
     and the follow binds or removes it after each edit on a running VM.
     Each CONNECT reads the list again, so a removal refuses at once.
-13. Decision CH77 rule 2: plan PR H4b sets the verify `timeout` of the
-    disks row to 300 s in `disks/component.toml`. It must equal
+13. Closed by plan PR H4b (decision CH77 rule 2): `disks/component.toml`
+    sets the verify `timeout_s` of the disks row to 300 s. It must equal
     `follow::HOOK_TIMEOUT`, or a hook may still run when the follow
-    imports. H4b adds a test that holds the two equal.
+    imports. `bin/tests/test_disks_manifest.py` holds the two equal.

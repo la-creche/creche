@@ -264,9 +264,9 @@ RETIRING: frozenset[str] = frozenset()
 #: and both read. Discovery tolerates the absent file and the allocator tags
 #: none of them: a tag is a version somebody can release, and there is no
 #: tree to release yet. A name leaves this set in the commit that adds its
-#: directory. `vmm` arrived with `rust/component.toml` (CH7-5, CH76 rule
-#: 1). `disks` leaves it with `disks/component.toml` (CH76 rule 1).
-ARRIVING: frozenset[str] = frozenset({"disks"})
+#: directory. Empty now: `vmm` arrived with `rust/component.toml` and
+#: `disks` with `disks/component.toml` (CH7-5, CH76 rule 1).
+ARRIVING: frozenset[str] = frozenset()
 
 #: Repositories that a host may not have cloned yet. Discovery tolerates the
 #: absent manifest of each component of such a repository, as it does for a

@@ -250,6 +250,10 @@ FROM_STAGE = "--from="
 VENV_STAGE = "creche-test-venv"
 
 
+#: The image row whose build makes the files of the disk-image row.
+IMAGE_ROW = "playpen"
+
+
 def _copied(dockerfile: Path) -> set[str]:
     """Every top directory of the repository an image build copies from.
 
@@ -287,13 +291,19 @@ def test_each_component_bundles_what_its_build_installs(found: ManifestSet) -> N
     changes the artifact, so it must move the tag, and `CatalogRow.bundles`
     is that list written down. A package added to a build and not there
     ships with no new tag: a merge that changed only `door-trigger/` and
-    `family/` once left `attendance` and `noticeboard` on tags older than their code."""
+    `family/` once left `attendance` and `noticeboard` on tags older than their code.
+
+    A disk-image build installs nothing this test can see: its files come
+    from the image build of `playpen` and the playpen scripts (CH76 rule
+    5). So it bundles what `playpen/Dockerfile` copies, and `playpen`."""
     packages = _workspace()
     for name, item in found.found.items():
         row = CATALOG_BY_NAME[name]
         installed = _installed(item.manifest.build, packages)
         if row.kind is Kind.OCI_IMAGE:
             installed |= _copied(REPO_ROOT / row.path / "Dockerfile")
+        if row.kind is Kind.DISK_IMAGE:
+            installed |= {IMAGE_ROW, *_copied(REPO_ROOT / IMAGE_ROW / "Dockerfile")}
 
         assert set(row.bundles) == installed - {row.path}, name
 

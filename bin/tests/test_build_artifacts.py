@@ -55,7 +55,7 @@ SCRIPT: Final = REPO / "bin" / "build-artifacts.sh"
 
 #: The one reader of the line form, and each script that sources it.
 READER: Final = REPO / "bin" / "lib" / "artifactrows.sh"
-READER_USERS: Final = [SCRIPT]
+READER_USERS: Final = [SCRIPT, REPO / "bin" / "check-disk-files.sh"]
 
 #: The catalog name of the repository, as the workflow gives it.
 THIS_REPOSITORY: Final = str(Repo.CRECHE)
@@ -815,8 +815,8 @@ def test_a_last_row_with_no_line_feed_is_a_whole_row(tmp_path: Path) -> None:
 
 def test_the_line_form_has_one_reader() -> None:
     """`bin/lib/artifactrows.sh` reads the rows for the build script, and
-    the script sources it. No other file under `bin/` outside `tests/`
-    defines `read_rows` or `read_disk_names`, or names the key
+    each script that reads a row sources it. No other file under `bin/`
+    outside `tests/` defines `read_rows` or `read_disk_rows`, or names the key
     `max-unpacked-bytes` or `out-env`. The test reads those texts only."""
     sourced = '. "$SELF_ROOT/bin/lib/artifactrows.sh"\n'
     others = [
@@ -832,10 +832,10 @@ def test_the_line_form_has_one_reader() -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
         assert "read_rows()" not in text, f"{path.name} holds a second reader"
         assert "max-unpacked-bytes" not in text, f"{path.name} holds a key of the form"
-        assert "read_disk_names()" not in text, f"{path.name} holds a second reader"
+        assert "read_disk_rows()" not in text, f"{path.name} holds a second reader"
         assert "out-env" not in text, f"{path.name} holds a key of the disk form"
     assert "read_rows() {" in READER.read_text(encoding="utf-8")
-    assert "read_disk_names() {" in READER.read_text(encoding="utf-8")
+    assert "read_disk_rows() {" in READER.read_text(encoding="utf-8")
 
 
 def test_a_command_that_gives_no_rows_stops_the_run(tmp_path: Path) -> None:
