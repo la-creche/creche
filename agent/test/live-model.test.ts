@@ -5,21 +5,16 @@
 // the key and changes the alias reads the limits with the new key. A
 // session that pulled the old alias before a change still resolves it.
 
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { init } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { composeAgent } from "../src/agent.js";
 import { fileBackend } from "../src/family-state.js";
 import type { StateBackend } from "../src/family-state.js";
 import { FALLBACK_LIMITS } from "../src/litellm.js";
 import { FakeCh, SEARCH_TOOL } from "./fake-ch.js";
 import { FakeModel } from "./fake-model.js";
-import { familyConfig, FIXTURE_TOKEN, swapConfig, writeCreds } from "./family.js";
+import { composeFamily, familyConfig, FIXTURE_TOKEN, swapConfig, writeCreds } from "./family.js";
 
 const NO_RETRY_MS = 0;
 const NEW_ALIAS = "code-router";
@@ -36,12 +31,7 @@ const fake = new FakeModel([
 fake.modelInfo = { data: [{ model_name: NEW_ALIAS, model_info: { max_input_tokens: 64000, max_output_tokens: 4096 } }] };
 const config = await familyConfig({ pepUrl: await ch.start(), litellmUrl: await fake.start(), runtime: { model_alias: "chat" } });
 
-const read = composeAgent(config, mkdtempSync(join(tmpdir(), "agent-workspace-")));
-if (!read.ok) {
-  throw new Error(read.reason);
-}
-
-const { composed } = read;
+const composed = composeFamily(config);
 const backend: StateBackend = fileBackend(config.mounts, composed.state.config, NO_RETRY_MS);
 const flue = await start({ agents: [composed.agent], db: composed.db, providers: composed.providers });
 afterAll(async () => {

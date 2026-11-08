@@ -77,12 +77,14 @@ The tests use `sqlite()` with no path, an in-memory store, and pi's
 
 The facade reads the edge, composes the agent and starts Flue at process
 start. Then it pulls the family state before each `session/prompt`
-(decision CH5a):
+(decision CH5a). On sbx the start is the mounts:
 
 ```ts
 const read = await readFamilyConfig(process.env);       // src/config.ts
-const limits = await readModelLimits(read.config);      // src/litellm.ts
-const composed = composeAgent(read.config, workspace, limits.limits);  // src/agent.ts
+const started = startOf(read.config);                   // src/agent.ts
+const { planes, state } = started.start;
+const limits = await readModelLimits(planes, state.config.modelAlias, state.creds.litellmKey);  // src/litellm.ts
+const composed = composeAgent(started.start, limits.limits);  // src/agent.ts
 await start({ agents: [composed.agent], db: composed.db, providers: composed.providers });
 const backend = fileBackend(read.config.mounts, composed.state.config);  // src/family-state.ts
 
@@ -94,8 +96,15 @@ if (pulled.ok) {
 }
 ```
 
-Under CH the backend is `vmmBackend(FAMILY_STATE_SOCKET, …)` of
-`src/family-state.ts` (decisions CH5a, CH62 rule 13):
+Under CH the start is `readGuestStart(process.env, say)` of
+`src/guest-start.ts`, and the backend is `vmmBackend(FAMILY_STATE_SOCKET,
+composed.state.config, say)` of `src/family-state.ts` (decisions CH5a,
+CH5e, CH62 rule 13, CH80). The start pulls until the vmm gives a state.
+After each fault it writes one stderr line and waits, 250 ms first, then
+twice as long each time up to 5 s (decision CH81 rule 4). It never exits
+on a fault (decision CH23 rule 2). The guest planes are constants: a port
+that gives no plane URL throws when the module loads. A skill of the CH
+start has no supporting files. Each pull:
 
 1. Each pull dials the family-state socket of guest init, sends one
    `FamilyStatePull` line and reads one `FamilyStateReply` line with
@@ -112,8 +121,9 @@ Under CH the backend is `vmmBackend(FAMILY_STATE_SOCKET, …)` of
    `PULL_WAIT_MS` (20 s), is `not_valid`. The backend writes the cause
    to stderr in one line (decision CH81 rules 2 and 3).
 
-`src/guest.ts` holds the socket path, and `test/guest.test.ts` holds it
-and `STATE_REPLY_CAP` equal to `rust/crates/wire/vectors/guest.json`.
+`src/guest.ts` holds the socket path, `FLUE_DB`, `WORKSPACE` and the two
+plane ports. `test/guest.test.ts` holds them and `STATE_REPLY_CAP` equal
+to `rust/crates/wire/vectors/guest.json`.
 
 Each LiteLLM request and each `ch` request reads the creds of the latest
 pull. Each render of a session reads the config of that session's last
@@ -140,25 +150,27 @@ and the facade writes the fault to stderr. A router alias has no window of
 its own: the LiteLLM config sets it in the alias's `model_info`.
 
 Each step gives a typed refusal, not an exception. The store of
-`start()` is `<AGENT_SESSIONS_DIR>/flue.db`. The facade writes the names
-in `composed.skippedSkills` to stderr.
+`start()` is `<AGENT_SESSIONS_DIR>/flue.db` on sbx and `FLUE_DB` under
+CH. The facade writes the names in `composed.skippedSkills` to stderr.
 
 ## Environment the agent expects
 
-`src/config.ts` reads each variable one time, at process start, into one
-`FamilyConfig`. A fault gives one refusal. The refusal names the variable or
-the field, never the value.
+On sbx `src/config.ts` reads each variable one time, at process start,
+into one `FamilyConfig`. A fault gives one refusal. The refusal names the
+variable or the field, never the value. Under CH the agent reads none of
+them, and a set one has no effect (`src/guest-start.ts`, decisions CH80,
+CH81 rule 5):
 
-| Variable | Meaning | Absent |
-|---|---|---|
-| `AGENT_SESSIONS_DIR` | the sessions directory, for `flue.db` | `mount_dir_unset` |
-| `AGENT_CRED_DIR` | the credential directory, for `creds.json` | `mount_dir_unset` |
-| `AGENT_FAMILY_CONFIG_DIR` | the family config directory | `mount_dir_unset` |
-| `AGENT_CONTROL_DIR` | the control directory | `mount_dir_unset` |
-| `AGENT_INDEX_ROOT` | the `library/` index store | no index |
-| `AGENT_SANDBOX` | the sandbox id | `sandbox_unset` |
-| `AGENT_PEP_URL` | the URL of the chaperone | `plane_unset` |
-| `AGENT_LITELLM_BASE_URL` | the base URL of LiteLLM | `plane_unset` |
+| Variable | Meaning | Absent | Under CH |
+|---|---|---|---|
+| `AGENT_SESSIONS_DIR` | the sessions directory, for `flue.db` | `mount_dir_unset` | `FLUE_DB` and `WORKSPACE` on the session disk |
+| `AGENT_CRED_DIR` | the credential directory, for `creds.json` | `mount_dir_unset` | the start pull |
+| `AGENT_FAMILY_CONFIG_DIR` | the family config directory | `mount_dir_unset` | the start pull |
+| `AGENT_CONTROL_DIR` | the control directory | `mount_dir_unset` | none: no lock (decisions CH5d, CH19) |
+| `AGENT_INDEX_ROOT` | the `library/` index store | no index | none: no VM reads the index (decision CH4d) |
+| `AGENT_SANDBOX` | the sandbox id | `sandbox_unset` | none: the session id is `CRECHE_SESSION_ID` |
+| `AGENT_PEP_URL` | the URL of the chaperone | `plane_unset` | `http://127.0.0.1:8300` |
+| `AGENT_LITELLM_BASE_URL` | the base URL of LiteLLM | `plane_unset` | `http://127.0.0.1:4000` |
 
 A credential is a `Secret` (`src/secret.ts`). Only the `auth` of the `ch`
 connection and the `auth` of the LiteLLM provider unwrap it.
@@ -187,9 +199,10 @@ file's line count. A new name fails CI until someone picks a list.
   the sandbox is made again (decision CH52 rule 1), so a config edit
   never reaches a running sandbox. Under CH the vmm reply has no such
   fallback (`src/family-state.ts`).
-- At start a skill gets its supporting files. The family state carries
-  only the text of each `SKILL.md`. A skill whose text changes after the
-  start has no supporting files until the facade starts again.
+- On sbx a skill gets its supporting files at start. The family state
+  carries only the text of each `SKILL.md`. A skill whose text changes
+  after the start has no supporting files until the facade starts again.
+  Under CH the start is a pull too, so no skill has supporting files.
   caregiver writes no supporting file today (`src/skills.ts`).
 - After a model alias change, a failed limits read falls back to the
   128000-token window and stays cached until the next alias change, as

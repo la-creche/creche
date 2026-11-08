@@ -3,7 +3,8 @@
 // upstream tool `<upstream>__<tool>`, and Flue prefixes `mcp__ch__`, so the
 // model calls `mcp__ch__<upstream>__<tool>`.
 //
-//   FamilyConfig.planes.pep ──► <pep>/mcp     (correction 11 of the plan)
+//   planes.pep ──► <pep>/mcp     (correction 11 of the plan). sbx:
+//                  `AGENT_PEP_URL`. CH: guest 127.0.0.1:8300
 //   creds().pepToken ──► Authorization: Bearer, per request. The facade
 //                        pulls the creds before each prompt (decision CH5a).
 //
@@ -32,7 +33,7 @@ const MCP_PATH = "/mcp";
  * request. `creds` gives the current creds. The default is the start creds.
  */
 export function chaperoneConnection(
-  config: FamilyConfig,
+  config: Pick<FamilyConfig, "planes" | "creds">,
   creds: () => LiveCreds = () => config.creds,
 ): McpConnectionDefinition {
   return defineMcpConnection({

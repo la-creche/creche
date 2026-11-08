@@ -8,3 +8,18 @@
  * vsock dial of host port 1100 (decision CH62 rule 13).
  */
 export const FAMILY_STATE_SOCKET = "/run/creche/family-state.sock";
+
+/** The facade database, on the session disk (decision CH62 rule 5). */
+export const FLUE_DB = "/var/lib/creche/session/flue.db";
+
+/**
+ * The workspace on the session disk: the cwd of the facade, and the
+ * working directory of the granted sandbox tools (decision CH62 rule 5).
+ */
+export const WORKSPACE = "/var/lib/creche/session/workspace";
+
+/** The guest loopback port of the LiteLLM plane (decision CH6-2). */
+export const LITELLM_PORT = 4000;
+
+/** The guest loopback port of the chaperone plane (decision CH6-2). */
+export const CHAPERONE_PORT = 8300;

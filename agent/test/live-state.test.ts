@@ -2,20 +2,15 @@
 // `ch` call while session B pulls a new config. A's next model request
 // keeps A's config. B's turn gets the new one (decision CH5c).
 
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { init } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { composeAgent } from "../src/agent.js";
 import { fileBackend } from "../src/family-state.js";
 import type { StateBackend, StateHolder } from "../src/family-state.js";
 import { FakeCh, SEARCH_TOOL } from "./fake-ch.js";
 import { FakeModel } from "./fake-model.js";
-import { familyConfig, FIXTURE_TOKEN, swapConfig } from "./family.js";
+import { composeFamily, familyConfig, FIXTURE_TOKEN, swapConfig } from "./family.js";
 
 const NO_RETRY_MS = 0;
 
@@ -28,12 +23,7 @@ const config = await familyConfig({
   configFiles: { "instructions.md": "FIXTURE-OLD" },
 });
 
-const read = composeAgent(config, mkdtempSync(join(tmpdir(), "agent-workspace-")));
-if (!read.ok) {
-  throw new Error(read.reason);
-}
-
-const { composed } = read;
+const composed = composeFamily(config);
 const state: StateHolder = composed.state;
 const backend: StateBackend = fileBackend(config.mounts, state.config, NO_RETRY_MS);
 const flue = await start({ agents: [composed.agent], db: composed.db, providers: composed.providers });

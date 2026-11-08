@@ -52,7 +52,7 @@ function supervise(dir: string = controlDir()): Run {
 
   const exited = new Promise<number>((resolve) => {
     void runSupervisor({
-      input,
+      supervision: { kind: "sbx", input, lock },
       stdout: {
         writeLine: (line) => lines.push(line),
         exit: (code) => {
@@ -61,11 +61,9 @@ function supervise(dir: string = controlDir()): Run {
         },
       },
       say: (text) => said.push(text),
-      lock,
       deadlineMs: DEADLINE_MS,
       serve: async () => ({ ok: true, serving: { runtime: { stop: async () => void events.push("stop") }, sessions: null } }),
       socketPath: null,
-      link: null,
     });
   });
 

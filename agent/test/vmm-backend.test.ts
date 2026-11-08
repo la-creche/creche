@@ -5,9 +5,6 @@
 // fails the pull with the fault word of the file backend, and nothing keeps
 // a last good config.
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { createServer } from "node:net";
-import type { Server, Socket } from "node:net";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,96 +14,13 @@ import type { LiveConfig, StatePull } from "../src/family-state.js";
 import { revealSecret } from "../src/secret.js";
 import { readSkills } from "../src/skills.js";
 import { validator } from "../src/wire-read.js";
+import { closeFakeVmms, CONFIG, CREDS, fakeVmm, replying, sayer, SKILL, socketPath, stateLine } from "./fake-vmm.js";
 import { familyEnv, FIXTURE_KEY, FIXTURE_TOKEN } from "./family.js";
 
 const START: LiveConfig = { modelAlias: "chat", instructions: null, systemPrompt: "append", sandboxTools: [], skills: [] };
-const SKILL = "---\nname: weather-report\ndescription: Write a short weather report.\n---\nSearch first.\n";
 const SHORT_WAIT_MS = 200;
 
-const CONFIG = {
-  instructions: "  FIXTURE-INSTRUCTIONS  \n",
-  model_alias: "litellm/chat",
-  sandbox_tools: { bash: true, edit: false, glob: false, grep: false, read: true, write: false },
-  skills: { "weather-report": SKILL },
-  system_prompt: "replace",
-};
-
-const CREDS = { litellm_key: FIXTURE_KEY, pep_token: FIXTURE_TOKEN };
-
-/** The compact text of a reply, as the vmm writes it. */
-function stateLine(config: Readonly<Record<string, unknown>> = CONFIG): string {
-  return JSON.stringify({ state: { config, creds: CREDS } });
-}
-
-/** The vmm end: the lines of each link, and the reply that the test gives each pull. */
-interface FakeVmm {
-  readonly path: string;
-  /** The bytes that each link sent, one entry per link. */
-  readonly links: string[];
-}
-
-const servers: Server[] = [];
-const sockets: Socket[] = [];
-const dirs: string[] = [];
-
-afterEach(() => {
-  for (const socket of sockets.splice(0)) {
-    socket.destroy();
-  }
-
-  for (const server of servers.splice(0)) {
-    server.close();
-  }
-
-  for (const dir of dirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-/** A path short enough for a Unix socket on every platform. */
-function socketPath(): string {
-  const dir = mkdtempSync("/tmp/fs-");
-  dirs.push(dir);
-
-  return join(dir, "family-state.sock");
-}
-
-/**
- * A fake vmm. `answer` gets the index of the link and writes what the vmm
- * sends: a reply line, or nothing, or a close.
- */
-async function fakeVmm(answer: (link: number, socket: Socket) => void): Promise<FakeVmm> {
-  const path = socketPath();
-  const links: string[] = [];
-  const server = createServer((socket) => {
-    sockets.push(socket);
-    const link = links.length;
-    links.push("");
-    socket.on("data", (chunk: Buffer) => {
-      links[link] += chunk.toString("utf8");
-      if (links[link]?.endsWith("\n")) {
-        answer(link, socket);
-      }
-    });
-    socket.on("error", () => undefined);
-  });
-  servers.push(server);
-  await new Promise<void>((resolve) => server.listen(path, resolve));
-
-  return { path, links };
-}
-
-/** A fake vmm that answers each pull with `line` and an LF. */
-function replying(line: string): Promise<FakeVmm> {
-  return fakeVmm((_link, socket) => socket.write(`${line}\n`));
-}
-
-/** The said lines of a pull. */
-function sayer(): { readonly lines: string[]; readonly say: (line: string) => void } {
-  const lines: string[] = [];
-
-  return { lines, say: (line) => lines.push(line) };
-}
+afterEach(closeFakeVmms);
 
 /** The config of a pull, by the parts a test compares. */
 function shown(pull: StatePull): unknown {

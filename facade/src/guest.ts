@@ -26,3 +26,10 @@ export const CONTROL_LINE_CAP = 65_536;
  * before SIGTERM, in milliseconds (decision CH62 rule 9).
  */
 export const FACADE_STOP_WAIT_MS = 25_000;
+
+/**
+ * The relay socket of the facade under CH, where guest init joins each
+ * ACP link of guest port 1201 (decisions CH5e, CH62 rule 5). On sbx the
+ * path comes from `TMPDIR` (`relaySocketPath`).
+ */
+export const RELAY_SOCKET = "/tmp/creche-facade/acp.sock";

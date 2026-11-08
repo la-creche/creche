@@ -1,32 +1,47 @@
-// The family edge: the agent module reads the family config at start and
-// composes the agent. A refusal exits with a status of its own and one
-// stderr line. Once the supervisor holds the lock, `serveFamily` starts
-// Flue on `<AGENT_SESSIONS_DIR>/flue.db` and opens `creche_sessions` there.
-// Before each prompt the facade pulls the family state from the mounts
-// into the agent (decision CH5a). A pulled `model_alias` that differs
-// switches the model at that prompt (decisions CH5c, CH5c-2).
+// The family edge. On sbx the agent module reads the family config at
+// start and composes the agent. Under CH it takes the fixed guest paths,
+// the guest planes and the state of one pull on the family-state socket,
+// and reads no `AGENT_*` variable (`agent/src/guest-start.ts`, decisions
+// CH5e, CH80, CH81 rule 5). A refusal exits with a status of its own and
+// one stderr line. Once the supervisor holds the lock, `serveFamily`
+// starts Flue on the start's `flue.db` and opens `creche_sessions` there.
+// Before each prompt the facade pulls the family state into the agent: on
+// sbx from the mounts, under CH from the vmm (decision CH5a). A pulled
+// `model_alias` that differs switches the model at that prompt (decisions
+// CH5c, CH5c-2).
 
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import type { Readable } from "node:stream";
 import { DatabaseSync } from "node:sqlite";
 
 import { start } from "@flue/runtime/node";
-import { AGENT_NAME, composeAgent, fileBackend, readModelLimits, storePath } from "agent/agent";
-import type { ComposedAgent, ComposeRead, LimitsRead, StateBackend } from "agent/agent";
+import {
+  AGENT_NAME,
+  composeAgent,
+  FAMILY_STATE_SOCKET,
+  fileBackend,
+  readGuestStart,
+  readModelLimits,
+  startOf,
+  vmmBackend,
+} from "agent/agent";
+import type { AgentStart, ComposedAgent, LimitsRead, StartRead, StateBackend } from "agent/agent";
 import { readFamilyConfig } from "agent/config";
-import type { ConfigRefusal, FamilyConfig } from "agent/config";
+import type { ConfigRefusal } from "agent/config";
 
 import { tapStores } from "./flue-history.js";
+import { guestLink } from "./local-link.js";
 import type { LocalLink } from "./local-link.js";
+import { SupervisorLock } from "./lock.js";
 import { readMode } from "./mode.js";
 import type { FacadeMode } from "./mode.js";
 import { sessionService } from "./service.js";
 import { SessionIndex } from "./session-index.js";
 import { say } from "./stdio.js";
-import type { ServingStart } from "./supervisor.js";
+import type { ServingStart, Supervision } from "./supervisor.js";
 import type { Refresh } from "./turns.js";
 
-type ComposeReason = Extract<ComposeRead, { readonly ok: false }>["reason"];
+type ComposeReason = Extract<StartRead, { readonly ok: false }>["reason"];
 
 /** One exit status per refusal. The map is total: a new reason breaks the build. */
 export const EXIT_BY_REFUSAL: { readonly [Reason in ConfigRefusal["reason"] | ComposeReason]: number } = {
@@ -46,11 +61,13 @@ export const EXIT_SESSION_ID = 17;
 
 export interface Family {
   readonly mode: FacadeMode;
-  readonly config: FamilyConfig;
   readonly composed: ComposedAgent;
-  readonly workspace: string;
   /** The model's limits from LiteLLM, or the fallback and its fault. */
   readonly limits: LimitsRead;
+  /** The pull before each prompt: the mounts on sbx, the vmm under CH. */
+  readonly backend: StateBackend;
+  /** What holds the facade: stdio and the lock on sbx, the local link under CH. */
+  readonly supervision: Supervision;
 }
 
 export type FamilyRead =
@@ -64,10 +81,31 @@ function detailOf({ reason, ...names }: ConfigRefusal): string {
   return held.length === 0 ? reason : `${reason}: ${held.join(", ")}`;
 }
 
-export async function readFamily(env: NodeJS.ProcessEnv): Promise<FamilyRead> {
+/** The agent of `start`, with the limits of its alias from LiteLLM. */
+async function composeStart(start: AgentStart): Promise<{ readonly composed: ComposedAgent; readonly limits: LimitsRead }> {
+  const { state } = start;
+  const limits = await readModelLimits(start.planes, state.config.modelAlias, state.creds.litellmKey);
+
+  return { composed: composeAgent(start, limits.limits), limits };
+}
+
+/**
+ * The family of the facade. `input` is attendance's stdio on sbx. Under CH
+ * the facade reads no stdio, and the start pulls until the vmm gives a
+ * state (decision CH23 rule 2).
+ */
+export async function readFamily(env: NodeJS.ProcessEnv, input: Readable): Promise<FamilyRead> {
   const mode = readMode(env);
   if (!mode.ok) {
     return { ok: false, exitCode: EXIT_SESSION_ID, detail: mode.detail };
+  }
+
+  if (mode.mode.kind === "ch") {
+    const { composed, limits } = await composeStart(await readGuestStart(env, say));
+    const backend = vmmBackend(FAMILY_STATE_SOCKET, composed.state.config, say);
+    const supervision: Supervision = { kind: "ch", link: guestLink(say) };
+
+    return { ok: true, family: { mode: mode.mode, composed, limits, backend, supervision } };
   }
 
   const read = await readFamilyConfig(env);
@@ -75,13 +113,17 @@ export async function readFamily(env: NodeJS.ProcessEnv): Promise<FamilyRead> {
     return { ok: false, exitCode: EXIT_BY_REFUSAL[read.refusal.reason], detail: detailOf(read.refusal) };
   }
 
-  const workspace = join(read.config.mounts.sessions, "workspace");
-  const limits = await readModelLimits(read.config);
-  const composed = composeAgent(read.config, workspace, limits.limits);
+  const { config } = read;
+  const started = startOf(config);
+  if (!started.ok) {
+    return { ok: false, exitCode: EXIT_BY_REFUSAL[started.reason], detail: started.reason };
+  }
 
-  return composed.ok
-    ? { ok: true, family: { mode: mode.mode, config: read.config, composed: composed.composed, workspace, limits } }
-    : { ok: false, exitCode: EXIT_BY_REFUSAL[composed.reason], detail: composed.reason };
+  const { composed, limits } = await composeStart(started.start);
+  const backend = fileBackend(config.mounts, composed.state.config);
+  const supervision: Supervision = { kind: "sbx", input, lock: new SupervisorLock(config.mounts.control, config.sandbox) };
+
+  return { ok: true, family: { mode: mode.mode, composed, limits, backend, supervision } };
 }
 
 /** The stderr line of a limits read. `alias` names the new model of a change, and is null at start. */
@@ -127,13 +169,13 @@ function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refr
  * Flue on the composed store, and the session methods on the same file.
  * `link` is the local link of guest init under CH, or null on sbx.
  */
-export async function serveFamily({ mode, config, composed, workspace }: Family, link: LocalLink | null): Promise<ServingStart> {
+export async function serveFamily({ mode, composed, backend }: Family, link: LocalLink | null): Promise<ServingStart> {
   try {
-    mkdirSync(workspace, { recursive: true });
+    mkdirSync(composed.workspace, { recursive: true });
     const tapped = tapStores(composed.db);
     const runtime = await start({ agents: [composed.agent], db: tapped.adapter, providers: composed.providers });
-    const index = new SessionIndex(new DatabaseSync(storePath(config)));
-    const refresh = refreshOf(fileBackend(config.mounts, composed.state.config), composed);
+    const index = new SessionIndex(new DatabaseSync(composed.store));
+    const refresh = refreshOf(backend, composed);
     const sessions = sessionService({ agent: composed.agent, agentName: AGENT_NAME, index, mode, link, store: tapped.store, refresh });
 
     return { ok: true, serving: { runtime, sessions } };
