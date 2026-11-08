@@ -1,10 +1,12 @@
-"""What CI asks the pure half about a binary component.
+"""What CI asks the pure half about a binary or a disk-image component.
 
-Three commands print it: `handover artifacts` (the rows, one crate row and
-the words of the signature check), `handover check-tree` (the walk of a
-built tree) and `handover allocate-tags --assets` (the assets of a
-Release). The one binary row of this repository is `vmm`, whose manifest
-is `rust/component.toml` (CH7-5). A test that needs a row of its own swaps
+Four commands print it: `handover artifacts` (the rows, one crate row and
+the words of the signature check), `handover disk-assets` (the disk-image
+rows), `handover check-tree` (the walk of a built tree) and `handover
+allocate-tags --assets` (the assets of a Release). The one binary row of
+this repository is `vmm`, whose manifest is `rust/component.toml` (CH7-5).
+The one disk-image row is `disks`, still in `ARRIVING` (CH76 rule 1). A
+test that needs a disk row takes it out. A test that needs a row of its own swaps
 one row for a binary copy of itself (`handover_bin_fixtures.py`). The root
 of such a test holds the real vmm manifest too, so its rows end with the
 vmm row.
@@ -23,8 +25,8 @@ from handover.artifacts import (
     TOKEN_ISSUER,
     ArtifactRefusal,
     ArtifactRow,
-    archive_expected,
     asset_names,
+    assets_expected,
     crate_row,
     download_url,
     install_words,
@@ -61,7 +63,7 @@ from handover_bin_fixtures import (
     use_binary_catalog,
     write_program,
 )
-from handover_fixtures import manifest_text, write_manifest
+from handover_fixtures import manifest_text, manifest_toml, write_manifest
 
 from handover import artifacts
 
@@ -139,14 +141,17 @@ def _vmm_lines() -> list[str]:
 # ---- the constants and the names --------------------------------------------
 
 
-def test_only_a_binary_component_ships_an_archive() -> None:
-    assert {kind: archive_expected(kind) for kind in Kind} == {
+def test_only_a_binary_and_a_disk_image_component_ship_signed_assets() -> None:
+    """A binary component ships one archive, a disk-image component N
+    files (CH35 (4))."""
+    assert {kind: assets_expected(kind) for kind in Kind} == {
         Kind.VENV: False,
         Kind.BINARY: True,
         Kind.OCI_IMAGE: False,
         Kind.COMPOSE: False,
         Kind.DATA: False,
         Kind.UNITS: False,
+        Kind.DISK_IMAGE: True,
     }
 
 
@@ -599,6 +604,118 @@ def test_a_component_that_leaves_or_comes_into_the_catalog_has_no_row(
     assert [row.component for row in rows({VMM: vmm}, Repo.CRECHE)] == [VMM]
 
 
+# ---- the disk-image rows -----------------------------------------------------
+
+DISKS = "disks"
+
+#: The one build argv of the disks row (contract 06 §8.4 rule 1).
+DISK_ARGV = ("/usr/bin/env", "bash", "disks/bin/playpen-release-disks")
+
+#: The line form of the disks row: its files and bundles, then its argv.
+DISK_LINES = [
+    "component disks",
+    "out-env DISK_OUT",
+    "asset digests.json 65536",
+    "asset digests.json.sigstore.json 1048576",
+    "asset vmlinux-x86_64.zst 2147483647",
+    "asset vmlinux-x86_64.zst.sigstore.json 1048576",
+    "asset base.ext4.zst 2147483647",
+    "asset base.ext4.zst.sigstore.json 1048576",
+    "asset python.ext4.zst 2147483647",
+    "asset python.ext4.zst.sigstore.json 1048576",
+    "argv 3",
+    *DISK_ARGV,
+    "end",
+]
+
+
+def _disks_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, build: bool = True) -> Path:
+    """A root that holds a disks manifest and the real vmm manifest, with
+    `disks` out of `ARRIVING`, as after its manifest PR."""
+    monkeypatch.setattr(artifacts, "ARRIVING", artifacts.ARRIVING - {DISKS})
+    words = ", ".join(f'"{word}"' for word in DISK_ARGV)
+    text = manifest_toml(DISKS) + (f"build = [[{words}]]\n" if build else "")
+    root = tmp_path / "root"
+    write_manifest(root, DISKS, text, Markup.TOML)
+    write_manifest(root, VMM, VMM_MANIFEST_TEXT, Markup.TOML)
+
+    return root
+
+
+def test_disk_assets_prints_the_disk_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _disks_root(tmp_path, monkeypatch)
+
+    assert _out(capsys, "disk-assets", "--repo", "creche", "--root", str(root)) == (
+        EXIT_OK,
+        DISK_LINES,
+    )
+
+
+def test_artifacts_prints_no_disk_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`read_rows` of `bin/lib/artifactrows.sh` never meets a disk line."""
+    root = _disks_root(tmp_path, monkeypatch)
+
+    code, lines = _out(capsys, "artifacts", "--repo", "creche", "--root", str(root))
+
+    assert code == EXIT_OK
+    assert lines == _vmm_lines()
+
+
+def test_disk_assets_prints_no_row_while_the_disks_row_arrives(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`disks` is in `ARRIVING`, so this checkout has no disk row yet."""
+    assert DISKS in artifacts.ARRIVING
+    assert _out(capsys, "disk-assets", "--repo", "creche", "--root", str(REPO_ROOT)) == (
+        EXIT_OK,
+        [],
+    )
+
+
+def test_another_repository_has_no_disk_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _disks_root(tmp_path, monkeypatch)
+
+    assert _out(capsys, "disk-assets", "--repo", "mcp", "--root", str(root)) == (EXIT_OK, [])
+
+
+def test_a_disk_row_with_no_manifest_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(artifacts, "ARRIVING", artifacts.ARRIVING - {DISKS})
+    root = tmp_path / "root"
+    write_manifest(root, VMM, VMM_MANIFEST_TEXT, Markup.TOML)
+
+    code = main(["disk-assets", "--repo", "creche", "--root", str(root)])
+
+    assert code == EXIT_REFUSED
+    assert capsys.readouterr().err.startswith(f"refused [catalog] {DISKS}:")
+
+
+def test_a_disk_manifest_with_no_build_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _disks_root(tmp_path, monkeypatch, build=False)
+
+    code = main(["disk-assets", "--repo", "creche", "--root", str(root)])
+
+    assert code == EXIT_REFUSED
+    assert "a disk-image component with no build command" in capsys.readouterr().err
+
+
+def test_disk_assets_needs_a_repository(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as caught:
+        main(["disk-assets"])
+
+    assert caught.value.code == EXIT_USAGE
+    assert "--repo" in capsys.readouterr().err
+
+
 # ---- one crate row ----------------------------------------------------------
 
 
@@ -788,12 +905,12 @@ def test_an_unknown_repository_is_a_usage_error() -> None:
 # ---- the assets of a Release ------------------------------------------------
 
 
-def test_no_component_of_today_but_a_binary_one_has_an_asset(
+def test_no_component_of_today_but_a_binary_or_disk_one_has_an_asset(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The binary rows are `chaperone` and `vmm`. Every other row ships no
-    archive."""
-    for row in (one for one in CATALOG if one.kind is not Kind.BINARY):
+    """The binary rows are `chaperone` and `vmm`, and the disk-image row is
+    `disks`. Every other row ships no signed asset."""
+    for row in (one for one in CATALOG if not assets_expected(one.kind)):
         argv = ["allocate-tags", "--repo", str(row.repo), "--assets", row.name]
 
         assert _out(capsys, *argv) == (EXIT_OK, []), row.name

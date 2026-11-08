@@ -470,6 +470,51 @@ Kind.BINARY, Releases.YES)` (CH7-5, CH9, item 12 (1)). Its manifest is
    (`discovery.read_named`). A CI runner has no site file, and each other
    manifest of this repository names a `~/` path, which needs one.
 
+## Disk images
+
+The catalog row of `disks` is `CatalogRow("disks", Repo.CRECHE, "disks",
+Kind.DISK_IMAGE, Releases.YES, ("playpen", "agent", "facade",
+"pyproject.toml", "uv.lock"))`, in `ARRIVING` (contract 06 §1 rule 15,
+CH7-2, CH35 (4), CH76 rules 1 and 5). Its manifest is
+`disks/component.toml`, which a later PR adds.
+
+1. A `kind: disk-image` tree is a set of signed files at the root of
+   `install.to`. CI builds and signs each file. Root checks each signature
+   and installs each file unchanged. Root runs no build and unpacks
+   nothing (contract 06 §8.4).
+2. The files are `digests.json`, `vmlinux-x86_64.zst` and one
+   `<flavor>.ext4.zst` for each flavor of `catalog.DISK_FLAVORS`. Each file
+   has its own bundle `<file>.sigstore.json`. `artifacts.asset_limits`
+   holds the list and the limits: `DISK_FILE_MAX_BYTES` (2 GiB - 1) for a
+   disk and the kernel, `DIGESTS_MAX_BYTES` (64 KiB, the `DIGESTS_CAP` of
+   the vmm) for `digests.json`, and `BUNDLE_MAX_BYTES` for each bundle.
+3. `DISK_FLAVORS` is `base` and `python`, the values of the wire enum
+   `SandboxFlavor`. `tests/test_handover_disk_flavors.py` holds the two
+   equal (CH58 rule 4, CH76 rule 7).
+4. A disk-image manifest names no unit, and its `runs_as` is `none`. Its
+   `build` argv starts with an absolute path, and only CI runs it, with
+   `DISK_OUT` set (`catalog.DISK_OUT_ENV`).
+5. Its verify program sits in the tree of a component that its
+   `depends_on` names, and each `--env-file` of its hook is one of the hook
+   of that component (contract 06 §4 rules 6 and 7, CH76 rule 6).
+   `manifest.check_disk_image_hooks` holds both rules, and `resolve` calls
+   it on each set. Rule 7 names the `EnvironmentFile=` of the unit of that
+   component. The check reads no unit file. It compares each `--env-file`
+   with the `--env-file` of the verify hook of that component, and
+   `tests/test_handover_r7r_verify_env.py` holds that one equal to the
+   `EnvironmentFile=` of its unit (CH78 rule 2).
+6. `handover disk-assets --repo <repo>` prints each disk-image row: the
+   component, `out-env DISK_OUT`, one `asset <name> <bytes>` line for each
+   file and bundle, then each argv, then `end` (`artifacts.DiskRow`).
+   `handover artifacts` prints binary rows only, so `read_rows` of
+   `bin/lib/artifactrows.sh` never meets a disk line.
+7. `artifacts.assets_expected` is true for `binary` and `disk-image`. So
+   root's check P6 runs for a disk-image release. Until the executor reads
+   the files of the row (plan PR H3b), root finds no copy of them and P6
+   refuses with `no artifact in the store`. No disk-image build runs.
+8. Release `handover` before the first manifest says `kind: disk-image`.
+   An older executor or requester refuses that manifest.
+
 ## The host component of creche-release
 
 The catalog row of `host` is `CatalogRow("host", Repo.CRECHE_RELEASE, ".",
@@ -585,8 +630,8 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `boundedyaml.py`, `tomlfile.py` | the YAML loader of each reader, with its two merge limits and its count of an empty merged mapping, and the TOML reader of each file kind |
 | `manifest.py`, `discovery.py`, `order.py`, `contracts.py` | the manifest as hostile input, the walk, the order, rules C1 to C5 |
 | `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, the server file as hostile bytes, the uninstalled component |
-| `artifacts.py`, `treewalk.py` | the names, the limits and the signer of the archive of a binary component, the walk of a tree of compiled programs |
-| `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow`, `artifacts`, `check-tree` |
+| `artifacts.py`, `treewalk.py` | the names, the limits and the signer of the archive of a binary component and of the files of a disk-image component, the walk of a tree of compiled programs |
+| `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow`, `artifacts`, `disk-assets`, `check-tree` |
 | `requester/`, `corpus/` | one request file, one `git fetch`, and the fetch of the two assets of a binary component into the store (`corpus/artifacts.py`) |
 | `follow/` | the set a newer tag moves, the marker, the decision |
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P6 |

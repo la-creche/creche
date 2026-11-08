@@ -170,6 +170,26 @@ _BINARY_FIELDS: Final = {
 }
 
 
+#: The disks row of contract 06 §1 rule 15: no unit, runs as none, a hook
+#: in the vmm tree, and a CI-only build with an absolute first word (§8.4).
+_DISK_FIELDS: Final = {
+    "name": "name: disks",
+    "path": "path: disks",
+    "kind": "kind: disk-image",
+    "unit": "unit: null",
+    "runs_as": "runs_as: none",
+    "build": 'build:\n  - ["/usr/bin/env", "bash", "disks/bin/playpen-release-disks"]',
+    "install": _install("/opt/components/disks", "/opt/components/disks.prev"),
+    "provides": "provides: []",
+    "requires": "requires: []",
+    "depends_on": "depends_on: [vmm]",
+    "verify": _verify(
+        '["/opt/components/vmm/bin/vmm", "check-images", "--json"]', "operator", "300"
+    ),
+    "secrets": "secrets: []",
+}
+
+
 def _binary(case_id: str, build: str, site: str = SITE_SET) -> Case:
     """The valid binary manifest with another `build`. Its fields name no
     path under the home of the operator, so it reads with no site file."""
@@ -233,6 +253,12 @@ CASES: Final[tuple[Case, ...]] = (
     _with("kind-oci-image", kind="kind: oci-image", runs_as="runs_as: sandbox"),
     _with("kind-compose", kind="kind: compose", runs_as="runs_as: root"),
     _with("kind-data", **_DATA_FIELDS),
+    _with("kind-disk-image", **_DISK_FIELDS),
+    # A disk-image component names no unit, and nothing runs it (§8.4 rule 5).
+    _with("kind-disk-image-unit", **(_DISK_FIELDS | {"unit": "unit: creche-disks.service"})),
+    _with("kind-disk-image-runs-as", **(_DISK_FIELDS | {"runs_as": "runs_as: operator"})),
+    # Only CI runs the build, and its first word is an absolute path (§8).
+    _with("kind-disk-image-build-word", **(_DISK_FIELDS | {"build": 'build:\n  - ["bash", "x"]'})),
     _with("kind-venv-mcp", kind="kind: venv", runs_as="runs_as: mcp", path="path: ."),
     _with("only-required-fields", **dict.fromkeys(_OPTIONAL)),
     _with(

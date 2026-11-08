@@ -395,6 +395,47 @@ def test_an_arriving_component_reads_absent_and_is_never_tagged(
     assert not arriving & {item.component for item in bumped}
 
 
+#: Each path that moves the `disks` tag: its own path, `playpen` and each
+#: path that `playpen` bundles (contract 06 §1 rule 15).
+DISK_PATHS = (
+    "disks/bin/playpen-release-disks",
+    "playpen/Dockerfile",
+    "agent/src/x.ts",
+    "facade/x.py",
+    "pyproject.toml",
+    "uv.lock",
+)
+
+
+@pytest.mark.parametrize("path", DISK_PATHS)
+def test_a_change_that_moves_playpen_moves_disks(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    """The disks come from `playpen/Dockerfile` and the playpen scripts, so
+    a change to a disk moves the disks tag. With `disks` out of `ARRIVING`,
+    as after its manifest PR."""
+    monkeypatch.setattr(allocate, "ARRIVING", ARRIVING - {"disks"})
+    tags = (*ALL_TAGGED, "disks-v0.1.0")
+
+    assert "disks" in {plan.component for plan in _plan((path,), tags=tags)}
+
+
+def test_a_change_to_the_disks_script_moves_only_disks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The build script sits under `disks/`, so it moves the disks tag
+    only. The Cargo workspace moves no disk-image row."""
+    monkeypatch.setattr(allocate, "ARRIVING", ARRIVING - {"disks"})
+    tags = (*ALL_TAGGED, "disks-v0.1.0")
+
+    assert {plan.component for plan in _plan((DISK_PATHS[0],), tags=tags)} == {"disks"}
+    assert "disks" not in {plan.component for plan in _plan(("rust/Cargo.lock",), tags=tags)}
+
+
+def test_the_arriving_disks_row_gets_no_tag() -> None:
+    """In `ARRIVING`, a change to a disk tags no disks (CH76 rule 1)."""
+    assert "disks" in ARRIVING
+    assert "disks" not in {plan.component for plan in _plan(DISK_PATHS, tags=ALL_TAGGED)}
+
+
 def test_a_docs_only_merge_still_gives_an_untagged_component_its_first() -> None:
     """The fourth row of §2.1 holds for a component that HAS a version. One
     that has none is not releasable at all, so it is not a release this

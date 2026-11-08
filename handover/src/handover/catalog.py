@@ -40,6 +40,12 @@ class Kind(StrEnum):
     #: It has no `build` and names no `unit`. Root copies the fetched tree,
     #: and step 9 links each unit file of the live tree into place.
     UNITS = "units"
+    #: A set of signed files at the root of `install.to`: the guest kernel,
+    #: one root disk for each flavor and `digests.json` (contract 06 §8.4).
+    #: CI builds and signs each file. Root checks each signature, installs
+    #: each file unchanged and runs no build (CH7-2, CH35 (4), CH76 rule 5).
+    #: It names no unit, and nothing runs it.
+    DISK_IMAGE = "disk-image"
 
 
 class RunsAs(StrEnum):
@@ -143,7 +149,15 @@ class CatalogRow:
 #: `vmm` is the Rust workspace of this repository, at `rust/`: four
 #: programs, `vmm`, `guest-init`, `cloud-hypervisor` and `ch-remote`, in one
 #: archive (CH7-5, CH9, item 12 (1)). Its manifest is `rust/component.toml`.
-#: It is the last row.
+#: It is the row before `disks`.
+#:
+#: `disks` is the set of signed disk files of this repository, at `disks/`:
+#: the guest kernel, one root disk for each flavor of `DISK_FLAVORS` and
+#: `digests.json` (CH7-2, CH35 (4), CH76 rule 5). The files come from
+#: `playpen/Dockerfile` and the playpen scripts, so the row bundles
+#: `playpen` and each path that `playpen` bundles: a change that moves the
+#: `playpen` tag moves the `disks` tag too (contract 06 §1 rule 15). Its
+#: manifest is `disks/component.toml`. It is the last row.
 CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("chaperone", Repo.CHAPERONE, ".", Kind.BINARY, Releases.YES),
     CatalogRow(
@@ -170,6 +184,14 @@ CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("host", Repo.CRECHE_RELEASE, ".", Kind.UNITS, Releases.YES),
     CatalogRow("memory", Repo.CRECHE, "memory", Kind.VENV, Releases.YES, (), Lock.OWN),
     CatalogRow("vmm", Repo.CRECHE, "rust", Kind.BINARY, Releases.YES),
+    CatalogRow(
+        "disks",
+        Repo.CRECHE,
+        "disks",
+        Kind.DISK_IMAGE,
+        Releases.YES,
+        ("playpen", "agent", "facade", "pyproject.toml", "uv.lock"),
+    ),
 )
 
 CATALOG_BY_NAME: dict[str, CatalogRow] = {row.name: row for row in CATALOG}
@@ -242,9 +264,9 @@ RETIRING: frozenset[str] = frozenset()
 #: and both read. Discovery tolerates the absent file and the allocator tags
 #: none of them: a tag is a version somebody can release, and there is no
 #: tree to release yet. A name leaves this set in the commit that adds its
-#: directory. Empty now: `vmm` arrived with `rust/component.toml` (CH7-5,
-#: CH76 rule 1).
-ARRIVING: frozenset[str] = frozenset()
+#: directory. `vmm` arrived with `rust/component.toml` (CH7-5, CH76 rule
+#: 1). `disks` leaves it with `disks/component.toml` (CH76 rule 1).
+ARRIVING: frozenset[str] = frozenset({"disks"})
 
 #: Repositories that a host may not have cloned yet. Discovery tolerates the
 #: absent manifest of each component of such a repository, as it does for a
@@ -270,19 +292,21 @@ CONTRACT_OWNER: dict[ContractId, str] = {
 #: the two numbers is the `provides` row of `handover/component.yaml`.
 #: `tests/test_handover_contract_version.py` fails when they differ from it.
 MANIFEST_CONTRACT_MAJOR = 0
-MANIFEST_CONTRACT_MINOR = 22
+MANIFEST_CONTRACT_MINOR = 23
 
 #: `handover` deploys last whatever `depends_on` says (contract 06 §1.1).
 LAST_IN_ORDER = "handover"
 
-#: spec §9: at most ten entries. The catalog minus `registry-data`, which
-#: never releases, is ten rows with the `vmm` row, at the cap (CH7-5).
-#: `tests/test_handover_catalog_cap.py` fails when a releasing row passes it.
-MAX_REQUEST_COMPONENTS = 10
+#: spec §9: at most eleven entries. The catalog minus `registry-data`, which
+#: never releases, is eleven rows with the `disks` row, at the cap (CH35
+#: (1)). `tests/test_handover_catalog_cap.py` fails when a releasing row
+#: passes it.
+MAX_REQUEST_COMPONENTS = 11
 
 #: The limits of the two assets of a binary component. CI refuses an
 #: archive past a limit before it signs it, and each reader of the archive
 #: refuses it too. The size of the archive and of its bundle, in bytes.
+#: Each bundle of a disk-image component has the bundle limit too.
 ARCHIVE_MAX_BYTES = 256 * 1024 * 1024
 BUNDLE_MAX_BYTES = 1024 * 1024
 
@@ -290,6 +314,37 @@ BUNDLE_MAX_BYTES = 1024 * 1024
 #: the unpack.
 ARCHIVE_MAX_MEMBERS = 64
 ARCHIVE_MAX_UNPACKED_BYTES = 512 * 1024 * 1024
+
+#: The flavors of a root disk, one file `<flavor>.ext4.zst` each. They are
+#: the values of the wire enum `SandboxFlavor`, and the vmm refuses a
+#: `digests.json` with any other key (CH58 rule 4, CH76 rule 7).
+#: `tests/test_handover_disk_flavors.py` holds the two equal. Coding joins
+#: at the cut, with the PR that adds it to the enum.
+DISK_FLAVORS: tuple[str, ...] = ("base", "python")
+
+#: The end of the name of the root disk of a flavor: `<flavor><this>`. An
+#: ext4 file, compressed with zstd. Root installs it unchanged (CH35 (4)).
+DISK_SUFFIX = ".ext4.zst"
+
+#: The guest kernel, compressed with zstd (CH7-3).
+KERNEL_FILE = "vmlinux-x86_64.zst"
+
+#: The digest of each other file of the row, after decompression (CH41
+#: rule 1, CH58 rule 4). The vmm reads it from `VMM_IMAGE_ROOT` (CH57
+#: rule 1).
+DIGESTS_FILE = "digests.json"
+
+#: The largest file of a disk-image row: GitHub takes an asset under 2 GiB
+#: (contract 06 §8.4).
+DISK_FILE_MAX_BYTES = 2 * 1024 * 1024 * 1024 - 1
+
+#: The largest `digests.json`: the cap of the reader of the vmm
+#: (`DIGESTS_CAP` of `rust/crates/vmm/src/image_root.rs`).
+DIGESTS_MAX_BYTES = 64 * 1024
+
+#: The variable that tells the build of a disk-image row where to write
+#: its files. Only CI runs that build (contract 06 §8).
+DISK_OUT_ENV = "DISK_OUT"
 
 
 def releasable_names() -> tuple[str, ...]:

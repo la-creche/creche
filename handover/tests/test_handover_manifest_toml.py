@@ -24,7 +24,9 @@ from handover.catalog import (
     CATALOG_BY_NAME,
     MANIFEST_CONTRACT_MAJOR,
     MANIFEST_CONTRACT_MINOR,
+    Kind,
     Releases,
+    RunsAs,
 )
 from handover.cli import EXIT_OK, EXIT_REFUSED, main
 from handover.discovery import MAX_MANIFEST_FILES, discover, read_one
@@ -42,13 +44,20 @@ from handover.executor.live_state import (
 from handover.executor.spool import Spool
 from handover.executor.steps import Wiring
 from handover.manifest import (
+    DISK_IMAGE_ENV_FILE,
+    DISK_IMAGE_HOOK_OUTSIDE,
+    DISK_IMAGE_NAMES_NO_UNIT,
+    DISK_IMAGE_RUNS_AS_NONE,
     MANIFEST_FILENAME,
     MANIFEST_FILENAME_YAML,
     ComponentManifest,
     Markup,
+    check_disk_image_hooks,
     parse_manifest,
 )
+from handover.resolve import resolve
 from handover.silent import silent_manifest
+from handover.state import ReleaseState
 from handover.tomlfile import BYTE_ORDER_MARK, DEPTH, NOT_TOML, NOT_UTF8, TOO_LARGE, FileKind
 from handover_executor_fixtures import (
     REQUEST_ID,
@@ -67,6 +76,7 @@ from handover_executor_fixtures import (
     write_request,
 )
 from handover_fixtures import (
+    DISK_HOOK,
     manifest_text,
     manifest_toml,
     provides_entry,
@@ -74,7 +84,7 @@ from handover_fixtures import (
     write_manifest,
 )
 
-from handover import discovery
+from handover import discovery, manifest
 
 #: Each set of arguments that the suite gives `manifest_text`. A run of the
 #: suite that recorded each call gave this list. An argument with an empty
@@ -131,6 +141,7 @@ ARGUMENT_SETS: tuple[tuple[str, dict[str, str]], ...] = (
     ("registry-data", {}),
     ("registry-data", {"release": "yes"}),
     ("vmm", {}),
+    ("disks", {}),
 )
 
 SUBJECT = "chaperone/component.toml"
@@ -259,6 +270,187 @@ def test_a_date_time_is_no_text() -> None:
     refusal = _refusal(_chaperone({'manifest_version = "0.4"': "manifest_version = 1979-05-27"}))
 
     assert refusal.detail == "field 'manifest_version' must be a string"
+
+
+# -- a disk-image manifest (contract 06 §4 rules 6 and 7, §8.4) --------------
+
+DISKS = "disks"
+VMM = "vmm"
+DISKS_SUBJECT = "disks/component.toml"
+
+#: The one build argv of the disks row (contract 06 §8.4 rule 1). Only CI
+#: runs it.
+DISK_BUILD = 'build = [["/usr/bin/env", "bash", "disks/bin/playpen-release-disks"]]'
+
+#: The env file of `creche-vmm.service` (contract 06 §4 rule 7).
+VMM_ENV = "/srv/agents/state/creche/vmm.env"
+
+#: The verify line of the disks fixture, and of the vmm fixture.
+DISKS_VERIFY = f'verify.command = ["{DISK_HOOK}", "check-images", "--json"]'
+VMM_VERIFY = 'verify.command = ["/opt/components/vmm/bin/vmm-verify", "--json"]'
+
+#: A hook in the disks tree itself, which holds no program.
+OWN_TREE_VERIFY = 'verify.command = ["/opt/components/disks/bin/check", "--json"]'
+
+
+def _edited(text: str, edits: dict[str, str]) -> str:
+    for old, new in edits.items():
+        assert old in text
+        text = text.replace(old, new, 1)
+
+    return text
+
+
+def _disks(edits: dict[str, str] | None = None) -> ComponentManifest:
+    text = _edited(manifest_toml(DISKS), edits or {})
+
+    return parse_manifest(f"{text}{DISK_BUILD}\n", DISKS_SUBJECT, Markup.TOML)
+
+
+def _disks_refusal(edits: dict[str, str]) -> Refusal:
+    with pytest.raises(Refusal) as caught:
+        _disks(edits)
+
+    assert caught.value.code is RefusalCode.MANIFEST
+
+    return caught.value
+
+
+def _vmm(edits: dict[str, str] | None = None) -> ComponentManifest:
+    text = _edited(manifest_toml(VMM), edits or {})
+
+    return parse_manifest(text, "rust/component.toml", Markup.TOML)
+
+
+def _hook_refusal(manifests: dict[str, ComponentManifest]) -> Refusal:
+    with pytest.raises(Refusal) as caught:
+        check_disk_image_hooks(manifests)
+
+    assert caught.value.code is RefusalCode.MANIFEST
+    assert caught.value.subject == DISKS
+
+    return caught.value
+
+
+def _with_env(command: str, env_file: str) -> str:
+    return command.replace('"--json"]', f'"--json", "--env-file", "{env_file}"]')
+
+
+def test_a_disk_image_manifest_reads() -> None:
+    """No unit, runs as none, a hook in the vmm tree, and a CI-only build
+    whose first word is an absolute path (CH35 (4), CH76 rules 5 and 6)."""
+    disks = _disks()
+
+    assert disks.kind is Kind.DISK_IMAGE
+    assert disks.unit is None
+    assert disks.runs_as is RunsAs.NONE
+    assert disks.depends_on == (VMM,)
+    assert disks.build == (("/usr/bin/env", "bash", "disks/bin/playpen-release-disks"),)
+    check_disk_image_hooks({DISKS: disks, VMM: _vmm()})
+
+
+def test_a_disk_image_manifest_with_a_unit_is_refused() -> None:
+    unit = 'unit = "creche-disks.service"\nruns_as = "none"'
+
+    assert _disks_refusal({'runs_as = "none"': unit}).detail == DISK_IMAGE_NAMES_NO_UNIT
+
+
+@pytest.mark.parametrize("account", ["operator", "root", "sandbox", "mcp"])
+def test_a_disk_image_manifest_that_runs_as_an_account_is_refused(account: str) -> None:
+    """Nothing runs a disk-image tree (contract 06 §8.4 rule 5)."""
+    refusal = _disks_refusal({'runs_as = "none"': f'runs_as = "{account}"'})
+
+    assert refusal.detail == DISK_IMAGE_RUNS_AS_NONE
+
+
+def test_a_disk_image_build_names_its_program_by_an_absolute_path() -> None:
+    """The rule of each kind but binary: CI runs the argv, and root never
+    does (contract 06 §8)."""
+    text = f'{manifest_toml(DISKS)}build = [["bash", "disks/bin/playpen-release-disks"]]\n'
+
+    with pytest.raises(Refusal) as caught:
+        parse_manifest(text, DISKS_SUBJECT, Markup.TOML)
+
+    assert caught.value.detail == "field 'build[0]' must be an absolute path"
+
+
+@pytest.mark.parametrize(
+    "edits",
+    [
+        {DISKS_VERIFY: OWN_TREE_VERIFY},
+        {DISKS_VERIFY: 'verify.command = ["/opt/components/vmmx/bin/vmm", "--json"]'},
+        {DISKS_VERIFY: 'verify.command = ["/opt/components/vmm", "--json"]'},
+        {'depends_on = ["vmm"]': "depends_on = []"},
+        {'depends_on = ["vmm"]': 'depends_on = ["caregiver"]'},
+    ],
+    ids=["own-tree", "a-sibling-path", "the-tree-itself", "no-depends-on", "another-tree"],
+)
+def test_a_disk_image_verify_outside_its_depends_on_trees_is_refused(
+    edits: dict[str, str],
+) -> None:
+    """Contract 06 §4 rule 6: the program sits in the tree of a component
+    that `depends_on` names."""
+    caregiver = parse_manifest(manifest_toml("caregiver"), "caregiver", Markup.TOML)
+    manifests = {DISKS: _disks(edits), VMM: _vmm(), "caregiver": caregiver}
+
+    assert _hook_refusal(manifests).detail == DISK_IMAGE_HOOK_OUTSIDE
+
+
+def test_a_disk_image_verify_needs_the_manifest_of_its_tree() -> None:
+    assert _hook_refusal({DISKS: _disks()}).detail == DISK_IMAGE_HOOK_OUTSIDE
+
+
+def test_the_resolver_refuses_a_disk_image_verify_outside_its_trees() -> None:
+    """The rule holds in the set that the CLI, the requester and root each
+    resolve."""
+    manifests = {DISKS: _disks({DISKS_VERIFY: OWN_TREE_VERIFY}), VMM: _vmm()}
+
+    with pytest.raises(Refusal) as caught:
+        resolve(manifests, ReleaseState(), {})
+
+    assert caught.value.detail == DISK_IMAGE_HOOK_OUTSIDE
+
+
+def test_a_disk_image_verify_env_file_is_its_depends_on_units_env_file() -> None:
+    """Contract 06 §4 rule 7: the `--env-file` of the disks hook is the
+    one of the vmm hook. `test_handover_r7r_verify_env.py` holds that one
+    equal to the `EnvironmentFile=` of `creche-vmm.service` (CH78 rule 2).
+    A hook with no `--env-file` passes too."""
+    vmm = _vmm({VMM_VERIFY: _with_env(VMM_VERIFY, VMM_ENV)})
+    disks = _disks({DISKS_VERIFY: _with_env(DISKS_VERIFY, VMM_ENV)})
+
+    check_disk_image_hooks({DISKS: disks, VMM: vmm})
+    check_disk_image_hooks({DISKS: _disks(), VMM: vmm})
+
+
+@pytest.mark.parametrize("vmm_env", [None, "/srv/agents/state/creche/other.env"])
+def test_a_disk_image_verify_env_file_of_no_unit_of_its_tree_is_refused(
+    vmm_env: str | None,
+) -> None:
+    vmm = _vmm() if vmm_env is None else _vmm({VMM_VERIFY: _with_env(VMM_VERIFY, vmm_env)})
+    disks = _disks({DISKS_VERIFY: _with_env(DISKS_VERIFY, VMM_ENV)})
+
+    assert _hook_refusal({DISKS: disks, VMM: vmm}).detail == DISK_IMAGE_ENV_FILE
+
+
+def test_a_disk_image_verify_env_file_with_no_path_is_refused() -> None:
+    no_path = DISKS_VERIFY.replace('"--json"]', '"--json", "--env-file"]')
+    manifests = {DISKS: _disks({DISKS_VERIFY: no_path}), VMM: _vmm()}
+
+    assert _hook_refusal(manifests).detail == "verify names --env-file with no path"
+
+
+def test_a_0_22_reader_refuses_kind_disk_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reader of 0.22 has no `disk-image` in its kind list, and it
+    refuses a manifest that declares 0.23. So the handover that installs
+    the kind (H3b) releases before the first disks manifest (contract 06
+    §8.4, plan risk 6)."""
+    monkeypatch.setattr(manifest, "MANIFEST_CONTRACT_MINOR", 22)
+    declared = f'manifest_version = "{MANIFEST_CONTRACT_MAJOR}.{MANIFEST_CONTRACT_MINOR}"'
+
+    refusal = _disks_refusal({'manifest_version = "0.4"': declared})
+
+    assert refusal.detail == "manifest_version 0.23 is outside 0.0 to 0.22"
 
 
 # -- the TOML reader ----------------------------------------------------------

@@ -35,7 +35,7 @@ from .catalog import (
 )
 from .contracts import ContractRow, Unprovided, build_table
 from .errors import Refusal, RefusalCode, safe_token
-from .manifest import EITHER_MANIFEST_NAME, ComponentManifest
+from .manifest import EITHER_MANIFEST_NAME, ComponentManifest, check_disk_image_hooks
 from .order import build_graph, deploy_order
 from .state import VERSION_RE, ReleaseState, SourceFacts
 
@@ -235,6 +235,9 @@ def resolve(
     for name in sorted(request):
         _check_requested(name, manifests)
 
+    # Contract 06 §4 rules 6 and 7 read two manifests of the set, so they
+    # hold here and not in the parse of one manifest (CH76 rule 6).
+    check_disk_image_hooks(manifests)
     components = tuple(_one_component(row.name, request, state, redeploy) for row in CATALOG)
     ordered = tuple(sorted(components, key=lambda item: item.name))
     deploying = frozenset(item.name for item in ordered if item.action is Action.DEPLOY)
