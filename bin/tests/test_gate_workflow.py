@@ -31,8 +31,8 @@ The release has jobs that the gate has not. The `plan` job names each
 binary component that gets a tag in the run, from the dry run of the tag
 script. The `artifacts` job builds the archive of each such component
 (`bin/build-artifacts.sh`), in each scope, after a step that installs
-musl-tools (plan risk 13). The tests run the text of the
-plan step against a stand-in dry run.
+musl-tools (plan risk 13). The tests run the text of the plan step against
+a stand-in dry run.
 The `sign` job signs each archive. It holds the identity token, and each
 word that it runs is in the workflow file. The `release` job takes both
 workflow artifacts and cosign, and the tag step gets `ASSET_DIR` and
@@ -76,9 +76,9 @@ step before the run fails the job when no such test exists.
 
 The `vmm-archive` job is the one job of the gate alone (decision CH76 rule
 4). It builds the vmm archive with the `artifacts` job's script, after the
-same musl-tools step, and holds guest-init static. On a code change that touches no file of the vmm
-build it skips each step after the checkout, as the `systemd-proof` job
-does. The scope gives that answer.
+same musl-tools step, and holds guest-init static. On a code change that
+touches no file of the vmm build it skips each step after the checkout, as
+the `systemd-proof` job does. The scope gives that answer.
 """
 
 from __future__ import annotations

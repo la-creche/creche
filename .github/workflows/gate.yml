@@ -551,12 +551,11 @@ jobs:
   # musl-tools: ring v0.17.14 compiles C with x86_64-linux-musl-gcc (plan
   # risk 13). Both jobs install it from apt before the build, as
   # bin/vm-smoke-setup.sh does, with runner sudo (CH36 G20). The script
-  # runs `handover check-tree`
-  # and holds the archive to the limits of its row. The last step holds
-  # guest-init of the archive static, with the check of step 7 of
-  # bin/vm-smoke-setup.sh: no PT_INTERP header, after a proof that the
-  # check refuses the dynamic /bin/bash of the runner. guest-init runs as
-  # the init of a guest that has no program interpreter.
+  # runs `handover check-tree` and holds the archive to the limits of its
+  # row. The last step holds guest-init of the archive static, with the
+  # check of step 7 of bin/vm-smoke-setup.sh: no PT_INTERP header, after a
+  # proof that the check refuses the dynamic /bin/bash of the runner.
+  # guest-init runs as the init of a guest that has no program interpreter.
   #
   # It runs on every code change, and on a change that touches no file of
   # the vmm build its steps after the checkout are skipped, as in the
