@@ -110,7 +110,7 @@ Under CH the backend is `vmmBackend(FAMILY_STATE_SOCKET, …)` of
    whose alias is the bare prefix `litellm/`, is `not_valid`.
 4. A link that closes with no line, or that gives no line in
    `PULL_WAIT_MS` (20 s), is `not_valid`. The backend writes the cause
-   to stderr.
+   to stderr in one line (decision CH81 rules 2 and 3).
 
 `src/guest.ts` holds the socket path, and `test/guest.test.ts` holds it
 and `STATE_REPLY_CAP` equal to `rust/crates/wire/vectors/guest.json`.
