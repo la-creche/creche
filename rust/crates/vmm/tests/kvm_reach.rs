@@ -46,6 +46,7 @@
 #![cfg(target_os = "linux")]
 
 mod common;
+mod stand_in;
 
 use std::ffi::OsStr;
 use std::fs;
@@ -72,9 +73,10 @@ use creche_wire::{
 use serde_json::{Value, json};
 
 use common::{
-    BOOT, Booted, FAMILY, HOST_GIT, SESSION, SYSTEMCTL, UP, boot, boot_with, ext4, family_root,
-    lines, sha256, stub_plane, sudo, transient, work,
+    BOOT, Booted, FAMILY, HOST_GIT, SESSION, SYSTEMCTL, UP, boot_with, family_root, lines, sha256,
+    sudo, transient, work,
 };
+use stand_in::{SMALL, boot, ext4, stand_in_disk, stub_plane};
 
 /// A CONNECT to an IP literal of TEST-NET-1 (RFC 5737).
 const CONNECT: &[u8] = b"CONNECT 192.0.2.1:443 HTTP/1.1\r\nHost: 192.0.2.1:443\r\n\r\n";
@@ -596,7 +598,8 @@ impl Drop for Served {
 fn serve_reach(name: &str) -> Booted<Served> {
     let (litellm, _) = stub_plane();
     let (chaperone, _) = stub_plane();
-    boot_with(name, "reach", (litellm, chaperone), |name, env, run| {
+    let disk = |work: &Path, root: &Path| stand_in_disk(work, root, "reach");
+    boot_with(name, disk, SMALL, (litellm, chaperone), |name, env, run| {
         Served::start(name, env, run)
     })
 }
