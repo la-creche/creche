@@ -38,14 +38,19 @@
 //!    rules 24 and 30).
 //! 7. The listener holds at most `LINK_CAP` links. A link past the cap is
 //!    accepted, logged and closed at once (decisions CH67 rule 3, CH69
-//!    rule 14). A failed accept is logged by kind, and the loop pauses
-//!    `ACCEPT_PAUSE` and accepts again (decisions CH40 rule 1, CH69 rule
-//!    30).
+//!    rule 14). The links that drain after a close count against the cap
+//!    of the reopen. A failed accept is logged by kind, and the loop
+//!    pauses `ACCEPT_PAUSE` and accepts again (decisions CH40 rule 1, CH69
+//!    rule 30).
 //! 8. A link does not set `last_use` and does not block a snapshot
 //!    (decision CH69 rule 20). This module holds no handle on the VM
 //!    table, so a restore cuts each open tunnel (fact 45).
 //! 9. The drop of `Server` closes the listener and every link. The VM
 //!    entry of the start table holds it, so the listener goes with the VM.
+//! 10. `Server::close` closes only the listener, after an edit that
+//!     empties `egress.json` (decision CH74 rule 2). Each open tunnel runs
+//!     to its own end in `Draining`, and the drop of `Draining` cuts it.
+//!     `Draining::reopen` serves a new listener with the same links.
 
 use std::future::poll_fn;
 use std::io;
@@ -60,12 +65,12 @@ use creche_vmm_store::layout::{SLOTS, VmRunDir};
 use creche_wire::{CheckReason, CheckReply, FamilyName, HostPort, SessionId};
 use tokio::net::{TcpStream, UnixListener, UnixStream};
 use tokio::runtime::Handle;
-use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::{sleep, timeout};
 
 use crate::egress::log::{Line, Log, ProxyReason, Reason, Verdict};
 use crate::egress::read_list;
 use crate::egress::rule::{Target, decide};
+use crate::links::{Accept, Links};
 use crate::planes::{BindError, CONNECT_WAIT, SPLICE_CAP};
 use crate::relay::Splice;
 use crate::server::ACCEPT_PAUSE;
@@ -152,47 +157,78 @@ impl Bound {
         session: SessionId,
         log: Arc<Log>,
     ) -> io::Result<Server> {
-        let listener = UnixListener::from_std(self.0)?;
         let proxy = Arc::new(Proxy {
             families,
             family,
             session,
             log,
         });
-        Ok(Server(tokio::spawn(accept(listener, proxy))))
+        let links = Links::default();
+        Draining { proxy, links }.reopen(self)
     }
 }
 
-/// The served listener of one VM. Its drop ends the listener task, and the
-/// end of the task drops its listener and its open links.
+/// The served listener of one VM. Its drop ends the listener task and
+/// cuts its open links.
 #[derive(Debug)]
-pub struct Server(JoinHandle<()>);
+pub struct Server {
+    /// The accept task. Its drop aborts it.
+    accept: Accept,
+    /// The open links and what a link reads.
+    draining: Draining,
+}
 
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.0.abort();
+impl Server {
+    /// Closes the listener and keeps each open link (decision CH74 rule
+    /// 2). When it returns, the listener is closed, and the caller removes
+    /// its socket file.
+    pub async fn close(self) -> Draining {
+        self.accept.end().await;
+        self.draining
     }
 }
 
-/// Accepts on `listener` until its task ends, and serves each link.
+/// The open links of a closed listener of one VM. Each one runs to its
+/// own end. The drop cuts each link that still runs.
+#[derive(Debug)]
+pub struct Draining {
+    proxy: Arc<Proxy>,
+    links: Links,
+}
+
+impl Draining {
+    /// Serves `bound`, a new listener at the path of the closed one, with
+    /// the links of the closed one. They count against `LINK_CAP`.
+    ///
+    /// # Errors
+    ///
+    /// The error of a listener that the runtime did not take.
+    pub fn reopen(self, bound: Bound) -> io::Result<Server> {
+        let listener = UnixListener::from_std(bound.0)?;
+        let task = accept(listener, Arc::clone(&self.proxy), self.links.clone());
+        Ok(Server {
+            accept: Accept::spawn(task),
+            draining: self,
+        })
+    }
+}
+
+/// Accepts on `listener` until its task ends, and serves each link in
+/// `links`.
 // Decision CH69 rule 30: as on vmm.sock (decision CH40 rule 1) and on
 // 1100 to 1102, a failed accept, such as EMFILE, is logged by kind, and
 // the loop pauses ACCEPT_PAUSE and goes on. CH67 rule 11 binds only the
 // guest rows of guest init.
-async fn accept(listener: UnixListener, proxy: Arc<Proxy>) {
-    let mut links = JoinSet::new();
+async fn accept(listener: UnixListener, proxy: Arc<Proxy>, links: Links) {
     loop {
-        let accepted = listener.accept().await;
-        while links.try_join_next().is_some() {}
-        match accepted {
-            Ok((guest, _)) if links.len() < LINK_CAP => {
-                links.spawn(serve_link(guest, Arc::clone(&proxy)));
-            }
-            // Decision CH67 rule 3: a link past the cap closes at once.
-            // Its line is the one line of the link (decision CH6-4).
+        match listener.accept().await {
             Ok((guest, _)) => {
-                drop(guest);
-                Link::new(Arc::clone(&proxy)).refuse(ProxyReason::LinkCap.into());
+                if !links.admit(LINK_CAP, serve_link(guest, Arc::clone(&proxy))) {
+                    // Decision CH67 rule 3: a link past the cap closes at
+                    // once. Its line is the one line of the link (decision
+                    // CH6-4).
+                    Link::new(Arc::clone(&proxy)).refuse(ProxyReason::LinkCap.into());
+                }
             }
             Err(error) => {
                 eprintln!("vmm: an egress accept failed: {}", error.kind());

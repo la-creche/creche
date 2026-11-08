@@ -2951,7 +2951,7 @@ fn an_emptied_repos_list_removes_1103() {
 
 /// A bind that fails after an edit writes `egress_assert_failed` and
 /// stops the VM: a path at `vsock.sock_1104` that the vmm did not bind
-/// fails the bind (Known gap 30, decision CH69 rule 12).
+/// fails the bind (decisions CH69 rule 12, CH74 rule 1).
 #[test]
 fn a_failed_bind_after_an_edit_writes_the_fault_and_stops_the_vm() {
     let test = Test::new("follow-bind", |_| {});
@@ -2963,13 +2963,111 @@ fn a_failed_bind_after_an_edit_writes_the_fault_and_stops_the_vm() {
     assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
 }
 
-/// An emptied list drops the 1104 server, which cuts a link that is open
-/// (Known gap 31). The guest stream holds a CONNECT head with no blank
-/// line, so the proxy waits for the rest (`HEAD_WAIT`, 30 s) until the
-/// cut.
+/// An edit that empties the list closes the 1104 listener and removes its
+/// socket file, so a new dial fails. A link that was open runs to its own
+/// end (decision CH74 rule 2, fact 43). A refill binds a fresh listener
+/// at the same path while that link drains, and a new link there gets
+/// its 403. No test reaches the network, so the link waits in
+/// its head read, not in a tunnel: the guest sends the rest of its head
+/// after both edits and gets the 403 of its CONNECT. The polls take about
+/// 14 s of paused time, inside `HEAD_WAIT` (30 s). A drop of the server
+/// at the edit cuts the link, and the test fails.
 #[test]
-fn an_emptied_list_cuts_an_open_link() {
-    let test = Test::new("follow-cut", |_| {});
+fn an_emptied_list_lets_an_open_link_end() {
+    let test = Test::new("follow-drain", |_| {});
+    let file = test.dir.join("families/chat/egress.json");
+    fs::write(&file, EGRESS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let mut guest = UnixStream::connect(test.listener(0, 1104)).unwrap();
+    guest
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    guest
+        .write_all(b"CONNECT 192.0.2.1:443 HTTP/1.1\r\n")
+        .unwrap();
+    test.pause();
+    fs::write(&file, r#"{"hosts":[]}"#).unwrap();
+    test.follow(|| !test.listener(0, 1104).exists());
+    assert_eq!(listeners(&test, 0), PLANES);
+    assert!(UnixStream::connect(test.listener(0, 1104)).is_err());
+
+    fs::write(&file, EGRESS).unwrap();
+    test.follow(|| test.listener(0, 1104).exists());
+    let reply = test.ask(0, 1104, IP_CONNECT.as_bytes());
+    assert!(reply.starts_with(b"HTTP/1.1 403 "), "{reply:?}");
+
+    let ended = test.runtime.spawn_blocking(move || {
+        guest.write_all(b"Host: 192.0.2.1:443\r\n\r\n").unwrap();
+        let mut answer = Vec::new();
+        guest.read_to_end(&mut answer).unwrap();
+        answer
+    });
+    let answer = test.runtime.block_on(ended).unwrap();
+    assert!(answer.starts_with(b"HTTP/1.1 403 "), "{answer:?}");
+    assert!(test.runs_clean(0));
+}
+
+/// An edit that empties the clone list closes the 1103 listener and
+/// removes its socket file, so a new dial fails. A clone that was open
+/// runs to its own end (decision CH74 rule 2, fact 43): `upload-pack`
+/// sent its refs before the edit, and after it the guest sends its want
+/// and gets the pack. A drop of the server at the edit kills the clone,
+/// and the test fails.
+#[test]
+fn an_emptied_clone_list_lets_an_open_clone_end() {
+    let test = Test::new("follow-clone", |_| {});
+    let repo = test.dir.join("mirror/creche");
+    git(&test.dir, |git| git.args(["init", "--quiet"]).arg(&repo));
+    git(&test.dir, |git| {
+        git.arg("-C").arg(&repo);
+        git.args(["-c", "user.name=t", "-c", "user.email=t@example.com"]);
+        git.args(["commit", "--quiet", "--allow-empty", "-m", "one"])
+    });
+    let file = test.dir.join("families/chat/repos.json");
+    fs::write(&file, REPOS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let path = test.listener(0, 1103);
+    // The current-thread runtime runs the mirror only inside `block_on`,
+    // so the guest side runs in `spawn_blocking`.
+    let opened = test.runtime.spawn_blocking(move || {
+        let mut guest = UnixStream::connect(path).unwrap();
+        guest
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let payload = "git-upload-pack /creche\0host=127.0.0.1:9418\0";
+        let line = format!("{:04x}{payload}", payload.len() + 4);
+        guest.write_all(line.as_bytes()).unwrap();
+        let head = read_pkt(&mut guest).unwrap();
+        while read_pkt(&mut guest).is_some() {}
+        (guest, String::from_utf8(head[..40].to_vec()).unwrap())
+    });
+    let (mut guest, head) = test.runtime.block_on(opened).unwrap();
+    test.pause();
+    fs::write(&file, r#"{"repos":[]}"#).unwrap();
+    test.follow(|| !test.listener(0, 1103).exists());
+    assert_eq!(listeners(&test, 0), PLANES);
+    assert!(UnixStream::connect(test.listener(0, 1103)).is_err());
+
+    let fetched = test.runtime.spawn_blocking(move || {
+        let want = format!("want {head}\n");
+        let lines = format!("{:04x}{want}00000009done\n", want.len() + 4);
+        guest.write_all(lines.as_bytes()).unwrap();
+        let mut answer = Vec::new();
+        guest.read_to_end(&mut answer).unwrap();
+        answer
+    });
+    let answer = test.runtime.block_on(fetched).unwrap();
+    assert!(answer.starts_with(b"0008NAK\nPACK"), "{answer:?}");
+    assert!(test.runs_clean(0));
+}
+
+/// A link that drains after an emptied list ends with the VM: the drop of
+/// the VM entry drops the follow, and with it each link that drains
+/// (decision CH74 rule 2). The link is open after the edit and reads its
+/// end after the drop, and the drop writes no fault.
+#[test]
+fn a_draining_link_ends_with_the_vm() {
+    let test = Test::new("follow-drain-end", |_| {});
     let file = test.dir.join("families/chat/egress.json");
     fs::write(&file, EGRESS).unwrap();
     assert_eq!(test.start(0), Ok(()));
@@ -2985,12 +3083,19 @@ fn an_emptied_list_cuts_an_open_link() {
     test.pause();
     fs::write(&file, r#"{"hosts":[]}"#).unwrap();
     test.follow(|| !test.listener(0, 1104).exists());
+    guest.set_nonblocking(true).unwrap();
+    let open = guest.read(&mut [0; 1]).map_err(|error| error.kind());
+    assert_eq!(open, Err(io::ErrorKind::WouldBlock));
+    guest.set_nonblocking(false).unwrap();
+
+    assert!(test.drop_session(0).is_ok());
+    test.follow(|| true);
     let mut answer = Vec::new();
     match guest.read_to_end(&mut answer) {
-        Ok(_) => {}
+        Ok(_) => assert!(answer.is_empty(), "{answer:?}"),
         Err(error) => assert_eq!(error.kind(), io::ErrorKind::ConnectionReset, "{error}"),
     }
-    assert!(test.runs_clean(0));
+    assert!(test.fault_codes().is_empty());
 }
 
 /// The follow ends with the VM: the drop of the VM entry drops the
@@ -3054,6 +3159,35 @@ fn a_failed_check_after_ch_exited_writes_no_fault() {
     fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
     test.follow(|| !test.hook.running(&test.rows[0].id));
     assert!(test.fault_codes().is_empty());
+}
+
+/// Runs the git of the host with no config of the host or the user, as
+/// `tests/mirror.rs` does, and fails the test unless it succeeds.
+#[cfg(test)]
+fn git(home: &std::path::Path, args: impl FnOnce(&mut Command) -> &mut Command) {
+    let mut command = Command::new("/usr/bin/git");
+    command
+        .env_clear()
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("HOME", home)
+        .env("PATH", "/usr/bin:/bin");
+    let output = args(&mut command).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// Reads one pkt-line of `guest`: its payload, or `None` for a flush.
+#[cfg(test)]
+fn read_pkt(guest: &mut UnixStream) -> Option<Vec<u8>> {
+    let mut length = [0; 4];
+    guest.read_exact(&mut length).unwrap();
+    let length = usize::from_str_radix(std::str::from_utf8(&length).unwrap(), 16).unwrap();
+    if length == 0 {
+        return None;
+    }
+    let mut payload = vec![0; length - 4];
+    guest.read_exact(&mut payload).unwrap();
+    Some(payload)
 }
 
 /// `creds.json` of the family `chat`, as caregiver writes it.

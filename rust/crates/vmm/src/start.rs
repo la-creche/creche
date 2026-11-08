@@ -1811,7 +1811,14 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             let egress = egress
                 .map(|bound| bound.serve(families.clone(), family.clone(), id.clone(), log))
                 .transpose()?;
-            Ok((planes, family_state, Served { mirror, egress }))
+            Ok((
+                planes,
+                family_state,
+                Served {
+                    mirror: mirror.into(),
+                    egress: egress.into(),
+                },
+            ))
         });
         let (planes, family_state, reached) = match served {
             Ok(served) => served,

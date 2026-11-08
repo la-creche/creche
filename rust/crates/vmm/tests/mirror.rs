@@ -533,6 +533,41 @@ fn the_65th_link_is_closed_at_once() {
     drop(held);
 }
 
+/// The links that drain after a close count against the cap of the
+/// reopen (decisions CH69 rule 14, CH74 rule 2). The closed listener
+/// takes no dial, the reopen at the same path closes a link past the cap
+/// at once, and a held link runs on to its own end.
+#[test]
+fn draining_links_count_against_the_cap_of_the_reopen() {
+    let scratch = Scratch::threaded("drain");
+    let server = scratch.serve();
+    let mut held: Vec<UnixStream> = (0..LINK_CAP).map(|_| scratch.dial()).collect();
+    let mut bytes = Vec::new();
+    scratch.dial().read_to_end(&mut bytes).unwrap();
+    assert!(bytes.is_empty());
+
+    let draining = scratch.runtime.block_on(server.close());
+    let path = scratch.run.host_listener(HostPort::GitMirror);
+    std::fs::remove_file(&path).unwrap();
+    assert!(UnixStream::connect(&path).is_err());
+    let bound = bind(&scratch.run).unwrap();
+    let _server = {
+        let _runtime = scratch.runtime.enter();
+        draining.reopen(bound).unwrap()
+    };
+    let mut past = scratch.dial();
+    let started = Instant::now();
+    past.read_to_end(&mut bytes).unwrap();
+    assert!(bytes.is_empty());
+    assert!(started.elapsed() < LINE_WAIT);
+
+    let mut first = held.remove(0);
+    first.write_all(&request("/other")).unwrap();
+    first.read_to_end(&mut bytes).unwrap();
+    assert_eq!(bytes, DENIED);
+    drop(held);
+}
+
 /// A link that ended frees its place under `LINK_CAP`: `LINK_CAP` + 1
 /// links one after another each get `DENIED`, so the listener reaps each
 /// link that ended (decisions CH67 rule 3, CH69 rule 14).
