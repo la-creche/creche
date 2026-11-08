@@ -1,4 +1,5 @@
-//! The kvm_ tests of phase 7 egress, in two groups.
+//! The kvm_ tests of phase 7 egress, in two groups, and the kvm_ test of
+//! the digests follow, which shares the real `vmm serve` of the second.
 //!
 //! The E3 tests prove the edit follow (plan PR E3, decisions CH49 rules 3
 //! and 4, CH69 rules 11 and 28). They are the spike of CH49 rule 4: does
@@ -26,6 +27,20 @@
 //! github.com:443 need the internet and DNS on the runner (decision CH69
 //! rule 22, plan risk 4).
 //!
+//! The V1 test proves the digests follow of the real `vmm serve` (plan PR
+//! V1, decisions CH7-6, CH58 rule 5, CH76 rule 8, CH77 rule 2). A disks
+//! release replaces `digests.json` while the vmm runs. The follow reads
+//! the root-owned file, waits `HOOK_TIMEOUT` plus one `POLL`, imports the
+//! new root disk and swaps the set of new starts. The vmm log line of the
+//! swap names the new set. A snapshot of a VM on the old disk holds the
+//! old key, so the next start drops it and cold-boots on the new disk. The
+//! VM sleeps on the idle timeout of `vmm serve`, 300 s, while the follow
+//! waits its 305 s. So the job kvm waits about 5 min once for both
+//! proofs, and the test proves that the compose step runs the follow. The
+//! rust job proves the follow on the bytes
+//! (`src/image_root/follow/tests.rs`), because only the runner's sudo
+//! makes a root-owned file (decision CH36 G20).
+//!
 //! `#[ignore]`: only the job `kvm` runs them, after the setup script, as
 //! `tests/kvm_guest.rs` says.
 #![cfg(target_os = "linux")]
@@ -34,16 +49,21 @@ mod common;
 
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::thread::sleep;
+use std::sync::mpsc::{self, Receiver};
+use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
 
+use creche_vmm::image_root::DIGESTS_FILE;
+use creche_vmm::image_root::follow::{HOOK_TIMEOUT, POLL};
 use creche_vmm::mirror::DENIED;
+use creche_vmm::sleep::IDLE_CHECK;
 use creche_vmm_store::claim::CONSUMED;
 use creche_vmm_store::layout::RunRoot;
+use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
 use creche_wire::guest::{EGRESS_PROXY_PORT, MIRROR_PORT};
 use creche_wire::{
     AcpRoute, CheckReason, CheckRefused, CheckReply, CheckRoute, CreateRoute, FacadeState,
@@ -52,8 +72,8 @@ use creche_wire::{
 use serde_json::{Value, json};
 
 use common::{
-    BOOT, Booted, FAMILY, HOST_GIT, SESSION, SYSTEMCTL, UP, boot, boot_with, family_root, lines,
-    stub_plane, transient, work,
+    BOOT, Booted, FAMILY, HOST_GIT, SESSION, SYSTEMCTL, UP, boot, boot_with, ext4, family_root,
+    lines, sha256, stub_plane, sudo, transient, work,
 };
 
 /// A CONNECT to an IP literal of TEST-NET-1 (RFC 5737).
@@ -418,13 +438,14 @@ impl Link {
 }
 
 /// The real `vmm serve` as a transient user service (decision CH69 rule
-/// 31). Its stderr, the vmm log, reaches the job log. A drop stops the
-/// unit, so `BindsTo=` stops each VM scope (decision CH61 rule 1), and
-/// reaps `systemd-run`.
+/// 31). A thread writes each line of its stderr, the vmm log, to the job
+/// log and sends it on `log`. A drop stops the unit, so `BindsTo=` stops
+/// each VM scope (decision CH61 rule 1), and reaps `systemd-run`.
 struct Served {
     unit: String,
     child: Child,
     run: RunRoot,
+    log: Receiver<String>,
 }
 
 #[cfg(test)]
@@ -439,15 +460,25 @@ impl Served {
     // (CH69 rule 31).
     fn start(name: &str, env: &[(&str, &OsStr)], run: &RunRoot) -> Self {
         let unit = format!("kvm-serve-{name}-{}.service", std::process::id());
-        let child = transient(&unit, env)
+        let mut child = transient(&unit, env)
             .args([env!("CARGO_BIN_EXE_vmm"), "serve"])
             .stdin(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .unwrap();
+        let stderr = BufReader::new(child.stderr.take().unwrap());
+        let (lines, log) = mpsc::channel();
+        thread::spawn(move || {
+            for line in stderr.lines().map_while(Result::ok) {
+                let _ = writeln!(io::stderr(), "{line}");
+                let _ = lines.send(line);
+            }
+        });
         let mut served = Self {
             unit,
             child,
             run: run.clone(),
+            log,
         };
         let deadline = Instant::now() + BOOT;
         while UnixStream::connect(run.vmm_socket()).is_err() {
@@ -508,9 +539,8 @@ impl Served {
     }
 
     /// Creates the session of the proof, as attendance does (decision
-    /// CH21-4), and opens its `acp` Upgrade, which starts the VM. The
-    /// stand-in facade of mode `reach` answers on it.
-    fn open(&self) -> Link {
+    /// CH21-4).
+    fn create(&self) {
         let create = json!({
             "created_at": 1_793_577_600_000_u64,
             "cwd": "/root",
@@ -519,9 +549,22 @@ impl Served {
             "origin": {"door": {}},
         });
         self.ask::<CreateRoute>(&create);
+    }
+
+    /// Opens the `acp` Upgrade of the session, which starts the VM. A
+    /// drop of the stream closes the door link.
+    fn acp(&self) -> UnixStream {
         let body = json!({"family": FAMILY, "id": SESSION}).to_string();
         let (status, reply, stream) = self.post(AcpRoute::NAME, &body, Some(AcpRoute::TOKEN));
         assert_eq!(status, 101, "acp: {reply}");
+        stream
+    }
+
+    /// Creates the session and opens its `acp` Upgrade. The stand-in
+    /// facade of mode `reach` answers on it.
+    fn open(&self) -> Link {
+        self.create();
+        let stream = self.acp();
         Link {
             reader: BufReader::new(stream.try_clone().unwrap()),
             stream,
@@ -822,4 +865,105 @@ fn kvm_reach_refuses_a_repo_outside_repos() {
     assert_eq!(link.send("g1", b""), Answer::Reply(Vec::new(), false));
     drop(link);
     drop(booted);
+}
+
+// The digests follow on the real `vmm serve` (plan PR V1, see the module
+// doc).
+
+/// Decisions CH7-6, CH76 rule 8 and CH77 rule 2: a VM sleeps on the old
+/// disk, a new root-owned `digests.json` names a new disk, and the follow
+/// of `vmm serve` swaps the set of new starts no sooner than
+/// `HOOK_TIMEOUT` plus one `POLL` after the rename. The next start drops
+/// the snapshot and cold-boots. A compose step that never runs the
+/// follow fails here.
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk() {
+    let name = "disk-swap";
+    let booted = serve_reach(name);
+    let (served, vsock, session) = (booted.vmm, booted.vsock, booted.session);
+
+    // 1. A cold boot on the old disk. The close of the door link starts
+    // the idle timeout of the VM (decision CH50 rule 5).
+    served.create();
+    drop(served.acp());
+    let closed = Instant::now();
+    assert!(
+        lines(&session.serial_log()).iter().any(|line| line == UP),
+        "step 1: the VM did not boot"
+    );
+
+    // 2. The disks release: a new root disk with one more file, and a new
+    // `digests.json` that root owns. The rename swaps it in whole, as
+    // handover swaps the disks tree.
+    let work = work(name);
+    let (image, tree) = (work.join("image"), work.join("tree"));
+    fs::write(tree.join("etc/creche-standin/swap"), "the new disk\n").unwrap();
+    ext4(&image.join("root2.img"), Some(&tree));
+    let new = sha256(&image.join("root2.img"));
+    let old = sha256(&image.join("root.img"));
+    assert_ne!(old, new, "step 2: the disks are equal");
+    let disk = format!(r#"{{"file":"root2.img","sha256":"{new}"}}"#);
+    let kernel = sha256(&image.join("vmlinux"));
+    let text = format!(
+        r#"{{"kernel":{{"file":"vmlinux","sha256":"{kernel}"}},"base":{disk},"python":{disk}}}"#
+    );
+    let staged = image.join("digests.json.new");
+    fs::write(&staged, text).unwrap();
+    sudo(&["chown", "0:0"], &staged);
+    let renamed = Instant::now();
+    fs::rename(&staged, image.join(DIGESTS_FILE)).unwrap();
+
+    // 3. The follow and the idle timeout wait at the same time. New
+    // starts keep the old disk for `HOOK_TIMEOUT` plus one `POLL`
+    // (decision CH77 rule 2), then the vmm log names the new set within a
+    // few polls. The VM of step 1 sleeps within `IDLE_TIMEOUT` plus one
+    // `IDLE_CHECK`, and the vmm log says so. Its snapshot holds the key of
+    // its start on the old disk, also when it sleeps after the swap.
+    let swap = format!(
+        "vmm: new starts use the new {DIGESTS_FILE}: kernel {kernel}, base {new}, python {new}"
+    );
+    let slept = format!("vmm: the VM of {SESSION} sleeps");
+    let settle = HOOK_TIMEOUT + POLL..HOOK_TIMEOUT + POLL * 4 + BOOT;
+    let deadline = (renamed + settle.end).max(closed + IDLE_TIMEOUT + IDLE_CHECK + BOOT);
+    let (mut waited, mut asleep) = (None, false);
+    while waited.is_none() || !asleep {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let line = served.log.recv_timeout(left).unwrap_or_else(|error| {
+            panic!("step 3: the swap after {waited:?}, the sleep {asleep}: {error}")
+        });
+        if line.starts_with("vmm: new starts use the new ") {
+            assert_eq!(line, swap, "step 3: another set");
+            waited = Some(renamed.elapsed());
+        }
+        asleep |= line == slept;
+    }
+    let waited = waited.unwrap();
+    assert!(
+        settle.contains(&waited),
+        "step 3: the swap came after {waited:?}"
+    );
+
+    // 4. The sleep left one snapshot.
+    let generations: Vec<PathBuf> = fs::read_dir(session.snapshots())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(generations.len(), 1, "step 4 sleep: {generations:?}");
+
+    // 5. The start drops the snapshot of the old key and cold-boots: the
+    // new serial log holds the `up` line of a boot, and the new VM has its
+    // vsock socket.
+    let link = served.acp();
+    assert!(vsock.exists(), "step 5: no vsock socket");
+    assert!(
+        !generations[0].exists(),
+        "step 5: the snapshot of the old disk stays"
+    );
+    assert!(
+        lines(&session.serial_log()).iter().any(|line| line == UP),
+        "step 5: the VM did not boot"
+    );
+    drop(link);
+    drop(served);
 }

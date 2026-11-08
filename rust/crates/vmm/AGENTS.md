@@ -333,17 +333,16 @@ that stay the same for 61 polls import once, bytes that change inside
 the wait import nothing, and a rolled-back file imports nothing. Each of
 the three fails when the wait is removed. It also proves that bytes
 whose import failed wait again in full once other bytes come between.
-The ignored `kvm_`
-test of `tests/image_follow.rs` makes the new `digests.json` root-owned
-with the runner's sudo (decision CH36 G20). It proves that a VM that
-slept on the old disk cold-boots on the new one. That test boots
-`examples/phase3_vm.rs`, which runs its own follow. So the ignored
-`kvm_serve_follows_a_new_digests_file` of `src/compose/tests.rs` proves
-the compose path: `Vmm::run` of `build` sees a new root-owned
-`digests.json` and swaps the set of new starts no sooner than
-`HOOK_TIMEOUT` plus one poll after the rename, and within four polls
-after `HOOK_TIMEOUT`. Each of the two kvm_ tests waits about 305 s, so
-the kvm job takes about 10 min more.
+The ignored `kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk` of
+`tests/kvm_reach.rs` makes the new `digests.json` root-owned with the
+runner's sudo (decision CH36 G20). It runs the real `vmm serve`, as
+the E4 tests do, so it proves the compose path: `Vmm::run` swaps the
+set of new starts no sooner than `HOOK_TIMEOUT` plus one poll after the
+rename, and within four polls after that. The vmm log line of the swap
+names the new set. The VM that started on the old disk sleeps on the
+idle timeout in the same wait, and the next start drops its snapshot and
+cold-boots on the new disk. This is the one 305 s wait of the kvm job
+(decision CH75 rule 2): the job takes about 5.5 min more.
 
 ## The verify hooks
 
@@ -1145,6 +1144,9 @@ still carries bytes (fact 43), an emptied list that refuses each new
 dial while an open tunnel still carries bytes (CH74 rule 2), a listed
 repo that clones and a repo outside `repos` that fails. The github.com
 tests need internet and DNS on the runner (plan risk 4).
+The kvm_ test of the digests follow (plan PR V1) sits in the same file
+and starts the same real `vmm serve`. Its `Served` sends each vmm log
+line on a channel too, so the test reads the line of the swap.
 
 ## The slots
 
@@ -1418,9 +1420,9 @@ the runner.
   and the owner check of CH and ch-remote (decision CH67 rule 1), as
   the compose step does. Then `check_cloud_hypervisor` checks the
   version of `VMM_CH_PROGRAM`, the CH that the kvm job builds (decisions
-  CH36 G19, CH75). It runs the digests follow (plan PR V1). It binds
+  CH36 G19, CH75). It runs no digests follow (plan PR V1). It binds
   no `vmm.sock`. The test sends it one step per line: `start`,
-  `facade`, `sleep`, `stop` and `root`, the root disk of a new start.
+  `facade`, `sleep` and `stop`.
 - The test runs it as a transient user service with
   `RuntimeDirectory=vmm` and `NoNewPrivileges=yes`, so each VM scope
   binds to its unit (decisions CH55, CH60 rule 1). The env holds each

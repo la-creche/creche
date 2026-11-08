@@ -1,8 +1,9 @@
 //! The digests follow on the bytes (plan PR V1, decisions CH58 rule 5,
 //! CH76 rule 8, CH77 rules 2 and 3). `read_bytes` trusts only a root-owned file, and a test of
 //! the rust job cannot make one. So these tests give `Follow::apply` each
-//! read as `read_bytes` gives it, one call for each poll. The kvm_ test of `tests/image_follow.rs`
-//! proves the poll on a root-owned file and a cold boot on the new disk.
+//! read as `read_bytes` gives it, one call for each poll. The kvm_ test of `tests/kvm_reach.rs`
+//! proves the poll of the real `vmm serve` on a root-owned file and a cold
+//! boot on the new disk.
 
 use std::fs;
 use std::path::PathBuf;

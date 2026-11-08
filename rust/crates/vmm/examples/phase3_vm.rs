@@ -6,15 +6,16 @@
 //!
 //! `serve <session> <family>` reads the vmm config from its env with
 //! `Config::read`, as `vmm serve` does. It composes the parts of the
-//! compose step: `guest_init::write_initramfs`, `image_root::read` with
-//! the digests follow (plan PR V1, decision CH76 rule 8), the fault book, the rows, the spawner, `ChTools` and one `ColdBoot` with
+//! compose step: `guest_init::write_initramfs`, `image_root::read`, the
+//! fault book, the rows, the spawner, `ChTools` and one `ColdBoot` with
 //! its plane bridges, family-state reply, retire and restore. It creates
 //! the row of `<session>` in `<family>` with origin `door`. Like the
 //! compose step, it first runs the leftover sweep (decision CH19 (4)) and
 //! the owner check of CH, ch-remote and git (decisions CH67 rule 1, CH69
 //! rule 17). Then `check_cloud_hypervisor` checks the version of
 //! `VMM_CH_PROGRAM`, the CH that the kvm job builds (decisions CH36 G19,
-//! CH75). It binds no `vmm.sock`.
+//! CH75). It binds no `vmm.sock`. It runs no digests follow (plan PR V1),
+//! so each start reads the set that `image_root::read` gave.
 //!
 //! It prints `ready`, then reads one step per stdin line and answers one
 //! stdout line:
@@ -29,8 +30,6 @@
 //!   so the idle gate passes with no wait. It answers `slept <count>`.
 //! - `stop`: `StopVm::stop`. It answers `stopped <ms>` or `stop failed
 //!   <error>`.
-//! - `root`: `root <sha256>`, the root disk of the flavor `base` that a
-//!   new start reads now. The digests follow swaps it.
 //!
 //! At the end of stdin it exits 0. `launch` and `launch-stage <plan>` are
 //! the launch step and the launch stage of the spawner, as in `vmm`.
@@ -49,13 +48,11 @@ use creche_vmm::guest_init::write_initramfs;
 use creche_vmm::handlers::acp::StartVm as _;
 use creche_vmm::handlers::drop::StopVm as _;
 use creche_vmm::image_root;
-use creche_vmm::image_root::follow::Follow;
 use creche_vmm::mirror::Mirror;
 use creche_vmm::relay::Relays;
 use creche_vmm::restore::ChTools;
 use creche_vmm::root_owned::check_program;
 use creche_vmm::shutdown::RUNTIME_END;
-use creche_vmm::start::Digests;
 use creche_vmm::start::{ColdBoot, StartConfig};
 use creche_vmm_confine::faults::{FaultBook, FaultDir};
 use creche_vmm_confine::leftovers::stop_all;
@@ -69,7 +66,7 @@ use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
 use creche_vmm_store::snapshot::Snapshotter;
-use creche_wire::{SandboxFlavor, SessionRow};
+use creche_wire::SessionRow;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::watch;
 
@@ -116,8 +113,7 @@ fn serve(session: &OsString, family: &OsString) -> Result<(), Failure> {
     check_program(GIT, config.git.path())?;
     let ch_version = check_cloud_hypervisor(config.ch.path(), VERSION_WAIT)?;
     let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
-    let (follow, digests) = Follow::start(image_root::read(&config.image_root)?, images.clone())?;
-    let current = digests.clone();
+    let digests = image_root::read(&config.image_root)?.import(&images)?;
     let initramfs = write_initramfs(config.guest_init.path(), &images)?.digest();
     let faults = FaultBook::start(FaultDir::open(&config.faults_root)?, SystemTime::now())?;
     let mut rows = Rows::open(config.state.clone())?;
@@ -137,7 +133,7 @@ fn serve(session: &OsString, family: &OsString) -> Result<(), Failure> {
     let start = StartConfig {
         images,
         disks: SessionDisks::new(&config.state, config.mke2fs.path().to_owned()),
-        digests,
+        digests: watch::channel(digests).1,
         initramfs,
         state: config.state,
         run: config.run,
@@ -170,13 +166,11 @@ fn serve(session: &OsString, family: &OsString) -> Result<(), Failure> {
         .enable_io()
         .enable_time()
         .build()?;
-    let follow = runtime.spawn(follow.run());
     answer("ready")?;
     for line in io::stdin().lock().lines() {
-        let reply = step(&runtime, &hook, (&row, &control, &current), &line?)?;
+        let reply = step(&runtime, &hook, (&row, &control), &line?)?;
         answer(&reply)?;
     }
-    follow.abort();
     runtime.shutdown_timeout(RUNTIME_END);
     Ok(())
 }
@@ -185,7 +179,7 @@ fn serve(session: &OsString, family: &OsString) -> Result<(), Failure> {
 fn step(
     runtime: &Runtime,
     hook: &Hook,
-    (row, control, current): (&SessionRow, &Mutex<ControlState>, &watch::Receiver<Digests>),
+    (row, control): (&SessionRow, &Mutex<ControlState>),
     line: &str,
 ) -> Result<String, Failure> {
     let facade = || -> Result<String, Failure> {
@@ -211,7 +205,6 @@ fn step(
             Ok(()) => format!("stopped {}", began.elapsed().as_millis()),
             Err(error) => format!("stop failed {error:?}"),
         },
-        "root" => format!("root {}", current.borrow().roots.get(SandboxFlavor::Base)),
         other => return Err(format!("no step {other:?}").into()),
     })
 }

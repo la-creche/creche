@@ -5,7 +5,7 @@
 //! rule 28), and the vmm of `examples/phase3_vm.rs` as a transient user
 //! service (decisions CH60 rule 1, CH62 rule 29). Plan PR E3 moved them
 //! here from `tests/kvm_guest.rs`, so `tests/kvm_reach.rs` boots the same
-//! vmm, and so does `tests/image_follow.rs` (plan PR V1).
+//! vmm.
 #![cfg(test)]
 
 use std::collections::BTreeSet;

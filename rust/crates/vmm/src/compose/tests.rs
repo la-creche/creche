@@ -40,7 +40,7 @@ use super::{Checked, StartError, VERSION_WAIT, Vmm, build, parts};
 use crate::ServeError;
 use crate::config::{CH, CH_REMOTE, Config, GIT, GUEST_INIT as GUEST_INIT_KEY};
 use crate::guest_init::GuestInitError;
-use crate::image_root::follow::{Follow, HOOK_TIMEOUT, POLL};
+use crate::image_root::follow::Follow;
 use crate::image_root::{DIGESTS_FILE, DigestsError, parse};
 use crate::root_owned::{OwnerError, ProgramError};
 use crate::start::Digests;
@@ -351,63 +351,6 @@ fn kvm_build_wires_each_key_to_its_part() {
     // program of the key, in the digest store.
     let stored = start.images.check(start.initramfs).unwrap();
     assert_eq!(fs::read(stored.path()).unwrap(), initramfs());
-}
-
-/// Decision CH76 rule 8: `Vmm::run` runs the digests follow, so a new
-/// root-owned `digests.json` reaches the set of new starts with no vmm
-/// restart. A compose step that never runs the follow fails here.
-/// Decision CH77 rule 2: the swap comes no sooner than `HOOK_TIMEOUT`
-/// plus one `POLL` after the rename, and within a few polls after it. The `kvm_` test of
-/// `tests/image_follow.rs` boots `examples/phase3_vm.rs`, which runs its
-/// own follow, so only this test proves the compose path.
-#[test]
-#[ignore = "needs runner sudo for a root-owned file: the job kvm runs it"]
-fn kvm_serve_follows_a_new_digests_file() {
-    let scratch = Scratch::new("follow");
-    scratch.trust();
-    let vmm = build(scratch.config()).unwrap();
-    let mut digests = vmm.hook.0.parts().0.digests.clone();
-    let runtime = runtime();
-    let (term, signal) = oneshot::channel::<()>();
-    let run = runtime.spawn(vmm.run(async move { _ = signal.await }));
-
-    // The base flavor moves to the python disk. The handover swap puts a
-    // root-owned file in place with a rename.
-    let entry = |(file, _, sha256): (&str, &str, &str)| serde_json::json!({ "file": file, "sha256": sha256 });
-    let next = serde_json::json!({
-        "kernel": entry(IMAGES[0]),
-        "base": entry(IMAGES[2]),
-        "python": entry(IMAGES[2]),
-    });
-    let staged = scratch.dir.join("images/next.json");
-    fs::write(&staged, next.to_string()).unwrap();
-    sudo(&["chown", "0:0"], &staged);
-    let renamed = Instant::now();
-    fs::rename(&staged, scratch.dir.join("images").join(DIGESTS_FILE)).unwrap();
-
-    let [kernel, _, python] = IMAGES.map(|(_, _, sha256)| sha256.parse().unwrap());
-    let want = Digests {
-        kernel,
-        roots: PerFlavor::every(|_| python),
-    };
-    let swapped = runtime.block_on(async {
-        tokio::time::timeout(
-            HOOK_TIMEOUT + POLL * 4,
-            digests.wait_for(|set| *set == want),
-        )
-        .await
-        .is_ok_and(|seen| seen.is_ok())
-    });
-    assert!(swapped, "{:?}", *digests.borrow());
-    let waited = renamed.elapsed();
-    assert!(
-        waited >= HOOK_TIMEOUT + POLL,
-        "the swap came after {waited:?}"
-    );
-
-    term.send(()).unwrap();
-    let ended = runtime.block_on(async { tokio::time::timeout(WAIT, run).await });
-    assert!(matches!(ended, Ok(Ok(Ok(())))), "{ended:?}");
 }
 
 /// Decisions CH62 rule 17, CH67 rule 1 and CH69 rule 17: the vmm runs CH,
