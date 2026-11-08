@@ -34,15 +34,18 @@ export interface StartPauses {
 /** 250 ms, then 500 ms, and so on up to 5 s. */
 export const START_PAUSES: StartPauses = { firstMs: 250, capMs: 5000 };
 
-/** The guest planes: each one on guest loopback, which guest init splices to the host (decision CH6-2). */
-function guestPlanes(): Planes | null {
-  const pep = PlaneUrl.parse(`http://127.0.0.1:${String(CHAPERONE_PORT)}`);
-  const litellm = PlaneUrl.parse(`http://127.0.0.1:${String(LITELLM_PORT)}`);
+/** A plane on guest loopback. The ports are constants, so a port that gives no plane URL is a build fault, and the load throws. */
+function loopbackPlane(port: number): PlaneUrl {
+  const parsed = PlaneUrl.parse(`http://127.0.0.1:${String(port)}`);
+  if (!parsed.ok) {
+    throw new Error(`the guest plane on port ${String(port)} is not a plane URL (${parsed.fault})`);
+  }
 
-  return pep.ok && litellm.ok ? { pep: pep.url, litellm: litellm.url } : null;
+  return parsed.url;
 }
 
-export type GuestStartRead = { readonly ok: true; readonly start: AgentStart } | { readonly ok: false; readonly reason: "plane_not_valid" };
+/** The guest planes: each one on guest loopback, which guest init splices to the host (decision CH6-2). */
+const GUEST_PLANES: Planes = { pep: loopbackPlane(CHAPERONE_PORT), litellm: loopbackPlane(LITELLM_PORT) };
 
 /**
  * The CH start: the fixed guest paths and planes, the tool env of `env`,
@@ -54,12 +57,7 @@ export async function readGuestStart(
   say: Say,
   socket: string = FAMILY_STATE_SOCKET,
   pauses: StartPauses = START_PAUSES,
-): Promise<GuestStartRead> {
-  const planes = guestPlanes();
-  if (planes === null) {
-    return { ok: false, reason: "plane_not_valid" };
-  }
-
+): Promise<AgentStart> {
   for (let pause = pauses.firstMs; ; pause = Math.min(pause * 2, pauses.capMs)) {
     const pulled = await pullWire(socket, say);
     if (pulled.ok) {
@@ -67,10 +65,7 @@ export async function readGuestStart(
       const kept = new Set(state.config.skills.map((skill) => skill.name));
       const skippedSkills = Object.keys(pulled.state.config.skills).filter((name) => !kept.has(name));
 
-      return {
-        ok: true,
-        start: { store: FLUE_DB, workspace: WORKSPACE, planes, indexRoot: null, toolEnv: readToolEnv(env), state, skippedSkills },
-      };
+      return { store: FLUE_DB, workspace: WORKSPACE, planes: GUEST_PLANES, indexRoot: null, toolEnv: readToolEnv(env), state, skippedSkills };
     }
 
     say(`the start pull of the family state failed (${pulled.fault}); the next pull is in ${String(pause)} ms`);

@@ -113,7 +113,7 @@ listing that Flue puts in the prompt.
 | 6 | sbx: the control mount cannot be written |
 | 7 | sbx: a mount variable is unset. The facade reads the mounts first |
 | 8 | the relay socket cannot be made |
-| 9 to 15 | the agent module refuses the family config (`EXIT_BY_REFUSAL` in `src/family.ts`). Under CH only 11 can occur, for a guest plane URL that does not parse |
+| 9 to 15 | sbx: the agent module refuses the family config (`EXIT_BY_REFUSAL` in `src/family.ts`). The CH start has no refusal |
 | 16 | Flue does not start |
 | 17 | `CRECHE_SESSION_ID` is set and is not a session id (`src/mode.ts`) |
 | 18 | CH: the local link does not open, or closes or faults outside a stop (decision CH67 rule 8) |

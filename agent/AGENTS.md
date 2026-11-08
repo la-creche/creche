@@ -102,7 +102,9 @@ composed.state.config, say)` of `src/family-state.ts` (decisions CH5a,
 CH5e, CH62 rule 13, CH80). The start pulls until the vmm gives a state.
 After each fault it writes one stderr line and waits, 250 ms first, then
 twice as long each time up to 5 s. It never exits on a fault (decision
-CH23 rule 2). A skill of the CH start has no supporting files. Each pull:
+CH23 rule 2). The guest planes are constants: a port that gives no plane
+URL throws when the module loads. A skill of the CH start has no
+supporting files. Each pull:
 
 1. Each pull dials the family-state socket of guest init, sends one
    `FamilyStatePull` line and reads one `FamilyStateReply` line with
