@@ -149,9 +149,12 @@ pub struct StartConfig {
     pub images: ImageStore,
     /// The session disks.
     pub disks: SessionDisks,
-    /// The kernel and the root disks. The vmm reads them from the
-    /// `digests.json` of its image root (decision CH57 rule 1).
-    pub digests: Digests,
+    /// The kernel and the root disks of each new start. The vmm reads
+    /// them from the `digests.json` of its image root (decision CH57 rule
+    /// 1). `image_root::follow` swaps them after a disks release, once
+    /// each new entry imports (decision CH76 rule 8). A start reads them
+    /// once, so its kernel and its root disk come from one set.
+    pub digests: watch::Receiver<Digests>,
     /// The guest init initramfs in the digest store (decision CH60 rule
     /// 2). The compose step writes it once per vmm start, and each VM
     /// start, cold boot or restore, names it (decisions CH61 rule 3, CH62
@@ -1646,11 +1649,12 @@ fn launch<L: Launcher>(
             .check(digest)
             .map_err(|error| error.to_string())
     };
-    let kernel = checked(config.digests.kernel)?;
+    let digests = config.digests.borrow().clone();
+    let kernel = checked(digests.kernel)?;
     let initramfs = checked(config.initramfs)?;
     // `PerFlavor` of the wire crate holds each flavor, so the vmm holds no
     // list of its own (decision CH58 rule 4).
-    let root = checked(*config.digests.roots.get(shape.flavor))?;
+    let root = checked(*digests.roots.get(shape.flavor))?;
     let disk = config
         .disks
         .for_boot(id)

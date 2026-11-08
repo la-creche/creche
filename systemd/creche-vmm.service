@@ -25,16 +25,18 @@ Environment=XDG_CONFIG_HOME=%h/.config
 # Decision CH59 rule 1: the vmm compiles in no default
 # (rust/crates/vmm/AGENTS.md, "The config"), and the site file holds only
 # the overrides of the catalog (env/AGENTS.md, "The files" rule 4). So the
-# unit reads `vmm.env` first. It holds each key of
+# unit reads `vmm.env`. It holds each key of
 # `rust/crates/vmm/src/config.rs` except RUNTIME_DIRECTORY, as `creche-env
 # get` resolves it against the site file: paths and sizes, no secret.
 # `bin/fleet-up up` writes it with `creche_env_get`, as it writes
 # `noticeboard.env`. Without the file the start fails before the vmm runs.
 # Without a key the vmm exits 78 and names the key.
+# Decision CH77 rule 1: the unit reads `vmm.env` alone, never the site
+# file. The verify hooks `vmm verify` and `vmm check-images` read the same
+# one file (`--env-file`), so a hook checks the values that the unit runs.
+# A site edit reaches the vmm only after `bin/fleet-up up` writes `vmm.env`
+# again. bin/tests/test_vmm_unit.py pins this one line.
 EnvironmentFile=/srv/agents/state/creche/vmm.env
-# The site values. The site file comes last, so a value that it sets wins
-# over a stale copy in vmm.env.
-EnvironmentFile=/etc/creche/site.env
 # The run root: `%t/vmm`, which is /run/user/<uid>/vmm. It holds `vmm.sock`
 # and the VM run dirs. Mode 0700 is the only guard of `vmm.sock`, because
 # every client runs as the operator (CH20). systemd sets RUNTIME_DIRECTORY

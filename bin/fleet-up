@@ -426,8 +426,8 @@ up_env_files() {
   env_from_catalog "$NOTICEBOARD_ENV" NOTICEBOARD_BIND NOTICEBOARD_PORT NOTICEBOARD_COOKIE_SECURE
 
   # The vmm compiles in no default, and the site file holds only the
-  # overrides. So `creche-vmm.service` reads this file, then the site file
-  # (decision CH59 rule 1).
+  # overrides. So `creche-vmm.service` and its verify hooks read this file
+  # alone, never the site file (decisions CH59 rule 1, CH77 rule 1).
   # shellcheck disable=SC2086 # the list splits into one word for each key
   env_from_catalog "$VMM_ENV" $VMM_KEYS
 
