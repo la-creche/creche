@@ -19,6 +19,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO_ROOT / "playpen" / "Dockerfile"
 BUILD = REPO_ROOT / "playpen" / "bin" / "playpen-build"
 CI = REPO_ROOT / "playpen" / "bin" / "playpen-ci"
+DISK = REPO_ROOT / "playpen" / "bin" / "playpen-disk"
+GUEST_INIT_BOOT = REPO_ROOT / "rust" / "crates" / "guest-init" / "src" / "boot.rs"
+WIRE_GUEST = REPO_ROOT / "rust" / "crates" / "wire" / "src" / "guest.rs"
 FACADE_PACKAGE = REPO_ROOT / "facade" / "package.json"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 UV_LOCK = REPO_ROOT / "uv.lock"
@@ -235,3 +238,55 @@ def test_no_flavor_sets_a_cmd() -> None:
     """Fact 59: sbx gives each sandbox its own command, and a root disk
     carries no image config, so a CMD line would only mislead."""
     assert re.search(r"^CMD ", _text(), re.MULTILINE) is None
+
+
+def _mount_points() -> list[str]:
+    """The dirs the boot plan of guest init mounts on, read from its source:
+    the session mount of creche_wire::guest, the five tmpfs dirs and the
+    three kernel file systems (CH62 rules 4 and 5)."""
+    boot = GUEST_INIT_BOOT.read_text(encoding="utf-8")
+    session = re.search(r'SESSION_DISK_MOUNT: &str = "([^"]+)"', WIRE_GUEST.read_text("utf-8"))
+    tmpfs = re.search(r"const TMPFS: .*?= \[(.*?)\];", boot, re.DOTALL)
+    assert session is not None
+    assert tmpfs is not None
+
+    return [
+        "/dev",
+        "/proc",
+        "/sys",
+        *re.findall(r'\("(/[^"]+)", c"mode=', tmpfs.group(1)),
+        session.group(1),
+    ]
+
+
+def test_the_base_stage_makes_the_session_mount_point() -> None:
+    """CH62 rule 5: guest init mounts the session disk and makes no dir, so
+    the root disk holds /var/lib/creche/session as root:root 0755. The
+    python and coding stages build on this stage, so each flavor holds it."""
+    stage = _stage("agent-sandbox")
+    session = "/var/lib/creche/session"
+    text = _text()
+
+    assert f"RUN mkdir -p -m 0755 {session} \\\n" in stage
+    assert "USER " not in text
+    assert "FROM agent-sandbox AS agent-sandbox-python" in text
+    assert "FROM agent-sandbox-python AS agent-sandbox-coding" in text
+    for stage_name in ("agent-sandbox-python", "agent-sandbox-coding"):
+        assert session not in _stage(stage_name)
+
+
+def test_each_mount_point_of_guest_init_is_named_in_the_image_and_the_disk_check() -> None:
+    """A mount point the boot plan adds fails here until the Dockerfile loop
+    and the playpen-disk loop list it. A missing dir on the read-only root
+    is a boot fault, so CI stops it before a release."""
+    points = _mount_points()
+    session = points[-1]
+    plain = [point for point in points if point != session]
+    dockerfile_loop = re.search(r"for dir in ([^;]+); do", _stage("agent-sandbox"))
+    disk_loop = re.search(r"for dir in ([^;]+); do", DISK.read_text(encoding="utf-8"))
+
+    assert session == "/var/lib/creche/session"
+    assert dockerfile_loop is not None
+    assert disk_loop is not None
+    assert dockerfile_loop.group(1).split() == plain
+    assert disk_loop.group(1).split() == [*plain, session]
