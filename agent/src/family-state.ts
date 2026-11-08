@@ -279,7 +279,8 @@ const LF = 0x0a;
  * How long one pull waits for its reply line, in milliseconds. The vmm
  * holds a `state` reply for at most 10 s (decision CH31 rule 1), and its
  * connect to host port 1100 has a 5 s timeout (decision CH62 rule 14).
- * The last 5 s is for the read. A pull past this wait closes its link.
+ * The last 5 s is for the read. A pull past this wait closes its link
+ * (decision CH81 rule 3).
  */
 export const PULL_WAIT_MS = 20_000;
 
@@ -294,7 +295,7 @@ type LineRead =
  * `STATE_REPLY_CAP` bytes and the LF. More bytes with no LF are
  * `too_large`, and the rest is not read (`wire/AGENTS.md`, "The vsock JSON
  * links", rule 2). A link that ends with no line, or that passes
- * `waitMs`, is `not_valid`: the pull got no state.
+ * `waitMs`, is `not_valid`: the pull got no state (decision CH81 rule 2).
  */
 function pullLine(path: string, waitMs: number): Promise<LineRead> {
   return new Promise((resolve) => {
@@ -395,7 +396,7 @@ export function liveStateOf(state: Wire<"FamilyState">, previous: readonly LiveS
 
 /**
  * One pull of the wire state on the socket `path`. A link that gives no
- * line writes its cause to `say` and is `not_valid`.
+ * line writes its cause to `say` and is `not_valid` (decision CH81 rule 2).
  */
 export async function pullWire(path: string, say: Say, waitMs: number = PULL_WAIT_MS): Promise<WirePull> {
   const line = await pullLine(path, waitMs);

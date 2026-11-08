@@ -1,6 +1,7 @@
 // The start of the agent under CH (decisions CH5a, CH5e, CH62 rules 5 and
-// 13, CH80). The facade reads no `AGENT_*` variable in CH mode. Each one
-// gets a source of the guest:
+// 13, CH80). The facade reads no `AGENT_*` variable in CH mode, and a set
+// one has no effect (decision CH81 rule 5). Each one gets a source of the
+// guest:
 //
 //   AGENT_SESSIONS_DIR      ──► FLUE_DB and WORKSPACE, on the session disk
 //   AGENT_CRED_DIR          ──► the start pull on the family-state socket
@@ -14,8 +15,9 @@
 //
 // The start pulls until the vmm gives a state. A typed fault and a link
 // with no reply each write one stderr line, then the start pulls again
-// after a pause that doubles up to its cap. It never exits on a fault, so
-// guest init never restarts it in a loop (decision CH23 rule 2).
+// after a pause that doubles up to its cap (decision CH81 rule 4). It
+// never exits on a fault, so guest init never restarts it in a loop
+// (decision CH23 rule 2).
 
 import type { AgentStart } from "./agent.js";
 import type { Planes } from "./config.js";
@@ -31,7 +33,7 @@ export interface StartPauses {
   readonly capMs: number;
 }
 
-/** 250 ms, then 500 ms, and so on up to 5 s. */
+/** 250 ms, then 500 ms, and so on up to 5 s (decision CH81 rule 4). */
 export const START_PAUSES: StartPauses = { firstMs: 250, capMs: 5000 };
 
 /** A plane on guest loopback. The ports are constants, so a port that gives no plane URL is a build fault, and the load throws. */

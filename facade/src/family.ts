@@ -2,12 +2,13 @@
 // start and composes the agent. Under CH it takes the fixed guest paths,
 // the guest planes and the state of one pull on the family-state socket,
 // and reads no `AGENT_*` variable (`agent/src/guest-start.ts`, decisions
-// CH5e, CH80). A refusal exits with a status of its own and one stderr
-// line. Once the supervisor holds the lock, `serveFamily` starts Flue on
-// the start's `flue.db` and opens `creche_sessions` there. Before each
-// prompt the facade pulls the family state into the agent: on sbx from the
-// mounts, under CH from the vmm (decision CH5a). A pulled `model_alias`
-// that differs switches the model at that prompt (decisions CH5c, CH5c-2).
+// CH5e, CH80, CH81 rule 5). A refusal exits with a status of its own and
+// one stderr line. Once the supervisor holds the lock, `serveFamily`
+// starts Flue on the start's `flue.db` and opens `creche_sessions` there.
+// Before each prompt the facade pulls the family state into the agent: on
+// sbx from the mounts, under CH from the vmm (decision CH5a). A pulled
+// `model_alias` that differs switches the model at that prompt (decisions
+// CH5c, CH5c-2).
 
 import { mkdirSync } from "node:fs";
 import type { Readable } from "node:stream";

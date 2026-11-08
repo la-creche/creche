@@ -3,7 +3,9 @@
 The ACP facade: the ACP v1 agent of one family sandbox. On sbx attendance
 starts one `creche-facade` per sandbox with `sbx exec` and speaks ACP over
 its stdio. Under CH guest init starts it, and ACP comes only on the relay
-socket (decision CH80). The root `AGENTS.md` applies here too.
+socket (decision CH80). The sbx path leaves at phase 11 item 7 of the
+handoff, with the lock and the control folder (decisions CH10-8, CH81
+rule 7). The root `AGENTS.md` applies here too.
 
 The package has two bins:
 
@@ -78,13 +80,16 @@ each variable. The agent's store and the facade's `creche_sessions` share
 lock.
 
 Under CH the facade reads no `AGENT_*` variable (decisions CH5e, CH80).
+A set one has no effect and gives no stderr line (decision CH81 rule 5).
 `readGuestStart` of the agent module gives the start: the fixed guest
 paths `FLUE_DB` and `WORKSPACE`, the planes at `127.0.0.1:4000` and
 `127.0.0.1:8300`, and the state of one pull on the family-state socket. The
 start pulls until the vmm gives a state, with one stderr line for each
-fault, and never exits on a fault (decision CH23 rule 2). So the facade
-stays `starting` for guest init until the pull gives a state. The image
-env gives only the tool env (`MPLBACKEND` and `CRECHE_TOOL_HTTPS_PROXY`).
+fault, and never exits on a fault (decision CH23 rule 2). The pause
+before the next pull is 250 ms, then doubles up to 5 s (decision CH81
+rule 4). So the facade stays `starting` for guest init until the pull
+gives a state. The image env gives only the tool env (`MPLBACKEND` and
+`CRECHE_TOOL_HTTPS_PROXY`).
 
 Before each `session/prompt`, the facade pulls the family state into the
 agent (`src/turns.ts`, decision CH5a): on sbx from the mounts, under CH
@@ -119,7 +124,9 @@ listing that Flue puts in the prompt.
 | 18 | CH: the local link does not open, or closes or faults outside a stop (decision CH67 rule 8) |
 
 Under CH only the stop line (0) and a lost local link (18) end a facade
-that serves (decisions CH66, CH67 rule 8, CH80).
+that serves (decisions CH66, CH67 rule 8, CH80). Before it serves, 16, 8
+and 17 stay its exits, and guest init starts it again after the 1 s
+restart pause (decisions CH62 rule 8, CH81 rule 8).
 
 A refusal (2, 7, 9 to 15, 17) writes one stderr line: the reason, and the
 variable or the field, never a value.
@@ -206,7 +213,8 @@ socket path, the line cap, the stop wait and `RELAY_SOCKET`, and
 
 1. The link opens after the start pull, the Flue start and the relay
    listen. guest init then moves the facade from `starting` to `running`
-   (decision CH32 rule 6).
+   (decision CH32 rule 6). So `running` means that the facade serves
+   (decision CH81 rule 6).
 2. Each turn sends `{"start":{}}` before Flue runs it, and
    `{"end":{"title":…,"updated_at":…}}` after its record. The end
    carries `titleOf` of the turn's prompt and the time of the turn's last
