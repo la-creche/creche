@@ -27,10 +27,11 @@
 #      hard RLIMIT_NOFILE of Hyperion's user manager, 1048576. The runner
 #      gives 65536, and `vmm serve` exits 78 below its need of 102720
 #      (decision CH67 rule 4, which keeps the vmm unit free of a
-#      LimitNOFILE= line). fs.nr_open must hold that limit. A user manager
-#      that runs before the drop-ins gets the limit in place, by root, and
-#      a re-exec. The script fails unless a unit of the user manager gets
-#      that hard limit, and then prints each limit on the way.
+#      LimitNOFILE= line). fs.nr_open must hold that limit, and a
+#      limits.d line for the runner user lifts the 65536 that pam_limits
+#      sets from the runner's limits.conf when user@.service starts. The
+#      script fails unless a unit of the user manager gets that hard
+#      limit, and then prints each limit on the way.
 #   6. It fetches the CH guest kernel (fact 53), checked by its sha256.
 #   7. It builds guest-init and the stand-in facade static for musl. It
 #      refuses a program with a PT_INTERP header, and first proves that the
@@ -159,6 +160,11 @@ printf '[Service]\nLimitNOFILE=%s\n' "$NOFILE_HARD" |
   sudo tee /etc/systemd/system/user@.service.d/90-creche-nofile.conf > /dev/null
 printf '[Manager]\nDefaultLimitNOFILE=1024:%s\n' "$NOFILE_HARD" |
   sudo tee /etc/systemd/user.conf.d/90-creche-nofile.conf > /dev/null
+# PAM starts user@.service (PAMName=systemd-user), and pam_limits then
+# sets the limits of /etc/security/limits.conf, which caps nofile at
+# 65536 on the runner. A line for the user outranks a `*` line there.
+printf '%s hard nofile %s\n' "$(id -un)" "$NOFILE_HARD" |
+  sudo tee /etc/security/limits.d/90-creche-nofile.conf > /dev/null
 sudo systemctl daemon-reload
 # A user manager that already runs keeps its old limit until it restarts.
 if systemctl is-active --quiet "user@$(id -u).service"; then
@@ -179,20 +185,12 @@ echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "${GITHUB_ENV:?GITHUB_ENV names the e
 manager=$(systemctl show -p MainPID --value "user@$(id -u).service")
 manager_hard() { awk '/^Max open files/ { print $5 }' "/proc/$manager/limits"; }
 say "the user manager (pid $manager) has the hard RLIMIT_NOFILE $(manager_hard)"
-# A user manager that started before the drop-ins keeps its old limit.
-# Root raises it in place, and a re-exec makes the manager read
-# DefaultLimitNOFILE of user.conf.d again for its new units.
-if (($(manager_hard) < NOFILE_HARD)); then
-  soft=$(awk '/^Max open files/ { print $4 }' "/proc/$manager/limits")
-  sudo prlimit --pid "$manager" --nofile="$soft:$NOFILE_HARD"
-  systemctl --user daemon-reexec
-  say "raised the user manager to the hard RLIMIT_NOFILE $(manager_hard)"
-fi
 hard=$(systemd-run --user --pipe --quiet --collect sh -c 'ulimit -Hn')
 if [[ "$hard" != "$NOFILE_HARD" ]]; then
   systemctl show -p LimitNOFILE "user@$(id -u).service" >&2
   systemctl --user show -p DefaultLimitNOFILE >&2
   grep '^Max open files' "/proc/$manager/limits" >&2
+  grep -rs nofile /etc/security/limits.conf /etc/security/limits.d >&2
   die "a user unit gets the hard RLIMIT_NOFILE $hard, not $NOFILE_HARD"
 fi
 
