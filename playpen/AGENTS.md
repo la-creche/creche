@@ -50,7 +50,9 @@ agent (`agent/src/tool-env.ts`, CH49 rule 1), so a new name, the parent
 image's too, fails until it sits in a list.
 
 The base stage makes `/var/lib/creche/session`, owner root, mode 0755. Guest
-init mounts the session disk there and makes no dir (CH62 rule 5). The
+init mounts the session disk there and makes no dir (CH62 rule 5). Only
+this stage makes it (CH81 rule 1). `disk/Dockerfile` builds the disk
+tools, and the dir reaches the disk in the flavor tar. The
 other mount points (`/dev /proc /sys /tmp /run /root /var/cache /var/tmp`)
 come with the parent image. The same stage fails the build on a parent
 that drops a tmpfs dir. The build mounts `/dev`, `/proc` and `/sys` in each
