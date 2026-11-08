@@ -1,20 +1,30 @@
-//! The kvm_ tests of the edit follow (plan PR E3, decisions CH49 rules 3
+//! The kvm_ tests of phase 7 egress, in two groups.
+//!
+//! The E3 tests prove the edit follow (plan PR E3, decisions CH49 rules 3
 //! and 4, CH69 rules 11 and 28). They are the spike of CH49 rule 4: does
 //! Cloud Hypervisor see a host listener that the vmm binds after a boot,
 //! and after a restore? The follow assumes that CH connects each guest
 //! dial to `vsock.sock_<port>` at the dial (decision CH24), so it binds
 //! 1104 on a running VM. A red test here means the fallback of CH49 rule
-//! 4: the bound set fixed at each boot and restore.
+//! 4: the bound set fixed at each boot and restore. Each E3 test boots
+//! `examples/phase3_vm.rs` with the helpers of `tests/common/mod.rs`, the
+//! real guest init and the stand-in facade in mode `reach` (plan PR A1).
+//! The family has no `egress.json` at the start. A 1201 link sends `dial`
+//! lines, so the stand-in opens guest TCP to 127.0.0.1:3128, which guest
+//! init splices to host port 1104 (decision CH46 rule 1). The CONNECT
+//! names an IP literal, which the proxy refuses with 403 before any lookup
+//! (decision CH6-4), so no E3 test needs the internet. With no 1104
+//! listener the guest dial fails, and guest init closes the stream with no
+//! reply (decision CH49 rule 3).
 //!
-//! Each test boots `examples/phase3_vm.rs` with the helpers of
-//! `tests/common/mod.rs`, the real guest init and the stand-in facade in
-//! mode `reach` (plan PR A1). The family has no `egress.json` at the
-//! start. A 1201 link sends `dial` lines, so the stand-in opens guest TCP
-//! to 127.0.0.1:3128, which guest init splices to host port 1104
-//! (decision CH46 rule 1). The CONNECT names an IP literal, which the
-//! proxy refuses with 403 before any lookup (decision CH6-4), so no test
-//! needs the internet. With no 1104 listener the guest dial fails, and
-//! guest init closes the stream with no reply (decision CH49 rule 3).
+//! The E4 tests are the phase 7 proof on the real `vmm serve` (plan PR
+//! E4, decision CH69 rule 31). The example of E3 binds no `vmm.sock`, so
+//! it serves no `check` and no Upgrade. Each E4 test starts `vmm serve`
+//! under `systemd-run` with the env of `boot_with`, creates the session
+//! over `vmm.sock` and sends the lines of mode `reach` on its `acp`
+//! Upgrade, as a door client does. The E4 tests that tunnel to
+//! github.com:443 need the internet and DNS on the runner (decision CH69
+//! rule 22, plan risk 4).
 //!
 //! `#[ignore]`: only the job `kvm` runs them, after the setup script, as
 //! `tests/kvm_guest.rs` says.
@@ -22,18 +32,29 @@
 
 mod common;
 
+use std::ffi::OsStr;
 use std::fs;
-use std::io::{BufRead as _, BufReader, Write as _};
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use creche_vmm::mirror::DENIED;
 use creche_vmm_store::claim::CONSUMED;
-use creche_wire::guest::EGRESS_PROXY_PORT;
-use creche_wire::{FacadeState, GuestPort};
+use creche_vmm_store::layout::RunRoot;
+use creche_wire::guest::{EGRESS_PROXY_PORT, MIRROR_PORT};
+use creche_wire::{
+    AcpRoute, CheckReason, CheckRefused, CheckReply, CheckRoute, CreateRoute, FacadeState,
+    GuestPort, HOST_API_HEADER, HOST_API_PROTOCOL, HostPort, JsonRoute, SessionId, UpgradeRoute,
+};
+use serde_json::{Value, json};
 
-use common::{BOOT, Booted, FAMILY, UP, boot, family_root, lines, stub_plane, work};
+use common::{
+    BOOT, Booted, FAMILY, HOST_GIT, SESSION, SYSTEMCTL, UP, boot, boot_with, family_root, lines,
+    stub_plane, transient, work,
+};
 
 /// A CONNECT to an IP literal of TEST-NET-1 (RFC 5737).
 const CONNECT: &[u8] = b"CONNECT 192.0.2.1:443 HTTP/1.1\r\nHost: 192.0.2.1:443\r\n\r\n";
@@ -227,29 +248,7 @@ fn kvm_reach_binds_1104_after_a_restore_and_an_edit() {
     drop(booted);
 }
 
-// Plan PR E4: the phase 7 proof on the real `vmm serve` (decision CH69
-// rule 31). The example of E3 binds no `vmm.sock`, so it serves no
-// `check` and no Upgrade. These tests start `vmm serve` under
-// `systemd-run` with the env of `boot_with`, create the session over
-// `vmm.sock` and send the lines of mode `reach` on its `acp` Upgrade, as
-// a door client does. The proxy and the mirror tests reach github.com:443
-// and need the internet and DNS on the runner (decision CH69 rule 22, plan
-// risk 4).
-
-use std::ffi::OsStr;
-use std::io::Read as _;
-use std::process::{Child, Command, Stdio};
-
-use creche_vmm::mirror::DENIED;
-use creche_vmm_store::layout::RunRoot;
-use creche_wire::guest::MIRROR_PORT;
-use creche_wire::{
-    AcpRoute, CheckReason, CheckRefused, CheckReply, CheckRoute, CreateRoute, HOST_API_HEADER,
-    HOST_API_PROTOCOL, HostPort, JsonRoute, SessionId, UpgradeRoute,
-};
-use serde_json::{Value, json};
-
-use common::{HOST_GIT, SESSION, SYSTEMCTL, boot_with, transient};
+// The E4 tests on the real `vmm serve` (plan PR E4, see the module doc).
 
 /// The allowed host of decision CH69 rule 22.
 const GITHUB: &str = "github.com";
@@ -433,13 +432,16 @@ impl Served {
     /// Starts the unit of the proof `name` with `env` and waits for
     /// `vmm.sock` in `run`. A vmm that exits first fails the proof, and
     /// its log above names the cause.
-    // CONTRACT-QUESTION (plan risk 9): `vmm serve` checks the version of
-    // `VMM_CH_PROGRAM` itself and accepts only `CH_VERSION`, v54.0.0 (fact
-    // 78). The runner installs the upstream asset of fact 71, which the
-    // V10 helpers expect to print its tag, v54.0. Then this start exits 78,
-    // and no row decides the fix. This test takes the narrowest reading of
-    // decision CH69 rule 31: the real `vmm serve`, with no stand-in for the
-    // version check.
+    // Dependency (decisions CH36 G19, CH69 rule 31, plan risk 9): `vmm
+    // serve` checks the version of `VMM_CH_PROGRAM` itself and accepts only
+    // `CH_VERSION`, v54.0.0 (fact 78). The runner must install the CI-built
+    // CH of fact 78, as CH36 G19 decides once phase 4 lands. Today
+    // `bin/vm-smoke-setup.sh` installs the upstream asset of fact 71. The
+    // build.rs of CH v54.0 takes the version from `git describe`, so that
+    // asset likely prints v54.0 (not yet seen on the runner). Then this
+    // start exits 78 until the setup script installs the fact 78 build
+    // (CH62 rule 3, no workflow edit). This test runs the real `vmm serve`
+    // with no stand-in for the version check.
     fn start(name: &str, env: &[(&str, &OsStr)], run: &RunRoot) -> Self {
         let unit = format!("kvm-serve-{name}-{}.service", std::process::id());
         let child = transient(&unit, env)
