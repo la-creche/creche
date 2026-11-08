@@ -143,7 +143,7 @@ fn example() -> PathBuf {
 }
 
 /// The SHA-256 of `path` in hex.
-fn sha256(path: &Path) -> String {
+pub fn sha256(path: &Path) -> String {
     let output = Command::new(SHA256SUM)
         .arg("--")
         .arg(path)

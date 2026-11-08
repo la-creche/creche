@@ -58,6 +58,7 @@ impl Root {
         ImageSet {
             root: self.images(),
             manifest: parse(text).unwrap(),
+            bytes: text.as_bytes().to_vec(),
         }
     }
 

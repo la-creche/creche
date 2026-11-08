@@ -40,7 +40,8 @@ use super::{Checked, StartError, VERSION_WAIT, Vmm, build, parts};
 use crate::ServeError;
 use crate::config::{CH, CH_REMOTE, Config, GIT, GUEST_INIT as GUEST_INIT_KEY};
 use crate::guest_init::GuestInitError;
-use crate::image_root::{DIGESTS_FILE, DigestsError};
+use crate::image_root::follow::Follow;
+use crate::image_root::{DIGESTS_FILE, DigestsError, parse};
 use crate::root_owned::{OwnerError, ProgramError};
 use crate::start::Digests;
 
@@ -207,28 +208,22 @@ impl Scratch {
     }
 
     /// The vmm from `parts`, after the checks of `check` that a test of
-    /// the rust job can run: the CH version check of the fixture and an
-    /// import of each image into the store of the state root.
+    /// the rust job can run: the CH version check of the fixture, and the
+    /// parse of `digests.json` with no owner check and an import of each
+    /// image into the store of the state root (`Follow::start`).
     fn parts(&self) -> Vmm {
         let config = self.config();
         let ch_version = check_cloud_hypervisor(config.ch.path(), VERSION_WAIT).unwrap();
         let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
-        let [kernel, base, python] = IMAGES.map(|(file, _, sha256)| {
-            let digest = sha256.parse().unwrap();
-            images
-                .import(&self.dir.join("images").join(file), digest)
-                .unwrap();
-            digest
-        });
-        let roots = PerFlavor::every(|flavor| match flavor {
-            SandboxFlavor::Base => base,
-            SandboxFlavor::Python => python,
-        });
+        let bytes = fs::read(config.image_root.join(DIGESTS_FILE)).unwrap();
+        let set = parse(&config.image_root, bytes).unwrap();
+        let (follow, digests) = Follow::start(set, images.clone()).unwrap();
         let initramfs = images.put_made(b"initramfs").unwrap().digest();
         let checked = Checked {
             ch_version,
             images,
-            digests: Digests { kernel, roots },
+            digests,
+            follow,
             initramfs,
         };
         parts(config, checked).unwrap()
@@ -347,7 +342,7 @@ fn kvm_build_wires_each_key_to_its_part() {
         SandboxFlavor::Base => base,
         SandboxFlavor::Python => python,
     });
-    assert_eq!(start.digests, Digests { kernel, roots });
+    assert_eq!(*start.digests.borrow(), Digests { kernel, roots });
     for digest in [kernel, base, python] {
         start.images.check(digest).unwrap();
     }
