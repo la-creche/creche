@@ -759,9 +759,10 @@ and removes it after each edit (see "The edit follow").
 7. At most `LINK_CAP` (64) links. A link past the cap is accepted,
    logged with `link_cap` and closed at once (decisions CH67 rule 3,
    CH69 rule 14). The links that drain after `Server::close` count
-   against the cap of `Draining::reopen` (decision CH74 rule 2). A failed accept is logged by kind, then the loop pauses
-   `ACCEPT_PAUSE` (decisions CH40 rule 1, CH69 rule 30). CH67 rule 11
-   binds only the guest rows of guest init.
+   against the cap of `Draining::reopen` (decision CH74 rule 2). A
+   failed accept is logged by kind, then the loop pauses `ACCEPT_PAUSE`
+   (decisions CH40 rule 1, CH69 rule 30). CH67 rule 11 binds only the
+   guest rows of guest init.
 8. A link sets no `last_use` and blocks no snapshot (decision CH69 rule
    20), so a restore cuts each open tunnel (fact 45).
 9. `proxy::fd_need` counts per slot the listener, and per link its
@@ -925,14 +926,15 @@ at the first poll.
 4. A failed check, and a failed bind, serve or removal (decision CH74
    rule 1), ends the task. A task of its own then writes
    `egress_assert_failed` to the fault file and stops the VM of that
-   control link, with the graceful stop first (decisions CH19 (3), CH21-1, CH54 rule 6, CH69
-   rule 12). The stop runs apart from the follow, because the stop
-   drops the VM entry, and that drop ends the follow. The VM entry, and
-   so the follow, lives on while a stop or a retire ends its CH, and a
-   check in that window fails on the command line of a CH that exited.
-   So the task writes the fault only when it takes the VM itself and its
-   CH runs, or when the stop that it joined failed. A stop or a retire
-   that ends the VM, and a CH that exited on its own, write no fault.
+   control link, with the graceful stop first (decisions CH19 (3),
+   CH21-1, CH54 rule 6, CH69 rule 12). The stop runs apart from the
+   follow, because the stop drops the VM entry, and that drop ends the
+   follow. The VM entry, and so the follow, lives on while a stop or a
+   retire ends its CH, and a check in that window fails on the command
+   line of a CH that exited. So the task writes the fault only when it
+   takes the VM itself and its CH runs, or when the stop that it joined
+   failed. A stop or a retire that ends the VM, and a CH that exited on
+   its own, write no fault.
 5. A removed host or repo does not wait for the poll: the proxy and the
    mirror read their file at each link (decisions CH6-4, CH69 rule 16).
    An added one waits one `POLL` at most.
@@ -1408,6 +1410,16 @@ the runner.
     `src/egress/watch.rs`).
     Decision CH73 rule 2 sets `REPOS_CAP` of `creche-vmm-confine` to 4
     KiB.
+30. Closed by decision CH74 rule 1: a failed bind or serve of a
+    listener that a live edit adds, or a failed removal of its socket
+    file, counts as a failed deny check, so the VM faults
+    `egress_assert_failed` and stops (`Follow::apply` in
+    `src/egress/watch.rs`).
+31. Closed by decision CH74 rule 2: an edit that empties `egress.json`
+    or `repos.json` closes only the listener and removes its socket
+    file. Each open tunnel or clone runs to its own end in `Draining`,
+    and a refill reopens with the same links (`Server::close`,
+    `Draining::reopen`).
 
 ## Caller duties
 
