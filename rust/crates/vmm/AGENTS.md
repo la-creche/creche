@@ -275,14 +275,21 @@ runs these steps:
 2. Every `follow::POLL` (5 s) it reads the bytes of the file with the
    checks of `read`, in `spawn_blocking` (decision CH36 G21), as the
    edit follow polls the reach files (decision CH69 rule 11). Bytes
-   equal to the last reading import nothing and log nothing. A read
-   that takes no bytes is a new reading only when its fault text
-   changes.
+   equal to the bytes of the set of new starts import nothing and log
+   nothing.
 3. New bytes parse, and each entry goes into the digest store. Only
    when every entry imports does the follow swap the set, and it logs
    one line that names each digest. A parse or an import that fails
-   keeps the old set and logs one line (decision CH58 rule 5). The
-   follow tries those bytes again only after they change.
+   keeps the old set (decision CH58 rule 5).
+4. The follow tries the bytes of a failed parse or import again every
+   `follow::RETRY_POLLS` polls (12 polls, one minute). So a fault that
+   clears, such as a full state root or a killed `zstd -d`, still swaps
+   the set with no vmm restart (decisions CH48 (2), CH76 rule 8). The
+   import skips each entry that the store holds, so a retry rereads
+   only the entries that did not import. No row sets the 12 polls.
+
+Each fault logs one line. A fault logs again only when its reading or
+its text changes, and a read that takes no bytes is such a reading.
 
 A running VM keeps its store copies, since no step removes a store file.
 Its snapshot holds the key of its start, which holds the root disk
@@ -296,7 +303,8 @@ so the follow may log one `is missing` line between them.
 
 `src/image_root/follow/tests.rs` proves the steps on the bytes in the
 rust job: a swap only after every import, a failed import that keeps the
-old set, and unchanged bytes that import nothing. The ignored `kvm_`
+old set, unchanged bytes that import nothing, and a failed import that
+tries again and swaps once its fault clears. The ignored `kvm_`
 test of `tests/image_follow.rs` makes the new `digests.json` root-owned
 with the runner's sudo (decision CH36 G20). It proves that a VM that
 slept on the old disk cold-boots on the new one.

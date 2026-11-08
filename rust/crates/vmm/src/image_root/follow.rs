@@ -6,17 +6,22 @@
 //! 1. Every `POLL` it reads the bytes of `digests.json` with the checks
 //!    of `image_root::read`, in `spawn_blocking` (decision CH36 G21), as
 //!    the edit follow polls the reach files (decision CH69 rule 11).
-//!    Bytes equal to the last reading change nothing and import nothing.
-//!    A read that takes no bytes (a missing file, a failed owner check, a
-//!    file past the cap) is a new reading only when its fault text
-//!    changes, so each fault logs one line.
+//!    Bytes equal to the bytes of the set of new starts import nothing.
 //! 2. New bytes parse with `image_root::parse`, and `ImageSet::import`
 //!    puts each entry into the digest store, one file at a time.
 //! 3. Only when every entry imports does the follow swap the `Digests`
 //!    that each new start reads (`StartConfig::digests`). A parse or an
-//!    import that fails keeps the old set and logs one line (decision
-//!    CH58 rule 5: a bad entry never serves). The follow tries those
-//!    bytes again only after they change.
+//!    import that fails keeps the old set (decision CH58 rule 5: a bad
+//!    entry never serves).
+//! 4. The follow tries the bytes of a failed parse or import again every
+//!    `RETRY_POLLS` polls, so a fault that clears, such as a full state
+//!    root, still swaps the set with no vmm restart (decisions CH48 (2),
+//!    CH76 rule 8). Import skips each entry that the store holds, so a
+//!    retry rereads only the entries that did not import.
+//!
+//! Each fault logs one line: a fault logs again only when its reading or
+//! its text changes. A read that takes no bytes (a missing file, a failed
+//! owner check, a file past the cap) is such a reading.
 //!
 //! A running VM keeps its store copies: no step removes a store file. A
 //! snapshot holds the key of its start, which holds the root disk digest
@@ -50,6 +55,12 @@ use crate::start::Digests;
 /// costs one small read per poll.
 pub const POLL: Duration = Duration::from_secs(5);
 
+/// The polls between two tries of the same bytes whose parse or import
+/// failed: 12 polls of `POLL`, one minute. No row sets it. A failed
+/// import of a 2.5 GB disk rereads that disk, so a try at each poll would
+/// keep the disk and `zstd -d` busy for as long as the fault holds.
+pub const RETRY_POLLS: u32 = 12;
+
 /// One read of `digests.json`: its bytes, or the text of a read that took
 /// no bytes.
 #[derive(Debug, PartialEq, Eq)]
@@ -58,12 +69,26 @@ enum Reading {
     Unread(String),
 }
 
+/// The last reading that did not swap the set, with the text of its
+/// fault.
+#[derive(Debug)]
+struct Fault {
+    reading: Reading,
+    text: String,
+    /// The polls of the same reading that pass before the next try.
+    wait: u32,
+}
+
 /// The follow of the `digests.json` of one image root. `run` polls it.
 #[derive(Debug)]
 pub struct Follow {
     root: PathBuf,
     images: ImageStore,
-    last: Reading,
+    /// The bytes of the set of new starts.
+    applied: Vec<u8>,
+    /// The fault of the last reading, or `None` when it swapped the set
+    /// or equals `applied`.
+    fault: Option<Fault>,
     current: watch::Sender<Digests>,
 }
 
@@ -85,7 +110,8 @@ impl Follow {
         let follow = Self {
             root: set.root,
             images,
-            last: Reading::Bytes(set.bytes),
+            applied: set.bytes,
+            fault: None,
             current,
         };
         Ok((follow, receiver))
@@ -118,25 +144,48 @@ impl Follow {
         }
     }
 
-    /// Applies one read of the file. It gives the one log line of a new
-    /// reading, or `None` when the reading equals the last one. Blocks.
+    /// Applies one read of the file. It gives the one log line of the
+    /// read, or `None` when the read changes nothing, or when it repeats
+    /// the fault of the last reading. Blocks.
     fn apply(&mut self, read: Result<Vec<u8>, DigestsError>) -> Option<String> {
         let reading = match read {
             Ok(bytes) => Reading::Bytes(bytes),
             Err(fault) => Reading::Unread(fault.to_string()),
         };
-        if reading == self.last {
-            return None;
-        }
-        let outcome = match &reading {
-            Reading::Unread(fault) => Err(fault.clone()),
-            Reading::Bytes(bytes) => self.switch(bytes.clone()),
+        let text = match &reading {
+            Reading::Unread(text) => text.clone(),
+            Reading::Bytes(bytes) => {
+                if self.fault.is_none() && *bytes == self.applied {
+                    return None;
+                }
+                if let Some(fault) = &mut self.fault
+                    && fault.reading == reading
+                    && fault.wait > 0
+                {
+                    fault.wait -= 1;
+                    return None;
+                }
+                match self.switch(bytes.clone()) {
+                    Ok(digests) => {
+                        self.applied.clone_from(bytes);
+                        self.fault = None;
+                        return Some(format!("new starts use the new {DIGESTS_FILE}: {digests}"));
+                    }
+                    Err(text) => text,
+                }
+            }
         };
-        self.last = reading;
-        Some(match outcome {
-            Ok(digests) => format!("new starts use the new {DIGESTS_FILE}: {digests}"),
-            Err(fault) => format!("{fault}, so new starts keep the last set"),
-        })
+        let repeat = self
+            .fault
+            .as_ref()
+            .is_some_and(|fault| fault.reading == reading && fault.text == text);
+        let line = (!repeat).then(|| format!("{text}, so new starts keep the last set"));
+        self.fault = Some(Fault {
+            reading,
+            text,
+            wait: RETRY_POLLS,
+        });
+        line
     }
 
     /// Parses `bytes`, imports each entry, and only then swaps the set of

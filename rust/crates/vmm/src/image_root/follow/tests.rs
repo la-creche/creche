@@ -11,7 +11,7 @@ use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::layout::StateRoot;
 use creche_wire::{PerFlavor, SandboxFlavor};
 
-use super::Follow;
+use super::{Follow, RETRY_POLLS};
 use crate::image_root::{DigestsError, KERNEL_KEY, parse};
 use crate::start::Digests;
 
@@ -146,10 +146,9 @@ fn a_failed_import_keeps_the_old_set() {
     assert_eq!(*current.borrow(), set(EMPTY, ABC));
 }
 
-/// Decision CH76 rule 8: bytes equal to the last reading import nothing
-/// and log nothing. That holds for the bytes of the start, and for bytes
-/// whose import failed: the follow tries them again only after they
-/// change.
+/// Decision CH76 rule 8: the bytes of the set of new starts import
+/// nothing and log nothing. After a fault they are a new reading again,
+/// and the store holds each digest, so the swap reads no file.
 #[test]
 fn an_unchanged_file_imports_nothing() {
     let root = Root::new("unchanged");
@@ -157,19 +156,47 @@ fn an_unchanged_file_imports_nothing() {
     let (mut follow, current) = root.follow(&start);
     assert_eq!(follow.apply(Ok(start.clone())), None);
 
-    // `hello.ext4` is missing, so the import fails once.
+    assert!(follow.apply(Err(DigestsError::Missing)).is_some());
+    fs::remove_file(root.images().join("abc.ext4")).unwrap();
+    let line = follow.apply(Ok(start.clone())).unwrap();
+    assert!(line.starts_with("new starts use the new "), "{line}");
+    assert_eq!(*current.borrow(), set(EMPTY, ABC));
+    assert_eq!(follow.apply(Ok(start)), None);
+}
+
+/// Decisions CH48 (2) and CH76 rule 8: an import that fails tries the
+/// same bytes again every `RETRY_POLLS` polls. A try that fails with the
+/// same fault logs nothing. Once the fault clears, the next try swaps the
+/// set with no vmm restart.
+#[test]
+fn a_failed_import_tries_again_until_it_swaps() {
+    let root = Root::new("retry");
+    let (mut follow, current) = root.follow(&digests(("vmlinux", EMPTY), ("abc.ext4", ABC)));
+
+    // `hello.ext4` is missing, so the import fails.
     fs::remove_file(root.images().join("hello.ext4")).unwrap();
     let next = digests(("vmlinux", EMPTY), ("hello.ext4", HELLO));
-    assert!(follow.apply(Ok(next.clone())).is_some());
-    // With the file back, the same bytes import nothing.
-    fs::write(root.images().join("hello.ext4"), "hello world").unwrap();
-    assert_eq!(follow.apply(Ok(next)), None);
-    assert!(root.store().check(digest(HELLO)).is_err());
+    let line = follow.apply(Ok(next.clone())).unwrap();
+    assert!(line.contains("cannot import hello.ext4"), "{line}");
+
+    // The polls before the next try import nothing. The try fails with
+    // the same fault, so it logs nothing.
+    for _ in 0..RETRY_POLLS {
+        assert_eq!(follow.apply(Ok(next.clone())), None);
+    }
+    assert_eq!(follow.apply(Ok(next.clone())), None);
     assert_eq!(*current.borrow(), set(EMPTY, ABC));
 
-    // The bytes of the start after a fault are a new reading. The store
-    // holds each digest, so the swap reads no file.
-    fs::remove_file(root.images().join("abc.ext4")).unwrap();
-    assert!(follow.apply(Ok(start)).is_some());
-    assert_eq!(*current.borrow(), set(EMPTY, ABC));
+    // The file is back. The polls of the wait still import nothing, and
+    // the try after them swaps the set.
+    fs::write(root.images().join("hello.ext4"), "hello world").unwrap();
+    for _ in 0..RETRY_POLLS {
+        assert_eq!(follow.apply(Ok(next.clone())), None);
+        assert!(root.store().check(digest(HELLO)).is_err());
+    }
+    let line = follow.apply(Ok(next.clone())).unwrap();
+    assert!(line.contains(&format!("base {HELLO}")), "{line}");
+    assert_eq!(*current.borrow(), set(EMPTY, HELLO));
+    root.store().check(digest(HELLO)).unwrap();
+    assert_eq!(follow.apply(Ok(next)), None);
 }
