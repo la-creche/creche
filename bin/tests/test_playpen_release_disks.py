@@ -18,6 +18,9 @@ The tests hold the output to three other sources:
    `digests.json`. The vmm parses the same vector
    (`rust/crates/vmm/src/image_root/tests.rs`).
 3. `catalog.DISK_FLAVORS` and the flavor pairs of `playpen/bin/playpen-ci`.
+
+The last two tests run a copy of the script beside stand-ins for the three
+playpen scripts, so a digest line can name another file.
 """
 
 from __future__ import annotations
@@ -262,3 +265,76 @@ def test_a_disk_out_that_holds_a_file_is_refused(tmp_path: Path) -> None:
     assert done.returncode == 1
     assert done.stderr == "playpen-release-disks: DISK_OUT is not empty\n"
     assert not (tmp_path / "docker.log").exists()
+
+
+#: `playpen-rootfs TARGET TAR`: an empty tar file.
+ROOTFS_STUB = """#!/usr/bin/env bash
+: > "$2"
+"""
+
+#: `playpen-disk TAR DIR NAME`: writes `DIR/NAME.ext4.zst` and prints the
+#: digest line. Its name is NAME, or STUB_NAME when that is set.
+DISK_STUB = """#!/usr/bin/env bash
+printf 'zst %s\\n' "$3" > "$2/$3.ext4.zst"
+printf 'playpen-disk: %s\\n' "$3"
+printf '%064d  %s\\n' 0 "${STUB_NAME:-$3.ext4}"
+"""
+
+#: `playpen-kernel DIR`: writes `DIR/vmlinux-x86_64.zst` and prints the
+#: digest line.
+KERNEL_STUB = """#!/usr/bin/env bash
+printf 'zst kernel\\n' > "$1/vmlinux-x86_64.zst"
+printf '%064d  vmlinux-x86_64\\n' 0
+"""
+
+
+def _run_with_playpen_stubs(tmp_path: Path, name: str) -> subprocess.CompletedProcess[str]:
+    """The script in a tree of its own, beside stand-ins for the three
+    playpen scripts. `name` is the file that the disk stand-in names in
+    its digest line ("" names the file of each flavor)."""
+    tree = tmp_path / "tree"
+    (tree / "disks" / "bin").mkdir(parents=True)
+    script = tree / "disks" / "bin" / SCRIPT.name
+    script.write_bytes(SCRIPT.read_bytes())
+    playpen = tree / "playpen" / "bin"
+    playpen.mkdir(parents=True)
+    _stub(playpen, "playpen-rootfs", ROOTFS_STUB)
+    _stub(playpen, "playpen-disk", DISK_STUB)
+    _stub(playpen, "playpen-kernel", KERNEL_STUB)
+    env = {"PATH": "/usr/bin:/bin", "DISK_OUT": str(tmp_path / "out")}
+    if name:
+        env["STUB_NAME"] = name
+
+    return subprocess.run(
+        ["bash", str(script)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tree,
+        timeout=60,
+    )
+
+
+def test_the_stand_ins_of_the_digest_check_build_the_files(tmp_path: Path) -> None:
+    """The positive control of the next test: each digest line names its
+    own file, and the run writes the four files and SHA256SUMS."""
+    done = _run_with_playpen_stubs(tmp_path, "")
+
+    assert done.returncode == 0, done.stderr
+    assert sorted(path.name for path in (tmp_path / "out").iterdir()) == sorted(
+        [*(one.name for one in disk_files()), SUMS]
+    )
+
+
+def test_a_digest_line_of_another_file_is_refused(tmp_path: Path) -> None:
+    """playpen-disk prints the digest of `other.ext4` for the first flavor.
+    The script takes no digest of the wrong file into digests.json, and
+    DISK_OUT stays empty."""
+    first = f"{DISK_FLAVORS[0]}.ext4"
+
+    done = _run_with_playpen_stubs(tmp_path, "other.ext4")
+
+    assert done.returncode == 1
+    assert done.stderr.splitlines()[-1] == f"playpen-release-disks: no digest line of {first}"
+    assert list((tmp_path / "out").iterdir()) == []
