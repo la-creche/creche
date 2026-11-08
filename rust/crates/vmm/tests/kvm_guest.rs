@@ -25,7 +25,6 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, BufRead as _, BufReader, Write as _};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
-use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -39,7 +38,6 @@ use creche_vmm_confine::command::CMDLINE;
 use creche_vmm_confine::slot_profile::CH_BINARY;
 use creche_vmm_store::claim::CONSUMED;
 use creche_vmm_store::images::ImageStore;
-use creche_vmm_store::key::{CH_VERSION, ChVersionError, check_cloud_hypervisor};
 use creche_vmm_store::layout::{RunRoot, StateRoot};
 use creche_wire::guest::{
     CHAPERONE_PORT, FACADE_PROGRAM, FACADE_STOP_WAIT, LITELLM_PORT, SESSION_DISK_MOUNT,
@@ -253,26 +251,6 @@ fn example() -> PathBuf {
     debug.join("examples").join("phase3_vm")
 }
 
-/// The program of the version check. The upstream CH of fact 71 may
-/// print its git tag, not the `CH_VERSION` of a `--rev` build (fact 78).
-/// Then a script that prints `CH_VERSION` stands in, as in `kvm_vm.rs`.
-/// Phase 4 brings the CI-built CH (decision CH36 G19).
-#[cfg(test)]
-fn version_program(work: &Path) -> PathBuf {
-    let ch = PathBuf::from(CH_BINARY);
-    match check_cloud_hypervisor(&ch, Duration::from_secs(10)) {
-        Ok(_) => ch,
-        Err(ChVersionError::Mismatch(text)) => {
-            assert!(text.contains("v54.0"), "not CH v54.0: {text}");
-            let stand_in = work.join("ch-version");
-            fs::write(&stand_in, format!("#!/bin/sh\necho {CH_VERSION}\n")).unwrap();
-            fs::set_permissions(&stand_in, fs::Permissions::from_mode(0o755)).unwrap();
-            stand_in
-        }
-        Err(error) => panic!("cloud-hypervisor --version: {error:?}"),
-    }
-}
-
 /// The SHA-256 of `path` in hex.
 #[cfg(test)]
 fn sha256(path: &Path) -> String {
@@ -436,7 +414,7 @@ struct Vmm {
 #[cfg(test)]
 impl Vmm {
     /// Starts the unit with `env` and waits for `ready`.
-    fn start(env: &[(&str, &OsStr)], version: &Path) -> Self {
+    fn start(env: &[(&str, &OsStr)]) -> Self {
         let unit = format!("kvm-vmm-phase3-{}.service", std::process::id());
         let mut run = Command::new(SYSTEMD_RUN);
         run.args(["--user", "--pipe", "--quiet", "--collect"])
@@ -457,7 +435,6 @@ impl Vmm {
             .arg("--")
             .arg(example())
             .arg("serve")
-            .arg(version)
             .args([SESSION, FAMILY])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -624,7 +601,7 @@ fn kvm_phase3_pulls_sleeps_restores_and_stops() {
         ]
         .map(|(key, value)| (key, OsStr::new(value))),
     );
-    let mut vmm = Vmm::start(&env, &version_program(&work));
+    let mut vmm = Vmm::start(&env);
     let vsock = run.vm(&id).vsock_socket();
 
     // 1. Cold boot: the start ends after the first ControlReady (G3). Its

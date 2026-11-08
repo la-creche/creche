@@ -1142,10 +1142,9 @@ job kvm runs it.
   config with `Config::read` and composes the parts of the compose step
   with one `ColdBoot`. It runs the leftover sweep (decision CH19 (4))
   and the owner check of CH and ch-remote (decision CH67 rule 1), as
-  the compose step does. The version check runs a program that the test
-  gives, not `VMM_CH_PROGRAM`: the upstream CH of the runner may print
-  its git tag, and the CI-built CH comes in phase 4 (decision CH7-4,
-  fact 78). It binds no `vmm.sock`. The test sends it one step per line: `start`,
+  the compose step does. Then `check_cloud_hypervisor` checks the
+  version of `VMM_CH_PROGRAM`, the CH that the kvm job builds (decisions
+  CH36 G19, CH75). It binds no `vmm.sock`. The test sends it one step per line: `start`,
   `facade`, `sleep` and `stop`.
 - The test runs it as a transient user service with
   `RuntimeDirectory=vmm` and `NoNewPrivileges=yes`, so each VM scope
