@@ -79,6 +79,19 @@ RUN for name in creche-facade acp-relay; do \
       && chmod 0755 "/usr/local/bin/$name"; \
     done
 
+# The mount points guest init needs on the read-only root disk (CH62
+# rules 4 and 5). It mounts the session disk at /var/lib/creche/session
+# and makes no dir itself. The dir is root:root 0755, as guest init makes
+# a missing dir. A python and a coding image inherit it from this stage.
+# The tmpfs and kernel targets (/tmp /run /root /var/cache /var/tmp /dev
+# /proc /sys) come with the parent image, and the loop fails the build on
+# a parent that drops one. playpen-disk reads all of them back from the
+# disk.
+RUN mkdir -p -m 0755 /var/lib/creche/session \
+    && for dir in /dev /proc /sys /tmp /run /root /var/cache /var/tmp; do \
+         [ -d "$dir" ] || { echo "no mount point $dir" >&2; exit 1; }; \
+       done
+
 ENV NODE_ENV=production
 ENV HOME=/root
 ENV TMPDIR=/tmp
