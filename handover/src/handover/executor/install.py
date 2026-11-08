@@ -390,19 +390,6 @@ class Paths:
 
 
 @dataclass(frozen=True)
-class BorrowedHook:
-    """Rule 11: where the verify program of a disk-image component sits at
-    step 8. `to` is the `install.to` of the `depends_on` component whose
-    tree holds it, the path that the hook names. `tree` is that tree now:
-    `<to>.new` when this release stages that component too, else `<to>`.
-    The order follows `depends_on`, so that component switches first, and
-    at step 9 the program sits in `<to>`."""
-
-    to: Path
-    tree: Path
-
-
-@dataclass(frozen=True)
 class _Sibling:
     """Rule 8: one sibling unit, where it is installed and where the clone
     or the tree carries its file."""
@@ -636,10 +623,12 @@ class Installer:
         manifest: ComponentManifest,
         paths: Paths,
         verified: VerifiedFiles | None,
-        hook: BorrowedHook,
+        holder: Path,
     ) -> None:
         """Rule 11: fill `<install.to>.new` with each file that check P6
-        verified, then prove the borrowed hook is there.
+        verified, then prove the borrowed hook is there. `holder` is the
+        live tree of the `depends_on` component whose tree holds the
+        verify program (`steps.Release._hook_holder_tree`).
 
         Each file is copied unchanged and hashed as it is written. A copy
         that changed after the check gives other sum lines, so the stage
@@ -658,25 +647,18 @@ class Installer:
         if f"{DIGEST_PREFIX}{sum_lines_digest(digests)}" != verified.digest:
             raise StepFailed(f"{manifest.name}: the staged files are not the files P6 verified")
 
-        self._check_borrowed_hook(manifest, hook)
+        self._check_borrowed_hook(manifest, holder)
 
-    def _check_borrowed_hook(self, manifest: ComponentManifest, hook: BorrowedHook) -> None:
-        """Rule 3 for a hook in the tree of a `depends_on` component (rule
-        11), and the program is root's alone: no group or other account
-        may write it.
-
-        CONTRACT-QUESTION: contract 06 §4 rule 6 says the program sits in
-        the live tree of that component. When the same release stages that
-        component, the program is checked in its `<to>.new`, which its
-        switch makes live before this component switches. The other reading
-        refuses each set that releases the `vmm` and `disks` together. It
-        costs one request for each, in order."""
-        staged = _relocate(manifest.verify.command[0], hook.to, hook.tree)
-        if staged is None:
+    def _check_borrowed_hook(self, manifest: ComponentManifest, holder: Path) -> None:
+        """Rule 3 for a hook in the live tree `holder` of a `depends_on`
+        component (rule 11, contract 06 §4 rule 6, CH76 rule 6), and the
+        program is root's alone: no group or other account may write it."""
+        program = Path(manifest.verify.command[0])
+        if holder not in program.parents:
             raise StepFailed(f"{manifest.name}: the verify hook is in no tree of depends_on")
 
-        real = _resolved(staged)
-        if real is None or not real.is_file() or hook.tree.resolve() not in real.parents:
+        real = _resolved(program)
+        if real is None or not real.is_file() or holder.resolve() not in real.parents:
             raise StepFailed(f"{manifest.name}: the borrowed verify hook is missing or escapes")
 
         facts = real.stat()

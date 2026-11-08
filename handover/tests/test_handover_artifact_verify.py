@@ -29,7 +29,7 @@ from typing import Any
 
 import pytest
 from handover.artifacts import ArtifactRefusal, SignerPolicy, signer_policy, verify_words
-from handover.catalog import BUNDLE_SUFFIX, CATALOG_BY_NAME, Kind, Repo
+from handover.catalog import BUNDLE_SUFFIX, CATALOG_BY_NAME, DISK_FILE_MAX_BYTES, Kind, Repo
 from handover.errors import Refusal, RefusalCode
 from handover.executor import host, provenance
 from handover.executor.artifact import Copied, CopiedFiles, SignedCopy
@@ -51,6 +51,7 @@ from handover.executor.host import (
 )
 from handover.executor.install import paths_of
 from handover.executor.provenance import (
+    DISK_CHECK_MEMORY_BYTES,
     TRUSTED_ROOT,
     VerifiedArtifact,
     VerifiedFiles,
@@ -201,11 +202,11 @@ UNIT_WORDS = (
     "-p",
     "CapabilityBoundingSet=",
     "-p",
-    "MemoryMax=512M",
-    "-p",
     "RuntimeMaxSec=120",
     "--setenv=HOME=/var/lib/creche-verify",
     "--setenv=TUF_ROOT=/var/lib/creche-verify/tuf",
+    "-p",
+    "MemoryMax=536870912",
 )
 
 
@@ -701,11 +702,39 @@ def test_each_disk_file_needs_its_own_signature(tmp_path: Path) -> None:
             identity=As.VERIFIER,
             timeout_s=VERIFIER_TIMEOUT_S,
             network=Network.NONE,
+            memory_max_bytes=DISK_CHECK_MEMORY_BYTES,
         )
 
     assert verified.component == DISKS
     assert verified.files == tuple((one.name, one.file) for one in copy.files)
     assert verified.digest == DIGEST
+
+
+@pytest.mark.usefixtures("home")
+def test_the_unit_of_a_disk_check_holds_the_largest_file(tmp_path: Path) -> None:
+    """cosign v3.1.3 `verify-blob` reads the whole file into memory. The
+    unit of child 2 of a disk file holds a file of `DISK_FILE_MAX_BYTES`
+    and the 512 MiB of an archive check on top. The refresh and an
+    archive check keep 512 MiB (CH76 rule 5)."""
+    copy = _disk_copy(tmp_path / "copy")
+    run = Recorded([0] * (1 + len(copy.files)))
+
+    check_files(run, DISKS, _disk_policy(), copy)
+
+    refresh, *checks = run.seen
+    limits = [_memory_max(one) for one in checks]
+    assert limits == [DISK_FILE_MAX_BYTES + 1 + 512 * 1024 * 1024] * len(copy.files)
+    assert _memory_max(refresh) == 512 * 1024 * 1024
+    assert _memory_max(_command("verify-blob", network=Network.NONE)) == 512 * 1024 * 1024
+
+
+def _memory_max(command: Command) -> int:
+    """The one `MemoryMax=` word of the unit of `command`, in bytes."""
+    argv = verifier_argv(command)
+    assert argv is not None
+    (word,) = [one for one in argv[: argv.index(UNIT_END)] if one.startswith("MemoryMax=")]
+
+    return int(word.removeprefix("MemoryMax="))
 
 
 def test_the_first_file_that_fails_stops_the_disk_check(tmp_path: Path) -> None:

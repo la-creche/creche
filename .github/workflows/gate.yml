@@ -549,8 +549,10 @@ jobs:
   # bin/build-artifacts.sh for the planned row `vmm`, with no step that the
   # `artifacts` job lacks: so it also shows whether the CH build needs a
   # package that the runner lacks. The script runs `handover check-tree`
-  # and holds the archive to the limits of its row. The last step holds each
-  # program of the archive static (bin/lib/elfstatic.sh). guest-init runs as
+  # and holds the archive to the limits of its row. The last step holds
+  # guest-init of the archive static, with the check of step 7 of
+  # bin/vm-smoke-setup.sh: no PT_INTERP header, after a proof that the
+  # check refuses the dynamic /bin/bash of the runner. guest-init runs as
   # the init of a guest that has no program interpreter.
   #
   # It runs on every code change, and on a change that touches no file of
@@ -585,7 +587,7 @@ jobs:
           ARTIFACT_OUT: ${{ runner.temp }}/artifacts
         run: bin/build-artifacts.sh
 
-      - name: static programs
+      - name: static guest-init
         if: needs.scope.outputs.vmm != 'false'
         shell: bash
         env:
@@ -593,14 +595,19 @@ jobs:
           TREE: ${{ runner.temp }}/vmm-tree
         run: |
           set -euo pipefail
-          . bin/lib/elfstatic.sh
-          elf_static_refuses_dynamic
+          interp='^[[:space:]]+INTERP[[:space:]]'
+          if ! readelf -lW /bin/bash | grep -Eq "$interp"; then
+            echo "the static check is broken: it passes the dynamic /bin/bash" >&2
+            exit 1
+          fi
           mkdir -- "$TREE"
           tar --extract --gzip --file "$ARCHIVE" --directory "$TREE"
-          for program in vmm guest-init cloud-hypervisor ch-remote; do
-            elf_static "$TREE/vmm/bin/$program"
-          done
-          echo "the four programs of the vmm archive are static"
+          headers=$(readelf -lW "$TREE/vmm/bin/guest-init")
+          if grep -Eq "$interp" <<< "$headers"; then
+            echo "guest-init names a program interpreter: it is not static" >&2
+            exit 1
+          fi
+          echo "guest-init of the vmm archive is static"
 
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.

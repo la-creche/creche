@@ -67,13 +67,14 @@ from typing import Any, Final, cast
 
 from .. import notices, strictjson
 from ..artifacts import ArtifactRefusal, SignerPolicy, verify_words
-from ..catalog import MAIN_BRANCH
+from ..catalog import DISK_FILE_MAX_BYTES, MAIN_BRANCH
 from ..errors import Refusal, RefusalCode
 from ..site import cosign_program, github_owner, github_repo
 from .artifact import Copied, CopiedFiles
 from .host import (
     NO_VERIFIER_EXIT_CODE,
     TIMEOUT_EXIT_CODE,
+    VERIFIER_MEMORY_BYTES,
     VERIFIER_TIMEOUT_S,
     VERIFIER_TUF_ROOT,
     As,
@@ -463,6 +464,16 @@ class VerifiedFiles:
         return self._digest
 
 
+#: The memory limit of the verifier child that checks one file of a
+#: disk-image component (CH76 rule 5). cosign v3.1.3 `verify-blob` reads
+#: the whole file into memory (`blob.LoadFileOrURL`), and a file of the
+#: row is at most `DISK_FILE_MAX_BYTES`. The 512 MiB of an archive check
+#: come on top, for the runtime and the trust root. Under the limit of an
+#: archive check, each file of 415 to 506 MiB (fact 51) would kill the
+#: child, and check P6 would refuse each disks release.
+DISK_CHECK_MEMORY_BYTES: Final = DISK_FILE_MAX_BYTES + 1 + VERIFIER_MEMORY_BYTES
+
+
 def _refuse_artifact(component: str, reason: ArtifactRefusal) -> Refusal:
     return Refusal(RefusalCode.P6, component, str(reason))
 
@@ -516,6 +527,7 @@ def check_files(
     """P6 for one `kind: disk-image` component: the signature of root's
     copy of each file, each with its own bundle (contract 06 §8.4 rule 3,
     CH76 rule 5). The signer policy is the policy of a binary archive.
+    Each child 2 runs with the memory limit `DISK_CHECK_MEMORY_BYTES`.
 
     Child 1 runs once. Child 2 runs once for each file, in the order of the
     copy, and the first file that does not pass stops the check. The
@@ -526,7 +538,9 @@ def check_files(
     """
     _refresh(run, component)
     for one in copy.files:
-        _check_signature(run, component, policy, one.file, one.bundle)
+        _check_signature(
+            run, component, policy, one.file, one.bundle, memory_max_bytes=DISK_CHECK_MEMORY_BYTES
+        )
 
     files = tuple((one.name, one.file) for one in copy.files)
 
@@ -542,15 +556,22 @@ def _refresh(run: RunFn, component: str) -> None:
 
 
 def _check_signature(
-    run: RunFn, component: str, policy: SignerPolicy, signed: Path, bundle: Path
+    run: RunFn,
+    component: str,
+    policy: SignerPolicy,
+    signed: Path,
+    bundle: Path,
+    memory_max_bytes: int = VERIFIER_MEMORY_BYTES,
 ) -> None:
-    """Child 2 for one signed file and its bundle, with no network."""
+    """Child 2 for one signed file and its bundle, with no network, in a
+    unit with the memory limit `memory_max_bytes`."""
     words = verify_words(policy, str(signed), str(bundle), TRUSTED_ROOT)
     check = Command(
         argv=(cosign_program(), *words),
         identity=As.VERIFIER,
         timeout_s=VERIFIER_TIMEOUT_S,
         network=Network.NONE,
+        memory_max_bytes=memory_max_bytes,
     )
     status = _status(run, check)
     if status in NO_ANSWER:
