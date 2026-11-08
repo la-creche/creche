@@ -22,7 +22,13 @@
 #      makes the second node.
 #   5. Linger starts the user manager, for a later `systemd-run --user`.
 #      The script writes XDG_RUNTIME_DIR to $GITHUB_ENV, so the later steps
-#      of the job reach the user manager, as the vmm unit does.
+#      of the job reach the user manager, as the vmm unit does. First a
+#      drop-in gives user@.service and the units of the user manager the
+#      hard RLIMIT_NOFILE of Hyperion's user manager, 1048576. The runner
+#      gives 65536, and `vmm serve` exits 78 below its need of 102720
+#      (decision CH67 rule 4, which keeps the vmm unit free of a
+#      LimitNOFILE= line). The script fails unless a unit of the user
+#      manager gets that hard limit.
 #   6. It fetches the CH guest kernel (fact 53), checked by its sha256.
 #   7. It builds guest-init and the stand-in facade static for musl. It
 #      refuses a program with a PT_INTERP header, and first proves that the
@@ -78,6 +84,8 @@ SLOT_PROFILES=$REPO/rust/crates/vmm-confine/apparmor/cloud-hypervisor-slots.prof
 RESTRICT=/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined
 KERNEL_URL=https://github.com/cloud-hypervisor/linux/releases/download/ch-release-v7.2.8-20261009
 MUSL=x86_64-unknown-linux-musl
+# The hard RLIMIT_NOFILE of the user manager on Hyperion.
+NOFILE_HARD=1048576
 # About twice the 5 min 34 s of fact 78.
 CH_BUILD_LIMIT=12m
 
@@ -137,6 +145,18 @@ for node in /dev/kvm /dev/vhost-vsock; do
   [[ -r "$node" && -w "$node" ]] || die "$node is not open to $(id -un)"
 done
 
+say "give the user manager the hard RLIMIT_NOFILE of Hyperion, $NOFILE_HARD"
+sudo mkdir -p /etc/systemd/system/user@.service.d /etc/systemd/user.conf.d
+printf '[Service]\nLimitNOFILE=%s\n' "$NOFILE_HARD" |
+  sudo tee /etc/systemd/system/user@.service.d/90-creche-nofile.conf > /dev/null
+printf '[Manager]\nDefaultLimitNOFILE=1024:%s\n' "$NOFILE_HARD" |
+  sudo tee /etc/systemd/user.conf.d/90-creche-nofile.conf > /dev/null
+sudo systemctl daemon-reload
+# A user manager that already runs keeps its old limit until it restarts.
+if systemctl is-active --quiet "user@$(id -u).service"; then
+  sudo systemctl restart "user@$(id -u).service"
+fi
+
 say "start the user manager"
 sudo loginctl enable-linger "$(id -un)"
 bus="/run/user/$(id -u)/bus"
@@ -146,6 +166,8 @@ for _ in $(seq 1 50); do
 done
 [[ -S "$bus" ]] || die "no user manager: $bus is missing"
 echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "${GITHUB_ENV:?GITHUB_ENV names the env file of the job}"
+hard=$(XDG_RUNTIME_DIR=/run/user/$(id -u) systemd-run --user --pipe --quiet --collect sh -c 'ulimit -Hn')
+[[ "$hard" == "$NOFILE_HARD" ]] || die "a user unit gets the hard RLIMIT_NOFILE $hard, not $NOFILE_HARD"
 
 cd "$dir"
 
