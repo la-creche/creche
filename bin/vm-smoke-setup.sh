@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI: makes a GitHub runner ready for the kvm_ tests and fetches what they boot.
+# CI: makes a GitHub runner ready for the kvm_ tests and builds what they boot.
 #   CRECHE_KVM_DIR=<dir> bin/vm-smoke-setup.sh
 # The job `kvm` of gate.yml and of release.yml runs it. No hook and no unit
 # runs it. It refuses to run outside GitHub Actions: it uses sudo, and CH36
@@ -7,30 +7,35 @@
 #
 # The method is the one the C0 spike proved (design note fact 79):
 #   1. /dev/kvm must exist. No KVM fails here, loudly (CH36 G19).
-#   2. A udev rule with MODE 0666 opens /dev/kvm and /dev/vhost-vsock to the
+#   2. It installs musl-tools from apt, the pinned toolchain and the musl
+#      target, the one target of the vmm row (CH7-4, CH7-5). apt and rustup
+#      run at once. The job runs this script before its `toolchain` step,
+#      so the script installs the toolchain itself (CH62 rule 3).
+#   3. It starts the build of CH and ch-remote in the background (decision
+#      CH75): the 13 words of bin/lib/chbuild.sh, the CH7-4 argv at
+#      the rev of fact 78, with no cache. The build has its own
+#      CARGO_TARGET_DIR, so no other build of the job waits for its lock.
+#      `timeout` bounds it at CH_BUILD_LIMIT, so the wait in step 11
+#      cannot hang. Steps 4 to 10 run beside it.
+#   4. A udev rule with MODE 0666 opens /dev/kvm and /dev/vhost-vsock to the
 #      runner user, who is not in the group kvm. `modprobe vhost_vsock`
 #      makes the second node.
-#   3. Linger starts the user manager, for a later `systemd-run --user`.
+#   5. Linger starts the user manager, for a later `systemd-run --user`.
 #      The script writes XDG_RUNTIME_DIR to $GITHUB_ENV, so the later steps
 #      of the job reach the user manager, as the vmm unit does.
-#   4. It fetches the upstream static CH v54.0 and ch-remote (fact 71) and
-#      the CH guest kernel (fact 53), each checked by its sha256.
-#   5. It builds guest-init and the stand-in facade static for musl, the
-#      one target of the vmm row (CH7-4, CH7-5). The job runs this script
-#      before its `toolchain` step, so the script installs the pinned
-#      toolchain and the musl target itself, with no workflow edit (CH62
-#      rule 3). It refuses a program with a PT_INTERP header, and first
-#      proves that the check refuses the runner's dynamic /bin/bash. The
-#      stand-in is a test program in no release row (CH62 rule 12), and
-#      the guest-init kvm tests put it on their root disks (CH64 rule 2). It
-#      packs guest-init as /init in guest-init.cpio, with dev/console 5:1,
-#      and fails unless GNU cpio lists exactly those entries, owned by root.
-#   6. It builds a busybox initramfs from `apt-get download busybox-static`.
+#   6. It fetches the CH guest kernel (fact 53), checked by its sha256.
+#   7. It builds guest-init and the stand-in facade static for musl. It
+#      refuses a program with a PT_INTERP header, and first proves that the
+#      check refuses the runner's dynamic /bin/bash. The stand-in is a test
+#      program in no release row (CH62 rule 12), and the guest-init kvm
+#      tests put it on their root disks (CH64 rule 2). It packs guest-init
+#      as /init in guest-init.cpio, with dev/console 5:1, and fails unless
+#      GNU cpio lists exactly those entries, owned by root.
+#   8. It builds a busybox initramfs from `apt-get download busybox-static`.
 #      Its init writes the line CRECHE-KVM-BOOTED to the serial port, then
 #      `tick` once a second. It keeps the static busybox program, which a
 #      kvm test packs into its own initramfs.
-#   7. It installs CH at /opt/components/vmm/bin/cloud-hypervisor and loads
-#      the slot profiles of rust/crates/vmm-confine/apparmor/
+#   9. It loads the slot profiles of rust/crates/vmm-confine/apparmor/
 #      cloud-hypervisor-slots.profile with the commands of design section
 #      6.1 step 1 (decisions CH8-1, CH55, gap G28 of CH36). It fails unless
 #      each creche-ch-slot-<k> label of the file is in enforce mode. The
@@ -38,8 +43,22 @@
 #      also fails when kernel.apparmor_restrict_unprivileged_unconfined is
 #      1 (decision CH55). No profile has an attachment path, so a CH that
 #      no launch stage starts runs unconfined.
-# Phase 4 replaces the upstream files with the CI-built CH, kernel and disks
-# (CH36 G19).
+#  10. It builds the test programs of rust/ with `cargo test --no-run`, so
+#      the steps of the job after it build nothing.
+#  11. It waits for the CH build. A failed build prints its log and fails
+#      the run. The install root must hold the two programs alone. Each is
+#      static, and `cloud-hypervisor --version` must print CH_BUILD_VERSION
+#      (fact 78), alone or after the program name, as the key check of the
+#      vmm reads it (gap G10). Then it installs CH at
+#      /opt/components/vmm/bin/cloud-hypervisor, the path of the slot
+#      profiles.
+#
+# The CPUs: steps 7 and 10 build under `nice -n 19`, with as many jobs as
+# the CH build, one per CPU. The CH build is the longest path of the job,
+# so it takes each CPU that it can use. Its release profile has LTO and one
+# codegen unit, so the last link of each of its two programs runs on one
+# CPU, and the other builds take the free CPUs then. A fixed split of the
+# jobs would leave CPUs idle in that link.
 #
 # The files land in CRECHE_KVM_DIR, which is absent or empty:
 #   cloud-hypervisor  ch-remote  vmlinux  initramfs.cpio  busybox
@@ -51,13 +70,16 @@ set -euo pipefail
 export LC_ALL=C
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=lib/chbuild.sh
+. "$REPO/bin/lib/chbuild.sh"
 INSTALLED_CH=/opt/components/vmm/bin/cloud-hypervisor
 PROFILE=/etc/apparmor.d/opt.components.vmm.bin.cloud-hypervisor
 SLOT_PROFILES=$REPO/rust/crates/vmm-confine/apparmor/cloud-hypervisor-slots.profile
 RESTRICT=/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined
-CH_URL=https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/v54.0
 KERNEL_URL=https://github.com/cloud-hypervisor/linux/releases/download/ch-release-v7.2.8-20261009
 MUSL=x86_64-unknown-linux-musl
+# About twice the 5 min 34 s of fact 78.
+CH_BUILD_LIMIT=12m
 
 say() { printf 'vm-smoke-setup: %s\n' "$*"; }
 die() {
@@ -70,6 +92,36 @@ dir=${CRECHE_KVM_DIR:?CRECHE_KVM_DIR names the output directory}
 [[ "$dir" == /* ]] || die "CRECHE_KVM_DIR is not absolute: $dir"
 [[ ! -e "$dir" ]] || [[ -z "$(ls -A "$dir")" ]] || die "$dir is not empty"
 [[ -e /dev/kvm ]] || die "no /dev/kvm on this runner: the kvm_ tests cannot run"
+mkdir -p "$dir"
+say "$(nproc) CPUs"
+
+say "install musl-tools, the pinned toolchain and the $MUSL target"
+# musl-gcc for any C that a dependency of CH builds, as in the spike of
+# fact 78. The busybox download of step 8 reads the same index.
+(sudo apt-get update -qq && sudo apt-get install --yes --no-install-recommends -qq musl-tools) &
+apt_pid=$!
+# In rust/, rustup reads the pinned toolchain from rust-toolchain.toml.
+(
+  cd "$REPO/rust"
+  rustup toolchain install --no-self-update
+  rustup target add "$MUSL"
+)
+wait "$apt_pid" || die "apt-get did not install musl-tools"
+
+say "start the build of CH and ch-remote, at most $CH_BUILD_LIMIT"
+ch_work=$(mktemp -d "$dir/ch-build.XXXXXX")
+ch_log=$ch_work/build.log
+ch_start=$SECONDS
+(
+  cd "$REPO/rust"
+  export CARGO_TARGET_DIR=$ch_work/target
+  export CARGO_INSTALL_ROOT=$ch_work/root
+  export CARGO_BUILD_TARGET=$MUSL
+  exec timeout --kill-after=30s "$CH_BUILD_LIMIT" "${CH_BUILD[@]}"
+) < /dev/null > "$ch_log" 2>&1 &
+ch_pid=$!
+# A fault in steps 4 to 10 stops the build too.
+trap 'kill "$ch_pid" 2> /dev/null || true' EXIT
 
 say "open /dev/kvm and /dev/vhost-vsock to the runner user"
 printf '%s\n' \
@@ -95,27 +147,18 @@ done
 [[ -S "$bus" ]] || die "no user manager: $bus is missing"
 echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "${GITHUB_ENV:?GITHUB_ENV names the env file of the job}"
 
-mkdir -p "$dir"
 cd "$dir"
 
-say "fetch CH v54.0, ch-remote and the guest kernel"
-curl -fsSL -o cloud-hypervisor "$CH_URL/cloud-hypervisor-static"
-curl -fsSL -o ch-remote "$CH_URL/ch-remote-static"
+say "fetch the guest kernel"
 curl -fsSL -o vmlinux "$KERNEL_URL/vmlinux-x86_64"
 sha256sum --check --strict <<'EOF'
-4f4f98a3d661a40f3e5272627cc895a1b2e525f2f6bedf5f895f9cd21ba5c65b  cloud-hypervisor
-acd5be240d5c73373effbe818908fc03e313ec8486237904bff11d93b71b1c83  ch-remote
 edfeb8a8a6c04ff2979e9f1c700feaa29b8f564f952261834ef0b7d2e673a853  vmlinux
 EOF
-chmod 0755 cloud-hypervisor ch-remote
 
 say "build guest-init and the stand-in facade static for $MUSL"
-# In rust/, rustup reads the pinned toolchain from rust-toolchain.toml.
 (
   cd "$REPO/rust"
-  rustup toolchain install --no-self-update
-  rustup target add "$MUSL"
-  cargo build --locked --release --target "$MUSL" \
+  nice -n 19 cargo build --locked --release --target "$MUSL" \
     -p creche-guest-init --bin guest-init --example standin_facade
 )
 built=$REPO/rust/target/$MUSL/release
@@ -163,7 +206,6 @@ expected=$(printf '%s\n' \
 say "guest-init.cpio holds /init, dev and dev/console 5:1, owned by root"
 
 say "build the busybox initramfs"
-sudo apt-get update -qq
 work=$(mktemp -d "$dir/busybox.XXXXXX")
 (cd "$work" && apt-get download busybox-static)
 dpkg-deb -x "$work"/busybox-static_*.deb "$work/deb"
@@ -184,7 +226,6 @@ say "load the slot profiles of CH"
 [[ "$(cat /sys/module/apparmor/parameters/enabled)" == Y ]] || die "AppArmor is off on this runner"
 [[ ! -e "$RESTRICT" || "$(cat "$RESTRICT")" == 0 ]] ||
   die "$RESTRICT is not 0: the launch stage cannot enter a slot label (decision CH55)"
-sudo install -D -m 0755 cloud-hypervisor "$INSTALLED_CH"
 sudo install -m 0644 "$SLOT_PROFILES" "$PROFILE"
 sudo apparmor_parser -r "$PROFILE"
 mapfile -t labels < <(sed -n 's/^profile \(creche-ch-slot-[0-9]*\) {$/\1/p' "$SLOT_PROFILES")
@@ -194,6 +235,41 @@ for label in "${labels[@]}"; do
   grep -Fqx "$label (enforce)" <<< "$loaded" || die "the profile $label is not in enforce mode"
 done
 say "${#labels[@]} slot labels in enforce mode"
+
+say "build the test programs of rust/"
+(cd "$REPO/rust" && nice -n 19 cargo test --locked --no-run)
+
+say "wait for the build of CH and ch-remote"
+wait_start=$SECONDS
+ch_status=0
+wait "$ch_pid" || ch_status=$?
+trap - EXIT
+if ((ch_status != 0)); then
+  cat "$ch_log" >&2
+  if ((ch_status == 124)); then
+    die "the build of CH and ch-remote passed its limit of $CH_BUILD_LIMIT"
+  fi
+  die "the build of CH and ch-remote failed with status $ch_status"
+fi
+# A passed build keeps its log in a group that the run page folds.
+echo "::group::the log of the CH build"
+cat "$ch_log"
+echo "::endgroup::"
+say "CH and ch-remote built in $((SECONDS - ch_start)) s, after a wait of $((SECONDS - wait_start)) s"
+found=$(cd "$ch_work/root" && find . -mindepth 1 | sort)
+[[ "$found" == "$(printf '%s\n' ./bin ./bin/ch-remote ./bin/cloud-hypervisor)" ]] ||
+  die "the install root of CH holds other files:"$'\n'"$found"
+install -m 0755 "$ch_work/root/bin/cloud-hypervisor" cloud-hypervisor
+install -m 0755 "$ch_work/root/bin/ch-remote" ch-remote
+rm -rf "$ch_work"
+for program in cloud-hypervisor ch-remote; do
+  require_static "$program"
+done
+version=$(./cloud-hypervisor --version) || die "cloud-hypervisor --version failed"
+[[ "$version" == "$CH_BUILD_VERSION" || "$version" == "cloud-hypervisor $CH_BUILD_VERSION" ]] ||
+  die "cloud-hypervisor prints $version, not $CH_BUILD_VERSION (fact 78)"
+say "cloud-hypervisor and ch-remote are static, and CH prints $version"
+sudo install -D -m 0755 cloud-hypervisor "$INSTALLED_CH"
 
 df -h /
 say "ready in $dir"

@@ -951,10 +951,9 @@ The follow assumes that Cloud Hypervisor connects each guest dial to
 listener that the follow bound after a boot or a restore. The CH49 rule
 4 spike of decision CH69 rule 28 checks the assumption with two kvm
 tests: `kvm_reach_binds_1104_after_an_egress_edit` and
-`kvm_reach_binds_1104_after_a_restore_and_an_edit`. No kvm run has
-passed them yet (plan risk 6). If the restore test fails, plan PR E3
-takes the fallback of CH49 rule 4: a bound set fixed at each boot and
-restore.
+`kvm_reach_binds_1104_after_a_restore_and_an_edit`. Both passed on
+the kvm runner (gate run 42429466220), so the follow needs no fallback
+of CH49 rule 4.
 
 `tests/start.rs` runs the follow on paused tokio time, one `POLL` at a
 time: an edit that binds 1104 and serves a 403, an emptied list that
@@ -970,7 +969,20 @@ file and runs no check. `tests/kvm_reach.rs` boots the vmm of
 `examples/phase3_vm.rs` with the real guest init and the stand-in in
 mode `reach`. A CONNECT to an IP literal from the guest gets no 403
 before the edit and a 403 after it, after a boot and after a restore,
-and no 403 again after an emptied list. The test needs no internet.
+and no 403 again after an emptied list. These two tests need no
+internet.
+
+The phase 7 proof of plan PR E4 sits in the same file. Each of its
+tests runs the real `vmm serve` under `systemd-run`, through
+`common::boot_with`, so the fd limit of the user manager applies
+(decision CH69 rule 31). It reads `check` over `vmm.sock`. The tests
+prove an allowed tunnel to github.com:443 with bytes both ways (CH69
+rule 22), the refusal of an IP literal, `check` that agrees with the
+proxy, a removal that refuses the next CONNECT while an open tunnel
+still carries bytes (fact 43), an emptied list that refuses each new
+dial while an open tunnel still carries bytes (CH74 rule 2), a listed
+repo that clones and a repo outside `repos` that fails. The github.com
+tests need internet and DNS on the runner (plan risk 4).
 
 ## The slots
 
@@ -1229,8 +1241,10 @@ and the graceful stop of a VM with no `synced`.
 `tests/kvm_guest.rs` holds the phase 3 proof of section 5 of the design
 (plan PR V10), `kvm_phase3_pulls_sleeps_restores_and_stops`. Only the
 job kvm runs it. Its boot helpers and the env of each config key sit in
-`tests/common/mod.rs` (plan PR E3), and `tests/kvm_reach.rs` boots the
-same vmm. `common::boot` takes the mode of the stand-in and holds a lock,
+`tests/common/mod.rs` (plan PR E3), and the E3 tests of
+`tests/kvm_reach.rs` boot the same vmm. `common::boot_with` takes the
+start of the vmm, so the E4 tests start the real `vmm serve` in its
+place. `common::boot` takes the mode of the stand-in and holds a lock,
 so one vmm of the test binary runs at a time: each proof uses one
 session, the run root of `RuntimeDirectory=vmm` and the state root of
 the runner.
@@ -1240,10 +1254,9 @@ the runner.
   config with `Config::read` and composes the parts of the compose step
   with one `ColdBoot`. It runs the leftover sweep (decision CH19 (4))
   and the owner check of CH and ch-remote (decision CH67 rule 1), as
-  the compose step does. The version check runs a program that the test
-  gives, not `VMM_CH_PROGRAM`: the upstream CH of the runner may print
-  its git tag, and the CI-built CH comes in phase 4 (decision CH7-4,
-  fact 78). It binds no `vmm.sock`. The test sends it one step per line: `start`,
+  the compose step does. Then `check_cloud_hypervisor` checks the
+  version of `VMM_CH_PROGRAM`, the CH that the kvm job builds (decisions
+  CH36 G19, CH75). It binds no `vmm.sock`. The test sends it one step per line: `start`,
   `facade`, `sleep` and `stop`.
 - The test runs it as a transient user service with
   `RuntimeDirectory=vmm` and `NoNewPrivileges=yes`, so each VM scope

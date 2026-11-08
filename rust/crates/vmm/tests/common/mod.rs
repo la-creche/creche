@@ -13,7 +13,6 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -23,7 +22,6 @@ use std::time::Duration;
 
 use creche_vmm::config;
 use creche_vmm_confine::slot_profile::CH_BINARY;
-use creche_vmm_store::key::{CH_VERSION, ChVersionError, check_cloud_hypervisor};
 use creche_vmm_store::layout::{RunRoot, SessionDir, StateRoot};
 use creche_wire::guest::{FACADE_PROGRAM, SESSION_DISK_MOUNT};
 use creche_wire::{FacadeState, SessionId};
@@ -142,25 +140,6 @@ fn example() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
     let debug = exe.parent().and_then(|deps| deps.parent()).unwrap();
     debug.join("examples").join("phase3_vm")
-}
-
-/// The program of the version check. The upstream CH of fact 71 may
-/// print its git tag, not the `CH_VERSION` of a `--rev` build (fact 78).
-/// Then a script that prints `CH_VERSION` stands in, as in `kvm_vm.rs`.
-/// Phase 4 brings the CI-built CH (decision CH36 G19).
-fn version_program(work: &Path) -> PathBuf {
-    let ch = PathBuf::from(CH_BINARY);
-    match check_cloud_hypervisor(&ch, Duration::from_secs(10)) {
-        Ok(_) => ch,
-        Err(ChVersionError::Mismatch(text)) => {
-            assert!(text.contains("v54.0"), "not CH v54.0: {text}");
-            let stand_in = work.join("ch-version");
-            fs::write(&stand_in, format!("#!/bin/sh\necho {CH_VERSION}\n")).unwrap();
-            fs::set_permissions(&stand_in, fs::Permissions::from_mode(0o755)).unwrap();
-            stand_in
-        }
-        Err(error) => panic!("cloud-hypervisor --version: {error:?}"),
-    }
 }
 
 /// The SHA-256 of `path` in hex.
@@ -318,12 +297,11 @@ pub struct Vmm {
 impl Vmm {
     /// Starts the unit of the proof `name` with `env` and waits for
     /// `ready`.
-    fn start(name: &str, env: &[(&str, &OsStr)], version: &Path) -> Self {
+    fn start(name: &str, env: &[(&str, &OsStr)]) -> Self {
         let unit = format!("kvm-vmm-{name}-{}.service", std::process::id());
         let mut child = transient(&unit, env)
             .arg(example())
             .arg("serve")
-            .arg(version)
             .args([SESSION, FAMILY])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -404,18 +382,16 @@ pub struct Booted<V = Vmm> {
 /// in mode `mode`, and the planes `litellm` and `chaperone`. The family of
 /// the proof has no `egress.json` and no `repos.json`.
 pub fn boot(name: &str, mode: &str, planes: (SocketAddr, SocketAddr)) -> Booted {
-    boot_with(name, mode, planes, |name, env, work, _| {
-        Vmm::start(name, env, &version_program(work))
-    })
+    boot_with(name, mode, planes, |name, env, _| Vmm::start(name, env))
 }
 
 /// `boot` with the vmm that `start` starts from the name of the proof,
-/// the env, the work dir and the run root (plan PR E4).
+/// the env and the run root (plan PR E4).
 pub fn boot_with<V>(
     name: &str,
     mode: &str,
     (litellm, chaperone): (SocketAddr, SocketAddr),
-    start: impl FnOnce(&str, &[(&str, &OsStr)], &Path, &RunRoot) -> V,
+    start: impl FnOnce(&str, &[(&str, &OsStr)], &RunRoot) -> V,
 ) -> Booted<V> {
     let one = ONE_VMM.lock().unwrap_or_else(PoisonError::into_inner);
     let files = files();
@@ -493,7 +469,7 @@ pub fn boot_with<V>(
         ]
         .map(|(key, value)| (key, OsStr::new(value))),
     );
-    let vmm = start(name, &env, &work, &run);
+    let vmm = start(name, &env, &run);
     Booted {
         vmm,
         vsock: run.vm(&id).vsock_socket(),

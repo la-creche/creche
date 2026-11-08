@@ -11,6 +11,8 @@ Cases:
    with no line feed.
 2. Each text that is not in the line form, with the reason of its refusal.
 3. A file that the reader cannot read.
+4. The CH build of `bin/lib/chbuild.sh`: the vmm row of the cases. Its rev
+   and its version are the ones of the key check of the vmm.
 """
 
 from __future__ import annotations
@@ -40,13 +42,37 @@ COMPONENT: Final = "agent-family"
 CRATE_DIR: Final = "rust/crates/agent-family"
 ARCHIVE: Final = f"{COMPONENT}-{BINARY_TARGET}{ARCHIVE_SUFFIX}"
 
-#: The vmm build of decision CH35 rule 3: one command of eleven words.
-VMM_WORDS: Final = (
-    *("cargo", "install", "--locked", "--no-track"),
-    *("--git", "https://github.com/cloud-hypervisor/cloud-hypervisor"),
-    *("--rev", "038ce5a72d761380a02f714a4eb4ca63e0ea073d", "cloud-hypervisor"),
-    *("--bin", "cloud-hypervisor", "--bin", "ch-remote"),
-)
+#: The one copy of the CH build of decision CH35 rule 3, and the file of
+#: the two constants of the vmm that it must match.
+CH_BUILD_LIB: Final = REPO / "bin" / "lib" / "chbuild.sh"
+KEY_RS: Final = REPO / "rust" / "crates" / "vmm-store" / "src" / "key.rs"
+
+#: The driver of the CH build: it sources the file and prints the version,
+#: then each word, one on each line.
+CH_DRIVER: Final = """\
+set -euo pipefail
+. "$1"
+printf '%s\\n' "$CH_BUILD_VERSION" "${CH_BUILD[@]}"
+"""
+
+
+def _ch_build() -> tuple[tuple[str, ...], str]:
+    """The words of `CH_BUILD` and the value of `CH_BUILD_VERSION`, as bash
+    reads them under `set -u`."""
+    done = subprocess.run(
+        ["bash", "-c", CH_DRIVER, "driver", str(CH_BUILD_LIB)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    version, *words = done.stdout.splitlines()
+
+    return tuple(words), version
+
+
+#: The vmm build of decision CH35 rule 3: one command of 13 words.
+VMM_WORDS: Final = _ch_build()[0]
 
 #: The driver: it sources the library, reads the file and prints each row,
 #: or the reason of the refusal. `$1` is a `set` line, so a case runs with
@@ -229,3 +255,28 @@ def test_a_file_that_the_reader_cannot_read_is_refused(tmp_path: Path) -> None:
     )
 
     assert (done.returncode, done.stdout) == (1, "fault cannot read the file of the rows\n")
+
+
+def _key_const(name: str) -> str:
+    """The value of the `&str` constant `name` of the key check."""
+    text = KEY_RS.read_text(encoding="utf-8")
+    (value,) = re.findall(rf'^pub const {name}: &str = "([^"]+)";$', text, re.MULTILINE)
+
+    return value
+
+
+def test_the_ch_build_is_the_cargo_install_of_the_rev_that_the_vmm_keys() -> None:
+    """The kvm job builds CH with these words (decision CH75). The vmm
+    accepts only a CH that prints `CH_VERSION` and keys each snapshot with
+    `CH_REV`, so a build of another rev, or another version, fails here
+    first. The two `--bin` words are the two programs that
+    bin/vm-smoke-setup.sh requires in the install root."""
+    words, version = _ch_build()
+    rev = words[words.index("--rev") + 1]
+    programs = [words[at + 1] for at, word in enumerate(words) if word == "--bin"]
+
+    assert len(words) == 13
+    assert words[:4] == ("cargo", "install", "--locked", "--no-track")
+    assert rev == _key_const("CH_REV")
+    assert version == _key_const("CH_VERSION")
+    assert programs == ["cloud-hypervisor", "ch-remote"]

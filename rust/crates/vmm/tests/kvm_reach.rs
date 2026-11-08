@@ -432,16 +432,11 @@ impl Served {
     /// Starts the unit of the proof `name` with `env` and waits for
     /// `vmm.sock` in `run`. A vmm that exits first fails the proof, and
     /// its log above names the cause.
-    // Dependency (decisions CH36 G19, CH69 rule 31, plan risk 9): `vmm
-    // serve` checks the version of `VMM_CH_PROGRAM` itself and accepts only
-    // `CH_VERSION`, v54.0.0 (fact 78). The runner must install the CI-built
-    // CH of fact 78, as CH36 G19 decides once phase 4 lands. Today
-    // `bin/vm-smoke-setup.sh` installs the upstream asset of fact 71. The
-    // build.rs of CH v54.0 takes the version from `git describe`, so that
-    // asset likely prints v54.0 (not yet seen on the runner). Then this
-    // start exits 78 until the setup script installs the fact 78 build
-    // (CH62 rule 3, no workflow edit). This test runs the real `vmm serve`
-    // with no stand-in for the version check.
+    // `vmm serve` checks the version of `VMM_CH_PROGRAM` itself and
+    // accepts only `CH_VERSION`, v54.0.0 (fact 78). `bin/vm-smoke-setup.sh`
+    // builds that CH at the fact 78 rev (decisions CH75, CH36 G19), so
+    // this test runs the real `vmm serve` with no stand-in for the check
+    // (CH69 rule 31).
     fn start(name: &str, env: &[(&str, &OsStr)], run: &RunRoot) -> Self {
         let unit = format!("kvm-serve-{name}-{}.service", std::process::id());
         let child = transient(&unit, env)
@@ -558,7 +553,7 @@ impl Drop for Served {
 fn serve_reach(name: &str) -> Booted<Served> {
     let (litellm, _) = stub_plane();
     let (chaperone, _) = stub_plane();
-    boot_with(name, "reach", (litellm, chaperone), |name, env, _, run| {
+    boot_with(name, "reach", (litellm, chaperone), |name, env, run| {
         Served::start(name, env, run)
     })
 }

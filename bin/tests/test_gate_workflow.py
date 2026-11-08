@@ -1390,10 +1390,11 @@ def test_the_rust_job_formats_lints_and_tests_the_workspace(
 def test_the_kvm_job_readies_the_runner_then_runs_every_kvm_test(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
-    """The setup script runs before the build, on the runner itself. The
-    test run reads the same directory as the script, and no step has a
-    rule or `continue-on-error`: no KVM is a red job. A run that matches
-    no kvm_ test is red too, because the count step fails first."""
+    """The setup script runs first, on the runner itself, and builds CH
+    and the test programs. The test run reads the same directory as the
+    script, and no step has a rule or `continue-on-error`: no KVM is a
+    red job. A run that matches no kvm_ test is red too, because the
+    count step fails first."""
     job = jobs[KVM_JOB]
     checkout, setup, toolchain, count, run = job["steps"]
 
