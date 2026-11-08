@@ -52,10 +52,12 @@ image's too, fails until it sits in a list.
 The base stage makes `/var/lib/creche/session`, owner root, mode 0755. Guest
 init mounts the session disk there and makes no dir (CH62 rule 5). The
 other mount points (`/dev /proc /sys /tmp /run /root /var/cache /var/tmp`)
-come with the parent image, and the same stage fails the build on a parent
-that drops one. `bin/playpen-disk` reads all nine back from the disk with
-`debugfs`, and `bin/tests/test_playpen_image.py` holds both lists equal to
-the boot plan of guest init. sbx ignores the extra empty dir.
+come with the parent image. The same stage fails the build on a parent
+that drops a tmpfs dir. The build mounts `/dev`, `/proc` and `/sys` in each
+`RUN` step, so only the disk can show them missing. `bin/playpen-disk`
+reads all nine back from the disk with `debugfs`, and
+`bin/tests/test_playpen_image.py` holds both lists equal to the boot plan
+of guest init. sbx ignores the extra empty dir.
 
 The image holds no pi, no fd, no playpen bundle, no PEP bridge, no
 `agent-pi-launch`. Only the `coding` flavor holds a package installer.
