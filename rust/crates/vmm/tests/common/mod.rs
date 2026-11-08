@@ -175,7 +175,7 @@ fn image_root(work: &Path, disk: impl FnOnce(&Path, &Path) -> RootDisk) -> PathB
     let disk = entry(&placed.file, &placed.sha256);
     let digests = root.join("digests.json");
     let text = format!(
-        r#"{{"kernel":{},"base":{disk},"python":{disk}}}"#,
+        r#"{{"kernel":{},"base":{disk},"python":{disk},"coding":{disk}}}"#,
         entry("vmlinux", &sha256(&root.join("vmlinux")))
     );
     fs::write(&digests, text).unwrap();

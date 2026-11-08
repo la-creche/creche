@@ -19,8 +19,7 @@
 #                         installed at BUILD time, so a run needs no network
 #   agent-sandbox-coding  the coding flavor of code and creche (CH7-1): the
 #                         python flavor plus uv, pnpm and cargo. A root
-#                         disk only (CH53 rule 1): no sbx image, no
-#                         SandboxFlavor member
+#                         disk only (CH53 rule 1): no sbx image
 #   creche-test-venv      build-only: it resolves uv.lock and installs the
 #                         test venv and the 3.12 interpreter. It ships in
 #                         no image. Only the coding flavor copies its uv

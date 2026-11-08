@@ -1451,9 +1451,9 @@ def _disks_and_caregiver(repo: Path) -> str:
     return _commit(repo, "disks/bin/one.sh", "caregiver/src/one.py")
 
 
-def test_the_disks_row_has_four_files_and_four_bundles() -> None:
-    """The planner names eight assets: each file, then its bundle."""
-    assert len(DISK_ASSETS) == 8
+def test_the_disks_row_has_five_files_and_five_bundles() -> None:
+    """The planner names ten assets: each file, then its bundle."""
+    assert len(DISK_ASSETS) == 10
     assert DISK_ASSETS[1::2] == tuple(f"{name}{BUNDLE_SUFFIX}" for name in DISK_ASSETS[::2])
 
 
@@ -1487,7 +1487,7 @@ def test_a_disk_image_component_releases_its_eight_assets(
 def test_each_disk_file_needs_its_own_signature(
     repo: Path, shims: Path, tmp_path: Path, assets: Assets
 ) -> None:
-    """The verifier refuses one file of the four: no tag for the row, a
+    """The verifier refuses one file of the five: no tag for the row, a
     tag for each other component, and a red end."""
     _disks_and_caregiver(repo)
 

@@ -52,6 +52,8 @@ def test_the_disks_row_lists_each_file_and_bundle() -> None:
         ("base.ext4.zst.sigstore.json", BUNDLE_MAX_BYTES),
         ("python.ext4.zst", 2 * GIB - 1),
         ("python.ext4.zst.sigstore.json", BUNDLE_MAX_BYTES),
+        ("coding.ext4.zst", 2 * GIB - 1),
+        ("coding.ext4.zst.sigstore.json", BUNDLE_MAX_BYTES),
     ]
 
 

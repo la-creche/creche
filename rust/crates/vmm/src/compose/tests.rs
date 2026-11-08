@@ -76,9 +76,9 @@ fn mismatch() -> String {
     format!(r#"{{"code":"protocol_mismatch","protocol":{HOST_API_PROTOCOL}}}"#)
 }
 
-/// The kernel, the base disk and the python disk, each with the SHA-256
-/// of its bytes.
-const IMAGES: [(&str, &str, &str); 3] = [
+/// The kernel and the root disk of each flavor, each with the SHA-256 of
+/// its bytes.
+const IMAGES: [(&str, &str, &str); 4] = [
     (
         "vmlinux",
         "",
@@ -93,6 +93,11 @@ const IMAGES: [(&str, &str, &str); 3] = [
         "python.ext4",
         "hello world",
         "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+    ),
+    (
+        "coding.ext4",
+        "coding",
+        "9623c1ece5cf9eac8c087030d2c4be5747556cf40920ebfeba1fcc0cc976f123",
     ),
 ];
 
@@ -148,6 +153,7 @@ impl Scratch {
             "kernel": entry(IMAGES[0]),
             "base": entry(IMAGES[1]),
             "python": entry(IMAGES[2]),
+            "coding": entry(IMAGES[3]),
         });
         fs::write(dir.join("images").join(DIGESTS_FILE), digests.to_string()).unwrap();
         fs::write(dir.join("bin/guest-init"), GUEST_INIT).unwrap();
@@ -337,13 +343,14 @@ fn kvm_build_wires_each_key_to_its_part() {
 
     // Decisions CH57 rule 1 and CH58 rule 4: the digests of
     // `digests.json`, each in the digest store of the state root.
-    let [kernel, base, python] = IMAGES.map(|(_, _, sha256)| sha256.parse().unwrap());
+    let [kernel, base, python, coding] = IMAGES.map(|(_, _, sha256)| sha256.parse().unwrap());
     let roots = PerFlavor::every(|flavor| match flavor {
         SandboxFlavor::Base => base,
         SandboxFlavor::Python => python,
+        SandboxFlavor::Coding => coding,
     });
     assert_eq!(*start.digests.borrow(), Digests { kernel, roots });
-    for digest in [kernel, base, python] {
+    for digest in [kernel, base, python, coding] {
         start.images.check(digest).unwrap();
     }
 

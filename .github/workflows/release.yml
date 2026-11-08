@@ -877,7 +877,7 @@ jobs:
             fi
             DIGESTS+="$DISK_DIGESTS"
           fi
-          asset='([A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz|digests[.]json|vmlinux-x86_64[.]zst|base[.]ext4[.]zst|python[.]ext4[.]zst)'
+          asset='([A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz|digests[.]json|vmlinux-x86_64[.]zst|base[.]ext4[.]zst|python[.]ext4[.]zst|coding[.]ext4[.]zst)'
           line="^[0-9a-f]{64}  $asset\$"
           whole="^$asset\$"
           named=""
@@ -918,7 +918,7 @@ jobs:
           (cd "$assets" && sha256sum --check --strict <<< "$DIGESTS")
           cosign="$RUNNER_TEMP/cosign"
           shopt -s extglob
-          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst)" > /dev/null; then
+          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst|coding.ext4.zst)" > /dev/null; then
             curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
               --output "$cosign" \
               "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
@@ -1015,7 +1015,7 @@ jobs:
           set -euo pipefail
           cosign="$RUNNER_TEMP/cosign"
           shopt -s extglob
-          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst)" > /dev/null; then
+          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst|coding.ext4.zst)" > /dev/null; then
             curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
               --output "$cosign" \
               "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"

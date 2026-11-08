@@ -37,7 +37,8 @@ STAGE_RE = re.compile(r"^FROM \S+ AS (\S+)$", re.MULTILINE)
 BUILD_ONLY_STAGES = ("build", "creche-test-venv")
 
 #: Flavors that ship as a root disk only: CI builds them, playpen-build does
-#: not, and SandboxFlavor has no member for them (CH7-1, CH53 rule 1).
+#: not, and caregiver maps them to no sbx image (CH7-1, CH53 rule 1, CH79
+#: rule 1).
 DISK_ONLY = ("coding:agent-sandbox-coding",)
 
 

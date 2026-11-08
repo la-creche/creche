@@ -12,7 +12,7 @@ digest of each other file.
 
 The tests hold the output to three other sources:
 
-1. `artifacts.disk_files`: the four files that `handover disk-assets`
+1. `artifacts.disk_files`: the five files that `handover disk-assets`
    names, and so the files that root installs.
 2. `rust/crates/wire/vectors/digests.json`: the keys and the file names of
    `digests.json`. The vmm parses the same vector
@@ -55,7 +55,7 @@ def _kernel_pin() -> str:
 
 KERNEL_PIN: Final = _kernel_pin()
 
-#: The digest list that the script writes beside the four files.
+#: The digest list that the script writes beside the five files.
 SUMS: Final = "SHA256SUMS"
 
 #: `docker`: one argv line per call into STUB_LOG.
@@ -170,7 +170,7 @@ def _written(tmp_path: Path) -> dict[str, object]:
 
 
 def test_the_script_writes_one_file_per_flavor_and_the_kernel(tmp_path: Path) -> None:
-    """The four files of `handover disk-assets` and SHA256SUMS, nothing
+    """The five files of `handover disk-assets` and SHA256SUMS, nothing
     else. SHA256SUMS holds the digest of each file as it ships."""
     done = _run(tmp_path)
 
@@ -318,7 +318,7 @@ def _run_with_playpen_stubs(tmp_path: Path, name: str) -> subprocess.CompletedPr
 
 def test_the_stand_ins_of_the_digest_check_build_the_files(tmp_path: Path) -> None:
     """The positive control of the next test: each digest line names its
-    own file, and the run writes the four files and SHA256SUMS."""
+    own file, and the run writes the five files and SHA256SUMS."""
     done = _run_with_playpen_stubs(tmp_path, "")
 
     assert done.returncode == 0, done.stderr

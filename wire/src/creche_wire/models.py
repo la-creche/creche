@@ -1735,6 +1735,7 @@ class SandboxFlavor(StrEnum):
 
     BASE = "base"
     PYTHON = "python"
+    CODING = "coding"
 
 
 class SandboxGrant(BaseModel):

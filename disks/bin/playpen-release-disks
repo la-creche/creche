@@ -19,15 +19,16 @@
 #      sorted and no other key (CH58 rule 4). The vmm reads it from
 #      VMM_IMAGE_ROOT (CH57 rule 1). rust/crates/wire/vectors/digests.json
 #      holds one good file of this shape, and the vmm parses it.
-#   4. `SHA256SUMS`: the SHA-256 of each of the four files above, as
-#      sha256sum prints it. The job hands it to the `sign` job, which signs
-#      each file as its own asset (CH35 (4)).
+#   4. `SHA256SUMS`: the SHA-256 of each file above, as sha256sum prints
+#      it. The job hands it to the `sign` job, which signs each file as its
+#      own asset (CH35 (4)).
 #
 # FLAVORS holds `catalog.DISK_FLAVORS` with the target of each one in
-# playpen/Dockerfile. Coding joins at the cut, with the PR that adds it to
-# the wire enum (CH76 rule 7). bin/tests/test_playpen_release_disks.py
-# holds FLAVORS equal to DISK_FLAVORS and to the pairs of playpen-ci, and
-# the four files equal to the files of `handover disk-assets`.
+# playpen/Dockerfile. Coding joined with the PR that added it to the wire
+# enum, before the cut (CH76 rule 7, CH79 rule 1).
+# bin/tests/test_playpen_release_disks.py holds FLAVORS equal to
+# DISK_FLAVORS and to the pairs of playpen-ci, and its files equal to the
+# files of `handover disk-assets`.
 #
 # Exit 0 with each file written. Exit 1 when a step fails. A step that
 # fails before the last one leaves DISK_OUT empty.
@@ -38,7 +39,7 @@ die() { printf 'playpen-release-disks: %s\n' "$*" >&2; exit 1; }
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 PLAYPEN_BIN="$ROOT/playpen/bin"
-FLAVORS="base:agent-sandbox python:agent-sandbox-python"
+FLAVORS="base:agent-sandbox python:agent-sandbox-python coding:agent-sandbox-coding"
 KERNEL=vmlinux-x86_64
 DIGESTS=digests.json
 SUMS=SHA256SUMS

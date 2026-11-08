@@ -26,9 +26,10 @@ Five rules, each with the reason it is a rule.
    read a released file answers with the flags.
 3. **A reference is a digest, never a tag.** A tag can move, and the tap
    approved exact bytes.
-4. **The flavors are a closed set, and `base` is required.** A line this
-   module does not know refuses the whole file: a half-read file is a
-   fleet on two releases.
+4. **The flavors are a closed set, and `base` is required.** The set is
+   `images.SBX_FLAVORS`, the flavors with an sbx image, so a `coding` line
+   is one this module does not know. A line this module does not know
+   refuses the whole file: a half-read file is a fleet on two releases.
 5. **The file is read as input.** No symlink is followed, the read is
    capped, and every line matches one pattern in full. The tree is root's,
    so this is the second fence and not the first.
@@ -46,7 +47,7 @@ from typing import Final
 
 from agent_family import SandboxFlavor
 
-from .images import SandboxImages
+from .images import SBX_FLAVORS, SandboxImages
 
 log = logging.getLogger("caregiver.released")
 
@@ -71,7 +72,7 @@ _READ_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 def parse_images(text: str) -> SandboxImages | None:
     """One `SandboxImages`, or None for a file that is not one (rules 3, 4)."""
     found: dict[str, str] = {}
-    known = {str(flavor) for flavor in SandboxFlavor}
+    known = set(SBX_FLAVORS)
     for line in text.splitlines():
         if not line:
             continue

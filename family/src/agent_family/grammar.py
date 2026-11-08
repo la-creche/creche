@@ -153,11 +153,17 @@ class SandboxFlavor(StrEnum):
     A CLOSED set, not an image reference. Invariant 10 says only the
     platform changes the platform, and a registry file that could name an
     image would choose what code runs inside the microVM. `playpen/
-    Dockerfile` has one target per member, and `caregiver` is started with
-    one image reference per member (contract 05 §4.1)."""
+    Dockerfile` has one target per member. `caregiver` is started with one
+    image reference per member that has an sbx image (contract 05 §4.1).
+
+    `coding` is the flavor of `code` and `creche`: a root disk of the disks
+    row only, with no sbx image (decisions CH7-1, CH53 rule 1). It joins
+    with the wire enum, before the cut (decisions CH76 rule 7, CH79 rule
+    1). On sbx a family that names it gets `image_flavor_unconfigured`."""
 
     BASE = "base"
     PYTHON = "python"
+    CODING = "coding"
 
 
 #: Every flavor, in declaration order, for a refusal that names the set.

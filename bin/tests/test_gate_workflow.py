@@ -1608,14 +1608,14 @@ REFUSED_SIGNS: dict[str, tuple[dict[str, bytes], str, str]] = {
     ),
     "one-name-two-times": ({ONE: BYTES[ONE]}, f"{LINES[ONE]}\n{LINES[ONE]}", "two times"),
     "a-disk-of-no-flavor": (
-        {f"coding{DISK_SUFFIX}": b""},
-        LINES[ONE].replace(ONE, f"coding{DISK_SUFFIX}"),
+        {f"gpu{DISK_SUFFIX}": b""},
+        LINES[ONE].replace(ONE, f"gpu{DISK_SUFFIX}"),
         "no SHA-256 line",
     ),
     "a-file-of-no-flavor": (
-        {ONE: BYTES[ONE], f"coding{DISK_SUFFIX}": b""},
+        {ONE: BYTES[ONE], f"gpu{DISK_SUFFIX}": b""},
         LINES[ONE],
-        f"gave coding{DISK_SUFFIX}, which is no archive",
+        f"gave gpu{DISK_SUFFIX}, which is no archive",
     ),
 }
 
