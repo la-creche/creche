@@ -133,16 +133,17 @@ def test_the_python_lock_file_moves_no_binary_component(monkeypatch: pytest.Monk
 
     The playpen image is the one exception: its test venv resolves the
     lock, so the wheels it pins are bytes of the image, and a lock change
-    moves the image tag with the venv tags. The mock binary component of
-    this suite reads only the Cargo workspace files, and moves for none
-    of the lock."""
+    moves the image tag with the venv tags. The disks row bundles each
+    path of playpen, so it moves too. The mock binary component of this
+    suite reads only the Cargo workspace files, and moves for none of the
+    lock."""
     use_binary_catalog(monkeypatch)
     ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in RETIRING]
     venvs = {row.name for row in ours if row.kind is Kind.VENV and row.lock is Lock.WORKSPACE} - {
         BINARY_NAME
     }
 
-    assert _moved((PYTHON_LOCK,)) == venvs | {"playpen"}
+    assert _moved((PYTHON_LOCK,)) == venvs | {"playpen", "disks"}
 
 
 @pytest.mark.parametrize(

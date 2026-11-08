@@ -29,10 +29,10 @@ from typing import Any
 
 import pytest
 from handover.artifacts import ArtifactRefusal, SignerPolicy, signer_policy, verify_words
-from handover.catalog import CATALOG_BY_NAME, Kind, Repo
+from handover.catalog import BUNDLE_SUFFIX, CATALOG_BY_NAME, DISK_FILE_MAX_BYTES, Kind, Repo
 from handover.errors import Refusal, RefusalCode
 from handover.executor import host, provenance
-from handover.executor.artifact import Copied
+from handover.executor.artifact import Copied, CopiedFiles, SignedCopy
 from handover.executor.host import (
     NO_VERIFIER_EXIT_CODE,
     TIMEOUT_EXIT_CODE,
@@ -51,9 +51,12 @@ from handover.executor.host import (
 )
 from handover.executor.install import paths_of
 from handover.executor.provenance import (
+    DISK_CHECK_MEMORY_BYTES,
     TRUSTED_ROOT,
     VerifiedArtifact,
+    VerifiedFiles,
     check_artifact,
+    check_files,
 )
 from handover.executor.request import parse_request
 from handover.executor.spool import Spool
@@ -75,6 +78,7 @@ from handover_bin_fixtures import (
     site_text,
     stock_store,
 )
+from handover_disk_fixtures import DISK_BYTES, DISKS, disk_bundle
 from handover_executor_fixtures import (
     DIGEST,
     REQUEST_ID,
@@ -198,11 +202,11 @@ UNIT_WORDS = (
     "-p",
     "CapabilityBoundingSet=",
     "-p",
-    "MemoryMax=512M",
-    "-p",
     "RuntimeMaxSec=120",
     "--setenv=HOME=/var/lib/creche-verify",
     "--setenv=TUF_ROOT=/var/lib/creche-verify/tuf",
+    "-p",
+    "MemoryMax=536870912",
 )
 
 
@@ -655,6 +659,135 @@ def test_only_check_p6_builds_a_verified_artifact() -> None:
         str(path.relative_to(source))
         for path in source.rglob("*.py")
         if "VerifiedArtifact(" in path.read_text(encoding="utf-8")
+    )
+
+    assert builders == ["executor/provenance.py"]
+
+
+# ---- 3a. check P6 for the files of a disk-image component -----------------------------
+
+
+def _disk_copy(where: Path, bundles: dict[str, bytes] | None = None) -> CopiedFiles:
+    """Root's copy of each file of the `disks` row, each with its bundle.
+    A bundle not in `bundles` is the good bundle of its file."""
+    where.mkdir(parents=True, exist_ok=True)
+    signed: list[SignedCopy] = []
+    for name, raw in DISK_BYTES.items():
+        bundle = where / f"{name}{BUNDLE_SUFFIX}"
+        (where / name).write_bytes(raw)
+        bundle.write_bytes((bundles or {}).get(name, disk_bundle(raw)))
+        signed.append(SignedCopy(name, where / name, bundle))
+
+    return CopiedFiles(files=tuple(signed), digest=DIGEST)
+
+
+def _disk_policy() -> SignerPolicy:
+    return signer_policy(Repo.CRECHE, OWNER, "creche", SHA_OF[DISKS])
+
+
+def test_each_disk_file_needs_its_own_signature(tmp_path: Path) -> None:
+    """Child 1 once, then child 2 for each file with the bundle of that
+    file (contract 06 §8.4 rule 3, CH76 rule 5)."""
+    copy = _disk_copy(tmp_path / "copy")
+    run = Recorded([0] * (1 + len(copy.files)))
+
+    verified = check_files(run, DISKS, _disk_policy(), copy)
+
+    refresh, *checks = run.seen
+    assert refresh.argv[1:] == ("initialize",)
+    for check, one in zip(checks, copy.files, strict=True):
+        words = verify_words(_disk_policy(), str(one.file), str(one.bundle), TRUSTED_ROOT)
+        assert check == Command(
+            argv=(site.cosign_program(), *words),
+            identity=As.VERIFIER,
+            timeout_s=VERIFIER_TIMEOUT_S,
+            network=Network.NONE,
+            memory_max_bytes=DISK_CHECK_MEMORY_BYTES,
+        )
+
+    assert verified.component == DISKS
+    assert verified.files == tuple((one.name, one.file) for one in copy.files)
+    assert verified.digest == DIGEST
+
+
+@pytest.mark.usefixtures("home")
+def test_the_unit_of_a_disk_check_holds_the_largest_file(tmp_path: Path) -> None:
+    """cosign v3.1.3 `verify-blob` reads the whole file into memory. The
+    unit of child 2 of a disk file holds a file of `DISK_FILE_MAX_BYTES`
+    and the 512 MiB of an archive check on top. The refresh and an
+    archive check keep 512 MiB (CH76 rule 5)."""
+    copy = _disk_copy(tmp_path / "copy")
+    run = Recorded([0] * (1 + len(copy.files)))
+
+    check_files(run, DISKS, _disk_policy(), copy)
+
+    refresh, *checks = run.seen
+    limits = [_memory_max(one) for one in checks]
+    assert limits == [DISK_FILE_MAX_BYTES + 1 + 512 * 1024 * 1024] * len(copy.files)
+    assert _memory_max(refresh) == 512 * 1024 * 1024
+    assert _memory_max(_command("verify-blob", network=Network.NONE)) == 512 * 1024 * 1024
+
+
+def _memory_max(command: Command) -> int:
+    """The one `MemoryMax=` word of the unit of `command`, in bytes."""
+    argv = verifier_argv(command)
+    assert argv is not None
+    (word,) = [one for one in argv[: argv.index(UNIT_END)] if one.startswith("MemoryMax=")]
+
+    return int(word.removeprefix("MemoryMax="))
+
+
+def test_the_first_file_that_fails_stops_the_disk_check(tmp_path: Path) -> None:
+    copy = _disk_copy(tmp_path / "copy")
+    run = Recorded([0, 0, 1])
+
+    with pytest.raises(Refusal) as caught:
+        check_files(run, DISKS, _disk_policy(), copy)
+
+    assert caught.value.code is RefusalCode.P6
+    assert caught.value.detail == str(ArtifactRefusal.SIGNATURE_REFUSED)
+    assert len(run.seen) == 3
+
+
+@pytest.mark.parametrize("code", [NO_VERIFIER_EXIT_CODE, TIMEOUT_EXIT_CODE])
+def test_a_disk_check_with_no_answer_is_no_verifier(tmp_path: Path, code: int) -> None:
+    run = Recorded([0, 0, code])
+
+    with pytest.raises(Refusal) as caught:
+        check_files(run, DISKS, _disk_policy(), _disk_copy(tmp_path / "copy"))
+
+    assert caught.value.detail == str(ArtifactRefusal.VERIFIER_UNAVAILABLE)
+
+
+def test_a_bundle_of_another_file_is_refused(tmp_path: Path, home: Path) -> None:
+    """The stand-in verifier runs as a child. The bundle of `base.ext4.zst`
+    signs the bytes of `python.ext4.zst`, so its check refuses."""
+    del home
+    other = disk_bundle(DISK_BYTES["python.ext4.zst"])
+    run = StandIn(FakeRun())
+
+    with pytest.raises(Refusal) as caught:
+        check_files(
+            run, DISKS, _disk_policy(), _disk_copy(tmp_path / "bad", {"base.ext4.zst": other})
+        )
+
+    assert caught.value.detail == str(ArtifactRefusal.SIGNATURE_REFUSED)
+    verified = check_files(StandIn(FakeRun()), DISKS, _disk_policy(), _disk_copy(tmp_path / "ok"))
+    assert [name for name, _ in verified.files] == list(DISK_BYTES)
+
+
+def test_no_other_value_makes_verified_files(tmp_path: Path) -> None:
+    with pytest.raises(TypeError):
+        VerifiedFiles(object(), DISKS, (), DIGEST)  # pyright: ignore[reportArgumentType]
+
+
+def test_only_check_p6_builds_verified_files() -> None:
+    """The stage of a disk-image tree takes only this type."""
+    source = Path(__file__).resolve().parents[1] / "src" / "handover"
+    builders = sorted(
+        str(path.relative_to(source))
+        for path in source.rglob("*.py")
+        if "VerifiedFiles(" in path.read_text(encoding="utf-8")
     )
 
     assert builders == ["executor/provenance.py"]

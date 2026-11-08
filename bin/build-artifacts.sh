@@ -24,7 +24,11 @@
 #   CARGO_HOME        the cargo home. Default: $HOME/.cargo.
 # Each path of a variable is absolute: the script changes its directory.
 #
-# Each planned component must have a row. A planned name with no row stops
+# Each planned component must have a binary row or a disk-image row. The
+# script builds binary rows only, so it skips a planned name that
+# `handover disk-assets --repo "$ARTIFACT_REPO"` names (decision CH76 rule
+# 5): another job builds the files of a disk-image row. It reads those names
+# only for a planned name with no binary row. Any other planned name stops
 # the run: the plan and the catalog do not agree.
 #
 # With no planned row the script starts no rustup and no cargo. It writes an
@@ -303,8 +307,9 @@ mkdir -p -- "$OUT" || die "cannot make ARTIFACT_OUT"
 
 cd "$WORKSPACE" || die "cannot enter the checkout"
 ROWS="$(mktemp "$RUNNER_TEMP/build-artifacts-rows.XXXXXX")" || die "cannot make a file for the rows"
+DISKS="$(mktemp "$RUNNER_TEMP/build-artifacts-disks.XXXXXX")" || die "cannot make a file for the disk rows"
 WORK=""
-trap 'rm -rf -- "$ROWS" ${WORK:+"$WORK"}' EXIT
+trap 'rm -rf -- "$ROWS" "$DISKS" ${WORK:+"$WORK"}' EXIT
 
 "${CLI[@]}" artifacts --repo "$ARTIFACT_REPO" < /dev/null > "$ROWS" ||
   die "handover gave no rows"
@@ -315,9 +320,10 @@ for ((ROW = 0; ROW < ${#ROW_ARCHIVE[@]}; ROW++)); do
 done
 
 # The planned components. `read -a` splits at each space and expands no
-# pattern. Each planned name must name a row.
+# pattern. Each planned name must name a binary row or a disk-image row.
 PLANNED=()
 read -r -a PLANNED <<< "${ARTIFACT_PLANNED:-}" || die "cannot read ARTIFACT_PLANNED"
+DISKS_READ=no
 for ((AT = 0; AT < ${#PLANNED[@]}; AT++)); do
   FOUND=no
   for ((ROW = 0; ROW < ${#ROW_COMPONENT[@]}; ROW++)); do
@@ -325,7 +331,23 @@ for ((AT = 0; AT < ${#PLANNED[@]}; AT++)); do
       FOUND=yes
     fi
   done
-  [[ "$FOUND" == yes ]] || die "the planned component ${PLANNED[$AT]} has no row"
+  if [[ "$FOUND" == no && "$DISKS_READ" == no ]]; then
+    "${CLI[@]}" disk-assets --repo "$ARTIFACT_REPO" < /dev/null > "$DISKS" ||
+      die "handover gave no disk rows"
+    read_disk_rows "$DISKS" || die "$ROWS_FAULT"
+    DISKS_READ=yes
+  fi
+  if [[ "$FOUND" == no ]]; then
+    for ((ROW = 0; ROW < ${#DISK_COMPONENT[@]}; ROW++)); do
+      if [[ "${DISK_COMPONENT[$ROW]}" == "${PLANNED[$AT]}" ]]; then
+        FOUND=disk
+      fi
+    done
+  fi
+  [[ "$FOUND" != no ]] || die "the planned component ${PLANNED[$AT]} has no row"
+  if [[ "$FOUND" == disk ]]; then
+    say "${PLANNED[$AT]}: a disk-image row, which this script does not build"
+  fi
 done
 
 #: The rows to build: each planned row, in the order of the rows.

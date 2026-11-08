@@ -34,10 +34,12 @@ Nine rules hold its shape, each with the reason it is a rule.
 6. **The marker goes down BEFORE the request.** A request with no marker
    behind it is filed again on the next run, and each one is a push. In
    this order a marker that cannot be written costs no request at all.
-7. **A binary member waits for its artifact, for a time.** Root installs a
-   binary component from the archive in the store of the operator. A member
-   that ships an archive and has no two files there is not ready, and while
-   it waits the run files nothing. After `ARTIFACT_WAIT_S` it leaves the set
+7. **A member with signed assets waits for them, for a time.** Root
+   installs a binary component from the archive in the store of the
+   operator, and a disk-image component from each of its files there
+   (contract 06 §8.4 rule 3). A member that ships signed assets and lacks
+   one of them there is not ready, and while it waits the run files
+   nothing. After `ARTIFACT_WAIT_S` it leaves the set
    of the run, so one network fault costs no refusal and stops no other
    member. `cli.py` asks the store, and `gate_artifacts` takes the answer as
    data. When the files arrive later, the member is part of a new set.
@@ -132,9 +134,9 @@ ENTRY_SUFFIX: Final = ".json"
 
 _READ_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
-#: How long a member that ships an archive waits for its two files in the
-#: store, from the first run that read its tag with no files. CI publishes
-#: the assets after it pushes the tag, so the first runs can find none.
+#: How long a member that ships signed assets waits for them in the store,
+#: from the first run that read its tag with no files. CI publishes the
+#: assets after it pushes the tag, so the first runs can find none.
 ARTIFACT_WAIT_S: Final = 600
 
 #: The time of one run, from the start of the process. The fetch of the
@@ -401,8 +403,8 @@ def gate_artifacts(
 ) -> ArtifactGate:
     """The wait rule. Pure: every input is an argument.
 
-    `ready` holds each member that ships no archive, and each member whose
-    two files are in the store. A member that is not ready waits from the
+    `ready` holds each member that ships no signed asset, and each member
+    whose assets are all in the store. A member that is not ready waits from the
     first run that read its version. A wait of another version starts again,
     and so does a wait whose time is after `now`, because the wall clock
     went back.

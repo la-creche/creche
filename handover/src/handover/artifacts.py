@@ -9,7 +9,8 @@ archive: each file and the bundle of its signature is an asset (contract
 06 §3.4, §8.4). This module holds what each side of that path reads, so
 each side reads one source:
 
-1. The names of the assets and their limits, and a download URL.
+1. The names of the assets and their limits, a download URL, and
+   `sum_lines_digest`: the one approval digest of a disk-image component.
 2. `assets_expected`: the one answer to "does a component of this kind
    ship signed assets".
 3. `SignerPolicy` and `verify_words`: the workflow, the ref and the commit
@@ -25,6 +26,7 @@ Pure: no child, no socket, and no import of `executor/`. It reads no file.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from dataclasses import InitVar, dataclass
 from enum import StrEnum
@@ -191,6 +193,18 @@ def asset_limits(component: str, kind: Kind) -> tuple[AssetLimit, ...]:
         AssetLimit(name=names.archive, max_bytes=ARCHIVE_MAX_BYTES),
         AssetLimit(name=names.bundle, max_bytes=BUNDLE_MAX_BYTES),
     )
+
+
+def sum_lines_digest(digests: Mapping[str, str]) -> str:
+    """The `artifact_digest` of a disk-image component, as 64 hex (contract
+    06 §9, CH76 rule 5). `digests` maps each file of `disk_files` to the
+    SHA-256 of its bytes, as 64 hex. The answer is the SHA-256 of the
+    `sha256sum` lines of the files, one `<64 hex>  <file>` line each, in
+    the byte order of `LC_ALL=C sort`. The digest covers each byte that
+    root installs, and no bundle: root installs none."""
+    lines = sorted(f"{hexed}  {name}\n" for name, hexed in digests.items())
+
+    return hashlib.sha256("".join(lines).encode("ascii")).hexdigest()
 
 
 def download_url(owner: str, repo: str, tag: str, asset: str) -> str:

@@ -20,13 +20,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from handover.artifacts import asset_names
+from handover.artifacts import asset_limits, asset_names
 from handover.catalog import (
     ARCHIVE_MAX_BYTES,
     ARRIVING,
     BUNDLE_MAX_BYTES,
+    BUNDLE_SUFFIX,
     CATALOG,
     RETIRING,
+    Kind,
     Repo,
 )
 
@@ -43,6 +45,15 @@ COMPONENTS = tuple(
 #: it needs its two assets, so each test of a run that tags it takes the
 #: `assets` fixture.
 VMM = "vmm"
+
+#: The disk-image row of this repository, at `disks` (CH76 rule 5). A run
+#: that tags it needs its eight assets, which the `assets` fixture holds
+#: too.
+DISK_COMPONENT = "disks"
+
+#: The eight assets of the row, in the order of `allocate-tags --assets`:
+#: each file before its bundle.
+DISK_ASSETS = tuple(one.name for one in asset_limits(DISK_COMPONENT, Kind.DISK_IMAGE))
 
 #: Every one of them at its first version, sorted as `_tags` returns them.
 FIRST_TAGS = sorted(f"{name}-v0.1.0" for name in COMPONENTS)
@@ -102,9 +113,14 @@ esac
 
 
 #: A verifier that writes each word it gets to the file of `COSIGN_LOG`,
-#: one on each line, and ends with the status of `FAKE_COSIGN_STATUS`.
+#: one on each line, and ends with the status of `FAKE_COSIGN_STATUS`. It
+#: ends with 1 when its last word, the signed file, has the name of
+#: `FAKE_COSIGN_REFUSE`.
 COSIGN_FAKE = """#!/usr/bin/env bash
 printf '%s\\n' "$@" >> "$COSIGN_LOG"
+if [[ -n "${FAKE_COSIGN_REFUSE:-}" && "${!#}" == */"$FAKE_COSIGN_REFUSE" ]]; then
+  exit 1
+fi
 exit "${FAKE_COSIGN_STATUS:-0}"
 """
 
@@ -1062,14 +1078,17 @@ def binary_cli(tmp_path: Path) -> str:
 
 @pytest.fixture
 def assets(tmp_path: Path) -> Assets:
-    """The two assets of the binary copy and of `vmm`, each within its
-    limit, and a verifier that passes each signature."""
+    """The two assets of the binary copy and of `vmm`, the eight assets of
+    `disks`, each within its limit, and a verifier that passes each
+    signature."""
     directory = tmp_path / "assets"
     directory.mkdir()
     for component in (BINARY_COMPONENT, VMM):
         names = asset_names(component)
         (directory / names.archive).write_bytes(b"an archive\n")
         (directory / names.bundle).write_bytes(b"{}\n")
+    for name in DISK_ASSETS:
+        (directory / name).write_bytes(b"a file\n")
     verifier = tmp_path / "verifier" / "cosign"
     verifier.parent.mkdir()
     verifier.write_text(COSIGN_FAKE, encoding="utf-8")
@@ -1419,3 +1438,99 @@ def test_an_answer_of_the_planner_in_another_form_refuses_that_component_alone(
     assert "::error::noticeboard refused: the planner gave no list of its assets" in done.stderr
     assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
     assert not assets.log.exists()
+
+
+# ---- the signed files of a disk-image component -----------------------------
+
+
+def _disks_and_caregiver(repo: Path) -> str:
+    """A merge that moves the disks row and `caregiver`, after the first
+    tags. The SHA of the merge."""
+    _seed_first_tags(repo)
+
+    return _commit(repo, "disks/bin/one.sh", "caregiver/src/one.py")
+
+
+def test_the_disks_row_has_four_files_and_four_bundles() -> None:
+    """The planner names eight assets: each file, then its bundle."""
+    assert len(DISK_ASSETS) == 8
+    assert DISK_ASSETS[1::2] == tuple(f"{name}{BUNDLE_SUFFIX}" for name in DISK_ASSETS[::2])
+
+
+@pytest.mark.slow
+def test_a_disk_image_component_releases_its_eight_assets(
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
+) -> None:
+    """Each file and each bundle in ASSET_DIR, and one check for each file
+    with its own bundle: one Release with the eight assets, in the order of
+    the planner."""
+    sha = _disks_and_caregiver(repo)
+
+    done = _run(repo, shims, tmp_path, assets=assets)
+
+    assert done.returncode == 0, done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1", "disks-v0.1.1"])
+    releases = (tmp_path / "gh.log").read_text(encoding="utf-8").split("release create ")
+    (attached,) = [one for one in releases if one.startswith("disks-v0.1.1 ")]
+    paths = " ".join(str(assets.directory / name) for name in DISK_ASSETS)
+    assert attached.endswith(f" {paths}\n")
+    words = _words(assets)
+    starts = [at for at, word in enumerate(words) if word == "verify-blob"]
+    checks = [words[at:end] for at, end in zip(starts, [*starts[1:], len(words)], strict=True)]
+    assert [(check[2], check[-2], check[-1]) for check in checks] == [
+        (str(assets.directory / bundle), sha, str(assets.directory / file))
+        for file, bundle in zip(DISK_ASSETS[::2], DISK_ASSETS[1::2], strict=True)
+    ]
+
+
+@pytest.mark.slow
+def test_each_disk_file_needs_its_own_signature(
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets
+) -> None:
+    """The verifier refuses one file of the four: no tag for the row, a
+    tag for each other component, and a red end."""
+    _disks_and_caregiver(repo)
+
+    done = _run(
+        repo,
+        shims,
+        tmp_path,
+        assets=assets,
+        env_change={"FAKE_COSIGN_REFUSE": "base.ext4.zst"},
+    )
+
+    assert done.returncode != 0
+    assert "::error::disks refused: the verifier refused the signature of base.ext4.zst" in (
+        done.stderr
+    )
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("absent", DISK_ASSETS[-2:])
+def test_an_absent_disk_asset_refuses_the_row_alone(
+    repo: Path, shims: Path, tmp_path: Path, assets: Assets, absent: str
+) -> None:
+    """The last file or the last bundle is absent: no check runs, and the
+    row gets no tag."""
+    (assets.directory / absent).unlink()
+    _disks_and_caregiver(repo)
+
+    done = _run(repo, shims, tmp_path, assets=assets)
+
+    assert done.returncode != 0
+    assert f"::error::disks refused: {absent} is not a file in ASSET_DIR" in done.stderr
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
+    assert not assets.log.exists()
+
+
+@pytest.mark.slow
+def test_a_dry_run_names_the_eight_disk_assets(repo: Path, shims: Path, tmp_path: Path) -> None:
+    """The plan job reads these lines: the row is planned."""
+    _disks_and_caregiver(repo)
+
+    done = _run(repo, shims, tmp_path, "--dry-run")
+
+    assert done.returncode == 0, done.stderr
+    attached = [line for line in done.stdout.splitlines() if line.startswith("would attach")]
+    assert attached == [f"would attach {name} to disks-v0.1.1" for name in DISK_ASSETS]

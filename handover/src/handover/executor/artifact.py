@@ -1,13 +1,16 @@
-"""Root's copy of the two assets of a binary component, at step 2.
+"""Root's copy of the signed assets of a component, at step 2.
 
-The operator side fetches the archive and the bundle of its signature into
-the store below the home of the operator (`corpus/artifacts.py`):
+A `kind: binary` component has two assets: its archive and the bundle of
+its signature. A `kind: disk-image` component has each file of contract 06
+§8.4, each before its own bundle (CH35 (4), CH76 rule 5). The operator side
+fetches each asset into the store below the home of the operator
+(`corpus/artifacts.py`):
 
     <operator home>/.local/state/creche/artifacts/<catalog repo>/<tag>/<asset>
 
 The operator owns each directory and each file there. So root reads the
-store one time, at step 2, and copies the two files into the work tree of
-the request. Each later read is a read of that copy:
+store one time, at step 2, and copies each file into the work tree of the
+request. Each later read is a read of that copy:
 
     <work root>/<request id>/artifacts/<component>/<asset>
 
@@ -28,9 +31,12 @@ Seven rules hold the copy:
 4. **Root sets each mode by hand.** Each directory from `<request id>` down
    gets 0755, and each file 0644. The release unit runs with the umask
    0027, and the verifier reads the copy later as a dynamic user.
-5. **The digest is the SHA-256 of the archive bytes that root wrote**, as
-   `sha256:<64 hex>`. It goes into `artifact_digest` of the resolved
-   manifest, so the gate id and the tap bind those bytes.
+5. **The digest covers each signed byte that root wrote**, as
+   `sha256:<64 hex>`. For a binary component it is the SHA-256 of the
+   archive. For a disk-image component it is `artifacts.sum_lines_digest`
+   of its files (contract 06 §9, CH76 rule 5). No bundle changes it. It
+   goes into `artifact_digest` of the resolved manifest, so the gate id
+   and the tap bind those bytes.
 6. **Root reads the store one time in a release.** The release keeps the
    result of the first call and gives it to each later call. A later call
    never opens the store: it gives the `NoCopy` of the first call again,
@@ -57,8 +63,8 @@ from pathlib import Path
 from typing import Final
 
 from ..allocate import TAG_RE
-from ..artifacts import asset_limits
-from ..catalog import CATALOG_BY_NAME, Kind
+from ..artifacts import AssetLimit, asset_limits, sum_lines_digest
+from ..catalog import BUNDLE_SUFFIX, CATALOG_BY_NAME, Kind
 from ..errors import Refusal
 from ..site import operator_home
 from .install import DIR_MODE
@@ -81,7 +87,7 @@ _DIR_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _HOME_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
 
 NOT_ITS_TAG: Final = "{component}: the tag is not a tag of this component, so root copies nothing"
-NO_ASSETS: Final = "{component}: the release tool names no archive and bundle for this component"
+NO_ASSETS: Final = "{component}: the release tool names no signed file and bundle for it"
 NO_COPY_DIR: Final = "{component}: root could not make the directory of its copy"
 NO_HOME: Final = "{component}: the site file gives no home of the operator, so root copies nothing"
 NO_STORE_DIR: Final = "{component}: a directory of the store path is absent or is a link"
@@ -101,7 +107,8 @@ NO_READ: Final = "{component}: a call of the system failed while root read the s
 
 
 class Asset(StrEnum):
-    """The two assets of a binary component, as a note names them."""
+    """The two assets of a binary component, as a note names them. A note
+    names an asset of a disk-image component by its file name."""
 
     ARCHIVE = "archive"
     BUNDLE = "bundle"
@@ -109,25 +116,50 @@ class Asset(StrEnum):
 
 @dataclass(frozen=True)
 class _Part:
-    """One asset: its role, its file name and its limit in bytes."""
+    """One asset: how a note names it, its file name and its limit in
+    bytes."""
 
-    asset: Asset
+    label: str
     name: str
     max_bytes: int
 
 
-#: The two parts of a component: the archive, then the bundle.
+#: One signed file, then the bundle of its signature.
 type _Pair = tuple[_Part, _Part]
 
 
 @dataclass(frozen=True)
 class Copied:
-    """Root's copy of the two assets of one component, and the digest of
-    the archive bytes that root wrote: `sha256:<64 hex>`."""
+    """Root's copy of the two assets of one binary component, and the
+    digest of the archive bytes that root wrote: `sha256:<64 hex>`."""
 
     archive: Path
     bundle: Path
     digest: str
+
+
+@dataclass(frozen=True)
+class SignedCopy:
+    """Root's copy of one file of a disk-image component, and of the
+    bundle of its signature. `name` is the file name of the Release."""
+
+    name: str
+    file: Path
+    bundle: Path
+
+
+@dataclass(frozen=True)
+class CopiedFiles:
+    """Root's copy of each file of one disk-image component, in the order
+    of `artifacts.asset_limits`, and the digest of the bytes that root
+    wrote: `sha256:` and `artifacts.sum_lines_digest` (CH76 rule 5)."""
+
+    files: tuple[SignedCopy, ...]
+    digest: str
+
+
+#: What a copy gives: a binary copy, a disk-image copy, or no copy.
+type CopyResult = Copied | CopiedFiles | NoCopy
 
 
 @dataclass(frozen=True)
@@ -147,14 +179,16 @@ class _Fault(Exception):
 
 def copy_from_store(
     component: str,
+    kind: Kind,
     tag: str,
     work: Path,
     operator_uid: int,
-    earlier: Copied | NoCopy | None = None,
-) -> Copied | NoCopy:
-    """Root's copy of the archive and the bundle of `component` at `tag`, in
-    `work`, the work directory of the request. `operator_uid` is the uid of
-    the operator, who owns the store.
+    earlier: CopyResult | None = None,
+) -> CopyResult:
+    """Root's copy of each asset of `component` at `tag`, in `work`, the
+    work directory of the request. `kind` is the kind of the manifest of
+    the new tag, root's one source for it. `operator_uid` is the uid of the
+    operator, who owns the store.
 
     `earlier` is the result of the first call for `component` in this
     release, and None for the first call itself. The first call copies from
@@ -169,7 +203,7 @@ def copy_from_store(
     if isinstance(earlier, NoCopy):
         return earlier
 
-    parts = _parts(component)
+    parts = _parts(component, kind)
     if parts is None:
         return NoCopy(NO_ASSETS.format(component=component))
 
@@ -182,27 +216,58 @@ def copy_from_store(
 
     try:
         if earlier is None:
-            return _copy(component, tag, parts, target, operator_uid)
+            return _result(kind, target, parts, _copy(component, tag, parts, target, operator_uid))
 
-        return _hash_copy(component, parts, target)
+        return _result(kind, target, parts, _hash_copy(component, parts, target))
     except _Fault as fault:
         return NoCopy(fault.note)
     except OSError:
         return NoCopy(NO_READ.format(component=component))
 
 
-def _parts(component: str) -> _Pair | None:
-    """The archive and the bundle of `component`, each with its limit, as
-    `artifacts.asset_limits` gives them: the archive first. None when it
-    does not give two assets."""
-    match asset_limits(component, Kind.BINARY):
-        case (archive, bundle):
-            return (
-                _Part(Asset.ARCHIVE, archive.name, archive.max_bytes),
-                _Part(Asset.BUNDLE, bundle.name, bundle.max_bytes),
-            )
-        case _:
-            return None
+def _parts(component: str, kind: Kind) -> tuple[_Pair, ...] | None:
+    """Each signed file of `component` and its bundle, each with its limit,
+    as `artifacts.asset_limits` gives them. A binary component has one
+    pair, the archive first. A disk-image component has one pair for each
+    file, and each bundle is `<file>.sigstore.json`, so no file is checked
+    with the bundle of another file. None for each other answer."""
+    limits = asset_limits(component, kind)
+    if kind is Kind.BINARY:
+        match limits:
+            case (archive, bundle):
+                return (
+                    (
+                        _Part(str(Asset.ARCHIVE), archive.name, archive.max_bytes),
+                        _Part(str(Asset.BUNDLE), bundle.name, bundle.max_bytes),
+                    ),
+                )
+            case _:
+                return None
+
+    if kind is Kind.DISK_IMAGE:
+        return _disk_pairs(limits)
+
+    return None
+
+
+def _disk_pairs(limits: tuple[AssetLimit, ...]) -> tuple[_Pair, ...] | None:
+    """The pairs of a disk-image component: each file, then its own
+    bundle. None when the list has no file, or a bundle that is not the
+    bundle of the file before it."""
+    files, bundles = limits[::2], limits[1::2]
+    if not files or len(files) != len(bundles):
+        return None
+
+    pairs = tuple(zip(files, bundles, strict=True))
+    if any(bundle.name != f"{file.name}{BUNDLE_SUFFIX}" for file, bundle in pairs):
+        return None
+
+    return tuple((_named(file), _named(bundle)) for file, bundle in pairs)
+
+
+def _named(limit: AssetLimit) -> _Part:
+    """A part that a note names by its file name."""
+    return _Part(limit.name, limit.name, limit.max_bytes)
 
 
 def _make_copy_dir(work: Path, target: Path) -> None:
@@ -225,9 +290,11 @@ def _own_dir(path: Path) -> None:
     os.chmod(path, DIR_MODE)
 
 
-def _copy(component: str, tag: str, parts: _Pair, target: Path, operator_uid: int) -> Copied:
-    """The first call: copy each part from the store, then hash the archive
-    bytes that root wrote."""
+def _copy(
+    component: str, tag: str, parts: tuple[_Pair, ...], target: Path, operator_uid: int
+) -> dict[str, str]:
+    """The first call: copy each part from the store. The answer maps each
+    signed file to the SHA-256 of the bytes that root wrote, as 64 hex."""
     words = {"component": component}
     try:
         home = operator_home()
@@ -237,17 +304,20 @@ def _copy(component: str, tag: str, parts: _Pair, target: Path, operator_uid: in
 
     repo = str(CATALOG_BY_NAME[component].repo)
     segments = (*store.relative_to(home).parts, repo, tag)
-    digest = hashlib.sha256()
+    digests: dict[str, str] = {}
     with _tag_dir(Path(home), segments, operator_uid, words) as tag_fd:
         try:
-            for part in parts:
-                sink = digest.update if part.asset is Asset.ARCHIVE else None
-                _copy_one(tag_fd, part, target / part.name, operator_uid, component, sink)
+            for signed, bundle in parts:
+                digest = hashlib.sha256()
+                sink = digest.update
+                _copy_one(tag_fd, signed, target / signed.name, operator_uid, component, sink)
+                _copy_one(tag_fd, bundle, target / bundle.name, operator_uid, component, None)
+                digests[signed.name] = digest.hexdigest()
         except (_Fault, OSError):
             _discard(target, parts)
             raise
 
-    return _copied(target, parts, digest.hexdigest())
+    return digests
 
 
 @contextmanager
@@ -291,7 +361,7 @@ def _copy_one(
 ) -> None:
     """Copy one file of the store to `destination`, with the mode 0644. Each
     check runs on the open descriptor, before the first read."""
-    words = {"component": component, "asset": str(part.asset)}
+    words = {"component": component, "asset": part.label}
     try:
         source = os.open(part.name, CHECKED_READ_FLAGS, dir_fd=tag_fd)
     except OSError:
@@ -396,26 +466,35 @@ def _blocks(
         yield block
 
 
-def _hash_copy(component: str, parts: _Pair, target: Path) -> Copied:
-    """A later call: read root's own copy and hash the archive again. The
-    store is not opened."""
+def _hash_copy(component: str, parts: tuple[_Pair, ...], target: Path) -> dict[str, str]:
+    """A later call: read root's own copy and hash each signed file again.
+    The store is not opened."""
+    digests: dict[str, str] = {}
+    for signed, bundle in parts:
+        digests[signed.name] = _hash_one(component, signed, target)
+        _hash_one(component, bundle, target)
+
+    return digests
+
+
+def _hash_one(component: str, part: _Part, target: Path) -> str:
+    """The SHA-256 of one file of root's copy, as 64 hex, after the checks
+    of `_check_copy`."""
+    words = {"component": component, "asset": part.label}
     digest = hashlib.sha256()
-    for part in parts:
-        words = {"component": component, "asset": str(part.asset)}
-        try:
-            source = os.open(target / part.name, CHECKED_READ_FLAGS)
-        except OSError:
-            raise _Fault(COPY_GONE.format_map(words)) from None
+    try:
+        source = os.open(target / part.name, CHECKED_READ_FLAGS)
+    except OSError:
+        raise _Fault(COPY_GONE.format_map(words)) from None
 
-        try:
-            _check_copy(os.fstat(source), part, words)
-            for block in _blocks(source, part.max_bytes, words, (COPY_GONE, COPY_CHANGED)):
-                if part.asset is Asset.ARCHIVE:
-                    digest.update(block)
-        finally:
-            os.close(source)
+    try:
+        _check_copy(os.fstat(source), part, words)
+        for block in _blocks(source, part.max_bytes, words, (COPY_GONE, COPY_CHANGED)):
+            digest.update(block)
+    finally:
+        os.close(source)
 
-    return _copied(target, parts, digest.hexdigest())
+    return digest.hexdigest()
 
 
 def _check_copy(facts: os.stat_result, part: _Part, words: dict[str, str]) -> None:
@@ -430,24 +509,48 @@ def _check_copy(facts: os.stat_result, part: _Part, words: dict[str, str]) -> No
         raise _Fault(COPY_CHANGED.format_map(words))
 
 
-def _copied(target: Path, parts: _Pair, hex_digest: str) -> Copied:
-    archive, bundle = parts
+def _result(
+    kind: Kind, target: Path, parts: tuple[_Pair, ...], digests: dict[str, str]
+) -> Copied | CopiedFiles:
+    """The copy of `kind`: a binary copy of its one pair with the digest of
+    the archive, or a disk-image copy with the digest of the sum lines of
+    its files (rule 5). `_parts` gave a binary component one pair."""
+    if kind is Kind.BINARY:
+        archive, bundle = parts[0]
 
-    return Copied(
-        archive=target / archive.name,
-        bundle=target / bundle.name,
-        digest=f"{DIGEST_PREFIX}{hex_digest}",
+        return Copied(
+            archive=target / archive.name,
+            bundle=target / bundle.name,
+            digest=f"{DIGEST_PREFIX}{digests[archive.name]}",
+        )
+
+    return CopiedFiles(
+        files=tuple(
+            SignedCopy(name=signed.name, file=target / signed.name, bundle=target / bundle.name)
+            for signed, bundle in parts
+        ),
+        digest=f"{DIGEST_PREFIX}{sum_lines_digest(digests)}",
     )
 
 
-def _discard(target: Path, parts: _Pair) -> None:
+def _discard(target: Path, parts: tuple[_Pair, ...]) -> None:
     """Remove each file that a failed copy wrote. The directory stays, so
     a second call with no `earlier` copies nothing (`NO_COPY_DIR`)."""
-    for part in parts:
-        try:
-            os.unlink(target / part.name)
-        except OSError:
-            continue
+    for pair in parts:
+        for part in pair:
+            try:
+                os.unlink(target / part.name)
+            except OSError:
+                continue
 
 
-__all__ = ["COPY_DIR", "Asset", "Copied", "NoCopy", "copy_from_store"]
+__all__ = [
+    "COPY_DIR",
+    "Asset",
+    "Copied",
+    "CopiedFiles",
+    "CopyResult",
+    "NoCopy",
+    "SignedCopy",
+    "copy_from_store",
+]

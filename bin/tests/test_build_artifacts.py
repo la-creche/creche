@@ -21,9 +21,11 @@ Cases:
    line form, and a path of a variable that is not absolute.
 4. The plan: the script builds only the rows that `ARTIFACT_PLANNED` names.
    No planned row builds nothing, and a planned name with no row stops the
-   run.
-5. `bin/lib/artifactrows.sh` is the one reader of the line form. Its own
-   test, `test_artifactrows.py`, holds each text that it refuses.
+   run. A planned name of a disk-image row is skipped (decision CH76 rule
+   5). The script reads `handover disk-assets` only for a planned name with
+   no binary row, with the real line form of `handover.artifacts.DiskRow`.
+5. `bin/lib/artifactrows.sh` is the one reader of the two line forms. Its
+   own test, `test_artifactrows.py`, holds each text that it refuses.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-from handover.artifacts import crate_row
+from handover.artifacts import DiskRow, crate_row
 from handover.catalog import (
     ARCHIVE_MAX_BYTES,
     ARCHIVE_MAX_MEMBERS,
@@ -53,7 +55,7 @@ SCRIPT: Final = REPO / "bin" / "build-artifacts.sh"
 
 #: The one reader of the line form, and each script that sources it.
 READER: Final = REPO / "bin" / "lib" / "artifactrows.sh"
-READER_USERS: Final = [SCRIPT]
+READER_USERS: Final = [SCRIPT, REPO / "bin" / "check-disk-files.sh"]
 
 #: The catalog name of the repository, as the workflow gives it.
 THIS_REPOSITORY: Final = str(Repo.CRECHE)
@@ -147,7 +149,8 @@ printf '%s' "${STUB_PAD:-}"
 """
 
 #: The `handover` command: it writes its words. `artifacts` prints the file
-#: STUB_ROWS. `check-tree` prints STUB_WALK_TEXT and ends with
+#: STUB_ROWS, and `disk-assets` the file STUB_DISKS and ends with
+#: STUB_DISKS_STATUS. `check-tree` prints STUB_WALK_TEXT and ends with
 #: STUB_WALK_STATUS.
 CLI_STUB: Final = """#!/usr/bin/env bash
 printf '%s\\037' handover "$PWD" "$@" >> "$STUB_LOG"
@@ -155,6 +158,10 @@ printf '\\n' >> "$STUB_LOG"
 case "$1" in
   artifacts)
     cat "$STUB_ROWS"
+    ;;
+  disk-assets)
+    cat "$STUB_DISKS"
+    exit "${STUB_DISKS_STATUS:-0}"
     ;;
   check-tree)
     if [[ -n "${STUB_WALK_TEXT:-}" ]]; then
@@ -187,11 +194,24 @@ def _row(**changed: str) -> str:
     return "".join(f"{line}\n" for line in lines)
 
 
+#: The disk-image row of each case: the component and the build of H4b.
+DISK_COMPONENT: Final = "disks"
+DISK_BUILD: Final = ("/usr/bin/env", "bash", "disks/bin/playpen-release-disks")
+
+
+def _disk_row(component: str = DISK_COMPONENT) -> str:
+    """The real line form of one disk-image row."""
+    return "".join(f"{line}\n" for line in DiskRow(component, (DISK_BUILD,)).lines())
+
+
 class Build:
     """One run of the script against the stand-ins. `rows` is the text that
-    the `handover` command prints for `artifacts`."""
+    the `handover` command prints for `artifacts`, and `disks` the text that
+    it prints for `disk-assets`."""
 
-    def __init__(self, tmp_path: Path, rows: str, **overrides: str | None) -> None:
+    def __init__(
+        self, tmp_path: Path, rows: str, disks: str = "", /, **overrides: str | None
+    ) -> None:
         stubs = tmp_path / "stubs"
         _stub(stubs, "rustup", RUSTUP_STUB)
         _stub(stubs, "cargo", CARGO_STUB)
@@ -211,6 +231,8 @@ class Build:
         self.output.touch()
         self.rows = tmp_path / "rows"
         self.rows.write_text(rows, encoding="utf-8")
+        self.disks = tmp_path / "disks"
+        self.disks.write_text(disks, encoding="utf-8")
         env: dict[str, str | None] = {
             "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
             "HOME": str(self.home),
@@ -223,6 +245,7 @@ class Build:
             "RELEASE_CLI": str(cli),
             "STUB_LOG": str(self.log),
             "STUB_ROWS": str(self.rows),
+            "STUB_DISKS": str(self.disks),
         }
         given = env | overrides
         # The run starts in its own directory: a relative path that the
@@ -506,6 +529,85 @@ def test_a_planned_name_with_no_row_stops_the_run(tmp_path: Path, planned: str) 
     assert run.calls("rustup") == []
 
 
+def test_a_planned_disk_row_is_skipped(tmp_path: Path) -> None:
+    """The plan names the disk-image row alone. The script reads the names
+    of `handover disk-assets`, says it skips the row, builds nothing and
+    writes an empty digest list: another job builds the files of the row
+    (decision CH76 rule 5)."""
+    run = Build(tmp_path, _row(), _disk_row(), ARTIFACT_PLANNED=DISK_COMPONENT)
+
+    assert run.done.returncode == 0, run.said
+    assert run.done.stdout == (
+        f"build-artifacts: {DISK_COMPONENT}: a disk-image row, which this script does not build\n"
+        f"{NO_PLANNED_ROW}\n"
+    )
+    assert run.calls("handover") == [
+        ["handover", str(run.workspace), "artifacts", "--repo", THIS_REPOSITORY],
+        ["handover", str(run.workspace), "disk-assets", "--repo", THIS_REPOSITORY],
+    ]
+    assert run.calls("rustup") == []
+    assert run.calls("cargo") == []
+    assert run.digests == ""
+    assert run.output.read_text(encoding="utf-8") == EMPTY_OUTPUT
+
+
+@needs_sha256sum
+def test_a_planned_disk_row_beside_a_binary_row_builds_the_binary_row(tmp_path: Path) -> None:
+    """Only the archive of the binary row is in the digest list."""
+    planned = f"{DISK_COMPONENT} {COMPONENT}"
+    run = Build(tmp_path, _row(), _disk_row(), ARTIFACT_PLANNED=planned)
+
+    assert run.done.returncode == 0, run.said
+    assert len(run.calls("cargo")) == 1
+    assert [line.split("  ")[1] for line in run.digests.splitlines()] == [ARCHIVE]
+    assert len([call for call in run.calls("handover") if call[2] == "disk-assets"]) == 1
+
+
+def test_a_plan_of_binary_rows_reads_no_disk_row(tmp_path: Path) -> None:
+    """Each planned name has a binary row, so the script never asks for the
+    disk-image rows."""
+    run = Build(tmp_path, _row(), "not the line form\n")
+
+    assert run.done.returncode == 0, run.said
+    assert [call[2] for call in run.calls("handover")] == ["artifacts", "check-tree"]
+
+
+@pytest.mark.parametrize(
+    ("planned", "name"),
+    [("vmm", "vmm"), (f"{DISK_COMPONENT} vmm", "vmm"), ("disk*", "disk*")],
+)
+def test_a_planned_name_with_no_row_still_stops(tmp_path: Path, planned: str, name: str) -> None:
+    """A disk-image row skips its own name only. Each other planned name
+    with no row stops the run, before any build. A name is a word and no
+    pattern."""
+    run = Build(tmp_path, _row(), _disk_row(), ARTIFACT_PLANNED=planned)
+
+    _refused(run)
+    assert run.done.stderr == f"build-artifacts: the planned component {name} has no row\n"
+    assert run.calls("rustup") == []
+
+
+@pytest.mark.parametrize(
+    ("disks", "status", "fault"),
+    [
+        ("component disks\nend\n", "0", "a row has no key out-env"),
+        (_disk_row() + _disk_row(), "0", "two disk rows name the component disks"),
+        (_disk_row(), "1", "handover gave no disk rows"),
+    ],
+    ids=["not-the-line-form", "two-rows-of-one-name", "a-failed-answer"],
+)
+def test_a_disk_answer_that_does_not_read_stops_the_run(
+    tmp_path: Path, disks: str, status: str, fault: str
+) -> None:
+    """The reader refuses the answer of `handover disk-assets` as it
+    refuses a binary row: the run stops before any build."""
+    run = Build(tmp_path, _row(), disks, ARTIFACT_PLANNED=DISK_COMPONENT, STUB_DISKS_STATUS=status)
+
+    _refused(run)
+    assert fault in run.done.stderr
+    assert run.calls("rustup") == []
+
+
 def test_the_build_takes_no_rustflags_of_its_caller(tmp_path: Path) -> None:
     """cargo reads CARGO_ENCODED_RUSTFLAGS before RUSTFLAGS. A value of the
     caller would replace the remap flags."""
@@ -713,9 +815,9 @@ def test_a_last_row_with_no_line_feed_is_a_whole_row(tmp_path: Path) -> None:
 
 def test_the_line_form_has_one_reader() -> None:
     """`bin/lib/artifactrows.sh` reads the rows for the build script, and
-    the script sources it. No other file under `bin/` outside `tests/`
-    defines `read_rows` or names the key `max-unpacked-bytes`. The test
-    reads those two texts only."""
+    each script that reads a row sources it. No other file under `bin/`
+    outside `tests/` defines `read_rows` or `read_disk_rows`, or names the key
+    `max-unpacked-bytes` or `out-env`. The test reads those texts only."""
     sourced = '. "$SELF_ROOT/bin/lib/artifactrows.sh"\n'
     others = [
         path
@@ -730,7 +832,10 @@ def test_the_line_form_has_one_reader() -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
         assert "read_rows()" not in text, f"{path.name} holds a second reader"
         assert "max-unpacked-bytes" not in text, f"{path.name} holds a key of the form"
+        assert "read_disk_rows()" not in text, f"{path.name} holds a second reader"
+        assert "out-env" not in text, f"{path.name} holds a key of the disk form"
     assert "read_rows() {" in READER.read_text(encoding="utf-8")
+    assert "read_disk_rows() {" in READER.read_text(encoding="utf-8")
 
 
 def test_a_command_that_gives_no_rows_stops_the_run(tmp_path: Path) -> None:

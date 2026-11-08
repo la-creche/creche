@@ -28,6 +28,7 @@ CONTROL_NAMES = (
     "handover",
     "memory",
     "vmm",
+    "disks",
 )
 
 
@@ -292,17 +293,21 @@ def test_releasable_drops_the_data_component(tmp_path: Path) -> None:
     assert set(releasable(discover([tmp_path]))) == {"noticeboard"}
 
 
-def test_a_creche_checkout_without_rust_component_toml_misses_the_vmm(tmp_path: Path) -> None:
-    """`vmm` arrived with `rust/component.toml` (CH7-5, CH76 rule 1), so it
-    left `catalog.ARRIVING`. A checkout with no manifest at `rust/` now
+@pytest.mark.parametrize("name", ["vmm", "disks"])
+def test_a_creche_checkout_without_the_manifest_of_an_arrived_row_misses_it(
+    tmp_path: Path, name: str
+) -> None:
+    """`vmm` arrived with `rust/component.toml` and `disks` with
+    `disks/component.toml` (CH7-5, CH76 rule 1), so each left
+    `catalog.ARRIVING`. A checkout with no manifest at the row's path now
     misses it, and the requester refuses to plan over it."""
-    kept = tuple(name for name in CONTROL_NAMES if name != "vmm")
+    kept = tuple(one for one in CONTROL_NAMES if one != name)
     roots = _all_five(tmp_path, kept)
 
     found = discover(roots)
 
-    assert not (roots[0] / "rust").exists()
-    assert found.missing == ("vmm",)
+    assert not (roots[0] / CATALOG_BY_NAME[name].path).exists()
+    assert found.missing == (name,)
     with pytest.raises(Refusal) as caught:
         require_complete(found)
     assert caught.value.code is RefusalCode.CATALOG

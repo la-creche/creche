@@ -97,7 +97,7 @@ from .corpus.artifacts import (
     artifact_store,
     fetch_artifacts,
     prune_artifacts,
-    ships_archive,
+    ships_assets,
 )
 from .discovery import ManifestSet, discover, read_named, require_complete
 from .errors import Refusal, RefusalCode, safe_token
@@ -861,8 +861,8 @@ def _resolve_after(
 
 
 def _fetch_deploying(resolution: Resolution) -> None:
-    """Fetch the two assets of each binary component that deploys into the
-    store, after the corpus fetch of the same poll.
+    """Fetch the signed assets of each binary or disk-image component that
+    deploys into the store, after the corpus fetch of the same poll.
 
     A fault is a note on stderr, and the request still files, for the
     reason of `_print_corpus`: a request that this side refused for a
@@ -871,7 +871,7 @@ def _fetch_deploying(resolution: Resolution) -> None:
     tags: dict[str, str] = {}
     for item in resolution.components:
         tag = item.tag()
-        if item.action is Action.DEPLOY and tag is not None and ships_archive(item.name):
+        if item.action is Action.DEPLOY and tag is not None and ships_assets(item.name):
             tags[item.name] = tag
 
     if tags:
@@ -991,12 +991,13 @@ def _set_text(moving: dict[str, str]) -> str:
 
 
 def _ready_members(moving: dict[str, str]) -> frozenset[str]:
-    """Each member of `moving` that ships no archive, and each member whose
-    two files the store holds after this run's fetch (`follow/`, rule 7)."""
+    """Each member of `moving` that ships no signed asset, and each member
+    whose assets the store holds after this run's fetch: both files of a
+    binary row, every file of a disk-image row (`follow/`, rule 7)."""
     tags = {
         name: TAG_FORMAT.format(name=name, version=version)
         for name, version in moving.items()
-        if ships_archive(name)
+        if ships_assets(name)
     }
     plain = frozenset(moving) - frozenset(tags)
     if not tags:
@@ -1010,9 +1011,9 @@ def _ready_members(moving: dict[str, str]) -> frozenset[str]:
 
 def _prune_store(wanted: dict[str, str], state: ReleaseState) -> None:
     """Remove the store directory of each tag below the live version of its
-    component. Only a run that follows a component that ships an archive
-    reads the store."""
-    if not any(ships_archive(name) for name in wanted):
+    component. Only a run that follows a component that ships signed
+    assets reads the store."""
+    if not any(ships_assets(name) for name in wanted):
         return
 
     try:

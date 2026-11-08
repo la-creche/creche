@@ -18,8 +18,9 @@
 #                  `handover` project beside this script, wherever it sits.
 #
 # A BINARY COMPONENT SHIPS TWO ASSETS: the archive that CI built and the
-# bundle of its signature. Two more variables serve it, and a run with no
-# binary component reads neither:
+# bundle of its signature. A disk-image component ships each file that CI
+# built, each with the bundle of its signature (decision CH76 rule 5). Two
+# more variables serve them, and a run with no such component reads neither:
 #   ASSET_DIR      the directory that holds the assets of this run.
 #   COSIGN         the absolute path of the verifier of a signature.
 #
@@ -365,22 +366,26 @@ done < "$WORK/names"
 
 cat "$WORK/plan"
 
-# ---- the two assets of a binary component ----------------------------------
+# ---- the signed assets of a component ----------------------------------------
 #
 # The planner says which component ships assets, because the kind of a
 # component lives in the catalog and this script holds no copy of it.
 # `allocate-tags --assets` prints one line for each asset, `<name> <largest
-# size in bytes>`, the archive first. It prints nothing for each other kind,
-# and then no line below checks a file or starts the verifier.
+# size in bytes>`, in pairs: each signed file, then the bundle of its
+# signature. A binary component has one pair, its archive first. A
+# disk-image component has one pair for each file (decision CH76 rule 5).
+# It prints nothing for each other kind, and then no line below checks a
+# file or starts the verifier.
 #
-# A binary component gets its tag only when both files are in ASSET_DIR,
-# each one at most its size, and the verifier passes the signature. If not,
-# the component counts as refused and the next row goes on: each other
-# component still gets its tag, and the run ends red.
+# A component gets its tag only when each of its files is in ASSET_DIR, each
+# one at most its size, and the verifier passes the signature of each pair.
+# If not, the component counts as refused and the next row goes on: each
+# other component still gets its tag, and the run ends red.
 #
 # The verifier gets the words of `handover artifacts --verify-words`, the
-# words that root uses on the host. They name the ref of `main`, so a run
-# on another branch gets no tag for a binary component.
+# words that root uses on the host, once for each pair. Its `--archive`
+# names the signed file of the pair. The words name the ref of `main`, so a
+# run on another branch gets no tag for a component that ships assets.
 
 # refuse COMPONENT REASON: one `::error::` line, and one more refused row.
 refuse() {
@@ -389,8 +394,8 @@ refuse() {
 }
 
 # assets_of COMPONENT: the asset lines of COMPONENT into $WORK/assets. It
-# fails for a refusal of the planner, and for an answer that is not 0 or 2
-# lines of a name and a count.
+# fails for a refusal of the planner, and for an answer that is not an even
+# count of lines of a name and a count: no line, or one pair or more.
 assets_of() {
   local name limit extra count=0
   "${CLI[@]}" allocate-tags --repo "$REPO" --assets "$1" < /dev/null > "$WORK/assets" \
@@ -399,15 +404,15 @@ assets_of() {
     [[ -n "$name" && "$limit" =~ ^[0-9]+$ && -z "$extra" ]] || return 1
     count=$((count + 1))
   done < "$WORK/assets"
-  [[ "$count" -eq 0 || "$count" -eq 2 ]]
+  [[ $((count % 2)) -eq 0 ]]
 }
 
 # check_assets COMPONENT: each asset of $WORK/assets is a file in ASSET_DIR,
-# at most its size, and the verifier passes the signature. On success ATTACH
-# holds the absolute path of each file, the archive first. On a failure the
-# component is refused.
+# at most its size, and the verifier passes the signature of each pair. On
+# success ATTACH holds the absolute path of each file, in the order of the
+# lines. On a failure the component is refused.
 check_assets() {
-  local component=$1 dir name limit path size word
+  local component=$1 dir name limit path size word at
   ATTACH=()
   dir=$(cd -- "${ASSET_DIR:-}" 2>/dev/null && pwd) && [[ -n "${ASSET_DIR:-}" ]] \
     || { refuse "$component" "ASSET_DIR names no directory"; return 1; }
@@ -433,21 +438,23 @@ check_assets() {
     return 1
   fi
 
-  if ! "${CLI[@]}" artifacts --verify-words --repo "$REPO" \
-    --github-repository "${GITHUB_REPOSITORY:-}" --sha "$SHA" \
-    --archive "${ATTACH[0]}" --bundle "${ATTACH[1]}" < /dev/null > "$WORK/words"; then
-    refuse "$component" "the planner gave no words for the check of its signature"
-    return 1
-  fi
+  for ((at = 0; at < ${#ATTACH[@]}; at += 2)); do
+    if ! "${CLI[@]}" artifacts --verify-words --repo "$REPO" \
+      --github-repository "${GITHUB_REPOSITORY:-}" --sha "$SHA" \
+      --archive "${ATTACH[$at]}" --bundle "${ATTACH[$((at + 1))]}" < /dev/null > "$WORK/words"; then
+      refuse "$component" "the planner gave no words for the check of its signature"
+      return 1
+    fi
 
-  WORDS=()
-  while IFS= read -r word; do
-    WORDS+=("$word")
-  done < "$WORK/words"
-  if ! "$COSIGN" ${WORDS[@]+"${WORDS[@]}"} < /dev/null; then
-    refuse "$component" "the verifier refused the signature of ${ATTACH[0]##*/}"
-    return 1
-  fi
+    WORDS=()
+    while IFS= read -r word; do
+      WORDS+=("$word")
+    done < "$WORK/words"
+    if ! "$COSIGN" ${WORDS[@]+"${WORDS[@]}"} < /dev/null; then
+      refuse "$component" "the verifier refused the signature of ${ATTACH[$at]##*/}"
+      return 1
+    fi
+  done
 
   return 0
 }
@@ -509,7 +516,7 @@ say "allocate-tags: $MADE created"
 
 # Reported last so the tags that WERE right are already made and pushed. A
 # run that ends here needs a human. A newest tag that is not in this
-# commit's history stays so until somebody fixes it. A binary component
-# whose assets did not pass keeps its range, so a later run tags it.
+# commit's history stays so until somebody fixes it. A component whose
+# assets did not pass keeps its range, so a later run tags it.
 [[ "$REFUSED" -eq 0 ]] \
   || die "$REFUSED component(s) refused: each one has its own ::error:: line above"
