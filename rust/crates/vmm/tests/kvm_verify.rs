@@ -65,10 +65,15 @@ impl Work {
         path
     }
 
-    /// A root-owned copy of `source` named `name` in the dir.
+    /// A root-owned copy of `source` named `name` in the dir. A `cp` child
+    /// writes the copy, as `tests/binary.rs` `place_program` does. The
+    /// write fd then lives only in that child, so no fork of a parallel
+    /// test holds it open for writing, and the exec of the copy never
+    /// fails with ETXTBSY.
     fn root_copy(&self, source: &Path, name: &str) -> PathBuf {
         let copy = self.0.join(name);
-        fs::copy(source, &copy).unwrap();
+        let status = Command::new("cp").arg(source).arg(&copy).status().unwrap();
+        assert!(status.success(), "cp {} failed", source.display());
         sudo_chown_root(&copy);
         copy
     }
