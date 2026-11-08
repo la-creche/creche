@@ -83,6 +83,8 @@ RUN for name in creche-facade acp-relay; do \
 # rules 4 and 5). It mounts the session disk at /var/lib/creche/session
 # and makes no dir itself. The dir is root:root 0755, as guest init makes
 # a missing dir. A python and a coding image inherit it from this stage.
+# Only this file makes it (CH81 rule 1): playpen/disk/Dockerfile builds
+# the disk tools, and the dir reaches the disk in the flavor tar.
 # The tmpfs targets (/tmp /run /root /var/cache /var/tmp) come with the
 # parent image, and the loop fails the build on a parent that drops one.
 # The build mounts /dev, /proc and /sys in each RUN step, so this loop
