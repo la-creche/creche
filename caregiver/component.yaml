@@ -19,7 +19,7 @@ install:
   prev: ~/.local/components/caregiver.prev
 provides:
   # Contract 01: the family.yaml and mcp/<name>/server.yaml schemas.
-  - { contract: family-file, major: 0, minor: 13 }
+  - { contract: family-file, major: 0, minor: 16 }
   # Contract 05: per-family status, sandbox state, switch-sandbox.
   - { contract: manager-status, major: 0, minor: 17 }
 requires:
