@@ -18,6 +18,10 @@
 //                      └─► the local link does not open, closes or faults,
 //                          outside a stop
 //                                 ──► stop Flue, for at most `stopMs` ──► exit 18
+//
+// Under CH the exits 16 and 8 come before the facade serves, and guest
+// init starts it again after its 1 s restart pause (decisions CH62 rule 8,
+// CH81 rule 8).
 
 import type { Readable } from "node:stream";
 
@@ -172,13 +176,15 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
   };
 
   if (supervision.kind === "ch") {
-    // The link opens once the relay listens. guest init sends the stop line
-    // only to an open link, and it moves the facade to `running` at the
-    // open (decisions CH32 rule 6, CH66 rule 4). A lost link outside a stop
-    // exits 18, so that guest init starts the facade again (decision CH67
-    // rule 8). Inside a stop, `stop` returns at once and the stop goes on
-    // (decision CH66 rule 5). Nothing else ends the process: stdin is
-    // /dev/null, and no beat deadline runs (decisions CH5d, CH19).
+    // The link opens once the start pull, the Flue start and the relay
+    // listen, so `running` means that the facade serves (decision CH81
+    // rule 6). guest init sends the stop line only to an open link, and it
+    // moves the facade to `running` at the open (decisions CH32 rule 6,
+    // CH66 rule 4). A lost link outside a stop exits 18, so that guest init
+    // starts the facade again (decision CH67 rule 8). Inside a stop, `stop`
+    // returns at once and the stop goes on (decision CH66 rule 5). Nothing
+    // else ends the process: stdin is /dev/null, and no beat deadline runs
+    // (decisions CH5d, CH19).
     supervision.link.open({
       onStop: () => void stop("the stop line of guest init", EXIT_OK, supervision.link.stopMs),
       onLost: (detail) => void stop(`${detail}; the facade exits`, EXIT_LOCAL_LINK, supervision.link.stopMs),
