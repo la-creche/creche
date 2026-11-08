@@ -1,6 +1,7 @@
 # Sourced only (bin/AGENTS.md, Library): the one reader of the line form of
-# `handover artifacts`. Each script that reads a row sources it, so no two
-# scripts can read one row in two ways.
+# `handover artifacts`, and of the line form of `handover disk-assets`. Each
+# script that reads a row sources it, so no two scripts can read one row in
+# two ways.
 #
 # The line form is `ArtifactRow.lines` of handover/src/handover/artifacts.py.
 # A row is these lines, in this order:
@@ -178,12 +179,29 @@ rows_commands() {
   ROW_COMMANDS+=("$commands")
 }
 
+# rows_load FILE: puts each line of FILE into ROWS_LINES, and the index of
+# the next line to 0. Status 1 for a file that it cannot read.
+rows_load() {
+  local line
+
+  ROWS_LINES=()
+  ROWS_POS=0
+  if [[ ! -f "$1" || ! -r "$1" ]]; then
+    ROWS_FAULT="cannot read the file of the rows"
+    return 1
+  fi
+  # The last line counts also when no line feed ends it.
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    ROWS_LINES+=("$line")
+  done < "$1"
+}
+
 # read_rows FILE: reads each row of FILE. Status 1 with the reason in
 # ROWS_FAULT for a file that it cannot read and for each text that is not in
 # the line form. Two rows with one component, one archive or one bundle are
 # refused too: the second archive would replace the first.
 read_rows() {
-  local line row other
+  local row other
 
   ROW_COMPONENT=()
   ROW_TARGET=()
@@ -199,18 +217,8 @@ read_rows() {
   COMMAND_COUNT=()
   COMMAND_WORD=()
   ROWS_FAULT=""
-  ROWS_LINES=()
 
-  if [[ ! -f "$1" || ! -r "$1" ]]; then
-    ROWS_FAULT="cannot read the file of the rows"
-    return 1
-  fi
-  # The last line counts also when no line feed ends it.
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    ROWS_LINES+=("$line")
-  done < "$1"
-
-  ROWS_POS=0
+  rows_load "$1" || return 1
   while [[ "$ROWS_POS" -lt "${#ROWS_LINES[@]}" ]]; do
     rows_head || return 1
     rows_commands || return 1
@@ -228,6 +236,125 @@ read_rows() {
       fi
       if [[ "${ROW_BUNDLE[$other]}" == "${ROW_BUNDLE[$row]}" ]]; then
         ROWS_FAULT="two rows name the bundle ${ROW_BUNDLE[$row]}"
+        return 1
+      fi
+    done
+  done
+}
+
+# ---- the disk-image rows -----------------------------------------------------
+#
+# The line form of `handover disk-assets` is `DiskRow.lines` of
+# handover/src/handover/artifacts.py (decision CH76 rule 5). A row is these
+# lines, in this order:
+#
+#   component <name>            the component
+#   out-env <variable>          the variable that names the output directory
+#   asset <name> <count>        one asset and its bytes, at most. A row has
+#   ...                         one asset or more.
+#   argv <count>                one command, as in the form of `artifacts`.
+#   <word>                      A row has one command or more.
+#   ...
+#   end
+#
+# `read_disk_names FILE` reads each row of FILE and puts its component into
+# DISK_COMPONENT. bin/build-artifacts.sh needs the names alone: it skips a
+# planned disk-image row, because it builds binary rows only. The reader
+# refuses each other text, as `read_rows` does, and two rows with one
+# component. A refusal returns 1 and puts the reason into ROWS_FAULT.
+
+#: The component of each disk-image row.
+DISK_COMPONENT=()
+
+# disk_head: reads the keys of a disk-image row before its first command.
+disk_head() {
+  local assets=0 value
+
+  rows_value component || return 1
+  if [[ ! "$ROWS_VALUE" =~ $PLAIN_NAME ]]; then
+    ROWS_FAULT="the component of a disk row is not a plain name"
+    return 1
+  fi
+  DISK_COMPONENT+=("$ROWS_VALUE")
+
+  rows_value out-env || return 1
+  if [[ ! "$ROWS_VALUE" =~ $VARIABLE_NAME ]]; then
+    ROWS_FAULT="the out-env of a disk row is not a variable name"
+    return 1
+  fi
+
+  while true; do
+    rows_next || return 1
+    if [[ "$ROWS_LINE" != "asset "* ]]; then
+      break
+    fi
+    value="${ROWS_LINE#asset }"
+    if [[ "$value" != *" "* || ! "${value%% *}" =~ $PLAIN_NAME || ! "${value#* }" =~ $LIMIT ]]; then
+      ROWS_FAULT="an asset of a disk row is not a plain name and a count above 0"
+      return 1
+    fi
+    assets=$((assets + 1))
+  done
+  if [[ "$assets" -eq 0 ]]; then
+    ROWS_FAULT="a disk row has no asset where the line form puts one"
+    return 1
+  fi
+
+  # The line after the last asset is the first command.
+  ROWS_POS=$((ROWS_POS - 1))
+}
+
+# disk_commands: reads the commands of a disk-image row and its `end` line,
+# with the rules of `rows_commands`. It keeps no word.
+disk_commands() {
+  local count index commands=0
+
+  while true; do
+    rows_next || return 1
+    if [[ "$ROWS_LINE" == "end" && "$commands" -gt 0 ]]; then
+      return 0
+    fi
+
+    if [[ "$ROWS_LINE" != "argv "* ]]; then
+      ROWS_FAULT="a disk row has no command where the line form puts one"
+      return 1
+    fi
+    count="${ROWS_LINE#argv }"
+    if [[ ! "$count" =~ $WORD_COUNT ]]; then
+      ROWS_FAULT="a command of a disk row has no count of words"
+      return 1
+    fi
+
+    for ((index = 0; index < count; index++)); do
+      rows_next || return 1
+      if [[ "$index" -eq 0 && -z "$ROWS_LINE" ]]; then
+        ROWS_FAULT="a command of a disk row has an empty first word"
+        return 1
+      fi
+    done
+    commands=$((commands + 1))
+  done
+}
+
+# read_disk_names FILE: reads each disk-image row of FILE into
+# DISK_COMPONENT. Status 1 with the reason in ROWS_FAULT for a file that it
+# cannot read, for each text that is not in the line form, and for two rows
+# with one component.
+read_disk_names() {
+  local row other
+
+  DISK_COMPONENT=()
+  ROWS_FAULT=""
+  rows_load "$1" || return 1
+  while [[ "$ROWS_POS" -lt "${#ROWS_LINES[@]}" ]]; do
+    disk_head || return 1
+    disk_commands || return 1
+  done
+
+  for ((row = 0; row < ${#DISK_COMPONENT[@]}; row++)); do
+    for ((other = 0; other < row; other++)); do
+      if [[ "${DISK_COMPONENT[$other]}" == "${DISK_COMPONENT[$row]}" ]]; then
+        ROWS_FAULT="two disk rows name the component ${DISK_COMPONENT[$row]}"
         return 1
       fi
     done

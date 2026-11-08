@@ -553,6 +553,12 @@ CH7-2, CH35 (4), CH76 rules 1 and 5). Its manifest is
     whole file into memory. Fact 84 (CH78 rule 4) measured cosign v3.1.4
     on the host: a peak of the file size plus about 60 MiB, so a file at
     the 2 GiB - 1 cap needs about 2.06 GiB.
+16. `bin/allocate-tags.sh` takes every asset of the `--assets` lines, in
+    pairs of a file and its bundle. It runs the verifier once for each
+    pair, and the Release of a disk-image component holds the eight assets
+    (CH35 (2), CH76 rule 5). `bin/build-artifacts.sh` skips a planned
+    disk-image row, and the `sign` job of `release.yml` signs each of the
+    four files.
 
 ## The host component of creche-release
 

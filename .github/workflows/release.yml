@@ -737,12 +737,15 @@ jobs:
   #      only the archives that the job output `digests` names, and only when
   #      each one has the SHA-256 of that output. A file that the output does
   #      not name stops the job. `dotglob`: a name that starts with a period
-  #      is such a file too.
+  #      is such a file too. An asset is an archive `*.tar.gz` or one of the
+  #      four files of a disk-image row (decision CH76 rule 5).
   #   2. With no archive it prints one line, signs nothing and uploads an
   #      empty SHA256SUMS.
   #   3. It takes cosign from a release of the cosign repository, and
   #      compares the SHA-256 of the program with the constant before the
-  #      first use. The `release` job holds the same text.
+  #      first use. The `release` job holds the same text. The fetch runs
+  #      when the directory holds any asset of step 1, so a run that ships
+  #      disks alone has cosign too.
   #   4. One signature for each archive, in the bundle
   #      `<archive>.sigstore.json`. The bundles and the checked SHA256SUMS go
   #      into the workflow artifact `bundles`.
@@ -775,7 +778,9 @@ jobs:
           assets="$RUNNER_TEMP/assets"
           bundles="$RUNNER_TEMP/bundles"
           mkdir -p "$bundles"
-          line='^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz$'
+          asset='([A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz|digests[.]json|vmlinux-x86_64[.]zst|base[.]ext4[.]zst|python[.]ext4[.]zst)'
+          line="^[0-9a-f]{64}  $asset\$"
+          whole="^$asset\$"
           named=""
           if [[ -n "$DIGESTS" ]]; then
             while IFS= read -r one; do
@@ -792,7 +797,7 @@ jobs:
             if [[ ! -e "$file" || "$name" == "SHA256SUMS" ]]; then
               continue
             fi
-            if [[ -L "$file" || ! -f "$file" || "$name" != *.tar.gz ]]; then
+            if [[ -L "$file" || ! -f "$file" || ! "$name" =~ $whole ]]; then
               echo "sign: the job artifacts gave $name, which is no archive" >&2
               exit 1
             fi
@@ -813,7 +818,8 @@ jobs:
           fi
           (cd "$assets" && sha256sum --check --strict <<< "$DIGESTS")
           cosign="$RUNNER_TEMP/cosign"
-          if compgen -G "$RUNNER_TEMP/assets/*.tar.gz" > /dev/null; then
+          shopt -s extglob
+          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst)" > /dev/null; then
             curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
               --output "$cosign" \
               "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
@@ -903,7 +909,8 @@ jobs:
         run: |
           set -euo pipefail
           cosign="$RUNNER_TEMP/cosign"
-          if compgen -G "$RUNNER_TEMP/assets/*.tar.gz" > /dev/null; then
+          shopt -s extglob
+          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst)" > /dev/null; then
             curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
               --output "$cosign" \
               "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
