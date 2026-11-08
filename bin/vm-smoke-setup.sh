@@ -22,7 +22,16 @@
 #      makes the second node.
 #   5. Linger starts the user manager, for a later `systemd-run --user`.
 #      The script writes XDG_RUNTIME_DIR to $GITHUB_ENV, so the later steps
-#      of the job reach the user manager, as the vmm unit does.
+#      of the job reach the user manager, as the vmm unit does. First a
+#      drop-in gives user@.service and the units of the user manager the
+#      hard RLIMIT_NOFILE of Hyperion's user manager, 1048576. The runner
+#      gives 65536, and `vmm serve` exits 78 below its need of 102720
+#      (decision CH67 rule 4, which keeps the vmm unit free of a
+#      LimitNOFILE= line). fs.nr_open must hold that limit, and a
+#      limits.d line for the runner user lifts the 65536 that pam_limits
+#      sets from the runner's limits.conf when user@.service starts. The
+#      script fails unless a unit of the user manager gets that hard
+#      limit, and then prints each limit on the way.
 #   6. It fetches the CH guest kernel (fact 53), checked by its sha256.
 #   7. It builds guest-init and the stand-in facade static for musl. It
 #      refuses a program with a PT_INTERP header, and first proves that the
@@ -78,6 +87,8 @@ SLOT_PROFILES=$REPO/rust/crates/vmm-confine/apparmor/cloud-hypervisor-slots.prof
 RESTRICT=/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined
 KERNEL_URL=https://github.com/cloud-hypervisor/linux/releases/download/ch-release-v7.2.8-20261009
 MUSL=x86_64-unknown-linux-musl
+# The hard RLIMIT_NOFILE of the user manager on Hyperion.
+NOFILE_HARD=1048576
 # About twice the 5 min 34 s of fact 78.
 CH_BUILD_LIMIT=12m
 
@@ -137,6 +148,29 @@ for node in /dev/kvm /dev/vhost-vsock; do
   [[ -r "$node" && -w "$node" ]] || die "$node is not open to $(id -un)"
 done
 
+say "give the user manager the hard RLIMIT_NOFILE of Hyperion, $NOFILE_HARD"
+# No process gets a hard limit above fs.nr_open, so it must hold the limit.
+nr_open=$(cat /proc/sys/fs/nr_open)
+say "fs.nr_open is $nr_open"
+if ((nr_open < NOFILE_HARD)); then
+  sudo sysctl -q -w "fs.nr_open=$NOFILE_HARD"
+fi
+sudo mkdir -p /etc/systemd/system/user@.service.d /etc/systemd/user.conf.d
+printf '[Service]\nLimitNOFILE=%s\n' "$NOFILE_HARD" |
+  sudo tee /etc/systemd/system/user@.service.d/90-creche-nofile.conf > /dev/null
+printf '[Manager]\nDefaultLimitNOFILE=1024:%s\n' "$NOFILE_HARD" |
+  sudo tee /etc/systemd/user.conf.d/90-creche-nofile.conf > /dev/null
+# PAM starts user@.service (PAMName=systemd-user), and pam_limits then
+# sets the limits of /etc/security/limits.conf, which caps nofile at
+# 65536 on the runner. A line for the user outranks a `*` line there.
+printf '%s hard nofile %s\n' "$(id -un)" "$NOFILE_HARD" |
+  sudo tee /etc/security/limits.d/90-creche-nofile.conf > /dev/null
+sudo systemctl daemon-reload
+# A user manager that already runs keeps its old limit until it restarts.
+if systemctl is-active --quiet "user@$(id -u).service"; then
+  sudo systemctl restart "user@$(id -u).service"
+fi
+
 say "start the user manager"
 sudo loginctl enable-linger "$(id -un)"
 bus="/run/user/$(id -u)/bus"
@@ -145,7 +179,20 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 [[ -S "$bus" ]] || die "no user manager: $bus is missing"
-echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "${GITHUB_ENV:?GITHUB_ENV names the env file of the job}"
+XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export XDG_RUNTIME_DIR
+echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "${GITHUB_ENV:?GITHUB_ENV names the env file of the job}"
+manager=$(systemctl show -p MainPID --value "user@$(id -u).service")
+manager_hard() { awk '/^Max open files/ { print $5 }' "/proc/$manager/limits"; }
+say "the user manager (pid $manager) has the hard RLIMIT_NOFILE $(manager_hard)"
+hard=$(systemd-run --user --pipe --quiet --collect sh -c 'ulimit -Hn')
+if [[ "$hard" != "$NOFILE_HARD" ]]; then
+  systemctl show -p LimitNOFILE "user@$(id -u).service" >&2
+  systemctl --user show -p DefaultLimitNOFILE >&2
+  grep '^Max open files' "/proc/$manager/limits" >&2
+  grep -rs nofile /etc/security/limits.conf /etc/security/limits.d >&2
+  die "a user unit gets the hard RLIMIT_NOFILE $hard, not $NOFILE_HARD"
+fi
 
 cd "$dir"
 

@@ -55,17 +55,17 @@ pub const UP: &str = "guest-init: up";
 pub const BOOT: Duration = Duration::from_secs(30);
 
 /// The session and the family of each proof that boots the vmm.
-const SESSION: &str = "0123abcd-0000-4000-8000-0000000010a0";
+pub const SESSION: &str = "0123abcd-0000-4000-8000-0000000010a0";
 pub const FAMILY: &str = "proof";
 
 /// The host programs of the ubuntu-24.04 runner, as `kvm_vm.rs` names
 /// them. The vmm config passes each one (plan PR L20).
 const SYSTEMD_RUN: &str = "/usr/bin/systemd-run";
-const SYSTEMCTL: &str = "/usr/bin/systemctl";
+pub const SYSTEMCTL: &str = "/usr/bin/systemctl";
 const ZSTD: &str = "/usr/bin/zstd";
 /// The git of the runner, which root owns, so the owner check of
 /// `VMM_GIT_PROGRAM` passes (decision CH69 rule 17).
-const HOST_GIT: &str = "/usr/bin/git";
+pub const HOST_GIT: &str = "/usr/bin/git";
 const FALLOCATE: &str = "/usr/bin/fallocate";
 const SHA256SUM: &str = "/usr/bin/sha256sum";
 
@@ -299,23 +299,7 @@ impl Vmm {
     /// `ready`.
     fn start(name: &str, env: &[(&str, &OsStr)]) -> Self {
         let unit = format!("kvm-vmm-{name}-{}.service", std::process::id());
-        let mut run = Command::new(SYSTEMD_RUN);
-        run.args(["--user", "--pipe", "--quiet", "--collect"])
-            .arg(format!("--unit={unit}"));
-        for line in [
-            "RuntimeDirectory=vmm",
-            "RuntimeDirectoryMode=0700",
-            "NoNewPrivileges=yes",
-        ] {
-            run.args(["-p", line]);
-        }
-        for (key, value) in env {
-            let mut arg = OsString::from(format!("--setenv={key}="));
-            arg.push(value);
-            run.arg(arg);
-        }
-        let mut child = run
-            .arg("--")
+        let mut child = transient(&unit, env)
             .arg(example())
             .arg("serve")
             .args([SESSION, FAMILY])
@@ -380,9 +364,9 @@ pub fn work(name: &str) -> PathBuf {
 /// A vmm that `boot` started, and what its proof reads. The fields drop
 /// in their order: the vmm stops first, then the written files go, then
 /// the next proof may start a vmm.
-pub struct Booted {
+pub struct Booted<V = Vmm> {
     /// The vmm of the proof.
-    pub vmm: Vmm,
+    pub vmm: V,
     /// The vsock socket of the VM of the session.
     pub vsock: PathBuf,
     /// The session dir in the state root.
@@ -397,7 +381,18 @@ pub struct Booted {
 /// ch-remote (decision CH36 G20), an image root with the stand-in facade
 /// in mode `mode`, and the planes `litellm` and `chaperone`. The family of
 /// the proof has no `egress.json` and no `repos.json`.
-pub fn boot(name: &str, mode: &str, (litellm, chaperone): (SocketAddr, SocketAddr)) -> Booted {
+pub fn boot(name: &str, mode: &str, planes: (SocketAddr, SocketAddr)) -> Booted {
+    boot_with(name, mode, planes, |name, env, _| Vmm::start(name, env))
+}
+
+/// `boot` with the vmm that `start` starts from the name of the proof,
+/// the env and the run root (plan PR E4).
+pub fn boot_with<V>(
+    name: &str,
+    mode: &str,
+    (litellm, chaperone): (SocketAddr, SocketAddr),
+    start: impl FnOnce(&str, &[(&str, &OsStr)], &RunRoot) -> V,
+) -> Booted<V> {
     let one = ONE_VMM.lock().unwrap_or_else(PoisonError::into_inner);
     let files = files();
     // The run root of `RuntimeDirectory=vmm`, which the slot profiles
@@ -450,8 +445,8 @@ pub fn boot(name: &str, mode: &str, (litellm, chaperone): (SocketAddr, SocketAdd
         (config::CH_REMOTE, ch_remote),
         (config::GUEST_INIT, guest_init),
         (config::EGRESS_LOG, work.join("egress.jsonl")),
-        // The family of the proof has no `repos.json`, so no start opens
-        // the mirror root (decision CH69 rule 13).
+        // A start opens the mirror root only for a family with a
+        // `repos.json` (decision CH69 rule 13).
         (config::MIRROR_ROOT, work.join("mirror")),
         (config::GIT, PathBuf::from(HOST_GIT)),
     ];
@@ -474,7 +469,7 @@ pub fn boot(name: &str, mode: &str, (litellm, chaperone): (SocketAddr, SocketAdd
         ]
         .map(|(key, value)| (key, OsStr::new(value))),
     );
-    let vmm = Vmm::start(name, &env);
+    let vmm = start(name, &env, &run);
     Booted {
         vmm,
         vsock: run.vm(&id).vsock_socket(),
@@ -482,4 +477,33 @@ pub fn boot(name: &str, mode: &str, (litellm, chaperone): (SocketAddr, SocketAdd
         _written: written,
         _one: one,
     }
+}
+
+/// The `systemd-run` of a transient user service `unit` with `env`, up to
+/// the `--` before its program. With `--pipe` the unit reads the stdin and
+/// writes the stdout and stderr of `systemd-run`. The unit has the lines
+/// of `systemd/creche-vmm.service` that a VM start reads: the run root
+/// `RuntimeDirectory=vmm` (gap G5) and `NoNewPrivileges=yes`, so the
+/// launch stage writes the exec attribute under no_new_privs (decision
+/// CH55). It has no `LimitNOFILE=` line, as that unit has none (decision
+/// CH67 rule 4), so the fd limits of the user manager apply (decision
+/// CH69 rule 31).
+pub fn transient(unit: &str, env: &[(&str, &OsStr)]) -> Command {
+    let mut run = Command::new(SYSTEMD_RUN);
+    run.args(["--user", "--pipe", "--quiet", "--collect"])
+        .arg(format!("--unit={unit}"));
+    for line in [
+        "RuntimeDirectory=vmm",
+        "RuntimeDirectoryMode=0700",
+        "NoNewPrivileges=yes",
+    ] {
+        run.args(["-p", line]);
+    }
+    for (key, value) in env {
+        let mut arg = OsString::from(format!("--setenv={key}="));
+        arg.push(value);
+        run.arg(arg);
+    }
+    run.arg("--");
+    run
 }
