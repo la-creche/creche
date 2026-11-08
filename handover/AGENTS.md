@@ -501,7 +501,11 @@ CH76 rules 1 and 5). Its manifest is `disks/component.toml`, and
    `depends_on` names, and each `--env-file` of its hook is one of the hook
    of that component (contract 06 §4 rules 6 and 7, CH76 rule 6).
    `manifest.check_disk_image_hooks` holds both rules, and `resolve` calls
-   it on each set.
+   it on each set. Rule 7 names the `EnvironmentFile=` of the unit of that
+   component. The check reads no unit file. It compares each `--env-file`
+   with the `--env-file` of the verify hook of that component, and
+   `tests/test_handover_r7r_verify_env.py` holds that one equal to the
+   `EnvironmentFile=` of its unit (CH78 rule 2).
 6. `handover disk-assets --repo <repo>` prints each disk-image row: the
    component, `out-env DISK_OUT`, one `asset <name> <bytes>` line for each
    file and bundle, then each argv, then `end` (`artifacts.DiskRow`).
@@ -530,20 +534,33 @@ CH76 rules 1 and 5). Its manifest is `disks/component.toml`, and
     from the approval digest fail the stage. Root runs no build, unpacks
     nothing and decompresses nothing. The walk of contract 06 §8.2 does not
     run (`Installer.stage_files`, `install.py` rule 11).
-13. The verify program sits in the live tree of the `depends_on`
-    component that `manifest.hook_holder` names. A set that stages that
-    component too fails step 8 before any swap. The program must be a
-    regular file inside that tree, owned by root, and no group or other
-    account may write it. A
-    disk-image row names no unit, so step 9 restarts nothing, and a failed
-    hook puts the previous tree back (contract 06 §8.4 rules 5 and 6).
-14. `bin/allocate-tags.sh` takes every asset of the `--assets` lines, in
+13. The verify program sits in the tree of the `depends_on` component
+    that `manifest.hook_holder` names. The program must be a regular file
+    inside the checked tree, owned by root, and no group or other account
+    may write it. A disk-image row names no unit, so step 9 restarts
+    nothing, and a failed hook puts the previous tree back (contract 06
+    §8.4 rules 5 and 6).
+14. One set may hold the `vmm` and `disks` (CH78 rule 1). Step 9 switches
+    and verifies the `vmm` first, so the disks hook runs from the vmm tree
+    that the same set installs. Step 8 checks the program in the
+    `<install.to>.new` of the `vmm`, and a set of `disks` alone checks the
+    live vmm tree. Step 8 stages in `plan.order`, and step 9 switches in
+    `steps._switch_order`. A holder that does not come before the
+    disk-image component there fails step 8 before any swap
+    (`Release._hook_holder_tree`). A restore runs in reverse order, so
+    `disks` goes back while the new `vmm` is still live.
+15. Child 2 of check P6 for one disk file runs with `MemoryMax=` 2.5 GiB
+    (`provenance.DISK_CHECK_MEMORY_BYTES`): cosign `verify-blob` reads the
+    whole file into memory. Fact 84 (CH78 rule 4) measured cosign v3.1.4
+    on the host: a peak of the file size plus about 60 MiB, so a file at
+    the 2 GiB - 1 cap needs about 2.06 GiB.
+16. `bin/allocate-tags.sh` takes every asset of the `--assets` lines, in
     pairs of a file and its bundle. It runs the verifier once for each
     pair, and the Release of a disk-image component holds the eight assets
     (CH35 (2), CH76 rule 5). `bin/build-artifacts.sh` skips a planned
     disk-image row, and the `sign` job of `release.yml` signs each of the
     four files.
-15. The job `disks` of `release.yml` runs the build of the row,
+17. The job `disks` of `release.yml` runs the build of the row,
     `disks/bin/playpen-release-disks`, when the plan tags `disks`. It hands
     its files and their `SHA256SUMS` to the `sign` job beside the archives
     of the `artifacts` job. `tests/test_handover_repo_manifests.py` holds
@@ -716,21 +733,6 @@ that wants a refusal changes one field.
   with 600 seconds (`cli.py`). A disk file of 415 to 506 MiB needs about
   1.9 MiB/s in one run. Not checked: the rate from the host to the code
   host (plan risk 10).
-- Contract 06 §4 rule 6 says the verify program of a disk-image component
-  sits in the live tree of its `depends_on` component. Step 8 reads that
-  rule narrowly: a set that stages that component too fails before any
-  swap, so the `vmm` and `disks` go out in two requests, the `vmm` first.
-  One merge that tags both makes the follower file one set of the two.
-  That set fails at step 8 and is held (rule 4 of `follow/`), so the
-  operator then files the `vmm` and then `disks` by hand.
-  CONTRACT-QUESTION: may one set check the program in the
-  `<install.to>.new` of that component, which its switch makes live
-  first? (`executor/steps.py`, `Release._hook_holder_tree`).
-- Child 2 of check P6 for one disk file runs with `MemoryMax=` 2.5 GiB
-  (`provenance.DISK_CHECK_MEMORY_BYTES`): cosign v3.1.3 `verify-blob`
-  reads the whole file into memory. Not measured: one real `verify-blob`
-  of a file of about 500 MiB in the verifier unit on the host. A spike
-  measures it before the first disks release (`executor/provenance.py`).
 - The follower does not ask again for a request that root never ledgered.
   A newer tag or a request by hand recovers (`follow/`).
 - The follower reads tags out of the corpus. Root refuses a tag that has no
@@ -806,12 +808,6 @@ that wants a refusal changes one field.
   `rust/Cargo.toml` and `rust/rust-toolchain.toml`. A
   `rust/.cargo/config.toml` moves none. In the chaperone repository, each
   path moves `chaperone` (`catalog.py`).
-- Contract 06 §4 rule 7 says that the `--env-file` of a disk-image hook is
-  a path that an `EnvironmentFile=` line of the unit of its `depends_on`
-  component declares. CONTRACT-QUESTION: `manifest.py` reads no unit
-  file. The reading taken is the `--env-file` of the verify hook of that
-  component, which `tests/test_handover_r7r_verify_env.py` holds equal to
-  the `EnvironmentFile=` of its unit (`manifest.py`).
 - Only a test of this repository holds a binary build to `--locked`. The
   executor does not check the flag (`tests/test_handover_bin_manifest.py`).
 - Contract 06 §3.4 names three checks of a file in the store of artifacts:

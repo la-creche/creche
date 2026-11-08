@@ -73,6 +73,7 @@ from .artifact import Copied, CopiedFiles, CopyResult, NoCopy, copy_from_store
 from .host import Host, distrusted
 from .install import (
     UNIT_KEPT_SUFFIX,
+    BorrowedTree,
     Installer,
     Paths,
     StepFailed,
@@ -156,11 +157,10 @@ MAX_SERVERS: Final = 20
 SELF_AFTER: Final = f"{SELF_COMPONENT} switches after the ledger (contract 06 §1.1 rule 2)"
 NOT_BUILT_ROLLBACK: Final = "kind rollback is not built"
 NOTHING_TO_DO: Final = "the request moves no component"
-#: Step 8 of a disk-image component whose hook holder this set stages
-#: too: the hook reads the live tree of the holder alone (contract 06 §4
-#: rule 6, CH76 rule 6). The CONTRACT-QUESTION is at
-#: `Release._hook_holder_tree`.
-DISK_IMAGE_HOLDER_STAGED: Final = "this set also stages the holder of the verify hook"
+#: Step 8 of a disk-image component whose hook holder this set stages and
+#: step 9 does not switch before it. The hook runs from the tree that is
+#: live at its verify, so the holder switches first (CH78 rule 1).
+DISK_IMAGE_HOLDER_LATER: Final = "the holder of the verify hook does not switch before it"
 
 #: Contract 06 §9.2 rule 3: the registry's `mcp` tree is the one installed.
 NOTHING_REDEPLOYS: Final = "nothing would deploy: the registry's mcp tree is the one installed"
@@ -406,6 +406,14 @@ class Plan:
             f"{name} {self.from_version(name) or 'absent'} → {self.to_version(name)}"
             for name in self.order
         ]
+
+
+def _switch_order(plan: Plan) -> list[str]:
+    """The order in which step 9 switches: `plan.order` without
+    `handover`, which switches after the ledger (contract 06 §1.1 rule 2).
+    Step 8 reads it too: the holder of a disk-image hook comes first
+    (CH78 rule 1)."""
+    return [name for name in plan.order if name != SELF_COMPONENT]
 
 
 def _component_rows(document: dict[str, object]) -> list[dict[str, object]]:
@@ -1244,29 +1252,35 @@ class Release:
         if registry_sha is not None:
             self._stage_servers(plan, source, registry_sha)
 
-    def _hook_holder_tree(self, plan: Plan, manifest: ComponentManifest) -> Path:
-        """Where the verify program of a disk-image component sits at step
-        8 (`install.py` rule 11, contract 06 §4 rule 6, CH76 rule 6): the
-        live tree of the `depends_on` component that `manifest.hook_holder`
-        names. The resolver refused a hook outside every such tree, so a
-        None here is a failed stage.
+    def _hook_holder_tree(self, plan: Plan, manifest: ComponentManifest) -> BorrowedTree:
+        """Where step 8 checks the verify program of a disk-image component
+        (`install.py` rule 11, contract 06 §4 rule 6, CH76 rule 6, CH78
+        rule 1). The hook names the `install.to` of the `depends_on`
+        component that `manifest.hook_holder` names. The resolver refused a
+        hook outside every such tree, so a None here is a failed stage.
 
-        CONTRACT-QUESTION: §4 rule 6 says the program sits in the live tree
-        of that component. This reads the rule narrowly. A set that also
-        stages that component fails here, before any swap, so the `vmm` and
-        the `disks` go out in two requests, the `vmm` first. A set that the
-        follower files for one merge that tags both fails here too, and is
-        held until the operator files the two by hand. Ask David
-        whether one set may check the program in the `<install.to>.new` of
-        that component, which its switch makes live first."""
+        A set that stages no holder checks the live tree of the holder. A
+        set that stages the holder checks its `<install.to>.new`: step 9
+        switches the holder and verifies it before it switches this
+        component, so the hook runs from the tree that the set installs.
+        Step 8 stages in `plan.order` and step 9 switches in
+        `_switch_order`, so a holder staged before this component is a
+        tree that step 8 already wrote. A holder that does not come before
+        this component in `_switch_order` fails the stage before any
+        swap."""
         holder = hook_holder(manifest, plan.manifests)
         if holder is None:
             raise StepFailed(f"{manifest.name}: {DISK_IMAGE_HOOK_OUTSIDE}")
 
-        if holder.name in plan.order:
-            raise StepFailed(f"{manifest.name}: {DISK_IMAGE_HOLDER_STAGED} ({holder.name})")
+        paths = paths_of(holder, self.wiring.host.install_roots)
+        if holder.name not in plan.order:
+            return BorrowedTree(to=paths.to, checked=paths.to)
 
-        return paths_of(holder, self.wiring.host.install_roots).to
+        order = _switch_order(plan)
+        if holder.name not in order or order.index(holder.name) >= order.index(manifest.name):
+            raise StepFailed(f"{manifest.name}: {DISK_IMAGE_HOLDER_LATER} ({holder.name})")
+
+        return BorrowedTree(to=paths.to, checked=paths.new)
 
     def _approved_registry_sha(self, plan: Plan) -> str:
         """The registry commit David approved (contract 06 §9). A set that
@@ -1325,7 +1339,7 @@ class Release:
         time the note is written, so a set that fails never reaches it.
         """
         plan = self._require_plan()
-        live = [name for name in plan.order if name != SELF_COMPONENT]
+        live = _switch_order(plan)
         for name in live:
             self._switch_one(plan, name)
 

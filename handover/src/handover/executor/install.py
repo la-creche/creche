@@ -96,7 +96,8 @@ Ten rules this module exists to keep.
     the digest that the tap bound. The walk of contract 06 §8.2 does not
     run. The verify program sits in the tree of a `depends_on` component
     (§4 rule 6, CH76 rule 6), so rule 3 runs there, and that program must
-    be root's alone.
+    be root's alone. That tree is the live one, or the staged one in a set
+    that switches the holder first (`BorrowedTree`, CH78 rule 1).
 """
 
 from __future__ import annotations
@@ -390,6 +391,18 @@ class Paths:
 
 
 @dataclass(frozen=True)
+class BorrowedTree:
+    """Where step 8 checks the verify program of a disk-image component
+    (rule 11). `to` is the `install.to` of the holder, the tree that the
+    hook names. `checked` is the tree that is live when the hook runs:
+    `to` in a set that stages no holder, and the `<install.to>.new` of the
+    holder in a set that switches the holder first (CH78 rule 1)."""
+
+    to: Path
+    checked: Path
+
+
+@dataclass(frozen=True)
 class _Sibling:
     """Rule 8: one sibling unit, where it is installed and where the clone
     or the tree carries its file."""
@@ -623,12 +636,12 @@ class Installer:
         manifest: ComponentManifest,
         paths: Paths,
         verified: VerifiedFiles | None,
-        holder: Path,
+        holder: BorrowedTree,
     ) -> None:
         """Rule 11: fill `<install.to>.new` with each file that check P6
         verified, then prove the borrowed hook is there. `holder` is the
-        live tree of the `depends_on` component whose tree holds the
-        verify program (`steps.Release._hook_holder_tree`).
+        tree of the `depends_on` component that holds the verify program
+        when the hook runs (`steps.Release._hook_holder_tree`).
 
         Each file is copied unchanged and hashed as it is written. A copy
         that changed after the check gives other sum lines, so the stage
@@ -649,16 +662,17 @@ class Installer:
 
         self._check_borrowed_hook(manifest, holder)
 
-    def _check_borrowed_hook(self, manifest: ComponentManifest, holder: Path) -> None:
-        """Rule 3 for a hook in the live tree `holder` of a `depends_on`
-        component (rule 11, contract 06 §4 rule 6, CH76 rule 6), and the
-        program is root's alone: no group or other account may write it."""
-        program = Path(manifest.verify.command[0])
-        if holder not in program.parents:
+    def _check_borrowed_hook(self, manifest: ComponentManifest, holder: BorrowedTree) -> None:
+        """Rule 3 for a hook in the tree of a `depends_on` component (rule
+        11, contract 06 §4 rule 6, CH76 rule 6), in `holder.checked`, and
+        the program is root's alone: no group or other account may write
+        it."""
+        program = _relocate(manifest.verify.command[0], holder.to, holder.checked)
+        if program is None:
             raise StepFailed(f"{manifest.name}: the verify hook is in no tree of depends_on")
 
         real = _resolved(program)
-        if real is None or not real.is_file() or holder.resolve() not in real.parents:
+        if real is None or not real.is_file() or holder.checked.resolve() not in real.parents:
             raise StepFailed(f"{manifest.name}: the borrowed verify hook is missing or escapes")
 
         facts = real.stat()

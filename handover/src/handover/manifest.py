@@ -579,13 +579,11 @@ def check_disk_image_hooks(manifests: Mapping[str, ComponentManifest]) -> None:
     The set is the one that the resolver reads, so the CLI, the requester
     and root each refuse a hook outside those trees.
 
-    CONTRACT-QUESTION: §4 rule 7 says the `--env-file` path is one that an
-    `EnvironmentFile=` line of the unit of that component declares. This
-    module reads no unit file. The reading taken is the `--env-file` of
-    the verify hook of that component, which
-    `tests/test_handover_r7r_verify_env.py` holds equal to the
-    `EnvironmentFile=` of its unit. A check against the unit text costs
-    the read of that unit in each caller of the resolver."""
+    §4 rule 7 says the `--env-file` path is one that an `EnvironmentFile=`
+    line of the unit of that component declares. This module reads no unit
+    file. It checks the `--env-file` of the verify hook of that component,
+    and `tests/test_handover_r7r_verify_env.py` holds that one equal to the
+    `EnvironmentFile=` of its unit (CH78 rule 2)."""
     for name in sorted(manifests):
         manifest = manifests[name]
         if manifest.kind is not Kind.DISK_IMAGE:

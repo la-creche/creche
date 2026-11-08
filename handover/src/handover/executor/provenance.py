@@ -465,12 +465,14 @@ class VerifiedFiles:
 
 
 #: The memory limit of the verifier child that checks one file of a
-#: disk-image component (CH76 rule 5). cosign v3.1.3 `verify-blob` reads
-#: the whole file into memory (`blob.LoadFileOrURL`), and a file of the
-#: row is at most `DISK_FILE_MAX_BYTES`. The 512 MiB of an archive check
-#: come on top, for the runtime and the trust root. Under the limit of an
-#: archive check, each file of 415 to 506 MiB (fact 51) would kill the
-#: child, and check P6 would refuse each disks release.
+#: disk-image component (CH76 rule 5). cosign `verify-blob` reads the
+#: whole file into memory (`blob.LoadFileOrURL`), and a file of the row is
+#: at most `DISK_FILE_MAX_BYTES`. The 512 MiB of an archive check come on
+#: top, for the runtime and the trust root. Under the limit of an archive
+#: check, each file of 415 to 506 MiB (fact 51) would kill the child, and
+#: check P6 would refuse each disks release. Fact 84 measured it on the
+#: host (CH78 rule 4): cosign v3.1.4 peaks at the file size plus about 60
+#: MiB, so a file at the cap needs about 2.06 GiB of the 2.5 GiB.
 DISK_CHECK_MEMORY_BYTES: Final = DISK_FILE_MAX_BYTES + 1 + VERIFIER_MEMORY_BYTES
 
 
