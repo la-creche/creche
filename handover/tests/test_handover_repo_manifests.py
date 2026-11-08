@@ -357,6 +357,25 @@ def _timeout_s(text: str, key: str) -> int:
     return int(values[-1]) if values else SYSTEMD_DEFAULT_TIMEOUT_S
 
 
+#: The keys of a start that are each a step of the start job.
+START_STEPS = ("ExecStartPre", "ExecStartPost")
+
+
+def _start_bound_s(text: str) -> int:
+    """How long the start job of a restart may last. Under `Type=simple`
+    the job ends at the fork, so with no step before or after the main
+    process the bound is 0, whatever `TimeoutStartSec=` says. The vmm sets
+    `TimeoutStartSec=infinity` for its first start after a release
+    (systemd/creche-vmm.service, CH58 rule 5). Any other start is bounded
+    by `TimeoutStartSec=`."""
+    types = _settings(text, "Type")
+    steps = [value for key in START_STEPS for value in _settings(text, key)]
+    if types and types[-1] == "simple" and not steps:
+        return 0
+
+    return _timeout_s(text, "TimeoutStartSec")
+
+
 def test_a_restart_outlasts_every_units_own_stop_and_start(found: ManifestSet) -> None:
     """Step 9's `systemctl restart` answers only once its unit has stopped
     and started again, and systemd bounds both. A shorter wait fails a
@@ -372,4 +391,4 @@ def test_a_restart_outlasts_every_units_own_stop_and_start(found: ManifestSet) -
         parts = [text for text in units.values() if manifest.unit in _settings(text, PART_OF)]
         stop = sum(_timeout_s(text, "TimeoutStopSec") for text in (own, *parts))
 
-        assert stop + _timeout_s(own, "TimeoutStartSec") < RESTART_TIMEOUT_S, name
+        assert stop + _start_bound_s(own) < RESTART_TIMEOUT_S, name

@@ -1,4 +1,4 @@
-# Sourced only (bin/AGENTS.md, Library): the one copy of the Cloud
+# Sourced only (bin/AGENTS.md, Library): the source of the Cloud
 # Hypervisor build of decision CH35 rule 3, the CH7-4 argv.
 #
 #   CH_BUILD          the 13 words of the build. cargo installs the
@@ -13,10 +13,13 @@
 #                     brings no tag for `git describe` (fact 78).
 #
 # bin/vm-smoke-setup.sh runs the build for the kvm job of each workflow
-# (decision CH75). bin/tests/test_artifactrows.py takes the vmm row of its
-# cases from here. It also holds the rev equal to CH_REV and the version
-# equal to CH_VERSION of rust/crates/vmm-store/src/key.rs, the two values
-# that the key check of the vmm reads.
+# (decision CH75). The vmm manifest, rust/component.toml, holds the same
+# words as its third build argv, because handover reads a build only from
+# a manifest. bin/tests/test_vmm_manifest.py holds the two equal, so the
+# kvm job tests the CH that the vmm release ships. bin/tests/
+# test_artifactrows.py holds the rev equal to CH_REV and the version equal
+# to CH_VERSION of rust/crates/vmm-store/src/key.rs, the two values that
+# the key check of the vmm reads.
 #
 # Bash 3.2-clean: its tests source it on a development machine.
 #

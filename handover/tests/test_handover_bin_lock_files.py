@@ -74,10 +74,10 @@ def test_the_workspace_files_are_the_three_under_rust() -> None:
 
 def test_the_workspace_files_reach_the_vmm_alone() -> None:
     """`vmm` is the one binary row of this repository, so a change to the
-    Cargo workspace files reaches it and no other row. While it arrives
-    (`catalog.ARRIVING`), the run tags nothing."""
+    Cargo workspace files reaches it and no other row, and the run tags
+    it."""
     assert touched(WORKSPACE_FILES, Repo.CRECHE) == (VMM,)
-    assert _moved(WORKSPACE_FILES) == {VMM} - ARRIVING
+    assert _moved(WORKSPACE_FILES) == {VMM}
 
 
 def test_a_change_under_rust_reaches_the_vmm_alone() -> None:
@@ -109,10 +109,11 @@ def test_each_workspace_file_moves_the_binary_component_alone(
 ) -> None:
     """The lock file pins the crates, the workspace manifest holds the build
     profile, and the toolchain file names the compiler. Each one changes
-    the programs that a build makes."""
+    the programs that a build makes, so each binary row moves: the copy
+    and `vmm`."""
     use_binary_catalog(monkeypatch)
 
-    assert _moved((changed,)) == {BINARY_NAME}
+    assert _moved((changed,)) == {BINARY_NAME, VMM}
 
 
 def test_the_workspace_files_move_no_venv_component(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -145,23 +146,25 @@ def test_the_python_lock_file_moves_no_binary_component(monkeypatch: pytest.Monk
 
 
 @pytest.mark.parametrize(
-    "changed",
+    ("changed", "moved"),
     [
-        "Cargo.lock",
-        "Cargo.toml",
-        "rust-toolchain.toml",
-        "rust/crates/other/Cargo.toml",
-        "docs/rust/Cargo.lock",
-        "rust/Cargo.lock.orig",
+        ("Cargo.lock", set()),
+        ("Cargo.toml", set()),
+        ("rust-toolchain.toml", set()),
+        ("rust/crates/other/Cargo.toml", {VMM}),
+        ("docs/rust/Cargo.lock", set()),
+        ("rust/Cargo.lock.orig", {VMM}),
     ],
 )
-def test_a_file_of_that_name_in_another_place_moves_nothing(
-    monkeypatch: pytest.MonkeyPatch, changed: str
+def test_a_file_of_that_name_in_another_place_moves_no_other_row(
+    monkeypatch: pytest.MonkeyPatch, changed: str, moved: set[str]
 ) -> None:
-    """Only the three files at the workspace root are read by every build."""
+    """Only the three files at the workspace root are read by every build.
+    A file under `rust/` is a path of the vmm row (item 12 (1)), so it
+    moves the vmm and not the copy."""
     use_binary_catalog(monkeypatch)
 
-    assert _moved((changed,)) == set()
+    assert _moved((changed,)) == moved
 
 
 def test_a_label_counts_through_a_workspace_file(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -186,28 +186,31 @@ class First:
         return next(cast("dict[str, object]", one) for one in listed if one.get("name") == name)
 
 
-def _repo_manifest(components: Path, name: str) -> str | None:
-    """This repository's own `component.yaml`, with its install paths moved
-    under the bench. Only creche holds one, which is contract 06
-    §10.1 and the reason two components resolve to nothing here."""
+def _repo_manifest(components: Path, name: str) -> tuple[str, Markup] | None:
+    """This repository's own manifest and its markup, with its install
+    paths moved under the bench. The `vmm` manifest is `component.toml`,
+    each other one `component.yaml`. Only creche holds one, which is
+    contract 06 §10.1 and the reason two components resolve to nothing
+    here."""
     row = CATALOG_BY_NAME[name]
     if row.repo is not Repo.CRECHE:
         return None
 
     where = REPO_ROOT if row.path == "." else REPO_ROOT / row.path
+    markup = Markup.TOML if (where / Markup.TOML.file_name).is_file() else Markup.YAML
     # A retiring component's directory has left this tree (`catalog.RETIRING`),
     # and an arriving one's has not reached it yet (`catalog.ARRIVING`).
-    if name in RETIRING | ARRIVING and not (where / "component.yaml").is_file():
+    if name in RETIRING | ARRIVING and not (where / markup.file_name).is_file():
         return None
 
-    text = (where / "component.yaml").read_text(encoding="utf-8")
+    text = (where / markup.file_name).read_text(encoding="utf-8")
     # A manifest writes the operator's root from the home, `~/…`, and root's
     # in full. Both move under the bench.
     text = text.replace(f"{OPERATOR_HOME_PREFIX}{OPERATOR_COMPONENTS}", str(components))
     for real in default_install_roots():
         text = text.replace(str(real), str(components))
 
-    return text
+    return text, markup
 
 
 #: A test that wants one manifest changed hands this in. It takes the
@@ -222,16 +225,17 @@ def _serve_the_repository(bench: First, edit: EditFn | None = None) -> None:
 
     def write_tree(destination: Path, name: str) -> None:
         for row in CATALOG:
-            text = _repo_manifest(bench.components, row.name)
-            if text is None or CATALOG_BY_NAME[name].repo is not row.repo:
+            served = _repo_manifest(bench.components, row.name)
+            if served is None or CATALOG_BY_NAME[name].repo is not row.repo:
                 continue
 
+            text, markup = served
             if edit is not None:
                 text = edit(row.name, text)
 
             sub = destination if row.path == "." else destination / row.path
             sub.mkdir(parents=True, exist_ok=True)
-            (sub / "component.yaml").write_text(text, encoding="utf-8")
+            (sub / markup.file_name).write_text(text, encoding="utf-8")
 
         units = destination / "systemd"
         units.mkdir(parents=True, exist_ok=True)
@@ -339,9 +343,10 @@ def _repo_manifests(bench: First) -> dict[str, ComponentManifest]:
     walk would hand them over. It is the same text the fake clone serves."""
     found: dict[str, ComponentManifest] = {}
     for row in CATALOG:
-        text = _repo_manifest(bench.components, row.name)
-        if text is not None:
-            found[row.name] = parse_manifest(text, f"{row.name}/component.yaml", Markup.YAML)
+        served = _repo_manifest(bench.components, row.name)
+        if served is not None:
+            text, markup = served
+            found[row.name] = parse_manifest(text, f"{row.name}/{markup.file_name}", markup)
 
     return found
 

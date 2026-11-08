@@ -3,8 +3,11 @@
 Three commands print it: `handover artifacts` (the rows, one crate row and
 the words of the signature check), `handover check-tree` (the walk of a
 built tree) and `handover allocate-tags --assets` (the assets of a
-Release). The catalog holds no binary component, so a test that needs one
-swaps one row for a binary copy of itself (`handover_bin_fixtures.py`).
+Release). The one binary row of this repository is `vmm`, whose manifest
+is `rust/component.toml` (CH7-5). A test that needs a row of its own swaps
+one row for a binary copy of itself (`handover_bin_fixtures.py`). The root
+of such a test holds the real vmm manifest too, so its rows end with the
+vmm row.
 """
 
 from __future__ import annotations
@@ -44,6 +47,7 @@ from handover.catalog import (
     Repo,
 )
 from handover.cli import EXIT_OK, EXIT_REFUSED, EXIT_USAGE, main
+from handover.discovery import read_one
 from handover.errors import Refusal, RefusalCode
 from handover.manifest import Markup, parse_manifest
 from handover.mcpserver import ServerPin, Source
@@ -62,6 +66,10 @@ from handover_fixtures import manifest_text, write_manifest
 from handover import artifacts
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: The binary row of this repository and its real manifest (CH7-5).
+VMM = "vmm"
+VMM_MANIFEST_TEXT = (REPO_ROOT / "rust" / Markup.TOML.file_name).read_text(encoding="utf-8")
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 OWNER = "example-owner"
@@ -111,13 +119,21 @@ def _refusal(call: Callable[[], object]) -> Refusal:
 
 
 def _binary_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str | None = None) -> Path:
-    """A root that holds the manifest of the binary component alone, with a
-    catalog that holds its binary row."""
+    """A root that holds the manifest of the binary component and the real
+    vmm manifest, with a catalog that holds the binary row."""
     use_binary_catalog(monkeypatch)
     root = tmp_path / "root"
     write_manifest(root, BINARY_NAME, text or binary_manifest_text(tmp_path / "components"))
+    write_manifest(root, VMM, VMM_MANIFEST_TEXT, Markup.TOML)
 
     return root
+
+
+def _vmm_lines() -> list[str]:
+    """The line form of the real vmm row: its three build commands."""
+    manifest = read_one(REPO_ROOT, VMM).manifest
+
+    return list(ArtifactRow(VMM, manifest.build).lines())
 
 
 # ---- the constants and the names --------------------------------------------
@@ -413,11 +429,17 @@ def test_the_command_refuses_what_the_policy_and_the_words_refuse(
 # ---- the rows ---------------------------------------------------------------
 
 
-def test_no_row_with_the_catalog_of_today(capsys: pytest.CaptureFixture[str]) -> None:
-    assert _out(capsys, "artifacts", "--repo", "creche", "--root", str(REPO_ROOT)) == (
-        EXIT_OK,
-        [],
-    )
+def test_the_vmm_row_is_the_one_row_of_the_catalog_of_today(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The vmm row holds the three builds of `rust/component.toml`: the
+    vmm, guest-init, and CH with ch-remote (CH7-5, CH35 (3))."""
+    code, lines = _out(capsys, "artifacts", "--repo", "creche", "--root", str(REPO_ROOT))
+
+    assert code == EXIT_OK
+    assert lines == _vmm_lines()
+    assert lines.count("argv 8") == 2
+    assert lines.count("argv 13") == 1
 
 
 def test_with_no_binary_row_no_manifest_is_read(
@@ -434,6 +456,23 @@ def test_with_no_binary_row_no_manifest_is_read(
         )
 
 
+def test_the_rows_need_no_site_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A CI runner has no site file. The command reads only the manifest of
+    each binary row, and the vmm manifest names no path under the
+    operator's home. Each other manifest of this checkout does, and its
+    parse would need the site file to find that home."""
+    monkeypatch.setenv(SITE_FILE_ENV, str(tmp_path / "absent.env"))
+
+    code, lines = _out(capsys, "artifacts", "--repo", "creche", "--root", str(REPO_ROOT))
+
+    assert code == EXIT_OK
+    assert lines == _vmm_lines()
+    assert "~/" in (REPO_ROOT / "caregiver" / "component.yaml").read_text(encoding="utf-8")
+    assert "~/" not in VMM_MANIFEST_TEXT
+
+
 #: The lines of the binary component of the fixture manifest.
 ROW_HEAD = [
     f"component {BINARY_NAME}",
@@ -447,9 +486,10 @@ ROW_HEAD = [
 ]
 
 
-def test_one_row_with_a_catalog_that_holds_one_binary_row(
+def test_the_binary_copy_prints_its_row_before_the_vmm_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """The rows come in catalog order, and `vmm` is the last row."""
     root = _binary_root(tmp_path, monkeypatch)
 
     code, lines = _out(capsys, "artifacts", "--repo", "creche", "--root", str(root))
@@ -465,6 +505,7 @@ def test_one_row_with_a_catalog_that_holds_one_binary_row(
         "--path",
         f"rust/crates/{BINARY_NAME}",
         "end",
+        *_vmm_lines(),
     ]
 
 
@@ -480,7 +521,7 @@ def test_each_command_is_a_count_and_one_word_on_each_line(
     code, lines = _out(capsys, "artifacts", "--repo", "creche", "--root", str(root))
 
     assert code == EXIT_OK
-    assert lines[len(ROW_HEAD) :] == [
+    assert lines[len(ROW_HEAD) : -len(_vmm_lines())] == [
         "argv 6",
         "cargo",
         "install",
@@ -548,13 +589,14 @@ def test_a_manifest_of_another_kind_makes_no_row(
 def test_a_component_that_leaves_or_comes_into_the_catalog_has_no_row(
     monkeypatch: pytest.MonkeyPatch, moving: str
 ) -> None:
-    """The binary copy joins the real set, so `vmm`, which arrives today
-    (`catalog.ARRIVING`), stays out too."""
+    """The binary copy joins the real set. `vmm`, in neither set, keeps its
+    row."""
     use_binary_catalog(monkeypatch)
     monkeypatch.setattr(artifacts, moving, getattr(artifacts, moving) | {BINARY_NAME})
+    vmm = parse_manifest(VMM_MANIFEST_TEXT, "rust/component.toml", Markup.TOML)
 
-    assert artifacts.archive_components(Repo.CRECHE) == ()
-    assert rows({}, Repo.CRECHE) == ()
+    assert artifacts.archive_components(Repo.CRECHE) == (VMM,)
+    assert [row.component for row in rows({VMM: vmm}, Repo.CRECHE)] == [VMM]
 
 
 # ---- one crate row ----------------------------------------------------------

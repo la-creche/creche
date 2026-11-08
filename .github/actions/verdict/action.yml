@@ -37,6 +37,7 @@ runs:
                 "rust",
                 "systemd-proof",
                 "kvm",
+                "vmm-archive",
             ]
         }
 

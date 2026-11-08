@@ -30,8 +30,9 @@ verdict, one allocation at a time, and only its last job may write.
 The release has jobs that the gate has not. The `plan` job names each
 binary component that gets a tag in the run, from the dry run of the tag
 script. The `artifacts` job builds the archive of each such component
-(`bin/build-artifacts.sh`), in each scope. The tests run the text of the
-plan step against a stand-in dry run.
+(`bin/build-artifacts.sh`), in each scope, after a step that installs
+musl-tools (plan risk 13). The tests run the text of the plan step against
+a stand-in dry run.
 The `sign` job signs each archive. It holds the identity token, and each
 word that it runs is in the workflow file. The `release` job takes both
 workflow artifacts and cosign, and the tag step gets `ASSET_DIR` and
@@ -72,6 +73,12 @@ The `kvm` job runs `bin/vm-smoke-setup.sh`, then each ignored test of
 rust/ whose name holds `kvm_` (decisions CH8-4, CH36 G19). The test run
 names no crate and no file, so a new kvm_ test needs no workflow edit. A
 step before the run fails the job when no such test exists.
+
+The `vmm-archive` job is the one job of the gate alone (decision CH76 rule
+4). It builds the vmm archive with the `artifacts` job's script, after the
+same musl-tools step, and holds guest-init static. On a code change that
+touches no file of the vmm build it skips each step after the checkout, as
+the `systemd-proof` job does. The scope gives that answer.
 """
 
 from __future__ import annotations
@@ -92,6 +99,7 @@ import pytest
 import yaml
 from handover.artifacts import asset_names
 from handover.catalog import ARCHIVE_SUFFIX, BUNDLE_SUFFIX, Repo
+from handover.discovery import read_one
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO / ".github" / "workflows"
@@ -286,12 +294,27 @@ BUILD_STEP_ENV = {
     "ARTIFACT_OUT": ARTIFACT_DIR,
 }
 
+#: The words of the step that installs musl-gcc before each vmm build
+#: (plan risk 13). ring v0.17.14, a crate under CH, compiles C with
+#: `x86_64-linux-musl-gcc`, and the first gate run of H2 failed without it.
+#: bin/vm-smoke-setup.sh installs the same package with the same words, with
+#: runner sudo (CH36 G20).
+MUSL_TOOLS_RUN = (
+    "sudo apt-get update -qq && sudo apt-get install --yes --no-install-recommends -qq musl-tools"
+)
+
+#: That step, as the `artifacts` job holds it. The `vmm-archive` job holds
+#: the same step with the `if` of its other steps.
+MUSL_TOOLS_STEP = {"name": "musl-tools", "run": MUSL_TOOLS_RUN}
+
 #: The steps of the job, as a whole. The checkout keeps no token in the
 #: clone, because a build script runs here. The step that takes uv keeps no
-#: cache: the bytes of an archive come from a clean build.
+#: cache: the bytes of an archive come from a clean build. The musl-tools
+#: step comes before the build (plan risk 13).
 ARTIFACTS_STEPS = [
     {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
     {"uses": SETUP_UV, "with": {"enable-cache": False}},
+    MUSL_TOOLS_STEP,
     {"name": "build", "id": "build", "env": BUILD_STEP_ENV, "run": "bin/build-artifacts.sh"},
     {
         "uses": UPLOAD_ACTION,
@@ -301,6 +324,78 @@ ARTIFACTS_STEPS = [
             "if-no-files-found": "error",
             "retention-days": RETENTION_DAYS,
         },
+    },
+]
+
+#: The job of the gate alone: the vmm archive, built unsigned on a PR that
+#: changes a file of the vmm build (decision CH76 rule 4).
+VMM_ARCHIVE_JOB = "vmm-archive"
+
+#: The jobs that only the gate has.
+GATE_ONLY = {VMM_ARCHIVE_JOB}
+
+#: The steps of that job that a change with no file of the vmm build skips.
+#: Only the answer `false` skips them.
+ONLY_VMM = "needs.scope.outputs.vmm != 'false'"
+
+#: How the scope job hands that answer to the job.
+VMM_OUTPUT = "${{ steps.scope.outputs.vmm }}"
+
+#: Each key of the job. One more key can let a failed build pass, for
+#: example `continue-on-error`.
+VMM_ARCHIVE_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "steps"}
+
+#: The catalog row the job builds, and its archive.
+VMM_ROW = "vmm"
+VMM_ARCHIVE = asset_names(VMM_ROW).archive
+
+#: The program of the archive that the last step holds static: the init of
+#: a guest that has no program interpreter (the H2 proof of the plan).
+STATIC_PROGRAM = "guest-init"
+
+#: The text of the last step: the positive control, then guest-init of the
+#: archive. It is the check of step 7 of bin/vm-smoke-setup.sh.
+VMM_STATIC_RUN = f"""\
+set -euo pipefail
+interp='^[[:space:]]+INTERP[[:space:]]'
+if ! readelf -lW /bin/bash | grep -Eq "$interp"; then
+  echo "the static check is broken: it passes the dynamic /bin/bash" >&2
+  exit 1
+fi
+mkdir -- "$TREE"
+tar --extract --gzip --file "$ARCHIVE" --directory "$TREE"
+headers=$(readelf -lW "$TREE/vmm/bin/{STATIC_PROGRAM}")
+if grep -Eq "$interp" <<< "$headers"; then
+  echo "{STATIC_PROGRAM} names a program interpreter: it is not static" >&2
+  exit 1
+fi
+echo "{STATIC_PROGRAM} of the vmm archive is static"
+"""
+
+#: The steps of the job, as a whole. The musl-tools step and the build step
+#: are the steps of the `artifacts` job, with the vmm row planned: no step
+#: more, so the job shows what the release run would meet (plan risk 13).
+#: Nothing uploads and nothing signs.
+VMM_ARCHIVE_STEPS = [
+    {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
+    {"uses": SETUP_UV, "if": ONLY_VMM, "with": {"enable-cache": False}},
+    {**MUSL_TOOLS_STEP, "if": ONLY_VMM},
+    {
+        "name": "build",
+        "if": ONLY_VMM,
+        "env": {
+            "ARTIFACT_REPO": THIS_REPOSITORY,
+            "ARTIFACT_PLANNED": VMM_ROW,
+            "ARTIFACT_OUT": ARTIFACT_DIR,
+        },
+        "run": "bin/build-artifacts.sh",
+    },
+    {
+        "name": "static guest-init",
+        "if": ONLY_VMM,
+        "shell": "bash",
+        "env": {"ARCHIVE": f"{ARTIFACT_DIR}/{VMM_ARCHIVE}", "TREE": "${{ runner.temp }}/vmm-tree"},
+        "run": VMM_STATIC_RUN,
     },
 ]
 
@@ -726,6 +821,7 @@ def test_the_docs_scope_runs_no_shard_and_no_node_job(
 ) -> None:
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
     only_code = {name for name, rule in by_scope.items() if rule == ONLY_CODE}
+    alone = GATE_ONLY if last == GATE_NAME else set()
 
     assert only_code == {
         "tests",
@@ -738,8 +834,9 @@ def test_the_docs_scope_runs_no_shard_and_no_node_job(
         RUST_JOB,
         SYSTEMD_JOB,
         KVM_JOB,
+        *alone,
     }
-    assert only_code == set(DOCS), "the verdict table of this file names other jobs"
+    assert only_code == set(DOCS) & set(jobs), "the verdict table of this file names other jobs"
     assert {name for name, rule in by_scope.items() if rule is None} == NO_RULE[last]
 
 
@@ -772,15 +869,70 @@ def test_the_release_runs_the_gates_test_jobs() -> None:
 
 
 def test_the_two_workflows_have_the_same_jobs() -> None:
-    """The release runs each job of the gate before its last job, and the
-    jobs of RELEASE_ONLY. Another job that enters one file alone fails
-    here. So the last job of the release needs as many jobs more than the
-    last job of the gate as RELEASE_ONLY holds."""
-    assert set(JOBS) - {GATE_NAME} == set(RELEASE_JOBS) - {RELEASE_NAME, *RELEASE_ONLY}
+    """The release runs each job of the gate but GATE_ONLY before its last
+    job, and the jobs of RELEASE_ONLY. Another job that enters one file
+    alone fails here. So the last job of the release needs as many jobs
+    more than the last job of the gate as RELEASE_ONLY holds, and as many
+    fewer as GATE_ONLY holds."""
+    assert set(JOBS) - {GATE_NAME, *GATE_ONLY} == set(RELEASE_JOBS) - {RELEASE_NAME, *RELEASE_ONLY}
     assert not RELEASE_ONLY & set(JOBS)
-    assert len(RELEASE_JOBS[RELEASE_NAME]["needs"]) == len(JOBS[GATE_NAME]["needs"]) + len(
-        RELEASE_ONLY
-    )
+    assert not GATE_ONLY & set(RELEASE_JOBS)
+    assert len(RELEASE_JOBS[RELEASE_NAME]["needs"]) == len(JOBS[GATE_NAME]["needs"]) - len(
+        GATE_ONLY
+    ) + len(RELEASE_ONLY)
+
+
+def test_the_vmm_archive_job_is_pinned_as_a_whole() -> None:
+    """Each key of the job and each step, in their order (decision CH76
+    rule 4). The musl-tools step and the build step run the words of the
+    `artifacts` job, with its uv, for the vmm row of the catalog."""
+    job = JOBS[VMM_ARCHIVE_JOB]
+    artifacts_runs = [one["run"] for one in RELEASE_JOBS[ARTIFACTS_JOB]["steps"] if "run" in one]
+
+    assert set(job) == VMM_ARCHIVE_KEYS
+    assert job["needs"] == "scope"
+    assert job["if"] == ONLY_CODE
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert 0 < job["timeout-minutes"] <= RELEASE_JOBS[ARTIFACTS_JOB]["timeout-minutes"]
+    assert job["steps"] == VMM_ARCHIVE_STEPS
+    assert artifacts_runs == [one["run"] for one in VMM_ARCHIVE_STEPS[2:4]]
+
+
+def test_both_vmm_builds_install_musl_tools_just_before_the_build() -> None:
+    """The `artifacts` job and the `vmm-archive` job each hold one
+    musl-tools step, right before the build step (plan risk 13). The two
+    steps are equal but for the `if` of the gate job. bin/vm-smoke-setup.sh
+    runs the same words for the same reason (fact 78)."""
+    for steps, rule in (
+        (RELEASE_JOBS[ARTIFACTS_JOB]["steps"], None),
+        (JOBS[VMM_ARCHIVE_JOB]["steps"], ONLY_VMM),
+    ):
+        names = [one.get("name") for one in steps]
+        at = names.index(MUSL_TOOLS_STEP["name"])
+        step = dict(steps[at])
+
+        assert names.count(MUSL_TOOLS_STEP["name"]) == 1
+        assert names[at + 1] == "build"
+        assert step.pop("if", None) == rule
+        assert step == MUSL_TOOLS_STEP
+    assert MUSL_TOOLS_RUN in (REPO / "bin" / "vm-smoke-setup.sh").read_text()
+
+
+def test_the_vmm_archive_job_checks_guest_init_of_the_vmm_row() -> None:
+    """The last step reads guest-init, one `--bin` word of the vmm manifest
+    (CH7-5), and no other program."""
+    manifest = read_one(REPO, VMM_ROW).manifest
+    programs = [
+        argv[at + 1] for argv in manifest.build for at, word in enumerate(argv) if word == "--bin"
+    ]
+
+    assert STATIC_PROGRAM in programs
+    assert VMM_STATIC_RUN.count("$TREE/vmm/bin/") == 1
+
+
+def test_the_scope_action_gives_the_vmm_answer_as_an_output() -> None:
+    assert SCOPE_ACTION["outputs"]["vmm"]["value"] == VMM_OUTPUT
+    assert JOBS["scope"]["outputs"]["vmm"] == VMM_OUTPUT
 
 
 def test_the_artifacts_job_is_pinned_as_a_whole() -> None:
@@ -1878,6 +2030,7 @@ DOCS = {
     RUST_JOB: "skipped",
     SYSTEMD_JOB: "skipped",
     KVM_JOB: "skipped",
+    VMM_ARCHIVE_JOB: "skipped",
 }
 
 #: (the scope, what the jobs did, whether the last job is green), for the
@@ -1925,6 +2078,14 @@ CASES: list[tuple[str | None, dict[str, str], bool]] = [
     (None, DOCS | {"scope": "failure"}, False),
 ]
 
+#: The cases of the job that only the gate has. It runs on every code PR,
+#: and skips its own steps when the PR touches no file of the vmm build.
+GATE_CASES: list[tuple[str | None, dict[str, str], bool]] = [
+    ("code", {VMM_ARCHIVE_JOB: "failure"}, False),
+    ("code", {VMM_ARCHIVE_JOB: "skipped"}, False),
+    ("docs", DOCS | {VMM_ARCHIVE_JOB: "success"}, False),
+]
+
 #: The cases of the jobs that only the release has. Each one runs in each
 #: scope, so a failed or skipped one holds back each tag of the run.
 RELEASE_CASES: list[tuple[str | None, dict[str, str], bool]] = [
@@ -1954,6 +2115,7 @@ VERDICTS = [
         (_needs(RELEASE_JOBS, RELEASE_NAME, scope, results), green)
         for scope, results, green in RELEASE_CASES
     ],
+    *[(_needs(JOBS, GATE_NAME, scope, results), green) for scope, results, green in GATE_CASES],
 ]
 
 
@@ -2029,8 +2191,15 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _scope_of(repo: Path, base: str) -> tuple[str, str]:
+    """The docs answer and the systemd answer of the scope action."""
+    outputs = _scope_outputs(repo, base)
+
+    return outputs["scope"], outputs["systemd"]
+
+
+def _scope_outputs(repo: Path, base: str) -> dict[str, str]:
     """Runs the scope action's own script in `repo`, as a merge group on
-    `base` would. Returns its two outputs."""
+    `base` would. Returns its three outputs."""
     (step,) = SCOPE_ACTION["runs"]["steps"]
     output = repo.parent / "output"
     output.write_text("", encoding="utf-8")
@@ -2052,9 +2221,9 @@ def _scope_of(repo: Path, base: str) -> tuple[str, str]:
     assert done.returncode == 0, done.stdout + done.stderr
     outputs = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
 
-    assert set(outputs) == {"scope", "systemd"}
+    assert set(outputs) == {"scope", "systemd", "vmm"}
 
-    return outputs["scope"], outputs["systemd"]
+    return outputs
 
 
 @pytest.fixture
@@ -2117,6 +2286,58 @@ def test_a_base_that_the_clone_lacks_is_code_and_systemd(checkout: Path) -> None
     """A merge group names its base. A clone that lacks that commit reads no
     change, and each check is then the safe answer."""
     assert _scope_of(checkout, "0" * 40) == ("code", "true")
+
+
+#: What the scope action answers for the vmm build, for a change of these
+#: paths (decision CH76 rule 4).
+VMM_SCOPES = [
+    (["rust/crates/vmm/src/main.rs"], "true"),
+    (["rust/Cargo.lock"], "true"),
+    (["rust/component.toml"], "true"),
+    (["rust/crates/vmm/AGENTS.md"], "true"),
+    (["bin/lib/chbuild.sh"], "true"),
+    (["bin/build-artifacts.sh"], "true"),
+    (["bin/lib/artifactrows.sh"], "true"),
+    (["handover/src/handover/catalog.py"], "false"),
+    (["bin/vm-smoke-setup.sh"], "false"),
+    (["docs/rust/notes.md"], "false"),
+    (["rust-notes.txt"], "false"),
+]
+
+
+@pytest.mark.parametrize(("paths", "vmm"), VMM_SCOPES, ids=lambda one: " ".join(one))
+def test_the_scope_says_whether_a_change_touches_the_vmm_build(
+    checkout: Path, paths: list[str], vmm: str
+) -> None:
+    base = _git(checkout, "rev-parse", "HEAD")
+    for name in paths:
+        (checkout / name).parent.mkdir(parents=True, exist_ok=True)
+        with (checkout / name).open("a", encoding="utf-8") as file:
+            file.write("# changed\n")
+    _git(checkout, "add", "-A")
+    _git(checkout, "commit", "-q", "-m", "the change")
+
+    assert _scope_outputs(checkout, base)["vmm"] == vmm
+
+
+@pytest.mark.parametrize("base", ["", "0" * 40], ids=["none", "absent"])
+def test_a_base_the_scope_cannot_read_builds_the_vmm(checkout: Path, base: str) -> None:
+    """No base, or one that the clone lacks: the build is the safe answer."""
+    assert _scope_outputs(checkout, base)["vmm"] == "true"
+
+
+def test_a_file_that_moves_out_of_rust_builds_the_vmm(checkout: Path) -> None:
+    """A move is a change of the old path too."""
+    (checkout / "rust").mkdir()
+    (checkout / "rust" / "one.rs").write_text("fn one() {}\n", encoding="utf-8")
+    _git(checkout, "add", "-A")
+    _git(checkout, "commit", "-q", "-m", "a crate file")
+    base = _git(checkout, "rev-parse", "HEAD")
+    (checkout / "other").mkdir()
+    _git(checkout, "mv", "rust/one.rs", "other/one.rs")
+    _git(checkout, "commit", "-q", "-m", "the move")
+
+    assert _scope_outputs(checkout, base)["vmm"] == "true"
 
 
 @pytest.mark.parametrize("fault", ["absent", "not executable", "fails"])

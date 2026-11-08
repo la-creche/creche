@@ -11,14 +11,18 @@ Cases:
    with no line feed.
 2. Each text that is not in the line form, with the reason of its refusal.
 3. A file that the reader cannot read.
-4. The CH build of `bin/lib/chbuild.sh`: the vmm row of the cases. Its rev
-   and its version are the ones of the key check of the vmm.
+4. The vmm row of the catalog, as `handover artifacts --repo creche`
+   prints it from `rust/component.toml` (CH7-5): three commands.
+5. The CH build of `bin/lib/chbuild.sh`. Its rev and its version are the
+   ones of the key check of the vmm. bin/tests/test_vmm_manifest.py holds
+   the third command of the vmm row equal to it (CH35 (3)).
 """
 
 from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Final
 
@@ -71,8 +75,9 @@ def _ch_build() -> tuple[tuple[str, ...], str]:
     return tuple(words), version
 
 
-#: The vmm build of decision CH35 rule 3: one command of 13 words.
-VMM_WORDS: Final = _ch_build()[0]
+#: The CH build of decision CH35 rule 3: one command of 13 words, as bash
+#: reads `CH_BUILD`.
+CH_BUILD_WORDS: Final = _ch_build()[0]
 
 #: The driver: it sources the library, reads the file and prints each row,
 #: or the reason of the refusal. `$1` is a `set` line, so a case runs with
@@ -144,22 +149,58 @@ def test_the_reader_reads_the_row_that_handover_prints(tmp_path: Path, set_line:
 
 
 def test_a_row_with_two_commands_keeps_each_word_in_its_command(tmp_path: Path) -> None:
-    """The vmm row of decision CH35 rule 3, then a second command with a
-    space, a quote and a `$(...)` in its words. No shell reads a word."""
+    """The crate command, then a second command with a space, a quote and
+    a `$(...)` in its words. No shell reads a word."""
     other = ("cargo", "one two", "'q'", "$(touch made)")
-    row = ArtifactRow("vmm", (VMM_WORDS, other))
-    archive = f"vmm-{BINARY_TARGET}{ARCHIVE_SUFFIX}"
+    (crate,) = crate_row(COMPONENT, CRATE_DIR).commands
+    row = ArtifactRow(COMPONENT, (crate, other))
     text = "".join(f"{line}\n" for line in row.lines())
 
     assert _read(tmp_path, text) == (
         0,
-        _head("vmm", archive, f"{archive}{BUNDLE_SUFFIX}")
-        + "argv "
-        + " ".join(f"[{word}]" for word in VMM_WORDS)
-        + "\n"
-        + "argv [cargo] [one two] ['q'] [$(touch made)]\n",
+        ROW_OUT + "argv [cargo] [one two] ['q'] [$(touch made)]\n",
     )
     assert not (tmp_path / "made").exists()
+
+
+#: The vmm row of the catalog and its archive (CH7-5).
+VMM: Final = "vmm"
+VMM_ARCHIVE: Final = "vmm-x86_64-unknown-linux-musl.tar.gz"
+
+
+def test_the_vmm_row_of_the_catalog_reads(tmp_path: Path) -> None:
+    """The real row: `handover artifacts --repo creche` over this checkout.
+    It holds the vmm, guest-init and the CH build, in that order."""
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "handover.cli",
+            "artifacts",
+            "--repo",
+            "creche",
+            "--root",
+            str(REPO),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+
+    status, out = _read(tmp_path, done.stdout)
+
+    assert status == 0
+    assert out == (
+        _head(VMM, VMM_ARCHIVE, f"{VMM_ARCHIVE}{BUNDLE_SUFFIX}")
+        + "argv [cargo] [install] [--locked] [--no-track] [--path] [rust/crates/vmm]"
+        " [--bin] [vmm]\n"
+        + "argv [cargo] [install] [--locked] [--no-track] [--path] [rust/crates/guest-init]"
+        " [--bin] [guest-init]\n"
+        + "argv "
+        + " ".join(f"[{word}]" for word in CH_BUILD_WORDS)
+        + "\n"
+    )
 
 
 def test_two_rows_and_no_row(tmp_path: Path) -> None:

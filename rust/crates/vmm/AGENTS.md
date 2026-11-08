@@ -40,6 +40,30 @@ in step 4 of the compose step, after the start checks and before the
 bind (decision CH67 rule 4 for the bridge need, Known gap 23 for the
 family-state need).
 
+## The release row
+
+The handover row `vmm` ships this workspace (CH7-5, CH9). Its manifest is
+`rust/component.toml`, and `handover/AGENTS.md` ("The vmm, a binary
+component of this repository") holds its rules. In short:
+
+1. One archive holds `vmm`, `guest-init`, `cloud-hypervisor` and
+   `ch-remote`. Root installs it at `/opt/components/vmm`, root-owned, so
+   the operator runs each program and changes none. The paths are the
+   defaults of `VMM_CH_PROGRAM`, `VMM_CH_REMOTE_PROGRAM` and
+   `VMM_GUEST_INIT_PROGRAM` (CH62 rule 17), and the `ExecStart=` of
+   `systemd/creche-vmm.service`.
+2. The CH build is the argv of `bin/lib/chbuild.sh` (CH35 (3), CH75).
+3. The verify hook is `vmm verify --json --env-file
+   /srv/agents/state/creche/vmm.env` (CH76 rule 2).
+4. Each path under `rust/` is a path of the row (item 12 (1)), so each
+   merge that changes one mints a vmm tag.
+5. The slot profile does not ship. A PR that changes
+   `vmm-confine/apparmor/cloud-hypervisor-slots.profile` changes the pin
+   in `bin/tests/test_vmm_manifest.py` and names the sudo step (CH76 rule
+   9).
+6. The gate job `vmm-archive` builds the archive on each PR that changes
+   a file of the build, `rust/` among them (CH76 rule 4).
+
 ## The compose step
 
 `src/compose.rs` builds the vmm from its config and serves until SIGTERM
