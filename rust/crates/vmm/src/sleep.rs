@@ -1,7 +1,8 @@
 //! The snapshot that puts a VM to sleep (decisions CH2, CH8-6). An
 //! eviction of admission takes it (plan PR L17), and so does the idle
-//! timer of `run` (plan PR L18). `run` also runs the snapshot sweep of PR
-//! D13 on its own timer.
+//! timer of `run` (plan PR L18). The same idle tick caps the serial log
+//! of each VM (decision CH79 rule 7). `run` also runs the snapshot sweep
+//! of PR D13 on its own timer.
 
 use std::future::{Future, poll_fn};
 use std::pin::pin;
@@ -21,6 +22,13 @@ use crate::start::{ColdBoot, Launcher};
 // Decision CH54 rule 5: the idle check runs every 30 s, a tenth of the 5
 // minutes of `IDLE_TIMEOUT`.
 pub const IDLE_CHECK: Duration = Duration::from_secs(30);
+
+/// The size past which the vmm stops a VM for its serial log, in bytes.
+// Decision CH79 rule 7 (gap Q71-7 option A): the idle check reads the
+// size of the serial log of each running VM. So a runaway guest writes
+// at most 64 MiB plus `IDLE_CHECK` of output per start. Decision CH62
+// rule 26 asks for the cap before the cut.
+pub const SERIAL_CAP: u64 = 64 * 1024 * 1024;
 
 /// The time between two snapshot sweeps.
 // Decision CH54 rule 5: the sweep runs at the start of `run`, then each
@@ -66,7 +74,8 @@ pub fn take_keyed(
 /// The two passes that `run` times. `ColdBoot` is the one of the vmm, and
 /// a test gives a fake.
 pub trait Sleeper: Sync {
-    /// Puts each idle VM to sleep at `now` (`ColdBoot::sleep_idle`).
+    /// Stops each VM past `SERIAL_CAP` (`ColdBoot::cap_serial`), then
+    /// puts each idle VM to sleep at `now` (`ColdBoot::sleep_idle`).
     fn idle_tick(&self, now: std::time::Instant) -> impl Future<Output = ()> + Send;
 
     /// Sweeps the snapshots (`ColdBoot::sweep`).
@@ -75,6 +84,11 @@ pub trait Sleeper: Sync {
 
 impl<L: Launcher, A: ChApi> Sleeper for ColdBoot<L, A> {
     async fn idle_tick(&self, now: std::time::Instant) {
+        // A VM past the cap stops before the sleep reads its gate, so it
+        // takes no snapshot.
+        for id in self.cap_serial().await {
+            eprintln!("vmm: the VM of {id} stopped: its serial log passed {SERIAL_CAP} bytes");
+        }
         for id in self.sleep_idle(now).await {
             eprintln!("vmm: the VM of {id} sleeps");
         }

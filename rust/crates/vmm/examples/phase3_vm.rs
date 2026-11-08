@@ -30,6 +30,8 @@
 //!   so the idle gate passes with no wait. It answers `slept <count>`.
 //! - `stop`: `StopVm::stop`. It answers `stopped <ms>` or `stop failed
 //!   <error>`.
+//! - `cap`: `ColdBoot::cap_serial`, the serial log cap of the idle tick
+//!   (decision CH79 rule 7). It answers `capped <count>`.
 //!
 //! At the end of stdin it exits 0. `launch` and `launch-stage <plan>` are
 //! the launch step and the launch stage of the spawner, as in `vmm`.
@@ -201,6 +203,7 @@ fn step(
             let slept = runtime.block_on(hook.sleep_idle(now));
             format!("slept {}", slept.len())
         }
+        "cap" => format!("capped {}", runtime.block_on(hook.cap_serial()).len()),
         "stop" => match runtime.block_on(hook.stop(&row.id)) {
             Ok(()) => format!("stopped {}", began.elapsed().as_millis()),
             Err(error) => format!("stop failed {error:?}"),

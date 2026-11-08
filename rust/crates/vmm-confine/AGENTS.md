@@ -253,7 +253,9 @@ table of the three vmm crates.
 - `faults::FaultBook` writes the fault file of the vmm,
   `<faults root>/vmm/<family>.json`, in the shape of contract 05 §3.3.1
   with `source` `vmm` (decisions CH21-1, CH36 G18). It holds the two
-  start faults of decision CH6-3. Each change rewrites the whole file
+  start faults of decision CH6-3, which stop turns, and
+  `serial_log_full` of decision CH79 rule 7, which does not
+  (`FaultCode::blocks_turns`). Each change rewrites the whole file
   atomically. Lifecycle calls `refresh` every `faults::REFRESH` (30 s)
   while a fault is open, `clear` on a `ControlReady` of the family, and
   `start` at vmm start, which writes an empty list into every file. Each
@@ -421,6 +423,10 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
+- CONTRACT-QUESTION (decision CH79 rule 7): the code `serial_log_full`
+  and its `blocks_turns` false are the names of the PD1 draft of
+  contract 05 0.18.0. PD1 is not merged, and no row names the code. So
+  the merge of this code waits for PD1.
 - Closed by decision CH67 rule 5 (with CH23 rule 4, CH31 rule 3):
   `read_state` reads `creds.json` and `runtime.json` each with the cap
   `FAMILY_STATE_CAP`, and a larger file is `not_valid`, not

@@ -32,6 +32,7 @@ use creche_vmm::relay::{AcpLink, Door, Relays};
 use creche_vmm::restore::ChApi;
 use creche_vmm::server::Stop;
 use creche_vmm::shutdown::{Ended, VmSet, shutdown};
+use creche_vmm::sleep::{SERIAL_CAP, Sleeper as _};
 use creche_vmm::start::{ColdBoot, Digests, Launcher, StartConfig};
 use creche_vmm::stop::VmProcess;
 use creche_vmm_confine::admission::{GIB, Limits};
@@ -1182,6 +1183,37 @@ fn an_idle_vm_sleeps_after_the_timeout() {
     assert_eq!(test.snapshot_ids(), [A]);
     assert!(test.stopped(0));
     assert!(!test.hook.running(&test.rows[0].id));
+}
+
+/// A VM whose serial log passed `SERIAL_CAP` gets the graceful stop on
+/// the idle tick and no snapshot. Its family gets `serial_log_full`,
+/// which does not stop turns (decisions CH62 rule 26, CH79 rule 7). A VM
+/// at the cap stays up. The next start of the session makes the log new,
+/// and its `ControlReady` clears the fault (decision CH59 rule 2).
+#[test]
+fn a_serial_log_past_the_cap_stops_its_vm_on_the_idle_tick() {
+    let test = Test::new("cap", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.start(1), Ok(()));
+    let serial = |index: usize| test.state.session(&test.rows[index].id).serial_log();
+    for (index, size) in [(0, SERIAL_CAP + 1), (1, SERIAL_CAP)] {
+        let log = fs::OpenOptions::new().write(true).open(serial(index));
+        log.unwrap().set_len(size).unwrap();
+    }
+    test.runtime.block_on(test.hook.idle_tick(Instant::now()));
+    assert!(test.stopped(0));
+    assert_eq!(test.stop_lines(), 1);
+    assert!(!test.hook.running(&test.rows[0].id));
+    assert!(test.hook.running(&test.rows[1].id));
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+    let body: serde_json::Value = serde_json::from_slice(&fs::read(&test.faults).unwrap()).unwrap();
+    assert_eq!(body["faults"].as_array().unwrap().len(), 1);
+    assert_eq!(body["faults"][0]["code"], "serial_log_full");
+    assert_eq!(body["faults"][0]["blocks_turns"], false);
+
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(fs::metadata(serial(0)).unwrap().len(), 0);
+    assert!(test.fault_codes().is_empty());
 }
 
 /// A turn that runs or an open door link keeps the VM awake (decision

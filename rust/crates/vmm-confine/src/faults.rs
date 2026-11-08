@@ -2,8 +2,9 @@
 //! the phase 2 plan, taken by decision CH36).
 //!
 //! The vmm is the third writer of contract 05 §3.3.1. It reports the two
-//! start faults of decision CH6-3 in `<faults root>/vmm/<family>.json`, in
-//! the shape of §3.3.1, with `source` `vmm`. The rules of §3.3.1 hold:
+//! start faults of decision CH6-3 and the serial log cap of decision CH79
+//! rule 7 in `<faults root>/vmm/<family>.json`, in the shape of §3.3.1,
+//! with `source` `vmm`. The rules of §3.3.1 hold:
 //!
 //! 1. The file holds the open faults of the vmm for that family.
 //! 2. Each change rewrites the whole file. An empty list clears.
@@ -24,6 +25,11 @@
 //! enum of §3.3, and the reader. caregiver reads only `attendance` and
 //! `pep` today, so it ignores this file. AGENTS.md lists this in Known
 //! gaps.
+//!
+//! CONTRACT-QUESTION (decision CH79 rule 7): the name `serial_log_full`
+//! and its `blocks_turns` false come from the PD1 draft of contract 05
+//! 0.18.0, which is not merged. No row names the code. AGENTS.md lists
+//! this in Known gaps.
 
 use std::collections::BTreeMap;
 use std::fs::{self, DirBuilder, File, OpenOptions, Permissions};
@@ -55,8 +61,7 @@ const DIR_MODE: u32 = 0o750;
 /// The mode of each fault file. The group may read it.
 const FILE_MODE: u32 = 0o640;
 
-/// A fault that the vmm raises (decision CH6-3). Both stop turns
-/// (contract 05 §3.3).
+/// A fault that the vmm raises (decisions CH6-3, CH79 rule 7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FaultCode {
@@ -64,6 +69,21 @@ pub enum FaultCode {
     SandboxStartFailed,
     /// The VM failed the deny-by-default check of `deny::check`.
     EgressAssertFailed,
+    /// The serial log of a VM passed its cap, so the vmm stopped the VM.
+    SerialLogFull,
+}
+
+impl FaultCode {
+    /// Whether the fault stops turns. Contract 05 §3.3 fixes it per code.
+    /// The two start faults stop turns. A full serial log does not: the
+    /// next start of the session writes a new log (decision CH59 rule 2).
+    #[must_use]
+    pub const fn blocks_turns(self) -> bool {
+        match self {
+            Self::SandboxStartFailed | Self::EgressAssertFailed => true,
+            Self::SerialLogFull => false,
+        }
+    }
 }
 
 /// One entry of the file: the fault object of contract 05 §3.3.
@@ -206,7 +226,7 @@ impl FaultBook {
             Some(fault) => fault.message = message,
             None => faults.push(Entry {
                 code,
-                blocks_turns: true,
+                blocks_turns: code.blocks_turns(),
                 since: rfc3339::format(now),
                 source: SOURCE,
                 message,

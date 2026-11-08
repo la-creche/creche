@@ -1122,7 +1122,8 @@ at the first poll.
    line of a CH that exited. So the task writes the fault only when it
    takes the VM itself and its CH runs, or when the stop that it joined
    failed. A stop or a retire that ends the VM, and a CH that exited on
-   its own, write no fault.
+   its own, write no fault. The serial log cap stops its VM with the
+   same `fault_stop` of `src/start.rs` (see "The sleep and the sweep").
 5. A removed host or repo does not wait for the poll: the proxy and the
    mirror read their file at each link (decisions CH6-4, CH69 rule 16).
    An added one waits one `POLL` at most.
@@ -1343,6 +1344,16 @@ the passes on paused time.
    waits as `Evicting` only for its own retire, and a VM whose door
    opens meanwhile stays up. Each VM gets one try per pass. A sleep
    closes no door.
+   Before the sleep, the same tick runs `ColdBoot::cap_serial`
+   (decisions CH62 rule 26, CH79 rule 7). It reads the size of
+   `sessions/<id>/serial.log` of each VM with a control link, in
+   `spawn_blocking`. Past `sleep::SERIAL_CAP` (64 MiB) it writes
+   `serial_log_full` to the fault file of the family and stops that VM
+   with the graceful stop, in a task of its own. That code does not stop
+   turns (`FaultCode::blocks_turns`). The VM takes no snapshot, and the
+   next start of the session writes a new log (decision CH59 rule 2).
+   So a runaway guest writes at most 64 MiB plus `IDLE_CHECK` of output
+   per start.
 2. `ColdBoot::sweep` runs `retention::sweep` of `creche-vmm-store` with
    `StartConfig::budget`, the key `VMM_SNAPSHOT_BUDGET_GIB` (PR D13,
    decisions CH2, CH8-7, CH50 rule 8). It holds the
@@ -1363,7 +1374,8 @@ reads the same gates. `tests/start.rs` proves the sleep, a turn or an
 open door that keeps a VM awake, a `starting` VM that a `running` line
 opens, a door close through the acp handler as a use, a
 sweep that skips a generation in use, an eviction that outlives its
-dropped start, and an idle check that takes out one VM at a time.
+dropped start, an idle check that takes out one VM at a time, and an
+idle tick that stops a VM past the serial cap and keeps one at it.
 
 ## The stop hook
 
@@ -1453,7 +1465,7 @@ declares.
   version of `VMM_CH_PROGRAM`, the CH that the kvm job builds (decisions
   CH36 G19, CH75). It runs no digests follow (plan PR V1). It binds
   no `vmm.sock`. The test sends it one step per line: `start`,
-  `facade`, `sleep` and `stop`.
+  `facade`, `sleep`, `cap` and `stop`.
 - The test runs it as a transient user service with
   `RuntimeDirectory=vmm` and `NoNewPrivileges=yes`, so each VM scope
   binds to its unit (decisions CH55, CH60 rule 1). The env holds each
@@ -1479,6 +1491,11 @@ declares.
   `AcpLink::dial` does, because only the door relay of phase 6 carries
   the bytes of an `AcpLink`. It writes both pull times to the job log
   (decision CH23).
+- `kvm_serial_cap_stops_the_vm_and_writes_the_fault` boots the same VM
+  and writes its serial log past `SERIAL_CAP`. The `cap` step stops it
+  with the graceful stop and writes `serial_log_full` with
+  `blocks_turns` false. The next start cold-boots with a new log and
+  clears the fault (decisions CH59 rule 2, CH79 rule 7).
 
 ## The real facade proof
 
@@ -1677,6 +1694,15 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
     back never reaches a VM. A disks release reaches new starts about
     5 min after its install. Decision CH77 rule 3 sets the retry of a failed import
     every 12 polls (1 min), with one log line per distinct fault.
+34. Closed by decision CH79 rule 7 (plan PR CP3): decision CH62 rule 26
+    asked for a vmm cap of `serial.log` before the cut. The idle tick
+    stops a VM whose log passed `SERIAL_CAP` (64 MiB) and writes
+    `serial_log_full` (`ColdBoot::cap_serial`). CH writes the file
+    itself (`--serial file=`), so the cap reads the size and changes no
+    Landlock or AppArmor rule (gap Q71-7 option A).
+    CONTRACT-QUESTION (decision CH79 rule 7): the code name and its
+    `blocks_turns` false come from the PD1 draft of contract 05 0.18.0,
+    which is not merged. `creche-vmm-confine/AGENTS.md` lists it too.
 
 ## Caller duties
 
@@ -1708,8 +1734,8 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
    `sleep::run` with the `ColdBoot` of the vmm on the runtime, and plan
    PR L19 ends its stop future before the shutdown snapshots. L20 fires
    that stop at SIGTERM and passes the end of `sleep::run` to
-   `shutdown::shutdown` as its `sleep` future. `sleep::run` is the only caller of `ColdBoot::sweep` and
-   `ColdBoot::sleep_idle` in the vmm.
+   `shutdown::shutdown` as its `sleep` future. `sleep::run` is the only caller of `ColdBoot::sweep`,
+   `ColdBoot::sleep_idle` and `ColdBoot::cap_serial` in the vmm.
 6. Two drops of one session can overlap. The `StopVm` hook of the vmm
    makes a stop that finds a stop of the same VM running wait for it
    and return its outcome. So no drop removes the files of a VM that
