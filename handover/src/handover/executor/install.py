@@ -88,10 +88,20 @@ Ten rules this module exists to keep.
     regular file of the fetched tree into `<install.to>.new`, and leaves
     out the clone's `.git`. A link or any other entry stops the stage, so
     no link in the tree can point a unit at a file outside it.
+11. **A `kind: disk-image` tree is the verified files, copied.** Root runs
+    no build, unpacks nothing and decompresses nothing (contract 06 §8.4
+    rule 4, CH35 (4)). `stage_files` copies each file that check P6
+    verified (`provenance.VerifiedFiles`) into `<install.to>.new` under its
+    file name, mode 0644, and hashes what it wrote. The sum lines must give
+    the digest that the tap bound. The walk of contract 06 §8.2 does not
+    run. The verify program sits in the tree of a `depends_on` component
+    (§4 rule 6, CH76 rule 6), so rule 3 runs there, and that program must
+    be root's alone.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shlex
 import shutil
@@ -102,6 +112,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+from ..artifacts import sum_lines_digest
 from ..catalog import Kind, RestoreMode, VerifyUser
 from ..errors import Refusal, RefusalCode, safe_token
 from ..manifest import ComponentManifest
@@ -109,7 +120,7 @@ from ..site import operator_home, operator_user
 from .host import As, Command, Host, Result
 from .quiet import WATCHED_SERVICES
 from .selfcontained import check_binary_tree, check_tree
-from .source import GIT, REFRESH_COMMAND, git_env, git_ground, require_trusted
+from .source import DIGEST_PREFIX, GIT, REFRESH_COMMAND, git_env, git_ground, require_trusted
 from .spool import VerifyHook
 from .units import (
     Change,
@@ -120,11 +131,11 @@ from .units import (
     is_stoppable,
     is_timer,
 )
-from .unpack import UnpackRefused, extract_tar
+from .unpack import BLOCK_BYTES, NEW_FILE_FLAGS, UnpackRefused, extract_tar
 
 if TYPE_CHECKING:
     # `provenance` imports `artifact`, which imports this module.
-    from .provenance import VerifiedArtifact
+    from .provenance import VerifiedArtifact, VerifiedFiles
 
 NEW_SUFFIX: Final = ".new"
 
@@ -206,6 +217,14 @@ UV: Final = "/usr/local/bin/uv"
 RELOCATABLE_ARGV: Final = (UV, "venv", "--relocatable")
 
 UNIT_FILE_MODE: Final = "0644"
+
+#: Rule 11: the mode of each file of a staged disk-image tree.
+DISK_FILE_MODE: Final = 0o644
+
+#: Rule 11: the bits that the verify program of another tree may not have.
+#: A group or another account that could write it could change what root's
+#: hook runs.
+GROUP_OTHER_WRITE: Final = stat.S_IWGRP | stat.S_IWOTH
 
 #: Rule 6: where the unit file a switch replaces is kept, beside itself.
 #: systemd loads only a name that ends in a unit type, and `prev` is none.
@@ -368,6 +387,19 @@ class Paths:
     to: Path
     prev: Path
     new: Path
+
+
+@dataclass(frozen=True)
+class BorrowedHook:
+    """Rule 11: where the verify program of a disk-image component sits at
+    step 8. `to` is the `install.to` of the `depends_on` component whose
+    tree holds it, the path that the hook names. `tree` is that tree now:
+    `<to>.new` when this release stages that component too, else `<to>`.
+    The order follows `depends_on`, so that component switches first, and
+    at step 9 the program sits in `<to>`."""
+
+    to: Path
+    tree: Path
 
 
 @dataclass(frozen=True)
@@ -578,10 +610,15 @@ class Installer:
 
         A `kind: binary` component gets the unpack of its `verified`
         archive, and no command of its `build` runs. A `kind: units`
-        component gets a copy of the fetched tree (rule 10). Each other kind
-        runs its `build` there. `source` is the fetched work tree in each
-        case: the walk of a binary tree looks for its path.
+        component gets a copy of the fetched tree (rule 10). A `kind:
+        disk-image` component stages with `stage_files` (rule 11), and its
+        `build` is CI's alone, so this refuses it before it removes a tree.
+        Each other kind runs its `build` there. `source` is the fetched work
+        tree in each case: the walk of a binary tree looks for its path.
         """
+        if manifest.kind is Kind.DISK_IMAGE:
+            raise StepFailed(f"{manifest.name}: root runs no build of a disk-image component")
+
         remove_tree(paths.new)
         paths.new.parent.mkdir(parents=True, exist_ok=True)
         if manifest.kind is Kind.BINARY:
@@ -593,6 +630,58 @@ class Installer:
 
         self._check_staged_hook(manifest, paths)
         self._check_self_contained(manifest, source, paths)
+
+    def stage_files(
+        self,
+        manifest: ComponentManifest,
+        paths: Paths,
+        verified: VerifiedFiles | None,
+        hook: BorrowedHook,
+    ) -> None:
+        """Rule 11: fill `<install.to>.new` with each file that check P6
+        verified, then prove the borrowed hook is there.
+
+        Each file is copied unchanged and hashed as it is written. A copy
+        that changed after the check gives other sum lines, so the stage
+        fails and nothing is swapped (contract 06 §8.4 rule 4, CH76 rule
+        5)."""
+        remove_tree(paths.new)
+        paths.new.parent.mkdir(parents=True, exist_ok=True)
+        if verified is None or verified.component != manifest.name:
+            raise StepFailed(f"{manifest.name}: no files that check P6 verified")
+
+        paths.new.mkdir()
+        digests = {
+            name: _copy_verified(manifest.name, copy, paths.new / name)
+            for name, copy in verified.files
+        }
+        if f"{DIGEST_PREFIX}{sum_lines_digest(digests)}" != verified.digest:
+            raise StepFailed(f"{manifest.name}: the staged files are not the files P6 verified")
+
+        self._check_borrowed_hook(manifest, hook)
+
+    def _check_borrowed_hook(self, manifest: ComponentManifest, hook: BorrowedHook) -> None:
+        """Rule 3 for a hook in the tree of a `depends_on` component (rule
+        11), and the program is root's alone: no group or other account
+        may write it.
+
+        CONTRACT-QUESTION: contract 06 §4 rule 6 says the program sits in
+        the live tree of that component. When the same release stages that
+        component, the program is checked in its `<to>.new`, which its
+        switch makes live before this component switches. The other reading
+        refuses each set that releases the `vmm` and `disks` together. It
+        costs one request for each, in order."""
+        staged = _relocate(manifest.verify.command[0], hook.to, hook.tree)
+        if staged is None:
+            raise StepFailed(f"{manifest.name}: the verify hook is in no tree of depends_on")
+
+        real = _resolved(staged)
+        if real is None or not real.is_file() or hook.tree.resolve() not in real.parents:
+            raise StepFailed(f"{manifest.name}: the borrowed verify hook is missing or escapes")
+
+        facts = real.stat()
+        if facts.st_uid != os.geteuid() or stat.S_IMODE(facts.st_mode) & GROUP_OTHER_WRITE:
+            raise StepFailed(f"{manifest.name}: the borrowed verify hook is not root's alone")
 
     def _run_build(self, manifest: ComponentManifest, source: Path, paths: Paths) -> None:
         """The `build` argv of the manifest, as root, in the fetched tree."""
@@ -1453,6 +1542,31 @@ def _unpack(manifest: ComponentManifest, paths: Paths, verified: VerifiedArtifac
     except OSError as exc:
         detail = f"{manifest.name}: the archive could not be unpacked: {type(exc).__name__}"
         raise StepFailed(detail) from None
+
+
+def _copy_verified(component: str, copy: Path, target: Path) -> str:
+    """Rule 11: one verified copy, written to `target` as a new file with
+    the mode `DISK_FILE_MODE`. No link is followed at either end. The
+    answer is the SHA-256 of the bytes written, as 64 hex."""
+    digest = hashlib.sha256()
+    try:
+        with (
+            open(copy, "rb", opener=_open_no_link) as reader,
+            os.fdopen(os.open(target, NEW_FILE_FLAGS, DISK_FILE_MODE), "wb") as writer,
+        ):
+            os.fchmod(writer.fileno(), DISK_FILE_MODE)
+            for block in iter(lambda: reader.read(BLOCK_BYTES), b""):
+                digest.update(block)
+                writer.write(block)
+    except OSError as exc:
+        detail = f"{component}: {target.name} could not be staged: {type(exc).__name__}"
+        raise StepFailed(detail) from None
+
+    return digest.hexdigest()
+
+
+def _open_no_link(path: str, flags: int) -> int:
+    return os.open(path, flags | os.O_NOFOLLOW | os.O_CLOEXEC)
 
 
 def copy_units_tree(component: str, source: Path, new: Path) -> None:

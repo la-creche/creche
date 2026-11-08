@@ -31,8 +31,16 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from handover.artifacts import AssetLimit, asset_limits, asset_names
-from handover.catalog import BUNDLE_MAX_BYTES, CATALOG, CATALOG_BY_NAME, Kind
+from handover.artifacts import AssetLimit, asset_limits, asset_names, sum_lines_digest
+from handover.catalog import (
+    BUNDLE_MAX_BYTES,
+    BUNDLE_SUFFIX,
+    CATALOG,
+    CATALOG_BY_NAME,
+    DIGESTS_MAX_BYTES,
+    DISK_FILE_MAX_BYTES,
+    Kind,
+)
 from handover.executor import artifact
 from handover.executor.approval import Decision, Summary
 from handover.executor.artifact import (
@@ -53,6 +61,8 @@ from handover.executor.artifact import (
     OUTSIDE_LIMIT,
     SECOND_NAME,
     Copied,
+    CopiedFiles,
+    CopyResult,
     NoCopy,
     copy_from_store,
 )
@@ -79,6 +89,8 @@ from handover_bin_fixtures import (
     use_binary_catalog,
     write_program,
 )
+from handover_disk_fixtures import DISK_BYTES, DISKS, disk_bundle, sha256_hex, stock_disk_store
+from handover_disk_fixtures import NEW_VERSION as DISK_NEW_VERSION
 from handover_executor_fixtures import (
     DIGEST,
     REQUEST_ID,
@@ -170,10 +182,10 @@ def work(tmp_path: Path) -> Path:
     return tmp_path / "work" / REQUEST_ID
 
 
-def _copy(
-    work: Path, uid: int | None = None, earlier: Copied | NoCopy | None = None
-) -> Copied | NoCopy:
-    return copy_from_store(COMPONENT, TAG, work, os.getuid() if uid is None else uid, earlier)
+def _copy(work: Path, uid: int | None = None, earlier: CopyResult | None = None) -> CopyResult:
+    owner = os.getuid() if uid is None else uid
+
+    return copy_from_store(COMPONENT, Kind.BINARY, TAG, work, owner, earlier)
 
 
 def _copy_dir(work: Path) -> Path:
@@ -184,13 +196,13 @@ def _note(template: str, asset: str = "") -> str:
     return template.format(component=COMPONENT, asset=asset)
 
 
-def _no_copy(result: Copied | NoCopy) -> str:
+def _no_copy(result: CopyResult) -> str:
     assert isinstance(result, NoCopy), result
 
     return result.note
 
 
-def _copied(result: Copied | NoCopy) -> Copied:
+def _copied(result: CopyResult) -> Copied:
     assert isinstance(result, Copied), result
 
     return result
@@ -367,7 +379,7 @@ def test_a_fifo_gives_no_copy_and_does_not_block(home: Path, work: Path) -> None
     directory = _stock(home)
     (directory / NAMES.archive).unlink()
     os.mkfifo(directory / NAMES.archive, STORE_FILE_MODE)
-    results: list[Copied | NoCopy] = []
+    results: list[CopyResult] = []
     worker = threading.Thread(target=lambda: results.append(_copy(work)), daemon=True)
 
     worker.start()
@@ -451,7 +463,7 @@ def test_a_file_of_exactly_its_limit_is_copied(home: Path, work: Path) -> None:
 def test_a_tag_of_another_component_gives_no_copy(home: Path, work: Path) -> None:
     _stock(home)
 
-    result = copy_from_store(COMPONENT, f"caregiver-v{NEW_VERSION}", work, os.getuid())
+    result = copy_from_store(COMPONENT, Kind.BINARY, f"caregiver-v{NEW_VERSION}", work, os.getuid())
 
     assert _no_copy(result) == _note(NOT_ITS_TAG)
     assert not work.exists()
@@ -489,6 +501,120 @@ def test_a_site_file_with_no_home_gives_no_copy(
     monkeypatch.setenv(site.SITE_FILE_ENV, str(site_file))
 
     assert _no_copy(_copy(work)) == _note(NO_HOME)
+
+
+# ---- 2a. the files of a disk-image component --------------------------------------
+
+DISK_TAG = f"{DISKS}-v{DISK_NEW_VERSION}"
+
+
+def _copy_disks(work: Path, earlier: CopyResult | None = None) -> CopyResult:
+    return copy_from_store(DISKS, Kind.DISK_IMAGE, DISK_TAG, work, os.getuid(), earlier)
+
+
+def _copied_files(result: CopyResult) -> CopiedFiles:
+    assert isinstance(result, CopiedFiles), result
+
+    return result
+
+
+def _disk_note(template: str, asset: str = "") -> str:
+    return template.format(component=DISKS, asset=asset)
+
+
+def _disk_left(work: Path) -> list[str]:
+    return sorted(one.name for one in (work / COPY_DIR / DISKS).iterdir())
+
+
+def test_each_disk_file_and_its_bundle_is_copied(home: Path, work: Path) -> None:
+    """Contract 06 §3.4: root copies each file of the row with its own
+    bundle, in the order of `asset_limits`."""
+    stock_disk_store(home)
+
+    copied = _copied_files(_copy_disks(work))
+
+    assert [one.name for one in copied.files] == list(DISK_BYTES)
+    for one in copied.files:
+        assert one.file == work / COPY_DIR / DISKS / one.name
+        assert one.bundle == work / COPY_DIR / DISKS / f"{one.name}{BUNDLE_SUFFIX}"
+        assert one.file.read_bytes() == DISK_BYTES[one.name]
+        assert one.bundle.read_bytes() == disk_bundle(DISK_BYTES[one.name])
+
+
+def test_the_digest_of_a_disk_copy_is_the_hash_of_its_sum_lines(home: Path, work: Path) -> None:
+    """CH76 rule 5. No bundle changes it."""
+    stock_disk_store(home, bundles={"base.ext4.zst": b"another bundle\n"})
+    digests = {name: sha256_hex(raw) for name, raw in DISK_BYTES.items()}
+
+    copied = _copied_files(_copy_disks(work))
+
+    assert copied.digest == f"sha256:{sum_lines_digest(digests)}"
+
+
+def test_a_disk_file_owned_by_another_user_is_refused(
+    home: Path, work: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule 5a: root copies only a file of the operator. The first file is
+    `digests.json`, and the note names it."""
+    stock_disk_store(home)
+    _faked_fstat(monkeypatch, lambda found: _with(found, st_uid=found.st_uid + 1))
+
+    assert _no_copy(_copy_disks(work)) == _disk_note(NOT_OPERATORS_FILE, "digests.json")
+    assert _disk_left(work) == []
+
+
+def test_a_sparse_disk_file_past_its_limit_is_refused(home: Path, work: Path) -> None:
+    """The size is one byte past 2 GiB - 1, and the disk holds no such
+    count of bytes. No file of the row stays in the copy."""
+    directory = stock_disk_store(home)
+    with (directory / "base.ext4.zst").open("r+b") as handle:
+        handle.truncate(DISK_FILE_MAX_BYTES + 1)
+
+    assert _no_copy(_copy_disks(work)) == _disk_note(OUTSIDE_LIMIT, "base.ext4.zst")
+    assert _disk_left(work) == []
+
+
+def test_a_digests_file_past_its_own_limit_is_refused(home: Path, work: Path) -> None:
+    """`digests.json` has the 64 KiB cap of the reader of the vmm."""
+    stock_disk_store(home, files={**DISK_BYTES, "digests.json": b"{" * (DIGESTS_MAX_BYTES + 1)})
+
+    assert _no_copy(_copy_disks(work)) == _disk_note(OUTSIDE_LIMIT, "digests.json")
+
+
+def test_a_missing_disk_bundle_gives_no_copy(home: Path, work: Path) -> None:
+    directory = stock_disk_store(home)
+    (directory / f"python.ext4.zst{BUNDLE_SUFFIX}").unlink()
+
+    note = _disk_note(NO_FILE, f"python.ext4.zst{BUNDLE_SUFFIX}")
+    assert _no_copy(_copy_disks(work)) == note
+    assert _disk_left(work) == []
+
+
+def test_a_second_disk_call_hashes_the_copy_and_not_the_store(home: Path, work: Path) -> None:
+    directory = stock_disk_store(home)
+    first = _copied_files(_copy_disks(work))
+    (directory / "vmlinux-x86_64.zst").unlink()
+    changed = first.files[1].file
+    changed.write_bytes(b"other bytes\n")
+
+    second = _copied_files(_copy_disks(work, earlier=first))
+
+    assert second.digest != first.digest
+    assert [one.file for one in second.files] == [one.file for one in first.files]
+
+
+def test_a_disk_bundle_that_is_not_its_files_bundle_gives_no_copy(
+    home: Path, work: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The copy pairs each file with `<file>.sigstore.json`, so no check
+    reads a file with the bundle of another file."""
+    stock_disk_store(home)
+    limits = asset_limits(DISKS, Kind.DISK_IMAGE)
+    swapped = (limits[0], limits[3], limits[2], limits[1], *limits[4:])
+    monkeypatch.setattr(artifact, "asset_limits", lambda component, kind: swapped)
+
+    assert _no_copy(_copy_disks(work)) == _disk_note(NO_ASSETS)
+    assert not work.exists()
 
 
 # ---- 3. a later call in the same release -----------------------------------------

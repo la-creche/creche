@@ -12,6 +12,7 @@ that the tag is a Release CI cut, on the SHA the resolver computed, on
 | P4 | The SHA is a pull-request merge commit. |
 | P5 | That pull request's head has CI runs, all completed and successful. |
 | P6 | A `kind: binary` component: the signature and the member list of root's copy of an archive. |
+| P6 | A `kind: disk-image` component: the signature of each file of root's copy. |
 
 Plus: no component goes backwards unless `kind: rollback` (§2.4 step 3).
 
@@ -25,7 +26,10 @@ children in a transient unit with a dynamic user (`host.As.VERIFIER`):
 
 Root reads the exit status of each child and no text. After a signature
 passes, root reads the member list of its copy and writes no file. A pass
-gives a `VerifiedArtifact`, and the stage unpacks only such a value.
+gives a `VerifiedArtifact`, and the stage unpacks only such a value. For a
+disk-image component child 2 runs once for each file, and a pass gives a
+`VerifiedFiles`, the one value the stage copies files from (contract 06
+§8.4 rule 3, CH76 rule 5).
 
 They read the tag shape `<component>-vX.Y.Z` (contract 06 §2) and were
 measured on the host on 2026-09-17. Two facts from that run are easy to
@@ -66,7 +70,7 @@ from ..artifacts import ArtifactRefusal, SignerPolicy, verify_words
 from ..catalog import MAIN_BRANCH
 from ..errors import Refusal, RefusalCode
 from ..site import cosign_program, github_owner, github_repo
-from .artifact import Copied
+from .artifact import Copied, CopiedFiles
 from .host import (
     NO_VERIFIER_EXIT_CODE,
     TIMEOUT_EXIT_CODE,
@@ -375,10 +379,10 @@ NO_ANSWER: Final = frozenset({NO_VERIFIER_EXIT_CODE, TIMEOUT_EXIT_CODE})
 
 
 class _Checked:
-    """No module but this one names this type. `VerifiedArtifact` takes a
-    value of it first, so only `check_artifact` makes one: pyright refuses
-    the private name in each other module, and the type refuses each other
-    value."""
+    """No module but this one names this type. `VerifiedArtifact` and
+    `VerifiedFiles` take a value of it first, so only `check_artifact` and
+    `check_files` make one: pyright refuses the private name in each other
+    module, and the type refuses each other value."""
 
 
 _CHECKED: Final = _Checked()
@@ -423,6 +427,42 @@ class VerifiedArtifact:
         return self._programs
 
 
+@dataclass(frozen=True)
+class VerifiedFiles:
+    """Root's copy of each file of one disk-image component, after P6
+    passed for each file with its own bundle. Step 8 copies only such a
+    value into the staged tree (contract 06 §8.4 rule 4).
+
+    `check_files` is the one maker. The fields are private to this module,
+    and the accessors read them.
+    """
+
+    made: InitVar[_Checked]
+    _component: str
+    _files: tuple[tuple[str, Path], ...]
+    _digest: str
+
+    def __post_init__(self, made: _Checked) -> None:
+        if made is not _CHECKED:
+            raise TypeError("only check_files makes a VerifiedFiles")
+
+    @property
+    def component(self) -> str:
+        return self._component
+
+    @property
+    def files(self) -> tuple[tuple[str, Path], ...]:
+        """Each file name of the Release, with root's copy of that file in
+        the work tree of the request, in the order of the copy."""
+        return self._files
+
+    @property
+    def digest(self) -> str:
+        """The digest of the copies at step 2: `sha256:` and the hash of
+        their sum lines (`artifacts.sum_lines_digest`)."""
+        return self._digest
+
+
 def _refuse_artifact(component: str, reason: ArtifactRefusal) -> Refusal:
     return Refusal(RefusalCode.P6, component, str(reason))
 
@@ -458,14 +498,56 @@ def check_artifact(
     signature, so the follower does not ask again. A change costs a
     signal other than the exit status.
     """
+    _refresh(run, component)
+    _check_signature(run, component, policy, copy.archive, copy.bundle)
+    try:
+        programs = list_component_archive(copy.archive, component)
+    except (UnpackRefused, OSError):
+        # A copy whose member list root cannot read has no shape that
+        # passed.
+        raise _refuse_artifact(component, ArtifactRefusal.SHAPE_REFUSED) from None
+
+    return VerifiedArtifact(_CHECKED, component, copy.archive, copy.digest, programs)
+
+
+def check_files(
+    run: RunFn, component: str, policy: SignerPolicy, copy: CopiedFiles
+) -> VerifiedFiles:
+    """P6 for one `kind: disk-image` component: the signature of root's
+    copy of each file, each with its own bundle (contract 06 §8.4 rule 3,
+    CH76 rule 5). The signer policy is the policy of a binary archive.
+
+    Child 1 runs once. Child 2 runs once for each file, in the order of the
+    copy, and the first file that does not pass stops the check. The
+    refusals are the first three of `check_artifact`. A bundle of another
+    file signs other bytes, so its check is a refused signature. Root
+    reads no file of the copy: the stage copies each file unchanged, and
+    nothing unpacks one.
+    """
+    _refresh(run, component)
+    for one in copy.files:
+        _check_signature(run, component, policy, one.file, one.bundle)
+
+    files = tuple((one.name, one.file) for one in copy.files)
+
+    return VerifiedFiles(_CHECKED, component, files, copy.digest)
+
+
+def _refresh(run: RunFn, component: str) -> None:
+    """Child 1: load the trust root. Any status but a pass is no answer."""
     verifier = cosign_program()
     refresh = Command(argv=(verifier, REFRESH), identity=As.VERIFIER, timeout_s=VERIFIER_TIMEOUT_S)
     if _status(run, refresh) != PASSED:
         raise _refuse_artifact(component, ArtifactRefusal.VERIFIER_UNAVAILABLE)
 
-    words = verify_words(policy, str(copy.archive), str(copy.bundle), TRUSTED_ROOT)
+
+def _check_signature(
+    run: RunFn, component: str, policy: SignerPolicy, signed: Path, bundle: Path
+) -> None:
+    """Child 2 for one signed file and its bundle, with no network."""
+    words = verify_words(policy, str(signed), str(bundle), TRUSTED_ROOT)
     check = Command(
-        argv=(verifier, *words),
+        argv=(cosign_program(), *words),
         identity=As.VERIFIER,
         timeout_s=VERIFIER_TIMEOUT_S,
         network=Network.NONE,
@@ -476,15 +558,6 @@ def check_artifact(
 
     if status != PASSED:
         raise _refuse_artifact(component, ArtifactRefusal.SIGNATURE_REFUSED)
-
-    try:
-        programs = list_component_archive(copy.archive, component)
-    except (UnpackRefused, OSError):
-        # A copy whose member list root cannot read has no shape that
-        # passed.
-        raise _refuse_artifact(component, ArtifactRefusal.SHAPE_REFUSED) from None
-
-    return VerifiedArtifact(_CHECKED, component, copy.archive, copy.digest, programs)
 
 
 def _status(run: RunFn, command: Command) -> int:

@@ -40,8 +40,9 @@ prints no gate id, because root alone computes `manifest_sha256`.
 
 `corpus/` runs `git fetch` in the corpus root, as the operator, before a
 request is filed. `corpus/artifacts.py` runs `curl` as the operator. It
-fetches the two assets of the Release of a binary component into the store
-below the home of the operator. One fetch at a time writes in the directory
+fetches the two assets of the Release of a binary component, and each file
+and bundle of a disk-image component, into the store below the home of the
+operator. One fetch at a time writes in the directory
 of a tag: the fetch holds a lock on that directory. The package refuses to
 run as root. Nothing in it raises. `requester/` never imports it.
 
@@ -223,8 +224,9 @@ has the name of the markup of the manifest: `.component.toml` or
    written costs no request.
 7. A followed name is a releasable component of the catalog. A name on the
    command line carries no version: the version is the newest tag.
-8. A member that ships an archive is ready when the store holds its two
-   files. While a member is not ready and its 600 seconds are not over, the
+8. A member that ships signed assets is ready when the store holds each of
+   them: the two files of a binary member, each file and bundle of a
+   disk-image member. While a member is not ready and its 600 seconds are not over, the
    run files nothing. The 600 seconds start at the first run that read the
    tag of the member. After that time, the rest of the set goes to rules 2
    to 6, and the run prints one line. The marker keeps the version and the
@@ -505,11 +507,34 @@ CH7-2, CH35 (4), CH76 rules 1 and 5). Its manifest is
    `handover artifacts` prints binary rows only, so `read_rows` of
    `bin/lib/artifactrows.sh` never meets a disk line.
 7. `artifacts.assets_expected` is true for `binary` and `disk-image`. So
-   root's check P6 runs for a disk-image release. Until the executor reads
-   the files of the row (plan PR H3b), root finds no copy of them and P6
-   refuses with `no artifact in the store`. No disk-image build runs.
+   root's check P6 runs for a disk-image release, and P6 refuses with `no
+   artifact in the store` when step 2 made no copy.
 8. Release `handover` before the first manifest says `kind: disk-image`.
    An older executor or requester refuses that manifest.
+9. The operator side fetches each asset of the row with its own
+   `--max-filesize` (`corpus/artifacts.py`). The follower reads the member
+   as ready only when the store holds each file and each bundle
+   (`follow/` rule 7).
+10. Root copies each file and its bundle by rule 5a, with the limit of
+    that file, one read of the store in a release (`executor/artifact.py`).
+    Each bundle is `<file>.sigstore.json`. The approval digest is
+    `artifacts.sum_lines_digest`: the SHA-256 of the sorted `sha256sum`
+    lines of root's copies of the files (contract 06 §9, CH76 rule 5).
+11. Check P6 runs child 2 of the verifier once for each file, with the
+    bundle of that file and the signer policy of a binary archive
+    (`provenance.check_files`). A pass gives one `VerifiedFiles`, and only
+    the check makes one.
+12. Step 8 copies each verified file into `<install.to>.new` under its
+    name, root's and 0644, and hashes what it wrote. Sum lines that differ
+    from the approval digest fail the stage. Root runs no build, unpacks
+    nothing and decompresses nothing. The walk of contract 06 §8.2 does not
+    run (`Installer.stage_files`, `install.py` rule 11).
+13. The verify program sits in the tree of the `depends_on` component that
+    `manifest.hook_holder` names: its staged tree when the same release
+    stages it, else its live tree. It must be a regular file inside that
+    tree, owned by root, and no group or other account may write it. A
+    disk-image row names no unit, so step 9 restarts nothing, and a failed
+    hook puts the previous tree back (contract 06 §8.4 rules 5 and 6).
 
 ## The host component of creche-release
 
@@ -628,12 +653,12 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, the server file as hostile bytes, the uninstalled component |
 | `artifacts.py`, `treewalk.py` | the names, the limits and the signer of the archive of a binary component and of the files of a disk-image component, the walk of a tree of compiled programs |
 | `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow`, `artifacts`, `disk-assets`, `check-tree` |
-| `requester/`, `corpus/` | one request file, one `git fetch`, and the fetch of the two assets of a binary component into the store (`corpus/artifacts.py`) |
+| `requester/`, `corpus/` | one request file, one `git fetch`, and the fetch of the signed assets of a binary or disk-image component into the store (`corpus/artifacts.py`) |
 | `follow/` | the set a newer tag moves, the marker, the decision |
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P6 |
 | `executor/approval.py`, `phone.py`, `notice.py`, `quiet.py` | the gate, the transport, the outcome push, the busy check of step 7 and the quiet minutes |
 | `executor/host.py`, `install.py`, `mcpbuild.py`, `self_switch.py` | the one spawn and the unit of the verifier, steps 8 to 10, a server tree, the self-release |
-| `executor/unpack.py`, `artifact.py` | the unpack of a tar archive and the member list of a component archive, root's copy of the two assets of a binary component and the digest of its archive |
+| `executor/unpack.py`, `artifact.py` | the unpack of a tar archive and the member list of a component archive, root's copy of the signed assets of a binary or disk-image component and its digest |
 | `executor/ledger.py`, `steps.py`, `drain.py` | the entry, the ten steps, the unit's entry point |
 | `bin/allocate-tags.sh` | the workflow's body: gather, plan, tag, release |
 
@@ -674,7 +699,16 @@ that wants a refusal changes one field.
 - When the network connection of the host cannot fetch an archive inside
   one run of the follower, the follower never fetches it. One run has 270
   seconds, and the fetch resumes no partial file. `handover request` fetches
-  with 600 seconds (`cli.py`).
+  with 600 seconds (`cli.py`). A disk file of 415 to 506 MiB needs about
+  1.9 MiB/s in one run. Not checked: the rate from the host to the code
+  host (plan risk 10).
+- Contract 06 §4 rule 6 says the verify program of a disk-image component
+  sits in the live tree of its `depends_on` component. CONTRACT-QUESTION:
+  when the same release stages that component, step 8 checks the program
+  in its `<install.to>.new`. Its switch comes first and makes that tree
+  live before the hook runs. The other reading refuses a set that releases
+  the `vmm` and `disks` together, and costs one request for each, in order
+  (`executor/install.py`).
 - The follower does not ask again for a request that root never ledgered.
   A newer tag or a request by hand recovers (`follow/`).
 - The follower reads tags out of the corpus. Root refuses a tag that has no

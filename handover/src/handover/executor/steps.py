@@ -43,11 +43,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, cast
 
-from ..artifacts import ArtifactRefusal, assets_expected, signer_policy
+from ..artifacts import ArtifactRefusal, SignerPolicy, assets_expected, signer_policy
 from ..catalog import CATALOG_BY_NAME, Kind, Repo
 from ..discovery import read_one
 from ..errors import Refusal, RefusalCode
-from ..manifest import ComponentManifest
+from ..manifest import DISK_IMAGE_HOOK_OUTSIDE, ComponentManifest, hook_holder
 from ..mcpserver import ServerFile, read_registry
 from ..resolve import (
     TAG_FORMAT,
@@ -69,10 +69,11 @@ from .approval import (
     contracts_row,
     gate_id,
 )
-from .artifact import Copied, NoCopy, copy_from_store
+from .artifact import Copied, CopiedFiles, CopyResult, NoCopy, copy_from_store
 from .host import Host, distrusted
 from .install import (
     UNIT_KEPT_SUFFIX,
+    BorrowedHook,
     Installer,
     Paths,
     StepFailed,
@@ -96,7 +97,15 @@ from .live_state import (
 )
 from .mcpbuild import Fetched, McpBuilder, ServerBuild
 from .notice import Notifier, say_nothing
-from .provenance import ApiGetFn, VerifiedArtifact, check_artifact, check_monotonic, verify_commit
+from .provenance import (
+    ApiGetFn,
+    VerifiedArtifact,
+    VerifiedFiles,
+    check_artifact,
+    check_files,
+    check_monotonic,
+    verify_commit,
+)
 from .provenance import verify as check_provenance
 from .quiet import NO_WINDOW, Busy, BusyNowFn, BusySeenFn, needs_window, wait_for_quiet
 from .request import Kind as RequestKind
@@ -105,8 +114,8 @@ from .spool import SelfNote, Spool, SwitchNote, VerifyHook, acquire, release_loc
 from .units import UnitsDiff, component_units, drop_in_restarts, unit_files, units_diff
 
 #: The step detail of step 3: the checks of the code host, and those with
-#: the check of an archive, for a set that holds a `kind: binary`
-#: component.
+#: the check of the signed assets, for a set that holds a `kind: binary`
+#: or a `kind: disk-image` component.
 HOST_CHECKS: Final = "P1-P5"
 ALL_CHECKS: Final = "P1-P6"
 
@@ -453,14 +462,18 @@ class Release:
         #: order it cloned them. Row 5 of `_read_manifests` reads out of
         #: these and out of nothing else.
         self.fetched: list[str] = []
-        #: The result of the last copy of the two assets of each binary
-        #: component that deploys, by component (`_copy_artifacts`). Step
-        #: 2 makes the copy. Step 8 gives the result of step 2 back to the
-        #: copy, so it reads root's copy again and never the store.
-        self.copies: dict[str, Copied | NoCopy] = {}
+        #: The result of the last copy of the signed assets of each binary
+        #: or disk-image component that deploys, by component
+        #: (`_copy_artifacts`). Step 2 makes the copy. Step 8 gives the
+        #: result of step 2 back to the copy, so it reads root's copy again
+        #: and never the store.
+        self.copies: dict[str, CopyResult] = {}
         #: The archive of each binary component that passed check P6 at
         #: step 3, by component. Step 8 unpacks only these.
         self.verified: dict[str, VerifiedArtifact] = {}
+        #: The files of each disk-image component that passed check P6 at
+        #: step 3, by component. Step 8 copies only these (contract 06 §8.4).
+        self.verified_files: dict[str, VerifiedFiles] = {}
         #: What step 8's compose dry run said each `kind: compose`
         #: component would recreate. Step 9 reads it for §2.8's window.
         self.recreates: dict[str, tuple[str, ...]] = {}
@@ -823,9 +836,11 @@ class Release:
         The manifest of the new tag is root's one source for the kind of a
         component. So this runs after root read the manifests, and before
         `resolve`. For each component that deploys and whose manifest
-        ships an archive, root copies the two assets of the new tag
+        ships signed assets, root copies each asset of the new tag
         (`artifact.py`) and puts the digest of its copy into
-        `artifact_digest`. A component with no copy keeps null.
+        `artifact_digest`: the archive of a binary component, the sum lines
+        of the files of a disk-image component (contract 06 §9, CH76 rule
+        5). A component with no copy keeps null.
 
         Step 2 and step 8 each call it. The first call reads the store.
         The second call gets the result of the first, and it reads the
@@ -842,7 +857,8 @@ class Release:
 
             tag = TAG_FORMAT.format(name=name, version=version)
             earlier = self.copies.get(name)
-            copy = copy_from_store(name, tag, work, self.wiring.host.source_owner_uid, earlier)
+            owner = self.wiring.host.source_owner_uid
+            copy = copy_from_store(name, manifest.kind, tag, work, owner, earlier)
             self.copies[name] = copy
             known = facts.get(name)
             if isinstance(copy, NoCopy):
@@ -937,7 +953,7 @@ class Release:
 
     def _provenance(self) -> str:
         """P1 to P5 per deploying component, plus the monotonic rule, then
-        P6 for each component whose manifest ships an archive.
+        P6 for each component whose manifest ships signed assets.
 
         Every component in the set, not only the first: one unverified
         entry in a set of three is a set nobody verified.
@@ -953,7 +969,9 @@ class Release:
                 self.wiring.api, name, str(manifest.repo), plan.tag(name), plan.sha(name)
             )
             check_monotonic(name, plan.to_version(name), plan.from_version(name))
-            if assets_expected(manifest.kind):
+            if manifest.kind is Kind.DISK_IMAGE:
+                self.verified_files[name] = self._check_files(plan, name, manifest)
+            elif assets_expected(manifest.kind):
                 self.verified[name] = self._check_archive(plan, name, manifest)
 
             found.append(f"{name} PR #{reply.pr}")
@@ -967,21 +985,34 @@ class Release:
             reply = verify_commit(self.wiring.api, REGISTRY_DATA, REGISTRY_REPO, registry_sha)
             found.append(f"{REGISTRY_DATA} PR #{reply.pr}")
 
-        checks = ALL_CHECKS if self.verified else HOST_CHECKS
+        checks = ALL_CHECKS if self.verified or self.verified_files else HOST_CHECKS
 
         return f"{checks} pass: {', '.join(found)}"
 
     def _check_archive(
         self, plan: Plan, name: str, manifest: ComponentManifest
     ) -> VerifiedArtifact:
-        """P6 for one component, on root's copy of step 2. The signer is a
-        job of the release workflow of its repository, at the resolved SHA.
-        The site file gives the owner and the name of that repository on
-        the code host, with the letter case that they have there."""
+        """P6 for one binary component, on root's copy of step 2."""
         copy = self.copies.get(name)
         if not isinstance(copy, Copied):
             raise Refusal(RefusalCode.P6, name, str(ArtifactRefusal.NO_ARTIFACT))
 
+        return check_artifact(self.wiring.host.run, name, self._signer(plan, name, manifest), copy)
+
+    def _check_files(self, plan: Plan, name: str, manifest: ComponentManifest) -> VerifiedFiles:
+        """P6 for one disk-image component: each file of root's copy of
+        step 2, each with its own bundle (contract 06 §8.4 rule 3)."""
+        copy = self.copies.get(name)
+        if not isinstance(copy, CopiedFiles):
+            raise Refusal(RefusalCode.P6, name, str(ArtifactRefusal.NO_ARTIFACT))
+
+        return check_files(self.wiring.host.run, name, self._signer(plan, name, manifest), copy)
+
+    def _signer(self, plan: Plan, name: str, manifest: ComponentManifest) -> SignerPolicy:
+        """The signer of one component: a job of the release workflow of
+        its repository, at the resolved SHA. The site file gives the owner
+        and the name of that repository on the code host, with the letter
+        case that they have there."""
         # The unit of the verifier reads the copy as a dynamic user, which
         # must pass through each directory down to it. Step 2 can make the
         # work root with the umask of the release unit, and the copy opens
@@ -991,7 +1022,7 @@ class Release:
         policy = signer_policy(repo, github_owner(), github_repo(str(repo)), plan.sha(name))
         self._say_distrusted(name)
 
-        return check_artifact(self.wiring.host.run, name, policy, copy)
+        return policy
 
     def _say_distrusted(self, name: str) -> None:
         """One log line for each program of the verifier that root does
@@ -1172,7 +1203,11 @@ class Release:
         self.installer.check_unit_binds(manifest, source)
         registry_sha = self._approved_registry_sha(plan) if name == MCP_COMPONENT else None
         self.paths[name] = paths
-        self.installer.build(manifest, source, paths, self.verified.get(name))
+        if manifest.kind is Kind.DISK_IMAGE:
+            hook = self._borrowed_hook(plan, manifest)
+            self.installer.stage_files(manifest, paths, self.verified_files.get(name), hook)
+        else:
+            self.installer.build(manifest, source, paths, self.verified.get(name))
         if manifest.kind is Kind.UNITS:
             # Contract 06 §1 rule 12 and §8.3 items 1 and 3, on the staged
             # tree and before the swap. The other manifests name the units
@@ -1204,6 +1239,25 @@ class Release:
 
         if registry_sha is not None:
             self._stage_servers(plan, source, registry_sha)
+
+    def _borrowed_hook(self, plan: Plan, manifest: ComponentManifest) -> BorrowedHook:
+        """Where the verify program of a disk-image component sits at step
+        8 (`install.py` rule 11, contract 06 §4 rule 6, CH76 rule 6): the
+        tree of the `depends_on` component that `manifest.hook_holder`
+        names. When this release staged that component already, its staged
+        tree. Else its live tree. The resolver refused a hook outside every
+        such tree, so a None here is a failed stage."""
+        holder = hook_holder(manifest, plan.manifests)
+        if holder is None:
+            raise StepFailed(f"{manifest.name}: {DISK_IMAGE_HOOK_OUTSIDE}")
+
+        staged = self.paths.get(holder.name)
+        if staged is not None:
+            return BorrowedHook(to=staged.to, tree=staged.new)
+
+        live = paths_of(holder, self.wiring.host.install_roots).to
+
+        return BorrowedHook(to=live, tree=live)
 
     def _approved_registry_sha(self, plan: Plan) -> str:
         """The registry commit David approved (contract 06 §9). A set that
