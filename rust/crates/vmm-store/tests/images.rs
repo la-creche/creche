@@ -12,6 +12,7 @@ use std::process::Command;
 
 use creche_vmm_store::images::{
     CheckError, FileIdentity, ImageDigest, ImageStore, ImportError, MadeError, STORE_MODE,
+    hash_source,
 };
 use creche_vmm_store::layout::StateRoot;
 use sha2::{Digest, Sha256};
@@ -172,6 +173,51 @@ fn a_bad_zst_source_refuses_and_leaves_no_file() {
         .expect_err("a failure");
     assert!(matches!(error, ImportError::Decompress { .. }), "{error}");
     assert!(temp.store_files().is_empty());
+}
+
+/// `hash_source` reads a file as the import reads it and writes no file
+/// (decision CH76 rule 6): a plain file gives the digest of its bytes, and
+/// a `.zst` file the digest of the decompressed bytes (CH41 rule 1).
+#[test]
+fn hash_source_gives_the_digest_that_the_import_checks() {
+    let temp = Temp::new("hash");
+    let plain = temp.source("disk.ext4", BYTES);
+    let packed = temp.dir.join("source").join("disk.ext4.zst");
+    let status = Command::new("zstd")
+        .args(["-q", "-o"])
+        .arg(&packed)
+        .arg(&plain)
+        .status()
+        .expect("zstd runs");
+    assert!(status.success());
+    let zstd = PathBuf::from("zstd");
+
+    assert_eq!(
+        hash_source(&zstd, &plain).expect("a digest"),
+        digest_of(BYTES)
+    );
+    assert_eq!(
+        hash_source(&zstd, &packed).expect("a digest"),
+        digest_of(BYTES)
+    );
+    let mut names: Vec<_> = fs::read_dir(temp.dir.join("source"))
+        .expect("the source dir")
+        .map(|entry| entry.expect("an entry").file_name())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["disk.ext4", "disk.ext4.zst"]);
+    assert!(!temp.dir.join("state").exists());
+}
+
+#[test]
+fn hash_source_refuses_a_bad_zst_file() {
+    let temp = Temp::new("hash-bad");
+    let source = temp.source("disk.ext4.zst", BYTES);
+    let error = hash_source(&PathBuf::from("zstd"), &source).expect_err("a failure");
+    assert!(matches!(error, ImportError::Decompress { .. }), "{error}");
+    let missing = temp.dir.join("source").join("gone.ext4");
+    let error = hash_source(&PathBuf::from("zstd"), &missing).expect_err("a failure");
+    assert!(matches!(error, ImportError::Io { .. }), "{error}");
 }
 
 #[test]

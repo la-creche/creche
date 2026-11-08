@@ -19,16 +19,31 @@
 //! no name.
 //!
 //! The compose step then imports each named file into the digest store of
-//! the state root (`ImageStore::import`) and gives the `Digests` of
-//! `StartConfig`. An import reads no byte when the store already holds the
+//! the state root (`ImageStore::import`, through `follow::Follow::start`)
+//! and gives the `Digests` of `StartConfig`. An import reads no byte when the store already holds the
 //! digest with its identity. An entry that does not import refuses the
 //! start of the vmm (decision CH58 rule 5).
+//!
+//! `vmm check-images`, the verify hook of the disks row, reads the file
+//! with the same `read` and runs `ImageSet::check` (decision CH76 rule 6).
+//! The check hashes each named file as the import reads it and writes no
+//! file, so a bad release fails its hook.
+//!
+//! A disks release changes the file while the vmm runs. `follow` reads it
+//! every 5 s with the same checks, imports each new entry and then swaps
+//! the `Digests` of each new start (decision CH76 rule 8). handover runs
+//! the hook after it swaps the tree. The follow imports new bytes only
+//! after they stay the same for the 300 s of the hook plus one 5 s poll
+//! (decision CH77 rule 2). The extra poll covers the start of the hook
+//! and a restore after a timeout, so the follow never imports while the
+//! hook runs. A failed hook restores
+//! the previous tree inside that wait, and the follow imports nothing.
 
 use std::fmt;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
-use creche_vmm_store::images::{ImageDigest, ImageStore, ImportError};
+use creche_vmm_store::images::{ImageDigest, ImageStore, ImportError, hash_source};
 use creche_wire::{PerFlavor, SandboxFlavor};
 use serde::Deserialize;
 use serde::de::value::StrDeserializer;
@@ -98,6 +113,19 @@ impl std::error::Error for ImageImportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.source)
     }
+}
+
+/// The digest check of one entry of `digests.json` (decision CH76 rule
+/// 6). `ImageSet::check` gives one for each entry.
+#[derive(Debug)]
+pub struct EntryCheck {
+    /// `kernel` or the wire name of a flavor.
+    pub key: &'static str,
+    /// The file in the image root.
+    pub file: String,
+    /// `Ok` when the bytes have the digest of the entry. Else `Mismatch`,
+    /// `Decompress` or `Io`.
+    pub result: Result<(), ImportError>,
 }
 
 /// One file name in the image root: one normal path component.
@@ -200,11 +228,15 @@ impl<'de> Visitor<'de> for ManifestVisitor {
     }
 }
 
-/// The files that a trusted `digests.json` names. Only `read` makes one.
+/// The files that a trusted `digests.json` names. Only `read` and `parse`
+/// make one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageSet {
     root: PathBuf,
     manifest: Manifest,
+    /// The bytes that `manifest` parsed from. `follow` compares each new
+    /// reading with them (decision CH76 rule 8).
+    bytes: Vec<u8>,
 }
 
 /// Reads `digests.json` in `root` after the checks of `root_owned::open`:
@@ -215,6 +247,28 @@ pub struct ImageSet {
 ///
 /// A `DigestsError`. Each one refuses the start of the vmm.
 pub fn read(root: &Path) -> Result<ImageSet, DigestsError> {
+    parse(root, read_bytes(root)?)
+}
+
+/// The image set of `bytes` in `root`, with the strict parse of the
+/// module doc. The caller read `bytes` with `read_bytes`, so root owns
+/// their file. Only `read`, `follow` and the tests of the crate call it.
+///
+/// # Errors
+///
+/// `DigestsError::Malformed`.
+pub(crate) fn parse(root: &Path, bytes: Vec<u8>) -> Result<ImageSet, DigestsError> {
+    let manifest = serde_json::from_slice(&bytes).map_err(DigestsError::Malformed)?;
+    Ok(ImageSet {
+        root: root.to_owned(),
+        manifest,
+        bytes,
+    })
+}
+
+/// The bytes of `digests.json` in `root` after the checks of `read`, at
+/// most `DIGESTS_CAP`.
+fn read_bytes(root: &Path) -> Result<Vec<u8>, DigestsError> {
     let file = root_owned::open(&root.join(DIGESTS_FILE)).map_err(|fault| match fault {
         OwnerError::Io(error) if error.kind() == io::ErrorKind::NotFound => DigestsError::Missing,
         fault => DigestsError::Owner(fault),
@@ -226,11 +280,7 @@ pub fn read(root: &Path) -> Result<ImageSet, DigestsError> {
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > DIGESTS_CAP {
         return Err(DigestsError::TooLarge);
     }
-    let manifest = serde_json::from_slice(&bytes).map_err(DigestsError::Malformed)?;
-    Ok(ImageSet {
-        root: root.to_owned(),
-        manifest,
-    })
+    Ok(bytes)
 }
 
 impl ImageSet {
@@ -257,7 +307,41 @@ impl ImageSet {
             roots: self.manifest.roots.try_map(|_, entry| import(entry))?,
         })
     }
+
+    /// Hashes the kernel and each root disk with `hash_source` of the
+    /// store, one file at a time, and compares each digest with its entry
+    /// (decision CH76 rule 6). `zstd` decompresses a `.zst` file. It
+    /// writes no file and checks every entry, also after a failed one.
+    /// Blocks.
+    #[must_use]
+    pub fn check(&self, zstd: &Path) -> Vec<EntryCheck> {
+        let check = |key, entry: &Entry| {
+            let result = hash_source(zstd, &self.root.join(&entry.file.0)).and_then(|actual| {
+                let expected = entry.sha256.0;
+                if actual == expected {
+                    Ok(())
+                } else {
+                    Err(ImportError::Mismatch { expected, actual })
+                }
+            });
+            EntryCheck {
+                key,
+                file: entry.file.0.clone(),
+                result,
+            }
+        };
+        std::iter::once(check(KERNEL_KEY, &self.manifest.kernel))
+            .chain(
+                self.manifest
+                    .roots
+                    .iter()
+                    .map(|(flavor, entry)| check(flavor.name(), entry)),
+            )
+            .collect()
+    }
 }
+
+pub mod follow;
 
 #[cfg(test)]
 mod tests;

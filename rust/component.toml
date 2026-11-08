@@ -22,8 +22,8 @@
 # `verify`: `vmm verify` checks the four programs (root-owned, no group or
 # other write bit), the version that CH prints and a static guest-init. It
 # opens no socket and reads no disk, so it passes on the first release,
-# before the unit runs (CH76 rule 2). `--env-file` is the first
-# EnvironmentFile= of the unit (CH59 rule 1), pinned equal by
+# before the unit runs (CH76 rule 2). `--env-file` is the one
+# EnvironmentFile= of the unit (CH77 rule 1), pinned equal by
 # handover/tests/test_handover_r7r_verify_env.py.
 #
 # `requires`: the vmm reads config/, egress.json and repos.json of each

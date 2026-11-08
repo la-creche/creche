@@ -14,7 +14,8 @@
 //! the owner check of CH, ch-remote and git (decisions CH67 rule 1, CH69
 //! rule 17). Then `check_cloud_hypervisor` checks the version of
 //! `VMM_CH_PROGRAM`, the CH that the kvm job builds (decisions CH36 G19,
-//! CH75). It binds no `vmm.sock`.
+//! CH75). It binds no `vmm.sock`. It runs no digests follow (plan PR V1),
+//! so each start reads the set that `image_root::read` gave.
 //!
 //! It prints `ready`, then reads one step per stdin line and answers one
 //! stdout line:
@@ -67,6 +68,7 @@ use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
 use creche_vmm_store::snapshot::Snapshotter;
 use creche_wire::SessionRow;
 use tokio::runtime::{Builder, Runtime};
+use tokio::sync::watch;
 
 /// The bound of the version check, as in the compose step.
 const VERSION_WAIT: Duration = Duration::from_secs(10);
@@ -131,7 +133,7 @@ fn serve(session: &OsString, family: &OsString) -> Result<(), Failure> {
     let start = StartConfig {
         images,
         disks: SessionDisks::new(&config.state, config.mke2fs.path().to_owned()),
-        digests,
+        digests: watch::channel(digests).1,
         initramfs,
         state: config.state,
         run: config.run,
