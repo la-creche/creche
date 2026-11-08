@@ -30,7 +30,11 @@ writes the real exec attribute (plan PR L16c, decisions CH55, CH58 rule
 CH63). It reads only `AGENT_SYSTEMCTL_PROGRAM` through
 `config::KillScopesConfig`, with the check of `Config`, and calls
 `creche_vmm_confine::leftovers::kill_all`. A bad key exits 78, and any
-other failure exits 1. `vmm serve` raises its soft `RLIMIT_NOFILE` to
+other failure exits 1. `vmm verify --json --env-file <path>` and `vmm
+check-images --json --env-file <path>` are the verify hooks of the vmm
+row and of the disks row (decision CH76 rules 2 and 6, see "The verify
+hooks"). Each takes exactly those three words, in that order, and a
+wrong list exits 78. `vmm serve` raises its soft `RLIMIT_NOFILE` to
 `planes::fd_need` plus `family_state::fd_need` plus `proxy::fd_need`
 in step 4 of the compose step, after the start checks and before the
 bind (decision CH67 rule 4 for the bridge need, Known gap 23 for the
@@ -254,6 +258,71 @@ nothing. Its ignored `kvm_` tests make a root-owned file with the sudo
 of the runner (decision CH36 G20) and prove the accept path, a writable
 file, a file past the cap and a malformed one. `src/image_root/tests.rs`
 proves the parse and the import on the bytes, with no file check.
+
+## The verify hooks
+
+`src/verify.rs` and `src/check_images.rs` are the two verify hooks of
+contract 06 §4 (decision CH76 rules 2 and 6). handover gives a hook a
+small fixed env, never the env of its unit (§4 rule 7). The vmm compiles
+in no default (decision CH59 rule 1). So each hook takes `--env-file
+<path>`, the `vmm.env` of `systemd/creche-vmm.service`, and reads it
+itself with `src/env_file.rs`. Each hook writes one `verify::Report` on
+stdout, one JSON line `{"ok", "checks": [{"name", "ok", "detail"}]}`, as
+`caregiver-verify --json` does. It exits 0 when every check passes, else
+1. A detail names a key or a path, never a value of another key.
+
+`src/env_file.rs` reads the form of §4 rule 7: one `KEY=value` per line,
+no shell, no quoting, no expansion. It also takes the `#` header line of
+`bin/fleet-up` and any key order. It refuses each value that systemd
+reads in another way: a leading quote, a backslash, a space or a tab at
+either end, a CR or a NUL. So the hook and the unit read one value. The
+guest init reader refuses a comment and an unsorted file, and a path
+edge to `creche-guest-init` is a lock-lane change, so the vmm holds its
+own reader. `tests/env_file.rs` proves the fleet-up file and each
+refusal.
+
+`vmm verify` (CH76 rule 2) runs these checks, in this order:
+
+1. `env-file`: the file reads, and `VerifyConfig` reads
+   `VMM_CH_PROGRAM`, `VMM_CH_REMOTE_PROGRAM` and
+   `VMM_GUEST_INIT_PROGRAM` from it with the checks of `Config`. A
+   failure ends the run with this one check.
+2. `vmm`: the vmm program itself, which has no key
+   (`std::env::current_exe`), gets the check of `root_owned::open`
+   (decision CH67 rule 1). Then each of the three keys gets the same
+   check.
+3. `ch-version`: `check_cloud_hypervisor` with `VERSION_WAIT` of the
+   compose step (gap G10). It runs only on a CH that passed its owner
+   check.
+4. `guest-init-static`: the open file of the owner check is a 64-bit
+   little-endian ELF program (`ET_EXEC`, or the `ET_DYN` of a static-pie
+   musl build) for x86_64 with no `PT_INTERP` header, the rule of
+   `bin/vm-smoke-setup.sh`. It runs only on a trusted guest init.
+
+It opens no socket, reads no disk, writes no file and starts no VM. So it
+passes on the first vmm release, when the unit is not installed and no
+disk exists. A serve fault that needs a disk or KVM shows in the unit
+journal, not in the hook.
+
+`vmm check-images` (CH76 rule 6) reads `VMM_IMAGE_ROOT` and
+`VMM_ZSTD_PROGRAM` with `CheckImagesConfig`, then `digests.json` with
+`image_root::read`, the one reader of the file (decisions CH57 rule 1,
+CH58 rules 4 and 5). `ImageSet::check` hashes each named file with
+`hash_source` of `creche-vmm-store`, through `zstd -d` for a `.zst` file,
+and compares the digest with its entry. It writes no file, also not in
+the state root. Each entry gets its own check, named by its key, and a
+failed entry names its file.
+
+`tests/verify.rs` and `tests/check_images.rs` run the program in the rust
+job. A test user owns each copy there, so they prove the refusals: an
+owner other than root, a missing key, a missing `digests.json`, a
+dynamic guest init, the JSON line and a wrong argument list.
+`src/image_root/tests.rs` proves the digest check of each entry on the
+bytes. The ignored `kvm_` tests of `tests/kvm_verify.rs` make root-owned
+copies with the runner's sudo (decision CH36 G20). They prove that
+verify passes on the CI build of CH (decision CH75), ch-remote, guest
+init and the vmm itself, and that check-images passes on root-owned
+`.zst` disks and fails on a changed one.
 
 ## The server
 
@@ -1433,6 +1502,15 @@ the runner.
     file. Each open tunnel or clone runs to its own end in `Draining`,
     and a refill reopens with the same links (`Server::close`,
     `Draining::reopen`).
+32. CONTRACT-QUESTION (decision CH76 rules 2 and 6): the unit reads two
+    `EnvironmentFile=` lines, `vmm.env` and then `/etc/creche/site.env`,
+    and a site value wins. Contract 06 §4 rule 7 lets a hook add
+    `--env-file <that path>` for one path. The hooks take the narrowest
+    reading: one `--env-file`, the `vmm.env` of the plan (gap Q68-2
+    option A). `bin/fleet-up up` writes each key of `vmm.env` as
+    `creche-env get` resolves it against the site file. So a hook reads
+    another value than the unit only after a site file edit with no new
+    `fleet-up up`. David decides whether a hook reads the site file too.
 
 ## Caller duties
 

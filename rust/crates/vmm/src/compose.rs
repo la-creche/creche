@@ -89,9 +89,9 @@ use crate::{family_state, planes, sleep};
 /// The bound of `cloud-hypervisor --version` at the start (decision CH44
 /// rule 3: the caller sets each timeout).
 // No row sets it. The check runs once per start, and the tests of the
-// store use 10 s. Only this file reads it, so a change costs one
-// constant.
-const VERSION_WAIT: Duration = Duration::from_secs(10);
+// store use 10 s. `vmm verify` runs the same check with it (decision
+// CH76 rule 2), so a change costs one constant.
+pub(crate) const VERSION_WAIT: Duration = Duration::from_secs(10);
 
 /// Why `vmm serve` did not start, or stopped before SIGTERM.
 #[derive(Debug)]

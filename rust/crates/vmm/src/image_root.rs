@@ -23,12 +23,17 @@
 //! `StartConfig`. An import reads no byte when the store already holds the
 //! digest with its identity. An entry that does not import refuses the
 //! start of the vmm (decision CH58 rule 5).
+//!
+//! `vmm check-images`, the verify hook of the disks row, reads the file
+//! with the same `read` and runs `ImageSet::check` (decision CH76 rule 6).
+//! The check hashes each named file as the import reads it and writes no
+//! file, so a bad release fails before a vmm start reads it.
 
 use std::fmt;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
-use creche_vmm_store::images::{ImageDigest, ImageStore, ImportError};
+use creche_vmm_store::images::{ImageDigest, ImageStore, ImportError, hash_source};
 use creche_wire::{PerFlavor, SandboxFlavor};
 use serde::Deserialize;
 use serde::de::value::StrDeserializer;
@@ -98,6 +103,19 @@ impl std::error::Error for ImageImportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.source)
     }
+}
+
+/// The digest check of one entry of `digests.json` (decision CH76 rule
+/// 6). `ImageSet::check` gives one for each entry.
+#[derive(Debug)]
+pub struct EntryCheck {
+    /// `kernel` or the wire name of a flavor.
+    pub key: &'static str,
+    /// The file in the image root.
+    pub file: String,
+    /// `Ok` when the bytes have the digest of the entry. Else `Mismatch`,
+    /// `Decompress` or `Io`.
+    pub result: Result<(), ImportError>,
 }
 
 /// One file name in the image root: one normal path component.
@@ -256,6 +274,38 @@ impl ImageSet {
             kernel: import(&self.manifest.kernel)?,
             roots: self.manifest.roots.try_map(|_, entry| import(entry))?,
         })
+    }
+
+    /// Hashes the kernel and each root disk with `hash_source` of the
+    /// store, one file at a time, and compares each digest with its entry
+    /// (decision CH76 rule 6). `zstd` decompresses a `.zst` file. It
+    /// writes no file and checks every entry, also after a failed one.
+    /// Blocks.
+    #[must_use]
+    pub fn check(&self, zstd: &Path) -> Vec<EntryCheck> {
+        let check = |key, entry: &Entry| {
+            let result = hash_source(zstd, &self.root.join(&entry.file.0)).and_then(|actual| {
+                let expected = entry.sha256.0;
+                if actual == expected {
+                    Ok(())
+                } else {
+                    Err(ImportError::Mismatch { expected, actual })
+                }
+            });
+            EntryCheck {
+                key,
+                file: entry.file.0.clone(),
+                result,
+            }
+        };
+        std::iter::once(check(KERNEL_KEY, &self.manifest.kernel))
+            .chain(
+                self.manifest
+                    .roots
+                    .iter()
+                    .map(|(flavor, entry)| check(flavor.name(), entry)),
+            )
+            .collect()
     }
 }
 
