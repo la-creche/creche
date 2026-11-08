@@ -548,6 +548,46 @@ fn ended_links_free_the_cap() {
     }
 }
 
+/// The links that drain after a close count against the cap of the
+/// reopen (decisions CH69 rule 14, CH74 rule 2). The closed listener
+/// takes no dial, the reopen at the same path closes a link past the cap
+/// at once, and a held link runs on to its own end.
+#[test]
+fn draining_links_count_against_the_cap_of_the_reopen() {
+    let scratch = Scratch::threaded("drain");
+    scratch.egress(EGRESS);
+    let server = scratch.serve();
+    let mut held: Vec<UnixStream> = (0..LINK_CAP).map(|_| scratch.dial()).collect();
+    let mut bytes = Vec::new();
+    scratch.dial().read_to_end(&mut bytes).unwrap();
+    assert!(bytes.is_empty());
+    assert_eq!(scratch.lines(1)[0]["reason"], "link_cap");
+
+    let draining = scratch.runtime.block_on(server.close());
+    let path = scratch.run.host_listener(HostPort::Egress);
+    std::fs::remove_file(&path).unwrap();
+    assert!(UnixStream::connect(&path).is_err());
+    let bound = bind(&scratch.run).unwrap();
+    let _server = {
+        let _runtime = scratch.runtime.enter();
+        draining.reopen(bound).unwrap()
+    };
+    let mut past = scratch.dial();
+    let started = Instant::now();
+    past.read_to_end(&mut bytes).unwrap();
+    assert!(bytes.is_empty());
+    assert!(started.elapsed() < WAIT);
+    assert_eq!(scratch.lines(2)[1]["reason"], "link_cap");
+
+    let mut first = held.remove(0);
+    first.write_all(b"GET / HTTP/1.1\r\n\r\n").unwrap();
+    let mut reply = String::new();
+    first.read_to_string(&mut reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 405 "), "{reply}");
+    assert_eq!(scratch.lines(3)[2]["reason"], "not_connect");
+    drop(held);
+}
+
 /// The drop of `Server` closes the listener and cuts each open link, and
 /// the cut link writes its line with no reason (decision CH69 rule 10).
 /// The held link is accepted before the link whose line the test waits

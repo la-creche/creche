@@ -758,9 +758,11 @@ and removes it after each edit (see "The edit follow").
    of the runtime it does not, as at a crash (Q61-10).
 7. At most `LINK_CAP` (64) links. A link past the cap is accepted,
    logged with `link_cap` and closed at once (decisions CH67 rule 3,
-   CH69 rule 14). A failed accept is logged by kind, then the loop pauses
-   `ACCEPT_PAUSE` (decisions CH40 rule 1, CH69 rule 30). CH67 rule 11
-   binds only the guest rows of guest init.
+   CH69 rule 14). The links that drain after `Server::close` count
+   against the cap of `Draining::reopen` (decision CH74 rule 2). A
+   failed accept is logged by kind, then the loop pauses `ACCEPT_PAUSE`
+   (decisions CH40 rule 1, CH69 rule 30). CH67 rule 11 binds only the
+   guest rows of guest init.
 8. A link sets no `last_use` and blocks no snapshot (decision CH69 rule
    20), so a restore cuts each open tunnel (fact 45).
 9. `proxy::fd_need` counts per slot the listener, and per link its
@@ -790,9 +792,9 @@ table of targets with `no_address` among them, a list that does not
 read, 405, 400, a head that two reads split, a head of exactly
 `HEAD_CAP`, the head wait with paused tokio time, a removal, the fields
 of each line, the rollover, a rollover whose open failed after its
-rename, the link cap, `LINK_CAP` + 2 links one after another, the drop
-of `Server` (a cut link and its line, then a refused dial) and the fd
-need. No test reaches the network.
+rename, the link cap, `LINK_CAP` + 2 links one after another, the cap of a
+reopen while links drain, the drop of `Server` (a cut link and its
+line, then a refused dial) and the fd need. No test reaches the network.
 The kvm job proves an allowed tunnel (plan PR E4, decision CH69 rule
 22). `tests/start.rs` proves the bound set with and without a list, a
 list that does not read, the bind at a restore, and an extra 1104
@@ -853,7 +855,9 @@ removes it after each edit (see "The edit follow").
    `NOTE_WINDOW` (10 s) for one VM. A good clone writes none (decision
    CH69 rule 24).
 8. At most `LINK_CAP` (64) links. A link past the cap is accepted and
-   closed at once (decisions CH67 rule 3, CH69 rule 14). A failed accept
+   closed at once (decisions CH67 rule 3, CH69 rule 14). The links that
+   drain after `Server::close` count against the cap of
+   `Draining::reopen` (decision CH74 rule 2). A failed accept
    is logged by kind, then the loop pauses `ACCEPT_PAUSE` (decisions
    CH40 rule 1, CH69 rule 30).
 9. A link sets no `last_use` and blocks no snapshot (decision CH69 rule
@@ -872,7 +876,8 @@ clone with no v2 answer, a v2 clone, the exact argv, env and stderr of
 `upload-pack`, the one error for a repo not listed and one not in
 the mirror, a removal, each refused path form, `git-receive-pack`, a
 symlinked repo, the line cap, the line wait with paused tokio time, the
-link cap, `LINK_CAP` + 1 links one after another, the kill of the child and of its own child at the drop of
+link cap, `LINK_CAP` + 1 links one after another, the cap of a reopen
+while links drain, the kill of the child and of its own child at the drop of
 `Server`, the end and the reap of a link whose child exited, and the fd
 need. Its test `a_bad_clone_logs_one_line_and_a_good_clone_none` runs
 its own binary as a child and reads the real stderr: no line for a good
@@ -888,10 +893,10 @@ and one stderr line that names `not_valid` (decision CH73 rule 1).
 
 `src/egress/watch.rs` follows `egress.json` and `repos.json` of the
 family on each running VM (plan PR E3, decisions CH6-3, CH49 rules 3
-and 4, CH69 rules 11, 12, 13 and 28, CH72 rule 3, CH73 rule 1). The
-start commits the VM with one `Watch`, a task that starts from the
-reading of the launch, so an edit since the launch acts at the first
-poll.
+and 4, CH69 rules 11, 12, 13 and 28, CH72 rule 3, CH73 rule 1, CH74
+rules 1 and 2). The start commits the VM with one `Watch`, a task that
+starts from the reading of the launch, so an edit since the launch acts
+at the first poll.
 
 1. Every `POLL` (2 s) the task reads the bytes of both files with
    `FamilyRoot::read_repos_bytes` and `FamilyRoot::read_egress_bytes`,
@@ -908,27 +913,35 @@ poll.
    that holds an entry binds, and so does a present file that does not
    read. An absent file or an empty list binds none. A new listener
    gets the server of the start (`mirror::Bound::serve`,
-   `proxy::Bound::serve`). A removed listener loses its server, which
-   cuts its open links (Known gap 31), and then its socket file.
+   `proxy::Bound::serve`). A removed listener closes with
+   `Server::close`, and then its socket file goes, so no new link
+   starts.
+   Each open tunnel or clone runs to its own end in `Draining` (decision
+   CH74 rule 2, contract 01 section 3.7 rule 11, fact 43). A listener
+   that binds again while links drain gets them with `Draining::reopen`.
+   So a drained link counts against the `LINK_CAP` of the new listener,
+   one VM holds at most `LINK_CAP` links per port, and the fd need holds.
 3. Then `deny::check` runs with `Reach::ports` of the new reading, the
    check of the start (`Follow::check`, decisions CH6-3, CH49 rule 3).
-4. A failed check, and a failed bind, serve or removal (Known gap 30),
-   ends the task. A task of its own then writes `egress_assert_failed`
-   to the fault file and stops the VM of that control link, with the
-   graceful stop first (decisions CH19 (3), CH21-1, CH54 rule 6, CH69
-   rule 12). The stop runs apart from the follow, because the stop
-   drops the VM entry, and that drop ends the follow. The VM entry, and
-   so the follow, lives on while a stop or a retire ends its CH, and a
-   check in that window fails on the command line of a CH that exited.
-   So the task writes the fault only when it takes the VM itself and its
-   CH runs, or when the stop that it joined failed. A stop or a retire
-   that ends the VM, and a CH that exited on its own, write no fault.
+4. A failed check, and a failed bind, serve or removal (decision CH74
+   rule 1), ends the task. A task of its own then writes
+   `egress_assert_failed` to the fault file and stops the VM of that
+   control link, with the graceful stop first (decisions CH19 (3),
+   CH21-1, CH54 rule 6, CH69 rule 12). The stop runs apart from the
+   follow, because the stop drops the VM entry, and that drop ends the
+   follow. The VM entry, and so the follow, lives on while a stop or a
+   retire ends its CH, and a check in that window fails on the command
+   line of a CH that exited. So the task writes the fault only when it
+   takes the VM itself and its CH runs, or when the stop that it joined
+   failed. A stop or a retire that ends the VM, and a CH that exited on
+   its own, write no fault.
 5. A removed host or repo does not wait for the poll: the proxy and the
    mirror read their file at each link (decisions CH6-4, CH69 rule 16).
    An added one waits one `POLL` at most.
 6. The drop of the VM entry drops the `Watch`, which ends the task and
-   drops both servers. A restore binds from the files of that time and
-   starts a new follow.
+   drops both listeners with each link that drains, so no link outlives
+   the VM. A restore binds from the files of that time and starts a new
+   follow.
 7. The reads and the check of the follow hold at most 2 fds of one VM
    at once, inside the headroom of `planes::fd_need`, so the fd need
    does not change.
@@ -948,8 +961,10 @@ time: an edit that binds 1104 and serves a 403, an emptied list that
 removes 1104 and its file and a later edit that binds it again, an edit
 that binds 1103 and serves `DENIED`, an emptied clone list that removes
 1103, a failed check and a failed bind after an edit that each write
-the fault and stop the VM, an emptied list that cuts an open link, a
-follow that ends with the VM, a failed check during a stop and after a
+the fault and stop the VM, an open link on 1104 and an open clone on
+1103 that each run to their own end after an emptied list, a refill
+while a link drains, a draining link that ends with the VM, a follow
+that ends with the VM, a failed check during a stop and after a
 CH exit that write no fault, and an unchanged file that keeps the socket
 file and runs no check. `tests/kvm_reach.rs` boots the vmm of
 `examples/phase3_vm.rs` with the real guest init and the stand-in in
@@ -1395,23 +1410,16 @@ the runner.
     `src/egress/watch.rs`).
     Decision CH73 rule 2 sets `REPOS_CAP` of `creche-vmm-confine` to 4
     KiB.
-30. CONTRACT-QUESTION: decision CH69 rule 12 decides a failed deny check
-    after an edit. No row decides a failed bind or serve of a listener
-    that an edit adds, or a failed removal of a socket file. Reading
-    taken: each ends the follow as a failed check, so the VM faults
+30. Closed by decision CH74 rule 1: a failed bind or serve of a
+    listener that a live edit adds, or a failed removal of its socket
+    file, counts as a failed deny check, so the VM faults
     `egress_assert_failed` and stops (`Follow::apply` in
-    `src/egress/watch.rs`). A path that is there fails the bind, and the
-    deny check reads only names, so it would pass a listener that the
-    vmm did not bind. Cost of a change: one branch in `Follow::apply`.
-31. CONTRACT-QUESTION: fact 43 and the P1 draft of contract 01 section
-    3.7 say that open connections finish after a removal. The plan PR
-    E3 entry drops the server when a list turns empty, and that drop
-    cuts each open tunnel and clone of the VM. Reading taken: the plan
-    entry, which fails closed. A removal that leaves an entry in the
-    list keeps each open link. So the fact 43 proof of plan PR E4 must
-    keep one host listed. Cost of a change: a close of the listener only
-    in `proxy::Server` and `mirror::Server`, which then wait for their
-    links.
+    `src/egress/watch.rs`).
+31. Closed by decision CH74 rule 2: an edit that empties `egress.json`
+    or `repos.json` closes only the listener and removes its socket
+    file. Each open tunnel or clone runs to its own end in `Draining`,
+    and a refill reopens with the same links (`Server::close`,
+    `Draining::reopen`).
 
 ## Caller duties
 
