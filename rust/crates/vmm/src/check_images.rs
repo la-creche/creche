@@ -1,6 +1,12 @@
 //! `vmm check-images`, the verify hook of the disks row (contract 06 §4,
-//! decision CH76 rule 6). handover runs it from the vmm tree, after each
-//! disks release and before the vmm reads the new files.
+//! decision CH76 rule 6). handover runs it from the vmm tree after each
+//! disks release, once the new tree is in place. The digests follow of a
+//! running vmm (`image_root::follow`, decision CH76 rule 8) may import
+//! the new set while the hook runs. That import checks each digest itself
+//! (decision CH58 rule 5). A failed hook restores the previous tree, and
+//! the follow then swaps back to its set. CONTRACT-QUESTION (vmm
+//! AGENTS.md Known gaps 33): no row says whether the follow must wait for
+//! the end of the hook.
 //!
 //! 1. It reads the env file of the vmm unit (`crate::env_file`) and
 //!    `VMM_IMAGE_ROOT` and `VMM_ZSTD_PROGRAM` from it

@@ -32,10 +32,18 @@
 //! The follow is the only import after the vmm start, so the store still
 //! runs one import at a time. The handover swap of the disks tree has a
 //! short window with no `digests.json` (two renames). The follow then
-//! logs one `is missing` line, and its next poll reads the new file. A
-//! failed verify hook puts the previous tree back, and the follow then
-//! reads the previous bytes and swaps back to their set, which the store
-//! holds already.
+//! logs one `is missing` line, and its next poll reads the new file.
+//!
+//! handover swaps the tree first and runs `vmm check-images` after it
+//! (decision CH76 rule 6). So the follow may import and swap to the new
+//! set while the hook still runs. Each import checks each digest itself
+//! (decision CH58 rule 5), so no entry that fails its digest serves. A
+//! failed hook puts the previous tree back, and the follow then reads the
+//! previous bytes and swaps back to their set, which the store holds
+//! already. A VM that cold-booted on the new set in that window drops its
+//! snapshot again at its next start. CONTRACT-QUESTION (vmm AGENTS.md
+//! Known gaps 33): no row says whether the follow must wait for the end
+//! of the hook.
 
 use std::path::PathBuf;
 use std::time::Duration;

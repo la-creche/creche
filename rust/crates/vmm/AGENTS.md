@@ -301,6 +301,15 @@ process, and its `<sha256>.tmp` file stays until the next import of that
 digest truncates it. The handover swap of the disks tree is two renames,
 so the follow may log one `is missing` line between them.
 
+handover swaps the disks tree first and runs `vmm check-images` after it
+(decision CH76 rule 6). So the follow may import and swap to the new set
+while the hook still runs, and both decompress the same disks at once.
+Each import checks each digest itself (decision CH58 rule 5), so no
+entry that fails its digest serves. A failed hook restores the previous
+tree, and the follow then reads the previous bytes and swaps back to
+their set, which the store holds already. Known gaps 33 holds the open
+question.
+
 `src/image_root/follow/tests.rs` proves the steps on the bytes in the
 rust job: a swap only after every import, a failed import that keeps the
 old set, unchanged bytes that import nothing, and a failed import that
@@ -362,6 +371,12 @@ CH58 rules 4 and 5). `ImageSet::check` hashes each named file with
 and compares the digest with its entry. It writes no file, also not in
 the state root. Each entry gets its own check, named by its key, and a
 failed entry names its file.
+
+handover runs check-images after it swaps the disks tree, so the hook
+does not run before the vmm reads the new files. The digests follow of
+a running vmm may import the new set while the hook runs (see "The
+digests follow"). A failed hook restores the previous tree, and the
+follow then swaps back.
 
 `tests/verify.rs` and `tests/check_images.rs` run the program in the rust
 job. A test user owns each copy there, so they prove the refusals: an
@@ -1562,6 +1577,22 @@ the runner.
     `creche-env get` resolves it against the site file. So a hook reads
     another value than the unit only after a site file edit with no new
     `fleet-up up`. David decides whether a hook reads the site file too.
+33. CONTRACT-QUESTION (decision CH76 rules 6 and 8): two readers use
+    one disks tree during the verify hook. handover swaps the tree and
+    then runs `vmm check-images` (300 s timeout, gap Q68-6). The digests
+    follow polls every 5 s, so it may import and swap to the new set
+    while the hook still hashes the same disks. Each import checks each
+    digest (decision CH58 rule 5), so a bad entry never serves. But gap
+    Q68-6 says a bad release restores the previous tree before the vmm
+    ever reads it, and that does not hold. On a hook failure, new starts
+    may already have cold-booted on the new set. Each of those VMs drops
+    its snapshot again at its next start after the rollback. The two
+    decompressions at once also make the unmeasured 300 s timeout
+    easier to miss. The follow takes the narrowest reading of CH76 rule
+    8: it swaps once every entry imports, with no wait for the hook.
+    David decides whether the follow must wait, for example until the
+    bytes stay the same for the hook timeout, or until handover signals
+    the end of the hook.
 
 ## Caller duties
 

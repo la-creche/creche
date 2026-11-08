@@ -27,11 +27,17 @@
 //! `vmm check-images`, the verify hook of the disks row, reads the file
 //! with the same `read` and runs `ImageSet::check` (decision CH76 rule 6).
 //! The check hashes each named file as the import reads it and writes no
-//! file, so a bad release fails before a vmm start reads it.
+//! file, so a bad release fails its hook.
 //!
 //! A disks release changes the file while the vmm runs. `follow` reads it
 //! every 5 s with the same checks, imports each new entry and then swaps
-//! the `Digests` of each new start (decision CH76 rule 8).
+//! the `Digests` of each new start (decision CH76 rule 8). handover runs
+//! the hook after it swaps the tree, so the follow may import and swap
+//! to the new set while the hook runs. Each import checks each digest
+//! itself (decision CH58 rule 5). A failed hook restores the previous
+//! tree, and the follow then swaps back to its set. CONTRACT-QUESTION
+//! (vmm AGENTS.md Known gaps 33): no row says whether the follow must
+//! wait for the end of the hook.
 
 use std::fmt;
 use std::io::{self, Read};
