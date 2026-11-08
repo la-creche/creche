@@ -316,7 +316,11 @@ old set, unchanged bytes that import nothing, and a failed import that
 tries again and swaps once its fault clears. The ignored `kvm_`
 test of `tests/image_follow.rs` makes the new `digests.json` root-owned
 with the runner's sudo (decision CH36 G20). It proves that a VM that
-slept on the old disk cold-boots on the new one.
+slept on the old disk cold-boots on the new one. That test boots
+`examples/phase3_vm.rs`, which runs its own follow. So the ignored
+`kvm_serve_follows_a_new_digests_file` of `src/compose/tests.rs` proves
+the compose path: `Vmm::run` of `build` sees a new root-owned
+`digests.json` and swaps the set of new starts within three polls.
 
 ## The verify hooks
 
