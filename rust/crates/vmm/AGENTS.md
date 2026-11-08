@@ -326,7 +326,9 @@ import nothing, and a failed import that tries again and swaps once its
 fault clears. For the wait (decision CH77 rule 2) it proves that bytes
 that stay the same for 60 polls import once, bytes that change inside
 the wait import nothing, and a rolled-back file imports nothing. Each of
-the three fails when the wait is removed. The ignored `kvm_`
+the three fails when the wait is removed. It also proves that bytes
+whose import failed wait again in full once other bytes come between.
+The ignored `kvm_`
 test of `tests/image_follow.rs` makes the new `digests.json` root-owned
 with the runner's sudo (decision CH36 G20). It proves that a VM that
 slept on the old disk cold-boots on the new one. That test boots

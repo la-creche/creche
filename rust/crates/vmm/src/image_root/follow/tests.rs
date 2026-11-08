@@ -327,3 +327,27 @@ fn a_rolled_back_file_imports_nothing() {
     assert!(follow.apply(Ok(next)).is_some());
     assert_eq!(*current.borrow(), set(EMPTY, HELLO));
 }
+
+/// Decision CH77 rule 2: bytes whose import failed wait again in full
+/// once other bytes come between. Only the same bytes, read at each poll,
+/// skip the wait for their retry (CH77 rule 3).
+#[test]
+fn failed_bytes_wait_again_after_other_bytes() {
+    let root = Root::new("again");
+    let (mut follow, current) = root.follow(&digests(("vmlinux", EMPTY), ("abc.ext4", ABC)));
+    fs::remove_file(root.images().join("hello.ext4")).unwrap();
+    let failed = digests(("vmlinux", EMPTY), ("hello.ext4", HELLO));
+    let line = settle(&mut follow, &failed).unwrap();
+    assert!(line.contains("cannot import hello.ext4"), "{line}");
+
+    // Other bytes come, then the failed bytes come back.
+    assert!(
+        follow
+            .apply(Ok(digests(("abc.ext4", ABC), ("abc.ext4", ABC))))
+            .is_some()
+    );
+    fs::write(root.images().join("hello.ext4"), "hello world").unwrap();
+    let line = settle(&mut follow, &failed).unwrap();
+    assert!(line.contains(&format!("base {HELLO}")), "{line}");
+    assert_eq!(*current.borrow(), set(EMPTY, HELLO));
+}
