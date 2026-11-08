@@ -226,3 +226,603 @@ fn kvm_reach_binds_1104_after_a_restore_and_an_edit() {
     drop(link);
     drop(booted);
 }
+
+// Plan PR E4: the phase 7 proof on the real `vmm serve` (decision CH69
+// rule 31). The example of E3 binds no `vmm.sock`, so it serves no
+// `check` and no Upgrade. These tests start `vmm serve` under
+// `systemd-run` with the env of `boot_with`, create the session over
+// `vmm.sock` and send the lines of mode `reach` on its `acp` Upgrade, as
+// a door client does. The proxy and the mirror tests reach github.com:443
+// and need the internet and DNS on the runner (decision CH69 rule 22, plan
+// risk 4).
+
+use std::ffi::OsStr;
+use std::io::Read as _;
+use std::process::{Child, Command, Stdio};
+
+use creche_vmm::mirror::DENIED;
+use creche_vmm_store::layout::RunRoot;
+use creche_wire::guest::MIRROR_PORT;
+use creche_wire::{
+    AcpRoute, CheckReason, CheckRefused, CheckReply, CheckRoute, CreateRoute, HOST_API_HEADER,
+    HOST_API_PROTOCOL, HostPort, JsonRoute, SessionId, UpgradeRoute,
+};
+use serde_json::{Value, json};
+
+use common::{HOST_GIT, SESSION, SYSTEMCTL, boot_with, transient};
+
+/// The allowed host of decision CH69 rule 22.
+const GITHUB: &str = "github.com";
+
+/// A host that stays listed when a removal takes github.com out. No test
+/// dials it.
+const KEPT: &str = "example.com";
+
+/// The first line of the 200 of an allowed CONNECT. The blank line of
+/// the head follows it.
+const ESTABLISHED: &[u8] = b"HTTP/1.1 200 Connection established\r\n";
+
+/// The time that a held tunnel waits so a poll of the follow passes: 2 s
+/// (decision CH69 rule 11) and a margin.
+const FOLLOW: Duration = Duration::from_secs(5);
+
+/// The listed repo and a repo that the mirror holds and the list does not
+/// name.
+const LISTED: &str = "creche";
+const UNLISTED: &str = "other";
+
+/// `target` as `host:443`.
+fn on_443(host: &str) -> String {
+    format!("{host}:443")
+}
+
+/// A CONNECT head to `target`.
+fn connect(target: &str) -> Vec<u8> {
+    format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n").into_bytes()
+}
+
+/// An allowlist of `hosts` on port 443, sorted as caregiver writes it
+/// (decision CH69 rule 5).
+fn list(hosts: &[&str]) -> String {
+    let hosts: Vec<Value> = hosts
+        .iter()
+        .map(|host| json!({"host": host, "port": 443}))
+        .collect();
+    json!({ "hosts": hosts }).to_string()
+}
+
+/// `bytes` after their length in 2 bytes, big endian, as TLS sizes a
+/// vector.
+#[cfg(test)]
+fn sized(bytes: &[u8]) -> Vec<u8> {
+    let length = u16::try_from(bytes.len()).unwrap().to_be_bytes();
+    [&length[..], bytes].concat()
+}
+
+/// A TLS 1.2 ClientHello to github.com in one record (RFC 5246): two
+/// ECDHE AES-128-GCM suites, no session, the extensions `server_name`,
+/// `supported_groups`, `ec_point_formats` and `signature_algorithms`. The
+/// server answers it with a handshake record, so the tunnel carries bytes
+/// both ways. github.com sends no byte for junk: it closes the link.
+#[cfg(test)]
+fn client_hello() -> Vec<u8> {
+    let extension = |kind: u16, body: &[u8]| [&kind.to_be_bytes()[..], &sized(body)].concat();
+    let name = [&[0][..], &sized(GITHUB.as_bytes())].concat();
+    let extensions = [
+        extension(0, &sized(&name)),
+        extension(10, &sized(&[0x00, 0x1d, 0x00, 0x17])),
+        extension(11, &[1, 0]),
+        extension(13, &sized(&[0x04, 0x03, 0x08, 0x04, 0x04, 0x01])),
+    ]
+    .concat();
+    let body = [
+        &[0x03, 0x03][..],
+        &[0; 32],
+        &[0],
+        &sized(&[0xc0, 0x2f, 0xc0, 0x2b]),
+        &[1, 0],
+        &sized(&extensions),
+    ]
+    .concat();
+    let length = u32::try_from(body.len()).unwrap().to_be_bytes();
+    let handshake = [&[1][..], &length[1..], &body].concat();
+    [&[0x16, 0x03, 0x01][..], &sized(&handshake)].concat()
+}
+
+/// The bytes of `text` in the hex of mode `reach`, `-` for none.
+#[cfg(test)]
+fn unhex(text: &str) -> Vec<u8> {
+    if text == "-" {
+        return Vec::new();
+    }
+    text.as_bytes()
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect()
+}
+
+/// The first pkt-line of a v0 clone of `repo`, as git writes it.
+fn upload_request(repo: &str) -> Vec<u8> {
+    let payload = format!("git-upload-pack /{repo}\0host=127.0.0.1:{MIRROR_PORT}\0");
+    format!("{:04x}{payload}", payload.len() + 4).into_bytes()
+}
+
+/// One answer of mode `reach` to an action on one stream.
+#[derive(Debug, PartialEq, Eq)]
+enum Answer {
+    /// The bytes of one read, and whether the stream stays open.
+    Reply(Vec<u8>, bool),
+    /// The action failed with this io error kind.
+    Failed(String),
+}
+
+#[cfg(test)]
+impl Link {
+    /// Sends the action `line` on the stream `id` and reads its answer.
+    fn act(&mut self, id: &str, line: &str) -> Answer {
+        writeln!(&self.stream, "{line}").unwrap();
+        let answer = self.line();
+        match answer.split(' ').collect::<Vec<_>>().as_slice() {
+            ["reply", got, bytes, state] if *got == id => {
+                Answer::Reply(unhex(bytes), *state == "open")
+            }
+            ["failed", got, kind] if *got == id => Answer::Failed((*kind).to_owned()),
+            _ => panic!("{id}: no answer of mode reach: {answer:?}"),
+        }
+    }
+
+    /// Opens the guest stream `id` to 127.0.0.1:`port` with `bytes`.
+    fn dial(&mut self, id: &str, port: u16, bytes: &[u8]) -> Answer {
+        self.act(id, &format!("dial {id} {port} {}", hex(bytes)))
+    }
+
+    /// Writes `bytes` on the open stream `id`, or reads its next line.
+    fn send(&mut self, id: &str, bytes: &[u8]) -> Answer {
+        self.act(id, &format!("send {id} {}", hex(bytes)))
+    }
+
+    /// Closes the stream `id`.
+    fn close(&mut self, id: &str) {
+        writeln!(&self.stream, "close {id}").unwrap();
+        assert_eq!(self.line(), format!("closed {id}"));
+    }
+
+    /// The status line of a CONNECT to `target` on the new stream `id`,
+    /// which is then closed.
+    fn status(&mut self, id: &str, target: &str) -> Vec<u8> {
+        let Answer::Reply(line, open) = self.dial(id, EGRESS_PROXY_PORT, &connect(target)) else {
+            panic!("{id}: the CONNECT to {target} failed");
+        };
+        if open {
+            self.close(id);
+        }
+        line
+    }
+
+    /// Opens a tunnel to github.com:443 on the stream `id` and reads the
+    /// head of the 200 to its blank line. Each read of mode `reach` ends
+    /// at the first LF, so the blank line takes a read of its own.
+    fn tunnel(&mut self, id: &str) {
+        let first = self.dial(id, EGRESS_PROXY_PORT, &connect(&on_443(GITHUB)));
+        assert_eq!(first, Answer::Reply(ESTABLISHED.to_vec(), true), "{id}");
+        assert_eq!(self.send(id, b""), Answer::Reply(b"\r\n".to_vec(), true));
+    }
+
+    /// Sends the ClientHello on the tunnel `id`. A TLS 1.2 handshake
+    /// record from github.com comes back.
+    fn hello(&mut self, id: &str) {
+        match self.send(id, &client_hello()) {
+            Answer::Reply(bytes, true) if bytes.starts_with(&[0x16, 0x03, 0x03]) => {}
+            other => panic!("{id}: no handshake record from {GITHUB}: {other:?}"),
+        }
+    }
+}
+
+/// The real `vmm serve` as a transient user service (decision CH69 rule
+/// 31). Its stderr, the vmm log, reaches the job log. A drop stops the
+/// unit, so `BindsTo=` stops each VM scope (decision CH61 rule 1), and
+/// reaps `systemd-run`.
+struct Served {
+    unit: String,
+    child: Child,
+    run: RunRoot,
+}
+
+#[cfg(test)]
+impl Served {
+    /// Starts the unit of the proof `name` with `env` and waits for
+    /// `vmm.sock` in `run`. A vmm that exits first fails the proof, and
+    /// its log above names the cause.
+    // CONTRACT-QUESTION (plan risk 9): `vmm serve` checks the version of
+    // `VMM_CH_PROGRAM` itself and accepts only `CH_VERSION`, v54.0.0 (fact
+    // 78). The runner installs the upstream asset of fact 71, which the
+    // V10 helpers expect to print its tag, v54.0. Then this start exits 78,
+    // and no row decides the fix. This test takes the narrowest reading of
+    // decision CH69 rule 31: the real `vmm serve`, with no stand-in for the
+    // version check.
+    fn start(name: &str, env: &[(&str, &OsStr)], run: &RunRoot) -> Self {
+        let unit = format!("kvm-serve-{name}-{}.service", std::process::id());
+        let child = transient(&unit, env)
+            .args([env!("CARGO_BIN_EXE_vmm"), "serve"])
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut served = Self {
+            unit,
+            child,
+            run: run.clone(),
+        };
+        let deadline = Instant::now() + BOOT;
+        while UnixStream::connect(run.vmm_socket()).is_err() {
+            if let Some(status) = served.child.try_wait().unwrap() {
+                panic!("vmm serve ended with {status} before it bound vmm.sock");
+            }
+            assert!(Instant::now() < deadline, "no vmm.sock in {BOOT:?}");
+            sleep(Duration::from_millis(50));
+        }
+        served
+    }
+
+    /// Sends `POST /<route>` with the JSON `body` on a new link to
+    /// `vmm.sock`, with the Upgrade token `upgrade` if any. It gives the
+    /// status, the body and the link. After 101 the link is the relay.
+    fn post(&self, route: &str, body: &str, upgrade: Option<&str>) -> (u16, String, UnixStream) {
+        let mut stream = UnixStream::connect(self.run.vmm_socket()).unwrap();
+        stream.set_read_timeout(Some(BOOT)).unwrap();
+        let upgrade = upgrade.map_or_else(String::new, |token| {
+            format!("connection: upgrade\r\nupgrade: {token}\r\n")
+        });
+        write!(
+            stream,
+            "POST /{route} HTTP/1.1\r\nhost: vmm\r\n{HOST_API_HEADER}: {HOST_API_PROTOCOL}\r\n\
+             content-type: application/json\r\n{upgrade}content-length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            let mut byte = [0_u8];
+            stream.read_exact(&mut byte).unwrap();
+            head.push(byte[0]);
+        }
+        let head = String::from_utf8(head).unwrap().to_lowercase();
+        let status = head.get(9..12).unwrap().parse().unwrap();
+        let length = head
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length: "))
+            .map_or(0, |length| length.parse().unwrap());
+        let mut reply = vec![0_u8; length];
+        stream.read_exact(&mut reply).unwrap();
+        (status, String::from_utf8(reply).unwrap(), stream)
+    }
+
+    /// The 200 reply of the JSON route `R` to `body`.
+    fn ask<R: JsonRoute>(&self, body: &Value) -> String {
+        let (status, reply, _) = self.post(R::NAME, &body.to_string(), None);
+        assert_eq!(status, 200, "{}: {reply}", R::NAME);
+        reply
+    }
+
+    /// The verdict of the route `check` on `target` for the family of the
+    /// proof (decisions CH6-3, CH69 rule 1).
+    fn check(&self, target: &str) -> CheckReply {
+        let body = json!({"family": FAMILY, "target": target});
+        serde_json::from_str(&self.ask::<CheckRoute>(&body)).unwrap()
+    }
+
+    /// Creates the session of the proof, as attendance does (decision
+    /// CH21-4), and opens its `acp` Upgrade, which starts the VM. The
+    /// stand-in facade of mode `reach` answers on it.
+    fn open(&self) -> Link {
+        let create = json!({
+            "created_at": 1_793_577_600_000_u64,
+            "cwd": "/root",
+            "family": FAMILY,
+            "id": SESSION,
+            "origin": {"door": {}},
+        });
+        self.ask::<CreateRoute>(&create);
+        let body = json!({"family": FAMILY, "id": SESSION}).to_string();
+        let (status, reply, stream) = self.post(AcpRoute::NAME, &body, Some(AcpRoute::TOKEN));
+        assert_eq!(status, 101, "acp: {reply}");
+        Link {
+            reader: BufReader::new(stream.try_clone().unwrap()),
+            stream,
+            next: 0,
+        }
+    }
+
+    /// The socket file of the host listener `port` of the VM.
+    fn listener(&self, port: HostPort) -> PathBuf {
+        let id: SessionId = SESSION.parse().unwrap();
+        self.run.vm(&id).host_listener(port)
+    }
+}
+
+impl Drop for Served {
+    fn drop(&mut self) {
+        let _ = Command::new(SYSTEMCTL)
+            .args(["--user", "stop", "--"])
+            .arg(&self.unit)
+            .status();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Starts the real vmm of the proof `name` with the stand-in in mode
+/// `reach` and stub planes that no step reads. The VM starts at `open`.
+#[cfg(test)]
+fn serve_reach(name: &str) -> Booted<Served> {
+    let (litellm, _) = stub_plane();
+    let (chaperone, _) = stub_plane();
+    boot_with(name, "reach", (litellm, chaperone), |name, env, _, run| {
+        Served::start(name, env, run)
+    })
+}
+
+/// The first whole line of the egress log of the proof `name` that `pick`
+/// takes, within `BOOT`. The proxy writes the line of a tunnel at its end
+/// (decision CH69 rule 10).
+#[cfg(test)]
+fn logged(name: &str, pick: impl Fn(&Value) -> bool) -> Value {
+    let path = work(name).join("egress.jsonl");
+    let deadline = Instant::now() + BOOT;
+    loop {
+        let text = fs::read_to_string(&path).unwrap_or_default();
+        let line = text
+            .split_inclusive('\n')
+            .filter(|line| line.ends_with('\n'))
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|line| pick(line));
+        if let Some(line) = line {
+            return line;
+        }
+        assert!(Instant::now() < deadline, "no such log line: {text}");
+        sleep(RETRY);
+    }
+}
+
+/// Asserts the log line of the one tunnel to github.com:443: the checked
+/// address, `bytes_up` equal to the ClientHello and `bytes_down` above 0.
+/// The guest sends far fewer bytes than github.com, so a swap of the two
+/// counts fails.
+#[cfg(test)]
+fn assert_tunnel(name: &str) {
+    let line = logged(name, |line| line["verdict"] == "allowed");
+    assert_eq!(line["host"], GITHUB, "{line}");
+    assert_eq!(line["port"], 443, "{line}");
+    assert_eq!(line["reason"], Value::Null, "{line}");
+    assert!(line["address"].is_string(), "{line}");
+    assert_eq!(line["bytes_up"], client_hello().len(), "{line}");
+    assert!(line["bytes_down"].as_u64().unwrap() > 0, "{line}");
+}
+
+/// The log line of a refusal for `reason` (decision CH70 rule 2).
+#[cfg(test)]
+fn assert_refused(name: &str, reason: CheckReason) {
+    let reason = serde_json::to_value(reason).unwrap();
+    let line = logged(name, |line| line["reason"] == reason);
+    assert_eq!(line["verdict"], "refused", "{line}");
+    assert_eq!(line["bytes_up"], 0, "{line}");
+}
+
+/// Writes the mirror of the proof `name`: the repos `LISTED` and
+/// `UNLISTED` with one commit each, as the mirror sync keeps them
+/// (decision CH5f), and a `repos.json` that lists `LISTED` (decision
+/// CH69 rules 5 and 15). It gives the commit of HEAD of `LISTED`.
+#[cfg(test)]
+fn mirror(name: &str) -> String {
+    let work = work(name);
+    let git = |args: &[&str]| {
+        let output = Command::new(HOST_GIT)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .env_clear()
+            .envs([
+                ("GIT_CONFIG_NOSYSTEM", "1"),
+                ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ])
+            .env("HOME", &work)
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    for repo in [LISTED, UNLISTED] {
+        let dir = work.join("mirror").join(repo);
+        let dir = dir.to_str().unwrap();
+        git(&["init", "--quiet", dir]);
+        git(&["-C", dir, "commit", "--quiet", "--allow-empty", "-m", repo]);
+    }
+    let repos = json!({ "repos": [LISTED] }).to_string();
+    fs::write(family_root(&work).join(FAMILY).join("repos.json"), repos).unwrap();
+    let listed = work.join("mirror").join(LISTED);
+    git(&["-C", listed.to_str().unwrap(), "rev-parse", "HEAD"])
+        .trim_end()
+        .to_owned()
+}
+
+/// An allowed CONNECT tunnels to github.com:443, and the tunnel carries
+/// bytes both ways (section 5, decisions CH6-4, CH69 rule 22). Its log
+/// line names the checked address and counts each way.
+#[test]
+#[ignore = "needs /dev/kvm, bin/vm-smoke-setup.sh and the internet: the job kvm runs it"]
+fn kvm_reach_tunnels_to_an_allowed_host() {
+    let name = "reach-tunnel";
+    let booted = serve_reach(name);
+    fs::write(egress_file(name), list(&[GITHUB])).unwrap();
+    let mut link = booted.vmm.open();
+    link.tunnel("t1");
+    link.hello("t1");
+    link.close("t1");
+    assert_tunnel(name);
+    drop(link);
+    drop(booted);
+}
+
+/// A CONNECT to an IP literal gets 403 and an `ip_literal` line, also
+/// with a list (decision CH6-4).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_reach_refuses_an_ip_literal() {
+    let name = "reach-literal";
+    let booted = serve_reach(name);
+    fs::write(egress_file(name), list(&[GITHUB])).unwrap();
+    let mut link = booted.vmm.open();
+    assert!(link.refused(), "an IP literal got no 403");
+    assert_refused(name, CheckReason::IpLiteral);
+    drop(link);
+    drop(booted);
+}
+
+/// `check` over `vmm.sock` gives the verdict of the proxy for each target:
+/// an allowed host, an IP literal and a host that the list does not name
+/// (decisions CH6-3, CH69 rules 1 and 2).
+#[test]
+#[ignore = "needs /dev/kvm, bin/vm-smoke-setup.sh and the internet: the job kvm runs it"]
+fn kvm_reach_check_agrees_with_the_proxy() {
+    let name = "reach-check";
+    let booted = serve_reach(name);
+    fs::write(egress_file(name), list(&[GITHUB])).unwrap();
+    let mut link = booted.vmm.open();
+
+    // 1. github.com: a tunnel, and `check` allows it.
+    link.tunnel("t1");
+    link.hello("t1");
+    link.close("t1");
+    assert_tunnel(name);
+    match booted.vmm.check(&on_443(GITHUB)) {
+        CheckReply::Allowed(allowed) => assert!(!allowed.addresses.is_empty()),
+        refused @ CheckReply::Refused(_) => panic!("check refused {GITHUB}: {refused:?}"),
+    }
+
+    // 2. An IP literal and a host that is not listed: 403 and the reason
+    // that `check` gives.
+    let literal = "192.0.2.1:443";
+    for (id, target, reason) in [
+        ("r1", literal, CheckReason::IpLiteral),
+        ("r2", &on_443(KEPT), CheckReason::NotListed),
+    ] {
+        assert!(link.status(id, target).starts_with(FORBIDDEN), "{target}");
+        assert_refused(name, reason);
+        let refused = CheckReply::Refused(CheckRefused { reason });
+        assert_eq!(booted.vmm.check(target), refused, "{target}");
+    }
+    drop(link);
+    drop(booted);
+}
+
+/// Fact 43: after an edit that removes github.com, while another host
+/// stays listed, the next CONNECT to it gets 403 at once, because the
+/// proxy reads the list at each CONNECT (decision CH6-4). The tunnel that
+/// was open before the edit still carries bytes both ways, also after a
+/// poll of the follow (decision CH69 rule 11).
+#[test]
+#[ignore = "needs /dev/kvm, bin/vm-smoke-setup.sh and the internet: the job kvm runs it"]
+fn kvm_reach_a_removal_refuses_new_tunnels_and_keeps_open_ones() {
+    let name = "reach-removal";
+    let booted = serve_reach(name);
+    fs::write(egress_file(name), list(&[KEPT, GITHUB])).unwrap();
+    let mut link = booted.vmm.open();
+    link.tunnel("t1");
+
+    // 1. The removal refuses the next CONNECT.
+    fs::write(egress_file(name), list(&[KEPT])).unwrap();
+    let status = link.status("n1", &on_443(GITHUB));
+    assert!(status.starts_with(FORBIDDEN), "a CONNECT after the removal");
+    assert_refused(name, CheckReason::NotListed);
+
+    // 2. A poll of the follow passes. The list is not empty, so 1104
+    // stays, and the held tunnel carries bytes both ways.
+    sleep(FOLLOW);
+    assert!(booted.vmm.listener(HostPort::Egress).exists(), "no 1104");
+    link.hello("t1");
+    link.close("t1");
+    assert_tunnel(name);
+    drop(link);
+    drop(booted);
+}
+
+/// Decision CH74 rule 2: an edit that empties `egress.json` unbinds 1104
+/// and removes its socket file, so a new dial of guest 3128 fails. A
+/// tunnel that was open before the edit runs to its own end, and carries
+/// bytes both ways after the edit.
+#[test]
+#[ignore = "needs /dev/kvm, bin/vm-smoke-setup.sh and the internet: the job kvm runs it"]
+fn kvm_reach_an_emptied_list_unbinds_1104_and_keeps_open_tunnels() {
+    let name = "reach-emptied";
+    let booted = serve_reach(name);
+    fs::write(egress_file(name), list(&[GITHUB])).unwrap();
+    let mut link = booted.vmm.open();
+    let socket = booted.vmm.listener(HostPort::Egress);
+    assert!(socket.exists(), "step 1: no 1104 at the start");
+    link.tunnel("t1");
+
+    // 2. The follow unbinds 1104 and removes its socket file.
+    fs::write(egress_file(name), EMPTY).unwrap();
+    link.until(false, "step 2 emptied list (CH74 rule 2)");
+    let deadline = Instant::now() + BOOT;
+    while socket.exists() {
+        assert!(Instant::now() < deadline, "step 2: the 1104 socket stays");
+        sleep(RETRY);
+    }
+    match link.dial("n1", EGRESS_PROXY_PORT, &connect(&on_443(GITHUB))) {
+        Answer::Reply(bytes, false) if bytes.is_empty() => {}
+        Answer::Failed(_) => {}
+        other => panic!("step 2: a new dial of 3128 got {other:?}"),
+    }
+
+    // 3. The held tunnel still carries bytes both ways.
+    link.hello("t1");
+    link.close("t1");
+    assert_tunnel(name);
+    drop(link);
+    drop(booted);
+}
+
+/// A dial of guest 9418 with the request of a listed repo gets the
+/// advertisement of the mirror, whose first line names its HEAD
+/// (decisions CH46 rule 4, CH69 rules 16 and 18).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_reach_clones_a_listed_repo() {
+    let name = "reach-clone";
+    let booted = serve_reach(name);
+    let head = mirror(name);
+    let mut link = booted.vmm.open();
+    let Answer::Reply(line, true) = link.dial("g1", MIRROR_PORT, &upload_request(LISTED)) else {
+        panic!("no advertisement of {LISTED}");
+    };
+    let line = String::from_utf8_lossy(&line).into_owned();
+    assert!(
+        line.get(4..)
+            .unwrap()
+            .starts_with(&format!("{head} HEAD\0")),
+        "{line:?}"
+    );
+    link.close("g1");
+    drop(link);
+    drop(booted);
+}
+
+/// A dial of guest 9418 for a repo that the mirror holds and the list
+/// does not name gets the one `ERR` pkt-line, then the close (decisions
+/// CH10-10, CH69 rule 16).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_reach_refuses_a_repo_outside_repos() {
+    let name = "reach-unlisted";
+    let booted = serve_reach(name);
+    mirror(name);
+    let mut link = booted.vmm.open();
+    let request = upload_request(UNLISTED);
+    assert_eq!(
+        link.dial("g1", MIRROR_PORT, &request),
+        Answer::Reply(DENIED.to_vec(), true)
+    );
+    assert_eq!(link.send("g1", b""), Answer::Reply(Vec::new(), false));
+    drop(link);
+    drop(booted);
+}
