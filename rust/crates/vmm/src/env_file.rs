@@ -27,10 +27,9 @@
 //! A refusal names the line and the name, never the value, as in
 //! `env/AGENTS.md`.
 //!
-//! CONTRACT-QUESTION (decision CH76 rules 2 and 6, `AGENTS.md` Known gap
-//! 32): `creche-vmm.service` reads `vmm.env` and then the site file, and a
-//! site value wins. A hook takes one `--env-file`, the `vmm.env` of gap
-//! Q68-2 option A. That is the narrowest reading of contract 06 §4 rule 7.
+//! Decision CH77 rule 1 (`AGENTS.md` Known gap 32): `creche-vmm.service`
+//! reads `vmm.env` alone, and a hook takes one `--env-file`, that same
+//! file. So the hook and the unit read one set of values.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
