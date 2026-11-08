@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 import yaml
-from handover.catalog import CATALOG_BY_NAME
+from handover.catalog import CATALOG_BY_NAME, Kind
 from handover.manifest import Markup
 
 #: The contract version the fixtures declare. Kept equal to the catalog's
@@ -28,6 +28,22 @@ _INSTALL_ROOT = "/opt/components"
 
 #: The TOML value of each `release` word that `manifest_text` writes.
 _RELEASE_WORDS = {"yes": "true", "no": "false"}
+
+#: The component whose tree holds the verify program of a disk-image
+#: fixture (contract 06 §4 rule 6), and that program.
+DISK_HOOK_HOLDER = "vmm"
+DISK_HOOK = f"{_INSTALL_ROOT}/{DISK_HOOK_HOLDER}/bin/{DISK_HOOK_HOLDER}"
+
+
+def _shape(name: str, depends_on: str) -> tuple[str, str, list[str]]:
+    """`runs_as`, `depends_on` and the verify argv of a fixture. A
+    disk-image component runs as none, and its hook is a program of the
+    tree of the component that its `depends_on` names (contract 06 §4
+    rule 6, §8.4 rule 5)."""
+    if CATALOG_BY_NAME[name].kind is Kind.DISK_IMAGE:
+        return "none", depends_on or DISK_HOOK_HOLDER, [DISK_HOOK, "check-images", "--json"]
+
+    return "operator", depends_on, [f"{_INSTALL_ROOT}/{name}/bin/{name}-verify", "--json"]
 
 
 #: The text of `component.toml` at the root of the creche-release
@@ -63,6 +79,7 @@ def manifest_text(
     row = CATALOG_BY_NAME[name]
     kind = row.kind
     declared = release if release is not None else str(row.releases)
+    runs_as, depends_on, command = _shape(name, depends_on)
 
     return f"""
 manifest_version: "{FIXTURE_MANIFEST_VERSION}"
@@ -71,7 +88,7 @@ repo: {row.repo}
 path: "{path if path is not None else row.path}"
 kind: {kind}
 unit: null
-runs_as: operator
+runs_as: {runs_as}
 install:
   to: {_INSTALL_ROOT}/{name}
   prev: {_INSTALL_ROOT}/{name}.prev
@@ -79,7 +96,7 @@ provides: [{provides}]
 requires: [{requires}]
 depends_on: [{depends_on}]
 verify:
-  command: ["{_INSTALL_ROOT}/{name}/bin/{name}-verify", "--json"]
+  command: {json.dumps(command)}
   user: operator
   timeout_s: 60
 restore:
@@ -108,6 +125,7 @@ def manifest_toml(
     row = CATALOG_BY_NAME[name]
     declared = release if release is not None else str(row.releases)
     word = _RELEASE_WORDS.get(declared, json.dumps(declared))
+    runs_as, depends_on, command = _shape(name, depends_on)
 
     return f"""
 manifest_version = "{FIXTURE_MANIFEST_VERSION}"
@@ -115,13 +133,13 @@ name = "{name}"
 repo = "{row.repo}"
 path = "{path if path is not None else row.path}"
 kind = "{row.kind}"
-runs_as = "operator"
+runs_as = "{runs_as}"
 install.to = "{_INSTALL_ROOT}/{name}"
 install.prev = "{_INSTALL_ROOT}/{name}.prev"
 provides = {_toml_array(provides)}
 requires = {_toml_array(requires)}
 depends_on = {_toml_array(depends_on)}
-verify.command = ["{_INSTALL_ROOT}/{name}/bin/{name}-verify", "--json"]
+verify.command = {json.dumps(command)}
 verify.user = "operator"
 verify.timeout_s = 60
 restore.mode = "automatic"

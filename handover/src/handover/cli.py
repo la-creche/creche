@@ -4,7 +4,7 @@
 (`handover/component.yaml`, `name: handover`), and nothing else declares
 it.
 
-Seven subcommands. Only `request` and `follow` write anything.
+Eight subcommands. Only `request` and `follow` write anything.
 
 1. `check` validates what is on disk: every manifest parses, every name
    matches contract 06 §1, `depends_on` is acyclic, and rules C1 to C3 hold
@@ -44,6 +44,10 @@ Seven subcommands. Only `request` and `follow` write anything.
 7. `check-tree --kind binary` walks a built tree of compiled programs
    (`treewalk.py`). It prints one line for each fault and exits 1 when it
    finds one.
+8. `disk-assets` prints what CI builds and signs for each disk-image
+   component, in the same line form (`artifacts.DiskRow`). `artifacts`
+   prints binary rows only, so a reader of its form never meets a disk
+   line (contract 06 §8.4 rule 1, CH76 rule 5).
 
 Each other subcommand has no notice file. It writes only the log line of
 such a text, and its caller reads that line.
@@ -70,6 +74,8 @@ from .artifacts import (
     archive_components,
     asset_limits,
     crate_row,
+    disk_components,
+    disk_rows,
     rows,
     signer_policy,
     verify_words,
@@ -433,8 +439,9 @@ PLAN_INPUTS = ("paths", "tags", "at_sha", "levels", "cut")
 
 def _run_assets(args: argparse.Namespace) -> int:
     """The assets that the Release of one component holds: one line for
-    each, `<name> <largest size in bytes>`, the archive first. No line for
-    a component whose kind ships no archive. It plans nothing."""
+    each, `<name> <largest size in bytes>`, in the order of
+    `artifacts.asset_limits`. No line for a component whose kind ships no
+    signed asset. It plans nothing."""
     extra = [_flag(name) for name in PLAN_INPUTS if getattr(args, name) is not None]
     if args.json:
         extra.append("--json")
@@ -552,6 +559,22 @@ def _run_artifact_rows(args: argparse.Namespace) -> int:
 
     manifests = read_named(_roots(args.root), names)
     for row in rows(manifests, repo):
+        _print_lines(row.lines())
+
+    return EXIT_OK
+
+
+def _run_disk_assets(args: argparse.Namespace) -> int:
+    """One row for each disk-image component of `--repo`. Only the
+    manifests of those components are read, as for `artifacts`. With no
+    such component, nothing is read and nothing is printed."""
+    repo = Repo(args.repo)
+    names = disk_components(repo)
+    if not names:
+        return EXIT_OK
+
+    manifests = read_named(_roots(args.root), names)
+    for row in disk_rows(manifests, repo):
         _print_lines(row.lines())
 
     return EXIT_OK
@@ -1351,6 +1374,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--trusted-root", dest="trusted_root", help="the absolute path of a trust root file"
     )
     made.set_defaults(handler=_run_artifacts, json=False)
+
+    disks = sub.add_parser(
+        "disk-assets", help="what CI builds and signs for a disk-image component"
+    )
+    disks.add_argument(
+        "--repo", required=True, choices=repos, help="the catalog's name of the repository"
+    )
+    disks.add_argument("--root", action="append", help="repository root to search (repeatable)")
+    disks.set_defaults(handler=_run_disk_assets, json=False)
 
     walk = sub.add_parser("check-tree", help="walk a built tree of compiled programs (CI)")
     walk.add_argument("--kind", required=True, choices=[str(Kind.BINARY)])

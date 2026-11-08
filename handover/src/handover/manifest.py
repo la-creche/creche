@@ -31,6 +31,7 @@ Two rules are load-bearing and easy to lose in a refactor.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePosixPath
@@ -114,6 +115,19 @@ UNIT_FIELD = "unit"
 #: The two refusals of a `kind: units` manifest (contract 06 §8.3).
 UNITS_NAME_NO_UNIT = "a units component names no unit"
 UNITS_HAVE_NO_BUILD = "a units component has no build"
+
+#: The refusals of a `kind: disk-image` manifest (contract 06 §4 rules 6
+#: and 7, §8.4).
+DISK_IMAGE_NAMES_NO_UNIT = "a disk-image component names no unit"
+DISK_IMAGE_RUNS_AS_NONE = "a disk-image component has runs_as none"
+DISK_IMAGE_HOOK_OUTSIDE = "the verify program of a disk-image component is in no depends_on tree"
+DISK_IMAGE_ENV_FILE = (
+    "the --env-file of a disk-image verify hook is not one of the component whose tree holds it"
+)
+
+#: The option of a verify hook that names the `EnvironmentFile=` of a unit
+#: (contract 06 §4 rule 7).
+ENV_FILE_OPTION = "--env-file"
 
 #: Contract 06 §8's field table, exactly. The key set is closed: an unknown
 #: key is a refusal, not a warning.
@@ -541,6 +555,84 @@ def _check_units(
         raise reader.refuse(UNITS_HAVE_NO_BUILD)
 
 
+def _check_disk_image(reader: _Reader, kind: Kind, unit: str | None, runs_as: RunsAs) -> None:
+    """Contract 06 §8.4 rule 5: a `kind: disk-image` component names no
+    unit, and nothing runs it. Its `build` has the rule of each kind but
+    `binary`, an absolute first word, and only CI runs it (§8)."""
+    if kind is not Kind.DISK_IMAGE:
+        return
+
+    if unit is not None:
+        raise reader.refuse(DISK_IMAGE_NAMES_NO_UNIT)
+
+    if runs_as is not RunsAs.NONE:
+        raise reader.refuse(DISK_IMAGE_RUNS_AS_NONE)
+
+
+def check_disk_image_hooks(manifests: Mapping[str, ComponentManifest]) -> None:
+    """Contract 06 §4 rules 6 and 7 for each `kind: disk-image` manifest of
+    one set (CH76 rule 6). A disk-image tree holds signed data files and no
+    program, so its verify program sits in the tree of a component that its
+    `depends_on` names. Each `--env-file` of its hook is one of the hook of
+    that component.
+
+    The set is the one that the resolver reads, so the CLI, the requester
+    and root each refuse a hook outside those trees.
+
+    CONTRACT-QUESTION: §4 rule 7 says the `--env-file` path is one that an
+    `EnvironmentFile=` line of the unit of that component declares. This
+    module reads no unit file. The reading taken is the `--env-file` of
+    the verify hook of that component, which
+    `tests/test_handover_r7r_verify_env.py` holds equal to the
+    `EnvironmentFile=` of its unit. A check against the unit text costs
+    the read of that unit in each caller of the resolver."""
+    for name in sorted(manifests):
+        manifest = manifests[name]
+        if manifest.kind is not Kind.DISK_IMAGE:
+            continue
+
+        holder = _hook_holder(manifest, manifests)
+        if holder is None:
+            raise Refusal(RefusalCode.MANIFEST, name, DISK_IMAGE_HOOK_OUTSIDE)
+
+        own = _env_files(manifest.verify.command, name)
+        if not set(own) <= set(_env_files(holder.verify.command, holder.name)):
+            raise Refusal(RefusalCode.MANIFEST, name, DISK_IMAGE_ENV_FILE)
+
+
+def _hook_holder(
+    manifest: ComponentManifest, manifests: Mapping[str, ComponentManifest]
+) -> ComponentManifest | None:
+    """The first component of `depends_on` whose `install.to` holds the
+    verify program of `manifest`, or None. Each path passed
+    `check_absolute_path`, so a path compare is a containment check."""
+    program = PurePosixPath(manifest.verify.command[0])
+    for name in manifest.depends_on:
+        other = manifests.get(name)
+        if other is not None and PurePosixPath(other.install.to) in program.parents:
+            return other
+
+    return None
+
+
+def _env_files(command: tuple[str, ...], name: str) -> tuple[str, ...]:
+    """Each path after `ENV_FILE_OPTION` in one verify hook. A hook whose
+    last word is the option names no path, and is refused."""
+    found: list[str] = []
+    for index, word in enumerate(command):
+        if word != ENV_FILE_OPTION:
+            continue
+
+        if index + 1 == len(command):
+            raise Refusal(
+                RefusalCode.MANIFEST, name, f"verify names {ENV_FILE_OPTION} with no path"
+            )
+
+        found.append(command[index + 1])
+
+    return tuple(found)
+
+
 def _check_manifest_version(value: str, subject: str) -> str:
     """This contract's major, at or below its minor. §3.1's `provides` rule."""
     matched = CONTRACT_VERSION_RE.fullmatch(value)
@@ -612,6 +704,7 @@ def parse_manifest(text: str, subject: str, markup: Markup) -> ComponentManifest
     runs_as = _read_account(reader, "runs_as", RunsAs)
     build = _read_build(reader, kind)
     _check_units(reader, kind, unit, build)
+    _check_disk_image(reader, kind, unit, runs_as)
 
     return ComponentManifest(
         manifest_version=manifest_version,

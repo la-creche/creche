@@ -43,7 +43,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, cast
 
-from ..artifacts import ArtifactRefusal, archive_expected, signer_policy
+from ..artifacts import ArtifactRefusal, assets_expected, signer_policy
 from ..catalog import CATALOG_BY_NAME, Kind, Repo
 from ..discovery import read_one
 from ..errors import Refusal, RefusalCode
@@ -837,7 +837,7 @@ class Release:
         wanted, redeploy = self.request.wanted(), self.request.redeploys()
         for name, version in sorted(deploying_versions(state, wanted, redeploy).items()):
             manifest = manifests.get(name)
-            if manifest is None or not archive_expected(manifest.kind):
+            if manifest is None or not assets_expected(manifest.kind):
                 continue
 
             tag = TAG_FORMAT.format(name=name, version=version)
@@ -953,7 +953,7 @@ class Release:
                 self.wiring.api, name, str(manifest.repo), plan.tag(name), plan.sha(name)
             )
             check_monotonic(name, plan.to_version(name), plan.from_version(name))
-            if archive_expected(manifest.kind):
+            if assets_expected(manifest.kind):
                 self.verified[name] = self._check_archive(plan, name, manifest)
 
             found.append(f"{name} PR #{reply.pr}")

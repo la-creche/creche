@@ -54,7 +54,7 @@ from time import monotonic
 from typing import Final
 
 from ..allocate import TAG_FORMAT, TAG_RE
-from ..artifacts import AssetLimit, archive_expected, asset_limits, download_url
+from ..artifacts import AssetLimit, asset_limits, assets_expected, download_url
 from ..catalog import CATALOG_BY_NAME, Kind, Repo
 from ..errors import Refusal
 from ..executor.source import CURL, CURL_PROTOCOL_FLAGS, artifact_store
@@ -116,7 +116,7 @@ def ships_archive(component: str) -> bool:
     This is the one read of the kind of a catalog row on the operator side.
     Root reads the kind of the manifest of the new tag instead.
     """
-    return archive_expected(CATALOG_BY_NAME[component].kind)
+    return assets_expected(CATALOG_BY_NAME[component].kind)
 
 
 @dataclass(frozen=True)

@@ -1,19 +1,23 @@
-"""The archive of a binary component: its names, its limits, who signs it,
-and the words that check its signature.
+"""The signed assets of a component: their names, their limits, who signs
+them, and the words that check a signature.
 
 CI builds each `kind: binary` component for `catalog.BINARY_TARGET`, packs
 the programs into one archive and signs the archive with a keyless
 signature. The Release of the tag holds two assets: the archive and the
-bundle of its signature. This module holds what each side of that path
-reads, so each side reads one source:
+bundle of its signature. A `kind: disk-image` component has N files and no
+archive: each file and the bundle of its signature is an asset (contract
+06 §3.4, §8.4). This module holds what each side of that path reads, so
+each side reads one source:
 
-1. The names of the two assets, and a download URL.
-2. `archive_expected`: the one answer to "does a component of this kind
-   ship an archive".
+1. The names of the assets and their limits, and a download URL.
+2. `assets_expected`: the one answer to "does a component of this kind
+   ship signed assets".
 3. `SignerPolicy` and `verify_words`: the workflow, the ref and the commit
    that a signature must name, as the words of the verifier.
-4. `rows` and `crate_row`: what CI builds, as the line form that
-   `handover artifacts` prints.
+4. `rows` and `crate_row`: what CI builds for a binary component, as the
+   line form that `handover artifacts` prints. `disk_rows`: what CI builds
+   for a disk-image component, as the line form that `handover
+   disk-assets` prints.
 5. `ArtifactRefusal`: the four reasons of a refusal with the code `P6`.
 
 Pure: no child, no socket, and no import of `executor/`. It reads no file.
@@ -39,6 +43,13 @@ from .catalog import (
     BUNDLE_MAX_BYTES,
     BUNDLE_SUFFIX,
     CATALOG_BY_NAME,
+    DIGESTS_FILE,
+    DIGESTS_MAX_BYTES,
+    DISK_FILE_MAX_BYTES,
+    DISK_FLAVORS,
+    DISK_OUT_ENV,
+    DISK_SUFFIX,
+    KERNEL_FILE,
     MAIN_BRANCH,
     RELEASE_WORKFLOW,
     RETIRING,
@@ -107,15 +118,20 @@ class ArtifactRefusal(StrEnum):
     SHAPE_REFUSED = "the archive shape was refused"
 
 
-def archive_expected(kind: Kind) -> bool:
-    """Whether a component of `kind` ships an archive: true for
-    `Kind.BINARY` and for no other kind.
+#: The kinds whose Release holds signed assets that root checks (check P6).
+SIGNED_KINDS: Final = frozenset({Kind.BINARY, Kind.DISK_IMAGE})
+
+
+def assets_expected(kind: Kind) -> bool:
+    """Whether a component of `kind` ships signed assets: true for
+    `Kind.BINARY` (one archive) and `Kind.DISK_IMAGE` (N files, CH35 (4)),
+    and for no other kind.
 
     This is the one place that answers the question. Each caller gives the
     kind that it trusts: root the kind of a manifest, the operator side
     and CI the kind of a catalog row.
     """
-    return kind is Kind.BINARY
+    return kind in SIGNED_KINDS
 
 
 @dataclass(frozen=True)
@@ -141,10 +157,32 @@ class AssetLimit:
     max_bytes: int
 
 
+def disk_files() -> tuple[AssetLimit, ...]:
+    """The files of a disk-image component, each with its largest size:
+    `digests.json`, the kernel, then one root disk for each flavor of
+    `catalog.DISK_FLAVORS` (contract 06 §8.4 rule 2, CH76 rules 5 and 7)."""
+    disks = (f"{flavor}{DISK_SUFFIX}" for flavor in DISK_FLAVORS)
+
+    return (
+        AssetLimit(name=DIGESTS_FILE, max_bytes=DIGESTS_MAX_BYTES),
+        AssetLimit(name=KERNEL_FILE, max_bytes=DISK_FILE_MAX_BYTES),
+        *(AssetLimit(name=name, max_bytes=DISK_FILE_MAX_BYTES) for name in disks),
+    )
+
+
 def asset_limits(component: str, kind: Kind) -> tuple[AssetLimit, ...]:
-    """The assets of a component of `kind`, the archive first. A kind that
-    ships no archive has none."""
-    if not archive_expected(kind):
+    """The assets of a component of `kind`. A binary component has its
+    archive, then its bundle. A disk-image component has each file of
+    `disk_files`, each before its own bundle (contract 06 §3.4). A kind
+    that ships no signed asset has none."""
+    if kind is Kind.DISK_IMAGE:
+        return tuple(
+            one
+            for file in disk_files()
+            for one in (file, AssetLimit(f"{file.name}{BUNDLE_SUFFIX}", BUNDLE_MAX_BYTES))
+        )
+
+    if kind is not Kind.BINARY:
         return ()
 
     names = asset_names(component)
@@ -326,16 +364,7 @@ class ArtifactRow:
         holds a line feed or a NUL. A row that breaks a rule refuses with
         the `request` code: CI would build nothing, or the line form would
         have more than one reading."""
-        if not NAME_RE.fullmatch(self.component):
-            detail = f"not a component name: {safe_token(self.component)}"
-            raise _refuse("artifact row", detail)
-
-        if not self.commands or not all(self.commands):
-            raise _refuse("artifact row", "a row needs one command or more, each with a word")
-
-        words = (word for command in self.commands for word in command)
-        if any("\n" in word or "\x00" in word for word in words):
-            raise _refuse("artifact row", "a word of a command holds a line feed or a NUL")
+        _check_row(self.component, self.commands)
 
     @property
     def target(self) -> str:
@@ -381,14 +410,25 @@ class ArtifactRow:
         return (*head, *body, "end")
 
 
-def archive_components(repo: Repo) -> tuple[str, ...]:
-    """Each component of `repo` that ships an archive, in catalog order. A
-    component that leaves or comes into the catalog is not one of them."""
+def _components(repo: Repo, kind: Kind) -> tuple[str, ...]:
+    """Each component of `repo` and `kind`, in catalog order. A component
+    that leaves or comes into the catalog is not one of them."""
     return tuple(
         row.name
         for row in CATALOG_BY_NAME.values()
-        if row.repo is repo and archive_expected(row.kind) and row.name not in RETIRING | ARRIVING
+        if row.repo is repo and row.kind is kind and row.name not in RETIRING | ARRIVING
     )
+
+
+def archive_components(repo: Repo) -> tuple[str, ...]:
+    """Each component of `repo` that ships an archive: each `kind: binary`
+    row, in catalog order."""
+    return _components(repo, Kind.BINARY)
+
+
+def disk_components(repo: Repo) -> tuple[str, ...]:
+    """Each `kind: disk-image` component of `repo`, in catalog order."""
+    return _components(repo, Kind.DISK_IMAGE)
 
 
 def rows(manifests: Mapping[str, ComponentManifest], repo: Repo) -> tuple[ArtifactRow, ...]:
@@ -399,22 +439,73 @@ def rows(manifests: Mapping[str, ComponentManifest], repo: Repo) -> tuple[Artifa
     another kind, refuses with the `catalog` code. A manifest with no build
     command refuses with the `manifest` code: CI would pack an empty tree.
     """
-    found: list[ArtifactRow] = []
-    for name in archive_components(repo):
-        manifest = manifests.get(name)
-        if manifest is None:
-            raise Refusal(RefusalCode.CATALOG, name, "a binary component with no manifest")
+    names = archive_components(repo)
 
-        if not archive_expected(manifest.kind):
-            detail = f"the catalog says {Kind.BINARY}, and the manifest says {manifest.kind}"
-            raise Refusal(RefusalCode.CATALOG, name, detail)
+    return tuple(ArtifactRow(name, _built(manifests, name, Kind.BINARY).build) for name in names)
 
-        if not manifest.build:
-            raise Refusal(RefusalCode.MANIFEST, name, "a binary component with no build command")
 
-        found.append(ArtifactRow(name, manifest.build))
+def _built(manifests: Mapping[str, ComponentManifest], name: str, kind: Kind) -> ComponentManifest:
+    """The manifest of a component that CI builds: present, of `kind`, and
+    with a build command. A missing manifest and another kind refuse with
+    the `catalog` code. No build command refuses with the `manifest` code:
+    CI would sign nothing."""
+    manifest = manifests.get(name)
+    if manifest is None:
+        raise Refusal(RefusalCode.CATALOG, name, f"a {kind} component with no manifest")
 
-    return tuple(found)
+    if manifest.kind is not kind:
+        detail = f"the catalog says {kind}, and the manifest says {manifest.kind}"
+        raise Refusal(RefusalCode.CATALOG, name, detail)
+
+    if not manifest.build:
+        raise Refusal(RefusalCode.MANIFEST, name, f"a {kind} component with no build command")
+
+    return manifest
+
+
+@dataclass(frozen=True)
+class DiskRow:
+    """What CI builds and signs for one disk-image component (contract 06
+    §8.4 rule 1). `commands` are the build commands, each a list of words.
+    The out variable and the files are no field: each reads its constant.
+    """
+
+    component: str
+    commands: tuple[tuple[str, ...], ...]
+
+    def __post_init__(self) -> None:
+        """The rules of `ArtifactRow`, for the same reasons."""
+        _check_row(self.component, self.commands)
+
+    @property
+    def out_env(self) -> str:
+        return DISK_OUT_ENV
+
+    @property
+    def assets(self) -> tuple[AssetLimit, ...]:
+        return asset_limits(self.component, Kind.DISK_IMAGE)
+
+    def lines(self) -> tuple[str, ...]:
+        """The line form of `ArtifactRow.lines`: `component`, `out-env`,
+        one `asset <name> <largest size in bytes>` line for each file and
+        each bundle, then each command, then `end`. A file name holds no
+        space, so the form has one reading."""
+        head = (
+            f"component {self.component}",
+            f"out-env {self.out_env}",
+            *(f"asset {one.name} {one.max_bytes}" for one in self.assets),
+        )
+        body = (line for words in self.commands for line in (f"argv {len(words)}", *words))
+
+        return (*head, *body, "end")
+
+
+def disk_rows(manifests: Mapping[str, ComponentManifest], repo: Repo) -> tuple[DiskRow, ...]:
+    """One row for each component of `disk_components(repo)`, with the
+    build commands of its manifest, under the refusals of `rows`."""
+    names = disk_components(repo)
+
+    return tuple(DiskRow(name, _built(manifests, name, Kind.DISK_IMAGE).build) for name in names)
 
 
 def crate_row(name: str, crate_dir: str) -> ArtifactRow:
@@ -425,6 +516,20 @@ def crate_row(name: str, crate_dir: str) -> ArtifactRow:
         raise _refuse("crate row", f"not a component name: {safe_token(name)}")
 
     return ArtifactRow(name, (install_words(crate_dir),))
+
+
+def _check_row(component: str, commands: tuple[tuple[str, ...], ...]) -> None:
+    """The rules of a row of CI: a component name, one command or more,
+    each with a word, and no word with a line feed or a NUL."""
+    if not NAME_RE.fullmatch(component):
+        raise _refuse("artifact row", f"not a component name: {safe_token(component)}")
+
+    if not commands or not all(commands):
+        raise _refuse("artifact row", "a row needs one command or more, each with a word")
+
+    words = (word for command in commands for word in command)
+    if any("\n" in word or "\x00" in word for word in words):
+        raise _refuse("artifact row", "a word of a command holds a line feed or a NUL")
 
 
 def _require_owner(owner: str) -> None:
