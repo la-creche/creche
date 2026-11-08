@@ -700,6 +700,12 @@ jobs:
         with:
           enable-cache: false
 
+      # musl-gcc for the C of ring under CH (plan risk 13). The
+      # `vmm-archive` job of gate.yml holds the same step. Runner sudo
+      # (CH36 G20), as in bin/vm-smoke-setup.sh.
+      - name: musl-tools
+        run: sudo apt-get update -qq && sudo apt-get install --yes --no-install-recommends -qq musl-tools
+
       # ARTIFACT_REPO: the catalog's name for this repository. TAG_REPO of
       # the tag step holds the same name. ARTIFACT_PLANNED: the components
       # of the plan.
