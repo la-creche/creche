@@ -1716,7 +1716,7 @@ the runner.
     binds 1104 at each boot and each restore from the list of that time,
     and the follow binds or removes it after each edit on a running VM.
     Each CONNECT reads the list again, so a removal refuses at once.
-13. Decision CH77 rule 2: plan PR H4b sets the verify `timeout` of the
-    disks row to 300 s in `disks/component.toml`. It must equal
+13. Closed by plan PR H4b (decision CH77 rule 2): `disks/component.toml`
+    sets the verify `timeout_s` of the disks row to 300 s. It must equal
     `follow::HOOK_TIMEOUT`, or a hook may still run when the follow
-    imports. H4b adds a test that holds the two equal.
+    imports. `bin/tests/test_disks_manifest.py` holds the two equal.

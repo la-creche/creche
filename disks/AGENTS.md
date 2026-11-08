@@ -53,6 +53,12 @@ to its keys, its file names and its byte form. That test runs the script
 against stand-ins for `docker`, `curl` and `sha256sum`. The
 `playpen-image` job builds each disk for real on each PR.
 
+The verify timeout of the row, 300 s, equals `follow::HOOK_TIMEOUT` of
+the vmm (decision CH77 rule 2). The vmm imports new bytes of
+`digests.json` only after they stay the same that long plus one poll, so
+no import runs while `vmm check-images` runs.
+`bin/tests/test_disks_manifest.py` holds the two equal.
+
 ## Known gaps
 
 1. CONTRACT-QUESTION: no row says whether CI refuses a disk file past its
