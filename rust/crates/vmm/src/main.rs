@@ -25,13 +25,29 @@
 //!   unit and queues no stop job. A missing or bad key exits 78. A unit
 //!   that is gone at its kill has ended. Any other failure exits 1, so
 //!   the unit ends `failed` only on a real failure.
+//! - `vmm verify --json --env-file <path>` is the verify hook of the vmm
+//!   row (decision CH76 rule 2, `creche_vmm::verify`). It checks the four
+//!   programs, the CH version and the static guest init, and opens no
+//!   socket and reads no disk.
+//! - `vmm check-images --json --env-file <path>` is the verify hook of the
+//!   disks row (decision CH76 rule 6, `creche_vmm::check_images`). It
+//!   checks the digest of each file that `digests.json` names and writes
+//!   no file.
+//!
+//! Each hook writes one JSON line on stdout and exits 0 when every check
+//! passes, else 1 (contract 06 §4 rule 3). Its `<path>` is the env file of
+//! the vmm unit, because handover passes no unit env to a hook (contract
+//! 06 §4 rule 7). A wrong argument list exits 78, as for each mode.
 
 use std::ffi::OsString;
 use std::fmt;
+use std::path::Path;
 use std::process::ExitCode;
 
 use creche_vmm::config::{Config, KillScopesConfig};
 use creche_vmm::shutdown::RUNTIME_END;
+use creche_vmm::verify::Report;
+use creche_vmm::{check_images, verify};
 use creche_vmm_confine::{launch, leftovers, stage};
 use tokio::runtime::Builder;
 
@@ -41,7 +57,12 @@ use tokio::runtime::Builder;
 const EX_CONFIG: u8 = 78;
 
 /// The usage line for a wrong argument list.
-const USAGE: &str = "usage: vmm serve | vmm launch | vmm launch-stage <plan> | vmm kill-scopes";
+const USAGE: &str = "usage: vmm serve | vmm launch | vmm launch-stage <plan> | vmm kill-scopes \
+| vmm verify --json --env-file <path> | vmm check-images --json --env-file <path>";
+
+/// The two words before the env file of each hook mode.
+const JSON: &str = "--json";
+const ENV_FILE: &str = "--env-file";
 
 /// The modes of the program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +73,12 @@ enum Mode<'a> {
     Stage(&'a OsString),
     /// The `ExecStopPost=` step of the vmm unit (decision CH63).
     KillScopes,
+    /// The verify hook of the vmm row with its env file (decision CH76
+    /// rule 2).
+    Verify(&'a OsString),
+    /// The verify hook of the disks row with its env file (decision CH76
+    /// rule 6).
+    CheckImages(&'a OsString),
 }
 
 impl<'a> Mode<'a> {
@@ -64,6 +91,15 @@ impl<'a> Mode<'a> {
             [mode] if mode == launch::MODE => Some(Self::Launch),
             [mode, plan] if mode == stage::MODE => Some(Self::Stage(plan)),
             [mode] if mode == "kill-scopes" => Some(Self::KillScopes),
+            [mode, json, flag, path] if json == JSON && flag == ENV_FILE => {
+                if mode == "verify" {
+                    Some(Self::Verify(path))
+                } else if mode == "check-images" {
+                    Some(Self::CheckImages(path))
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -91,6 +127,25 @@ fn dispatch(args: &[OsString]) -> ExitCode {
             refuse(&error)
         }
         Mode::KillScopes => kill_scopes(),
+        Mode::Verify(path) => hook(&verify::run(Path::new(path))),
+        Mode::CheckImages(path) => hook(&check_images::run(Path::new(path))),
+    }
+}
+
+/// Writes the report of a hook as one line on stdout. Exit 0 when every
+/// check passed, else 1 (contract 06 §4 rule 3).
+fn hook(report: &Report) -> ExitCode {
+    match report.line() {
+        Ok(line) => println!("{line}"),
+        Err(error) => {
+            eprintln!("vmm: the report does not serialize: {error}");
+            return ExitCode::FAILURE;
+        }
+    }
+    if report.passed() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 
@@ -173,6 +228,30 @@ mod tests {
         assert_eq!(Mode::parse(&stage), Some(Mode::Stage(&stage[1])));
         let kill = args(&["kill-scopes"]);
         assert_eq!(Mode::parse(&kill), Some(Mode::KillScopes));
+        let verify = args(&["verify", "--json", "--env-file", "/srv/vmm.env"]);
+        assert_eq!(Mode::parse(&verify), Some(Mode::Verify(&verify[3])));
+        let images = args(&["check-images", "--json", "--env-file", "/srv/vmm.env"]);
+        assert_eq!(Mode::parse(&images), Some(Mode::CheckImages(&images[3])));
+    }
+
+    /// Each hook takes exactly `--json --env-file <path>`, in that order.
+    #[test]
+    fn parse_refuses_a_wrong_hook_list() {
+        for mode in ["verify", "check-images"] {
+            for list in [
+                vec![mode],
+                vec![mode, "--json"],
+                vec![mode, "--json", "--env-file"],
+                vec![mode, "--env-file", "/srv/vmm.env"],
+                vec![mode, "--env-file", "/srv/vmm.env", "--json"],
+                vec![mode, "--json", "--env", "/srv/vmm.env"],
+                vec![mode, "--json", "--env-file", "/srv/vmm.env", "extra"],
+            ] {
+                assert_eq!(Mode::parse(&args(&list)), None, "{list:?}");
+            }
+        }
+        let other = args(&["serve", "--json", "--env-file", "/srv/vmm.env"]);
+        assert_eq!(Mode::parse(&other), None);
     }
 
     #[test]

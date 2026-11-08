@@ -45,8 +45,8 @@ DECIDED = [
     ("Requires", [], "CH19 (4), CH20"),
     (
         "EnvironmentFile",
-        ["/srv/agents/state/creche/vmm.env", "/etc/creche/site.env"],
-        "CH59 rule 1, the site file last",
+        ["/srv/agents/state/creche/vmm.env"],
+        "CH59 rule 1, CH77 rule 1: vmm.env alone, the one file of the unit and the verify hooks",
     ),
 ]
 
@@ -88,11 +88,16 @@ def test_the_stop_timeout_is_unit_stop_timeout() -> None:
 
 @pytest.mark.parametrize("mode", ["vmm serve", "vmm kill-scopes"])
 def test_each_mode_of_the_unit_is_a_mode_of_the_vmm(mode: str) -> None:
-    """A wrong mode word exits 78 at the first start or stop on the host."""
-    usage = re.findall(r'const USAGE: &str = "usage: (.*)";', MAIN_RS.read_text())
+    """A wrong mode word exits 78 at the first start or stop on the host.
+
+    `USAGE` may span lines: a Rust string drops a `\\` at a line end, the
+    line end and the leading spaces of the next line.
+    """
+    usage = re.findall(r'const USAGE: &str = "usage: (.*?)";', MAIN_RS.read_text(), re.DOTALL)
 
     assert len(usage) == 1
-    assert mode in [mode.strip() for mode in usage[0].split("|")]
+    text = re.sub(r"\\\n\s*", "", usage[0])
+    assert mode in [mode.strip() for mode in text.split("|")]
 
 
 def test_no_client_unit_needs_the_vmm() -> None:
