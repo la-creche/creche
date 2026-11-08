@@ -547,8 +547,11 @@ jobs:
   # archive only after the merge, so a broken build would fail the release
   # run and mint no vmm tag. This job fails the PR first. It runs
   # bin/build-artifacts.sh for the planned row `vmm`, with no step that the
-  # `artifacts` job lacks: so it also shows whether the CH build needs a
-  # package that the runner lacks. The script runs `handover check-tree`
+  # `artifacts` job lacks. Its first run showed that the CH build needs
+  # musl-tools: ring v0.17.14 compiles C with x86_64-linux-musl-gcc (plan
+  # risk 13). Both jobs install it from apt before the build, as
+  # bin/vm-smoke-setup.sh does, with runner sudo (CH36 G20). The script
+  # runs `handover check-tree`
   # and holds the archive to the limits of its row. The last step holds
   # guest-init of the archive static, with the check of step 7 of
   # bin/vm-smoke-setup.sh: no PT_INTERP header, after a proof that the
@@ -578,6 +581,12 @@ jobs:
         if: needs.scope.outputs.vmm != 'false'
         with:
           enable-cache: false
+
+      # musl-gcc for the C of ring under CH (plan risk 13). The `artifacts`
+      # job of release.yml holds the same step.
+      - name: musl-tools
+        if: needs.scope.outputs.vmm != 'false'
+        run: sudo apt-get update -qq && sudo apt-get install --yes --no-install-recommends -qq musl-tools
 
       - name: build
         if: needs.scope.outputs.vmm != 'false'
