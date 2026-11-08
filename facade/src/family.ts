@@ -100,12 +100,7 @@ export async function readFamily(env: NodeJS.ProcessEnv, input: Readable): Promi
   }
 
   if (mode.mode.kind === "ch") {
-    const guest = await readGuestStart(env, say);
-    if (!guest.ok) {
-      return { ok: false, exitCode: EXIT_BY_REFUSAL[guest.reason], detail: guest.reason };
-    }
-
-    const { composed, limits } = await composeStart(guest.start);
+    const { composed, limits } = await composeStart(await readGuestStart(env, say));
     const backend = vmmBackend(FAMILY_STATE_SOCKET, composed.state.config, say);
     const supervision: Supervision = { kind: "ch", link: guestLink(say) };
 

@@ -22,12 +22,7 @@ describe("readGuestStart", () => {
   it("takes the fixed guest paths, the guest planes and the state of the pull", async () => {
     const vmm = await replying(stateLine({ ...CONFIG, skills: { "weather-report": SKILL, broken: "no frontmatter" } }));
     const said = sayer();
-    const read = await readGuestStart({ MPLBACKEND: "Agg" }, said.say, vmm.path, QUICK);
-    if (!read.ok) {
-      throw new Error(read.reason);
-    }
-
-    const { start } = read;
+    const start = await readGuestStart({ MPLBACKEND: "Agg" }, said.say, vmm.path, QUICK);
     expect(start.store).toBe(FLUE_DB);
     expect(start.workspace).toBe(WORKSPACE);
     expect([start.planes.litellm.text, start.planes.pep.text]).toEqual(["http://127.0.0.1:4000", "http://127.0.0.1:8300"]);
@@ -44,15 +39,12 @@ describe("readGuestStart", () => {
   it("reads no AGENT_* variable", async () => {
     const vmm = await replying(stateLine());
     const env = { ...familyEnv({ pepUrl: "http://192.0.2.1:1", litellmUrl: "http://192.0.2.2:2" }), AGENT_INDEX_ROOT: "/nonexistent" };
-    const read = await readGuestStart(env, sayer().say, vmm.path, QUICK);
-    if (!read.ok) {
-      throw new Error(read.reason);
-    }
+    const start = await readGuestStart(env, sayer().say, vmm.path, QUICK);
 
-    expect(read.start.store).toBe(FLUE_DB);
-    expect(read.start.planes.pep.text).toBe("http://127.0.0.1:8300");
-    expect(read.start.indexRoot).toBeNull();
-    expect(read.start.toolEnv).toEqual({});
+    expect(start.store).toBe(FLUE_DB);
+    expect(start.planes.pep.text).toBe("http://127.0.0.1:8300");
+    expect(start.indexRoot).toBeNull();
+    expect(start.toolEnv).toEqual({});
   });
 
   it("pulls again after each fault, with a pause that doubles up to its cap", async () => {
@@ -65,9 +57,9 @@ describe("readGuestStart", () => {
     ];
     const vmm = await fakeVmm((link, socket) => socket.write(`${replies[link] ?? ""}\n`));
     const said = sayer();
-    const read = await readGuestStart({}, said.say, vmm.path, QUICK);
+    const start = await readGuestStart({}, said.say, vmm.path, QUICK);
 
-    expect(read.ok).toBe(true);
+    expect(start.store).toBe(FLUE_DB);
     expect(vmm.links).toHaveLength(5);
     expect(said.lines).toEqual([
       "the start pull of the family state failed (creds_missing); the next pull is in 1 ms",
@@ -84,10 +76,10 @@ describe("readGuestStart", () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     const late = createServer((socket) => socket.on("data", () => socket.end(`${stateLine()}\n`)));
     await new Promise<void>((resolve) => late.listen(path, resolve));
-    const read = await reading;
+    const start = await reading;
     late.close();
 
-    expect(read.ok).toBe(true);
+    expect(start.store).toBe(FLUE_DB);
     expect(said.lines[0]).toMatch(/^the family-state pull got no state: the link closed with no reply: .*ENOENT/);
     expect(said.lines[1]).toBe("the start pull of the family state failed (not_valid); the next pull is in 1 ms");
   });
