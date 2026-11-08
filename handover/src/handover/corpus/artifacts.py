@@ -1,10 +1,11 @@
-"""Fetch the two assets of the Release of a binary component into the store.
+"""Fetch the signed assets of the Release of a component into the store.
 
 Root installs a binary component from an archive that CI built and signed
-(`artifacts.py` of the pure half). Root fetches nothing. The operator side
-fetches the archive and the bundle of its signature into the store, and root
-copies the two files later and checks the signature. The check covers the
-bytes, so the route of the bytes does not matter.
+(`artifacts.py` of the pure half), and a disk-image component from N files
+that CI built and signed, each with its own bundle (contract 06 §3.4, §8.4,
+CH76 rule 5). Root fetches nothing. The operator side fetches each asset
+into the store, and root copies each file later and checks each signature.
+The check covers the bytes, so the route of the bytes does not matter.
 
     <operator home>/.local/state/creche/artifacts/<catalog repo>/<tag>/<asset>
 
@@ -20,7 +21,10 @@ Six rules hold its shape:
 2. **It never raises.** A fetch that fails costs a wait of the follower, and
    the next run fetches again. Each fault is one fixed line. No text of curl
    reaches a line.
-3. **It acts only for a component that ships an archive** (`ships_archive`).
+3. **It acts only for a component that ships signed assets**
+   (`ships_assets`). The assets and their limits are those of the kind of
+   its catalog row (`artifacts.asset_limits`). Each asset has its own
+   `--max-filesize`.
 4. **It writes a temporary name in the directory of the asset, and renames
    it after status 0.** It removes the temporary file of an older run
    first, and it resumes no partial file.
@@ -34,8 +38,13 @@ Six rules hold its shape:
    second fetch of the same tag, for example a run of the follower beside a
    `handover request`, gets one line and starts no child.
 
-CI publishes the two assets of a Release after it pushes the tag. For a new
+CI publishes the assets of a Release after it pushes the tag. For a new
 tag, the first fetch thus often gets an error from the server.
+
+A disk file is up to 2 GiB - 1. A fetch that passes its time limit keeps
+no part (rule 4), and a run of the follower ends at `follow.RUN_DEADLINE_S`.
+So each disk file must download in one run. Not checked: the download rate
+of the host from the code host (plan risk 10).
 """
 
 from __future__ import annotations
@@ -55,7 +64,7 @@ from typing import Final
 
 from ..allocate import TAG_FORMAT, TAG_RE
 from ..artifacts import AssetLimit, asset_limits, assets_expected, download_url
-from ..catalog import CATALOG_BY_NAME, Kind, Repo
+from ..catalog import CATALOG_BY_NAME, Repo
 from ..errors import Refusal
 from ..executor.source import CURL, CURL_PROTOCOL_FLAGS, artifact_store
 from ..site import github_owner, github_repo
@@ -109,9 +118,10 @@ PRUNED: Final = "removed the artifacts of {tag} from the store"
 NOT_PRUNED: Final = "{tag}: the store directory could not be removed"
 
 
-def ships_archive(component: str) -> bool:
-    """Whether the operator side expects an archive for `component`, a name
-    of the catalog.
+def ships_assets(component: str) -> bool:
+    """Whether the operator side expects signed assets for `component`, a
+    name of the catalog: an archive for a binary row, the files of a
+    disk-image row.
 
     This is the one read of the kind of a catalog row on the operator side.
     Root reads the kind of the manifest of the new tag instead.
@@ -121,8 +131,8 @@ def ships_archive(component: str) -> bool:
 
 @dataclass(frozen=True)
 class ArtifactReport:
-    """What one fetch did. `ready` holds each component whose two files are
-    in the store, and `lines` is what the caller prints."""
+    """What one fetch did. `ready` holds each component whose assets are
+    all in the store, and `lines` is what the caller prints."""
 
     ready: frozenset[str]
     lines: tuple[str, ...]
@@ -130,7 +140,7 @@ class ArtifactReport:
 
 @dataclass(frozen=True)
 class _Want:
-    """One component that ships an archive, and where its two files go."""
+    """One component that ships signed assets, and where they go."""
 
     component: str
     repo: Repo
@@ -155,7 +165,7 @@ def fetch_artifacts(
     euid: int | None = None,
 ) -> ArtifactReport:
     """Fetch each asset that `store` does not hold, for each component of
-    `tags` that ships an archive. `tags` maps a component to its tag, and
+    `tags` that ships signed assets. `tags` maps a component to its tag, and
     `deadline` is a time of `time.monotonic`. Never raises."""
     if (os.geteuid() if euid is None else euid) == 0:
         return ArtifactReport(frozenset(), (ROOT_REFUSAL,))
@@ -182,8 +192,9 @@ def fetch_artifacts(
 
 def _want_of(component: str, tag: str, store: Path, lines: list[str]) -> _Want | None:
     """The want of one component, or None: for a component that ships no
-    archive with no line, and for a tag of another shape with one line."""
-    if component not in CATALOG_BY_NAME or not ships_archive(component):
+    signed asset with no line, and for a tag of another shape with one
+    line."""
+    if component not in CATALOG_BY_NAME or not ships_assets(component):
         return None
 
     matched = TAG_RE.fullmatch(tag)
@@ -192,19 +203,19 @@ def _want_of(component: str, tag: str, store: Path, lines: list[str]) -> _Want |
 
         return None
 
-    repo = CATALOG_BY_NAME[component].repo
+    row = CATALOG_BY_NAME[component]
 
     return _Want(
         component=component,
-        repo=repo,
+        repo=row.repo,
         tag=tag,
-        directory=store / str(repo) / tag,
-        assets=asset_limits(component, Kind.BINARY),
+        directory=store / str(row.repo) / tag,
+        assets=asset_limits(component, row.kind),
     )
 
 
 def _complete(store: Path, want: _Want) -> bool:
-    """Whether the store holds both files of `want`, each with its mode, in
+    """Whether the store holds each asset of `want`, each with its mode, in
     directories with their mode."""
     chain = (store, store / str(want.repo), want.directory)
     if not all(_is_private_dir(path) for path in chain):
@@ -557,5 +568,5 @@ __all__ = [
     "artifact_store",
     "fetch_artifacts",
     "prune_artifacts",
-    "ships_archive",
+    "ships_assets",
 ]

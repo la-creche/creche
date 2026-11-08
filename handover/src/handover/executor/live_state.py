@@ -532,8 +532,9 @@ def _artifact_digest(component: str) -> str | None:
 
     This builder runs before root reads a manifest, so it cannot know the
     kind of a component. Step 2 fills the value after that read, for each
-    component that deploys and whose manifest says `binary`: the digest of
-    root's copy of its archive (`steps.Release._copy_artifacts`). Step 8
+    component that deploys and whose manifest says `binary` or
+    `disk-image`: the digest of root's copy of its archive, or of the sum
+    lines of its files (`steps.Release._copy_artifacts`, CH76 rule 5). Step 8
     fills it again from the same copy. Each other kind keeps `null`. For
     `oci-image` that is so today because nothing in this repository pushes
     `playpen` to an OCI registry, so there is no registry digest to record.

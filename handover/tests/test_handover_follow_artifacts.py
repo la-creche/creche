@@ -24,8 +24,8 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from handover.artifacts import ArtifactRefusal, asset_names
-from handover.catalog import CATALOG_BY_NAME, Repo
+from handover.artifacts import ArtifactRefusal, asset_limits, asset_names
+from handover.catalog import CATALOG_BY_NAME, Kind, Repo
 from handover.corpus import CorpusReport
 from handover.corpus import artifacts as fetching
 from handover.corpus.artifacts import CHILD_MAX_S, PRUNE_ROOT_REFUSAL, prune_artifacts
@@ -429,6 +429,30 @@ def test_a_run_with_no_binary_member_reads_no_store(
     assert today.follow(BOARD) == cli.EXIT_OK
     assert today.follow(BOARD) == cli.EXIT_OK
     assert today.filed() == [{BOARD: NEXT}]
+
+
+# -- a disk-image member ----------------------------------------------------------
+
+DISKS = "disks"
+
+
+def test_a_disk_member_is_ready_only_with_every_file(today: _Host) -> None:
+    """Contract 06 §8.4 rule 3: the follower reads a disk-image member as
+    ready only when the store holds each file of its row and each bundle.
+    A member that ships no signed asset is ready with no fetch."""
+    tag = f"{DISKS}-v{NEXT}"
+    names = [one.name for one in asset_limits(DISKS, Kind.DISK_IMAGE)]
+    today.releases.published |= {f"{tag}/{name}" for name in names[:-1]}
+    moving = {DISKS: NEXT, CARE: NEXT}
+
+    assert cli._ready_members(moving) == {CARE}  # pyright: ignore[reportPrivateUsage]
+
+    today.releases.published.add(f"{tag}/{names[-1]}")
+    today.releases.calls.clear()
+
+    assert cli._ready_members(moving) == {DISKS, CARE}  # pyright: ignore[reportPrivateUsage]
+    assert [call[-1].rsplit("/", 1)[-1] for call in today.releases.calls] == [names[-1]]
+    assert sorted(path.name for path in today.tag_dir(DISKS, NEXT).iterdir()) == sorted(names)
 
 
 # -- the marker -----------------------------------------------------------------

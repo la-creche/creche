@@ -51,7 +51,7 @@ from handover.corpus.artifacts import (
     ArtifactReport,
     artifact_store,
     fetch_artifacts,
-    ships_archive,
+    ships_assets,
 )
 from handover.executor.live_state import write_stamp
 from handover.executor.mcpbuild import CURL_FLAGS, MAX_ASSET_BYTES
@@ -426,15 +426,73 @@ def test_a_component_of_another_kind_starts_no_child(store: Path, curl: _Curl) -
     """`attendance` is a venv in the catalog: it ships no archive."""
     report = _fetch(store, curl, tags={"attendance": f"attendance-v{VERSION}"})
 
-    assert not ships_archive("attendance")
+    assert not ships_assets("attendance")
     assert curl.calls == []
     assert report == ArtifactReport(frozenset(), ())
 
 
-def test_only_a_binary_row_ships_an_archive(home: Path) -> None:
-    assert ships_archive(BINARY_NAME)
+def test_only_a_binary_or_disk_image_row_ships_signed_assets(home: Path) -> None:
+    assert ships_assets(BINARY_NAME)
+    assert ships_assets("disks")
     others = ("attendance", "playpen", "registry-data")
-    assert [name for name in others if ships_archive(name)] == []
+    assert [name for name in others if ships_assets(name)] == []
+
+
+#: The tag of the disk-image row, and each of its assets with its limit.
+DISK_TAG = f"disks-v{VERSION}"
+DISK_ASSETS = pure_half.asset_limits("disks", Kind.DISK_IMAGE)
+
+
+def _disk_url(asset: str) -> str:
+    repo = str(Repo.CRECHE)
+
+    return f"{HTTPS}{CODE_HOST}/{OWNER}/{repo}/releases/download/{DISK_TAG}/{asset}"
+
+
+def _disk_curl(*absent: str) -> _Curl:
+    """A Release of the disk-image row that holds each asset but `absent`."""
+    served = (one.name for one in DISK_ASSETS if one.name not in absent)
+
+    return _Curl(serves={_disk_url(name): f"{name}\n".encode() for name in served})
+
+
+def test_each_disk_file_is_fetched_with_its_own_limit(store: Path) -> None:
+    """Each file and each bundle is one child, with the limit of that
+    asset as the flag of curl and as the limit of the process (contract 06
+    §8.4 rule 3, CH76 rule 5)."""
+    curl = _disk_curl()
+
+    report = _fetch(store, curl, tags={"disks": DISK_TAG})
+
+    assert report.ready == frozenset({"disks"})
+    asked = [(call[-1], int(call[call.index("--max-filesize") + 1])) for call, _, _ in curl.calls]
+    assert asked == [(_disk_url(one.name), one.max_bytes) for one in DISK_ASSETS]
+    assert [limit for _, _, limit in curl.calls] == [one.max_bytes for one in DISK_ASSETS]
+    held = store / str(Repo.CRECHE) / DISK_TAG
+    assert sorted(path.name for path in held.iterdir()) == sorted(one.name for one in DISK_ASSETS)
+
+
+def test_a_missing_disk_file_leaves_the_member_waiting(store: Path) -> None:
+    """The Release lacks one disk. The files before it stay in the store,
+    and the next fetch asks only for what is missing."""
+    absent = "python.ext4.zst"
+    curl = _disk_curl(absent)
+
+    first = _fetch(store, curl, tags={"disks": DISK_TAG})
+
+    assert first.ready == frozenset()
+    held = store / str(Repo.CRECHE) / DISK_TAG
+    names = [one.name for one in DISK_ASSETS]
+    assert sorted(path.name for path in held.iterdir()) == sorted(names[: names.index(absent)])
+
+    curl.serves[_disk_url(absent)] = b"a disk\n"
+    curl.calls.clear()
+    second = _fetch(store, curl, tags={"disks": DISK_TAG})
+
+    assert second.ready == frozenset({"disks"})
+    assert [call[-1] for call, _, _ in curl.calls] == [
+        _disk_url(name) for name in names[names.index(absent) :]
+    ]
 
 
 def test_a_held_component_starts_no_child(store: Path, curl: _Curl) -> None:

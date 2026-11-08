@@ -167,11 +167,19 @@ VERIFIER_UNIT_SECONDS: Final = 120
 #: verifier refuses a signature with that status too.
 VERIFIER_TIMEOUT_S: Final = VERIFIER_UNIT_SECONDS / 2
 
+#: The memory limit of the unit of a verifier child, in bytes, unless its
+#: `Command` names another. cosign v3.1.3 `verify-blob` reads the whole
+#: signed file into memory, and an archive is at most
+#: `catalog.ARCHIVE_MAX_BYTES` (256 MiB). A child past the limit is killed,
+#: and its check does not pass.
+VERIFIER_MEMORY_BYTES: Final = 512 * 1024 * 1024
+
 #: The words of `systemd-run` before the program of a verifier child. The
 #: child waits for its unit and leaves no unit behind. It runs as a dynamic
 #: user with no capability, sees no home and no device, and can write only
 #: its state directory and its own `/tmp`. No `--pipe`: root reads the exit
-#: status of the child and no text.
+#: status of the child and no text. `verifier_argv` adds the memory limit
+#: of the `Command` after these words.
 VERIFIER_UNIT: Final = (
     "--quiet",
     "--wait",
@@ -192,8 +200,6 @@ VERIFIER_UNIT: Final = (
     "PrivateDevices=yes",
     "-p",
     "CapabilityBoundingSet=",
-    "-p",
-    "MemoryMax=512M",
     "-p",
     f"RuntimeMaxSec={VERIFIER_UNIT_SECONDS}",
     f"--setenv=HOME={VERIFIER_STATE_DIR}",
@@ -273,8 +279,8 @@ def _judge(path: Path, is_kind: Callable[[int], bool], wrong_kind: Distrust) -> 
 
 def verifier_argv(command: Command) -> tuple[str, ...] | None:
     """The whole argv of a child of `As.VERIFIER`: `systemd-run`, the words
-    of the unit, `--`, and the words of `command`. A `Network.NONE` command
-    adds `VERIFIER_NO_NETWORK` to the unit.
+    of the unit, its memory limit, `--`, and the words of `command`. A
+    `Network.NONE` command adds `VERIFIER_NO_NETWORK` to the unit.
 
     None when root starts no child: the first word of `command` is not the
     verifier of the site file, or `distrusted` finds a fault in the verifier
@@ -288,9 +294,10 @@ def verifier_argv(command: Command) -> tuple[str, ...] | None:
     if distrusted(starter) is not None or distrusted(verifier) is not None:
         return None
 
+    memory = ("-p", f"MemoryMax={command.memory_max_bytes}")
     network = VERIFIER_NO_NETWORK if command.network is Network.NONE else ()
 
-    return (starter, *VERIFIER_UNIT, *network, UNIT_END, *command.argv)
+    return (starter, *VERIFIER_UNIT, *memory, *network, UNIT_END, *command.argv)
 
 
 @dataclass(frozen=True)
@@ -314,6 +321,9 @@ class Command:
     max_file_bytes: int | None = None
     #: Read for `As.VERIFIER` only.
     network: Network = Network.HOST
+    #: The `MemoryMax=` of the unit of the child, in bytes. Read for
+    #: `As.VERIFIER` only.
+    memory_max_bytes: int = VERIFIER_MEMORY_BYTES
 
     def line(self) -> str:
         """What the log records. Argv words, never a shell line, so nobody

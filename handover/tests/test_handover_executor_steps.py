@@ -26,6 +26,8 @@ from handover.executor.live_state import STAMP_FILE, installed_version
 from handover.executor.quiet import Busy
 from handover.executor.spool import DONE_DIR, REQUESTS_DIR, Spool, SwitchNote
 from handover.executor.steps import NOTHING_TO_DO, QUIESCE_WAIT_S, Wiring
+from handover_disk_fixtures import LIVE_BYTES, make_disk_bench
+from handover_disk_fixtures import LIVE_VERSION as DISK_LIVE_VERSION
 from handover_executor_fixtures import (
     REQUEST_ID,
     SHA_OF,
@@ -727,3 +729,34 @@ def test_step_7_stops_waiting_at_its_cap(bench: Bench) -> None:
 
     assert entry["status"] == "succeeded"
     assert _step_detail(entry, "quiesce") == f"still busy after {QUIESCE_WAIT_S:.0f}s"
+
+
+# -- a disk-image row ----------------------------------------------------------
+
+
+def test_a_disk_row_restores_its_prev_tree_on_a_failed_verify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Contract 06 §8.4 rule 6: a failed hook of the vmm tree puts the
+    previous files back, and that hook passes for them (§5.1)."""
+    disks = make_disk_bench(tmp_path, monkeypatch)
+    calls = {"n": 0}
+    disks.run.fails["check-images"] = 1
+
+    def pass_after_the_first_call(_: object) -> None:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            disks.run.fails.pop("check-images", None)
+
+    disks.run.hooks["check-images"] = pass_after_the_first_call
+
+    entry = disks.release()
+
+    assert entry["status"] == "restored"
+    assert entry["reason"] == "switch: disks verify failed"
+    assert installed_version(disks.live) == DISK_LIVE_VERSION
+    for name, raw in LIVE_BYTES.items():
+        assert (disks.live / name).read_bytes() == raw
+
+    assert not disks.live.with_name("disks.new").exists()
+    assert calls["n"] == 2

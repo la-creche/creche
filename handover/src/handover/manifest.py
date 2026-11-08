@@ -589,7 +589,7 @@ def check_disk_image_hooks(manifests: Mapping[str, ComponentManifest]) -> None:
         if manifest.kind is not Kind.DISK_IMAGE:
             continue
 
-        holder = _hook_holder(manifest, manifests)
+        holder = hook_holder(manifest, manifests)
         if holder is None:
             raise Refusal(RefusalCode.MANIFEST, name, DISK_IMAGE_HOOK_OUTSIDE)
 
@@ -598,12 +598,14 @@ def check_disk_image_hooks(manifests: Mapping[str, ComponentManifest]) -> None:
             raise Refusal(RefusalCode.MANIFEST, name, DISK_IMAGE_ENV_FILE)
 
 
-def _hook_holder(
+def hook_holder(
     manifest: ComponentManifest, manifests: Mapping[str, ComponentManifest]
 ) -> ComponentManifest | None:
     """The first component of `depends_on` whose `install.to` holds the
     verify program of `manifest`, or None. Each path passed
-    `check_absolute_path`, so a path compare is a containment check."""
+    `check_absolute_path`, so a path compare is a containment check. Step 8
+    of the executor reads the same answer (`steps.Release._hook_holder_tree`).
+    """
     program = PurePosixPath(manifest.verify.command[0])
     for name in manifest.depends_on:
         other = manifests.get(name)
