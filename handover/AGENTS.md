@@ -500,7 +500,11 @@ CH7-2, CH35 (4), CH76 rules 1 and 5). Its manifest is
    `depends_on` names, and each `--env-file` of its hook is one of the hook
    of that component (contract 06 §4 rules 6 and 7, CH76 rule 6).
    `manifest.check_disk_image_hooks` holds both rules, and `resolve` calls
-   it on each set.
+   it on each set. Rule 7 names the `EnvironmentFile=` of the unit of that
+   component. The check reads no unit file. It compares each `--env-file`
+   with the `--env-file` of the verify hook of that component, and
+   `tests/test_handover_r7r_verify_env.py` holds that one equal to the
+   `EnvironmentFile=` of its unit (CH78 rule 2).
 6. `handover disk-assets --repo <repo>` prints each disk-image row: the
    component, `out-env DISK_OUT`, one `asset <name> <bytes>` line for each
    file and bundle, then each argv, then `end` (`artifacts.DiskRow`).
@@ -793,12 +797,6 @@ that wants a refusal changes one field.
   `rust/Cargo.toml` and `rust/rust-toolchain.toml`. A
   `rust/.cargo/config.toml` moves none. In the chaperone repository, each
   path moves `chaperone` (`catalog.py`).
-- Contract 06 §4 rule 7 says that the `--env-file` of a disk-image hook is
-  a path that an `EnvironmentFile=` line of the unit of its `depends_on`
-  component declares. CONTRACT-QUESTION: `manifest.py` reads no unit
-  file. The reading taken is the `--env-file` of the verify hook of that
-  component, which `tests/test_handover_r7r_verify_env.py` holds equal to
-  the `EnvironmentFile=` of its unit (`manifest.py`).
 - Only a test of this repository holds a binary build to `--locked`. The
   executor does not check the flag (`tests/test_handover_bin_manifest.py`).
 - Contract 06 §3.4 names three checks of a file in the store of artifacts:
