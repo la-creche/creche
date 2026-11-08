@@ -658,10 +658,26 @@ fn kvm_real_facade_prompts_sleeps_restores_and_stops() {
     );
     io::stderr().write_all(times.as_bytes()).unwrap();
 
-    // 7. Stop: the facade gets the stop line and exits by itself inside
-    // the stop wait, guest init remounts the session disk and powers off,
-    // and e2fsck finds the disk clean with flue.db on it (CH19 rule 3,
-    // CH62 rule 9, CH66).
+    // 7. Stop: the same facade is still `running` with no turn after the
+    // link closed. It gets the stop line and exits by itself inside the
+    // stop wait, guest init remounts the session disk and powers off, and
+    // e2fsck finds the disk clean with flue.db on it (CH19 rule 3, CH62
+    // rule 9, CH66).
+    let live = facade_until(
+        &mut vmm,
+        &session,
+        BOOT,
+        "step 7 live",
+        |state| matches!(state, FacadeState::Running(up) if !up.turn_running),
+    );
+    let FacadeState::Running(live) = live else {
+        panic!("step 7 live: {live:?}");
+    };
+    assert_eq!(
+        (live.pid, live.starts.get()),
+        (pid, 1),
+        "step 7 live: another facade"
+    );
     let answer = vmm.ask("stop");
     let ms: u64 = answer
         .strip_prefix("stopped ")
@@ -683,10 +699,11 @@ fn kvm_real_facade_prompts_sleeps_restores_and_stops() {
             "step 7 stop: no {line}: {serial:?}"
         );
     }
-    for signal in ["SIGTERM", "SIGKILL"] {
-        let line = format!("guest-init: facade pid {pid} sent {signal}");
-        assert!(!serial.contains(&line), "step 7 stop: {line}");
-    }
+    let signalled: Vec<&String> = serial
+        .iter()
+        .filter(|line| line.ends_with(" sent SIGTERM") || line.ends_with(" sent SIGKILL"))
+        .collect();
+    assert!(signalled.is_empty(), "step 7 stop: {signalled:?}");
     let header = Command::new(DUMPE2FS)
         .arg("-h")
         .arg(session.disk())
