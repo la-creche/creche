@@ -18,14 +18,9 @@ import type {
   CancelNotification,
   ContentBlock,
   InitializeResponse,
-  ListSessionsRequest,
-  ListSessionsResponse,
   LoadSessionRequest,
-  NewSessionRequest,
-  NewSessionResponse,
   PromptRequest,
   PromptResponse,
-  SessionInfo,
   SessionInfoUpdate,
   SessionUpdate,
   StopReason,
@@ -41,14 +36,9 @@ export type {
   AgentApp,
   CancelNotification,
   ContentBlock,
-  ListSessionsRequest,
-  ListSessionsResponse,
   LoadSessionRequest,
-  NewSessionRequest,
-  NewSessionResponse,
   PromptRequest,
   PromptResponse,
-  SessionInfo,
   SessionInfoUpdate,
   SessionUpdate,
   StopReason,
@@ -72,11 +62,15 @@ export interface Peer {
   readonly closed: Promise<void>;
 }
 
-/** The session methods. Null on a link that serves no session yet. */
+/**
+ * The session methods of the one session (`src/sessions.ts`). Null on sbx,
+ * which serves no session after the cut (decisions CH52 rule 2, CH79 rule
+ * 3). attendance answers `session/new` and `session/list` from the host
+ * list (decision CH21-7), so no link of the facade serves them, and the SDK
+ * answers each with method not found.
+ */
 export interface SessionService {
-  newSession(params: NewSessionRequest, peer: Peer): Promise<Outcome<NewSessionResponse>>;
   loadSession(params: LoadSessionRequest, peer: Peer): Promise<Outcome<Record<string, never>>>;
-  listSessions(params: ListSessionsRequest): Promise<Outcome<ListSessionsResponse>>;
   prompt(params: PromptRequest, peer: Peer): Promise<Outcome<PromptResponse>>;
   cancel(params: CancelNotification): Promise<void>;
 }
@@ -114,6 +108,12 @@ const INTERNAL_ERROR = -32603;
  * The answer to `initialize`, whatever the client offers. The facade reads
  * no client file system and opens no client terminal, so it needs neither
  * capability.
+ *
+ * CONTRACT-QUESTION: the answer still lists `sessionCapabilities.list`,
+ * and the facade serves no `session/list` (decision CH21-7). attendance's
+ * handshake refuses a facade that does not list it (`read_agent` in
+ * `attendance/src/attendance/acp_link.py`), and attendance answers
+ * `session/list` itself. No row says which side drops the claim.
  */
 export const INITIALIZE_RESPONSE: InitializeResponse = {
   protocolVersion: PROTOCOL_VERSION,
@@ -171,9 +171,7 @@ export function facadeApp(hooks: SupervisorHooks, sessions: SessionService | nul
     .onConnect((connection) => {
       link = connection;
     })
-    .onRequest(methods.agent.session.new, ({ params }) => answer(sessions.newSession(params, peer)))
     .onRequest(methods.agent.session.load, ({ params }) => answer(sessions.loadSession(params, peer)))
-    .onRequest(methods.agent.session.list, ({ params }) => answer(sessions.listSessions(params)))
     .onRequest(methods.agent.session.prompt, ({ params }) => answer(sessions.prompt(params, peer)))
     .onNotification(methods.agent.session.cancel, ({ params }) => sessions.cancel(params));
 }

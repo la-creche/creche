@@ -1,64 +1,47 @@
-// The sessions of the facade. A session is one Flue agent instance: its id
-// is the instance id, and `creche_sessions` lists it.
+// The one session of the facade. A VM serves one session, and its id is the
+// host's: guest init passes it as `CRECHE_SESSION_ID` (`src/mode.ts`,
+// decisions CH1, CH25 rule 2). The session is one Flue agent instance, and
+// its ACP session id is the instance id.
 //
-//   session/new  ──► the id ──► init() ──► one row
-//                    sbx: a fresh UUID. CH: the host's id, one session per VM
-//   session/list ──► one page of rows, newest first, each with the creche keys
-//   a turn ends  ──► the title from the first user text, `updatedAt` from
-//                    the last record, the creche keys ──► session_info_update
+//   start        ──► init(agent, {id}) ──► the one handle (decision CH21-8)
+//   session/load ──► the one id, or resourceNotFound
+//   a turn ends  ──► the title of the first turn, `updatedAt` from the last
+//                    record ──► session_info_update
 //
-// The creche keys of `_meta` (`src/creche-meta.ts`) go on the row: the job
-// id from `session/new`, the delegation and the trigger from the first
-// `session/prompt` that sends them. None of them reaches the model. The
-// row's `_meta` adds `creche/created_at`, which ACP's row does not have.
+// The facade opens the session at start. Flue makes the instance at the
+// first send, so a session with no turn yet loads an empty history. A send
+// with no `uid` condition creates the instance or continues it.
 //
-// CONTRACT-QUESTION: the owner asked to forward `creche/delegation` to the
+// attendance answers `session/new` and `session/list` from the host list
+// (decision CH21-7), so the facade serves neither. The host row carries the
+// session's cwd, title, times and origin, so the facade keeps no table of
+// its own and reads no creche key of `_meta` (decision CH21-4).
+//
+// CONTRACT-QUESTION: the owner asked to forward the delegation to the
 // chaperone as `_meta["creche.delegation"]` on each `tools/call` of the
 // session, so that the chaperone can bound a delegation to one hop at run
-// time. Flue 2.3.0 gives no way to do it. Its MCP adapter calls
-// `client.callTool({name, arguments}, requestOptions)` with no `_meta`
-// (`createMcpTools` in `@flue/runtime/dist/mcp-*.mjs`), and
-// `McpConnectionDefinition` has no per-call hook: `headers` are static and
-// read at the first connect, and `auth` sets only the bearer. Only a custom
-// `fetch` that rewrites each JSON-RPC body could add the key, and that is
-// not a contract. Flue keeps one connection per instance, so a static
-// header per session can exist, but only if the agent module reads the
-// delegation per instance. The chaperone reads no such header. Until Flue or the owner gives a path, the facade sends the
-// three keys in the `_meta` of each `session/list` row and of
-// `session_info_update`, for attendance and the noticeboard to read.
+// time. The delegation now rides in the origin of the host row (decision
+// CH21-4), and nothing gives it to the facade. Flue 2.3.0 also gives no way
+// to send it: its MCP adapter calls `client.callTool({name, arguments},
+// requestOptions)` with no `_meta` (`createMcpTools` in
+// `@flue/runtime/dist/mcp-*.mjs`), and `McpConnectionDefinition` has no
+// per-call hook. The chaperone reads no such key. The facade sends nothing
+// until a decision gives the path.
 
-import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 
-import { init } from "@flue/runtime";
+import { getAgentInstance, init } from "@flue/runtime";
 import type { Agent, AgentInstanceHandle } from "@flue/runtime";
+import type { Wire } from "agent/wire-read";
 
-import type {
-  ListSessionsRequest,
-  ListSessionsResponse,
-  LoadSessionRequest,
-  NewSessionRequest,
-  NewSessionResponse,
-  Outcome,
-  SessionInfo,
-  SessionInfoUpdate,
-} from "./acp.js";
-import { jobOf, promptMetaOf, utcOf } from "./creche-meta.js";
-import type { Meta } from "./creche-meta.js";
+import type { LoadSessionRequest, SessionInfoUpdate } from "./acp.js";
 import { cutToBytes } from "./line.js";
-import type { FacadeMode } from "./mode.js";
-import type { SessionIndex, SessionRow } from "./session-index.js";
-import { META_CREATED, META_DELEGATION, META_JOB, META_TRIGGER } from "./vectors.js";
 
 /** The longest title, in UTF-8 bytes. */
 export const MAX_TITLE_BYTES = 256;
 
 /** The longest cwd, in code points: `SessionCwd` of the wire (decision CH21). */
 export const MAX_CWD_CHARS = 4096;
-
-function refuse<T>(detail: string): Outcome<T> {
-  return { ok: false, refusal: { kind: "invalid_params", detail } };
-}
 
 /**
  * The first line of `text` with words, its white space folded, cut, or "".
@@ -74,11 +57,11 @@ export function titleOf(text: string): string {
 }
 
 /**
- * What the facade refuses in `session/new` and `session/load`, or null.
- * The family decides the agent's tools. A client's offer would be dropped
- * in silence, so the facade refuses it.
+ * What the facade refuses in `session/load`, or null. The family decides
+ * the agent's tools. A client's offer would be dropped in silence, so the
+ * facade refuses it.
  */
-export function sessionFault(params: NewSessionRequest | LoadSessionRequest): string | null {
+export function sessionFault(params: LoadSessionRequest): string | null {
   if (!isAbsolute(params.cwd)) {
     return "cwd is not an absolute path";
   }
@@ -99,19 +82,7 @@ export function sessionFault(params: NewSessionRequest | LoadSessionRequest): st
   return (params.additionalDirectories ?? []).length > 0 ? "the facade takes no additional directory" : null;
 }
 
-/** The creche keys of a row, as `session/list` and `session_info_update` send them, or null. */
-function metaOf(row: SessionRow): Record<string, unknown> | null {
-  const kept = [
-    [META_CREATED, utcOf(row.createdAt)],
-    [META_JOB, row.jobId],
-    [META_DELEGATION, row.delegation],
-    [META_TRIGGER, row.trigger],
-  ].filter(([, value]) => value !== null);
-
-  return kept.length > 0 ? Object.fromEntries(kept) : null;
-}
-
-/** The end of one turn, as the turn end event of the local link and the row take it. */
+/** The end of one turn, as the turn end event of the local link takes it. */
 export interface TurnEnd {
   /** `titleOf` of the turn's prompt: the title of a turn end (decision CH21). */
   readonly title: string;
@@ -119,140 +90,44 @@ export interface TurnEnd {
   readonly updatedAt: string;
 }
 
-function toInfo(row: SessionRow): SessionInfo {
-  const info = { sessionId: row.id, cwd: row.cwd, title: row.title, updatedAt: row.updatedAt };
-  const meta = metaOf(row);
-
-  return meta === null ? info : { ...info, _meta: meta };
+/**
+ * The `session_info_update` of a turn end. The first turn names the
+ * session, as the vmm keeps the first title of the row (decision CH32
+ * rule 4). Each turn moves `updatedAt`.
+ */
+export function infoOf({ title, updatedAt }: TurnEnd, first: boolean): SessionInfoUpdate {
+  return first && title.length > 0 ? { title, updatedAt } : { updatedAt };
 }
 
-export class Sessions {
-  private readonly handles = new Map<string, AgentInstanceHandle>();
+export class OneSession {
+  private readonly opened: AgentInstanceHandle;
 
   public constructor(
     private readonly agent: Agent,
-    private readonly index: SessionIndex,
-    private readonly mode: FacadeMode,
+    /** The host's id of the one session (decision CH25 rule 2). */
+    public readonly id: Wire<"SessionId">,
     private readonly now: () => Date = () => new Date(),
-  ) {}
-
-  public async newSession(params: NewSessionRequest): Promise<Outcome<NewSessionResponse>> {
-    const fault = sessionFault(params);
-    if (fault !== null) {
-      return refuse(fault);
-    }
-
-    const job = jobOf(params._meta);
-    if (!job.ok) {
-      return refuse(job.detail);
-    }
-
-    // On sbx each session gets a fresh id until the cut (decision CH52 rule
-    // 2). Under CH the host chose the id, and a VM serves one session
-    // (decisions CH1, CH25 rule 2).
-    const id = this.mode.kind === "ch" ? this.mode.sessionId : randomUUID();
-    if (this.index.get(id) !== null) {
-      return refuse("the VM already holds its one session");
-    }
-
-    // `uid: null`: the first send creates the instance, and never joins one.
-    this.handles.set(id, init(this.agent, { id, uid: null }));
-    this.index.create(id, params.cwd, this.now().toISOString(), job.value);
-
-    return { ok: true, value: { sessionId: id } };
+  ) {
+    this.opened = init(agent, { id });
   }
 
-  public async listSessions(params: ListSessionsRequest): Promise<Outcome<ListSessionsResponse>> {
-    const page = this.index.list(params.cwd ?? null, params.cursor ?? null);
-    if (page === null) {
-      return refuse("the cursor is not one that session/list gave");
-    }
-
-    return { ok: true, value: { sessions: page.rows.map(toInfo), nextCursor: page.nextCursor } };
-  }
-
-  /** True when `creche_sessions` lists the session. */
+  /** True for the id of the one session. */
   public known(id: string): boolean {
-    return this.index.get(id) !== null;
+    return id === this.id;
   }
 
-  /** The Flue handle of a listed session, or null. */
+  /** The Flue handle of the one session, or null for another id. */
   public handle(id: string): AgentInstanceHandle | null {
-    const known = this.handles.get(id);
-    if (known !== undefined) {
-      return known;
-    }
-
-    if (this.index.get(id) === null) {
-      return null;
-    }
-
-    const handle = init(this.agent, { id });
-    this.handles.set(id, handle);
-
-    return handle;
+    return this.known(id) ? this.opened : null;
   }
 
-  /**
-   * Keeps the delegation and the trigger of a prompt on the session row,
-   * before the turn runs. A session keeps its first value of each, so a
-   * prompt that sends another one is refused.
-   */
-  public keepPromptMeta(id: string, meta: Meta): Outcome<null> {
-    const sent = promptMetaOf(meta);
-    if (!sent.ok) {
-      return refuse(sent.detail);
-    }
-
-    const row = this.index.get(id);
-    if (row === null) {
-      return { ok: false, refusal: { kind: "unknown_session", sessionId: id } };
-    }
-
-    const { delegation, trigger } = sent.value;
-    if (delegation !== null && row.delegation !== null && delegation !== row.delegation) {
-      return refuse("the session already has another delegation");
-    }
-
-    if (trigger !== null && row.trigger !== null && JSON.stringify(trigger) !== JSON.stringify(row.trigger)) {
-      return refuse("the session already has another trigger");
-    }
-
-    this.index.keepOnce(id, delegation, trigger);
-
-    return { ok: true, value: null };
+  /** True before the first send of the session: Flue holds no instance of it yet. */
+  public async fresh(): Promise<boolean> {
+    return (await getAgentInstance(this.agent, this.id)) === null;
   }
 
-  /**
-   * The end of a turn on the prompt `userText`. It reads no row and writes
-   * none, so the turn end event never waits on a row write.
-   */
+  /** The end of a turn on the prompt `userText`. */
   public turnEndOf(userText: string, lastRecordAt: string | null): TurnEnd {
     return { title: titleOf(userText), updatedAt: lastRecordAt ?? this.now().toISOString() };
-  }
-
-  /**
-   * Writes the end of one turn on its row. The first turn names the
-   * session. Each turn moves `updatedAt` to the time of its last record.
-   * The answer is the `session_info_update` of the turn, or null for an
-   * unknown id.
-   */
-  public recordTurn(id: string, { title, updatedAt }: TurnEnd): SessionInfoUpdate | null {
-    const row = this.index.get(id);
-    if (row === null) {
-      return null;
-    }
-
-    this.index.touch(id, updatedAt);
-
-    const meta = metaOf(row);
-    const tail = meta === null ? { updatedAt } : { updatedAt, _meta: meta };
-    if (row.title !== null || title.length === 0) {
-      return tail;
-    }
-
-    this.index.nameOnce(id, title);
-
-    return { title, ...tail };
   }
 }

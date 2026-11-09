@@ -1,7 +1,7 @@
 // `session/load` over the facade's own wire: two links on one service, as
 // two door connections reach one facade.
 
-import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 
 import { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
 import { defineTool, useModel, useTool } from "@flue/runtime";
@@ -9,9 +9,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { facadeApp } from "../src/acp.js";
 import type { SessionService } from "../src/acp.js";
-import { SBX } from "../src/mode.js";
 import { sessionService } from "../src/service.js";
-import { SessionIndex } from "../src/session-index.js";
 import { Wire } from "./acp-wire.js";
 import { FAUX_MODEL, faux, startFlue } from "./faux-flue.js";
 
@@ -29,11 +27,13 @@ function Echoer(): string {
 const flue = await startFlue([Echoer]);
 afterAll(() => flue.stop());
 
+let id: string;
 let service: SessionService;
 
+// Each test gets a session of its own: one VM's id, on the one Flue of the file.
 beforeEach(() => {
-  const index = new SessionIndex(new DatabaseSync(":memory:"));
-  service = sessionService({ agent: Echoer, agentName: "Echoer", index, mode: SBX, link: null, store: flue.store });
+  id = randomUUID();
+  service = sessionService({ agent: Echoer, agentName: "Echoer", sessionId: id, link: null, store: flue.store });
 });
 
 function link(): Wire {
@@ -61,21 +61,18 @@ function joined(updates: Record<string, unknown>[]): unknown[] {
   return out;
 }
 
-async function oneTurn(wire: Wire): Promise<string> {
-  const id = (await wire.request("session/new", { cwd: "/work", mcpServers: [] })).result?.["sessionId"] as string;
+async function oneTurn(wire: Wire): Promise<void> {
   faux.setResponses([
     fauxAssistantMessage([fauxThinking("Think first."), fauxToolCall("echo", {}, { id: "call-1" })], { stopReason: "toolUse" }),
     fauxAssistantMessage([fauxText("All done.")]),
   ]);
   await wire.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "Echo, please." }] });
-
-  return id;
 }
 
 describe("session/load", () => {
   it("replays the history as the first link saw it, then answers {}", async () => {
     const first = link();
-    const id = await oneTurn(first);
+    await oneTurn(first);
     const second = link();
     const answer = await load(second, id);
     const live = joined(first.updates(id)).filter(
@@ -91,7 +88,7 @@ describe("session/load", () => {
 
   it("puts the loading link on the session's live updates", async () => {
     const first = link();
-    const id = await oneTurn(first);
+    await oneTurn(first);
     const second = link();
     await load(second, id);
     const replayed = second.updates(id).length;
@@ -100,23 +97,21 @@ describe("session/load", () => {
 
     expect(joined(second.updates(id).slice(replayed))).toEqual([
       { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Again." } },
-      { sessionUpdate: "session_info_update", updatedAt: expect.any(String), _meta: { "creche/created_at": expect.any(String) } },
+      { sessionUpdate: "session_info_update", updatedAt: expect.any(String) },
     ]);
   });
 
   it("replays nothing for a session with no turn", async () => {
-    const first = link();
-    const id = (await first.request("session/new", { cwd: "/work", mcpServers: [] })).result?.["sessionId"] as string;
-    const second = link();
+    const wire = link();
 
-    expect((await load(second, id)).result).toEqual({});
-    expect(second.updates(id)).toEqual([]);
+    expect((await load(wire, id)).result).toEqual({});
+    expect(wire.updates(id)).toEqual([]);
   });
 
   it("refuses an unknown session and a client MCP server", async () => {
     const wire = link();
 
-    expect((await load(wire, "no-such-session")).error?.code).toBe(-32002);
+    expect((await load(wire, randomUUID())).error?.code).toBe(-32002);
     expect(
       (await wire.request("session/load", { sessionId: "x", cwd: "/work", mcpServers: [{ name: "x", command: "x", args: [], env: [] }] }))
         .error?.code,

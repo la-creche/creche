@@ -1,5 +1,5 @@
 {
-  "about": "The creche extensions of ACP v1 between attendance and creche-facade. Each message is one JSON-RPC line as the wire carries it. The facade tests read this file, and the attendance tests read it too. On the supervisor link the beat id is an integer. On a relay connection attendance's door sends the beat with a string id `creche-beat-<n>`, a prefix that the door reserves, and takes the answer.",
+  "about": "The creche extensions of ACP v1 between attendance and creche-facade. Each message is one JSON-RPC line as the wire carries it. The facade tests read this file. On the supervisor link the beat id is an integer. On a relay connection attendance's door sends the beat with a string id `creche-beat-<n>`, a prefix that the door reserves, and takes the answer.",
   "protocol_version": 1,
   "max_line_bytes": 1048576,
   "beat_interval_s": 30,
@@ -40,52 +40,5 @@
   "shutdown": {
     "notification": { "jsonrpc": "2.0", "method": "_creche/shutdown", "params": {} },
     "exit_status": 0
-  },
-  "session_meta": {
-    "about": "The creche keys of `_meta`. attendance sends `job`, `delegation` and `trigger`. `method` names the one message that carries each of them: `session/prompt` is the first prompt of the job. The facade checks the shape, keeps the value in `column` of `creche_sessions`, and never puts it in the model's prompt. The facade sends `created_at`: `column` as RFC 3339 UTC. `info_update` is what the facade sends at the end of each turn. It shows each key. Each `session/list` row carries the same `_meta`, and a session sends only the keys that it holds.",
-    "job": {
-      "key": "creche/job",
-      "method": "session/new",
-      "column": "job_id",
-      "value": "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"
-    },
-    "delegation": {
-      "key": "creche/delegation",
-      "method": "session/prompt",
-      "column": "delegation",
-      "value": { "id": "01K5J9QWB2M4N6Q8S0V2W4Y6A8", "caller_session": "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33" }
-    },
-    "trigger": {
-      "key": "creche/trigger",
-      "method": "session/prompt",
-      "column": "trigger_json",
-      "value": {
-        "kind": "dispatch",
-        "name": "scrum-lead",
-        "fired_at": "2026-10-25T12:00:00Z",
-        "chain": ["chat", "scrum-lead", "issue-worker"]
-      }
-    },
-    "created_at": {
-      "key": "creche/created_at",
-      "method": ["session/list", "session_info_update"],
-      "column": "created_at",
-      "value": "2026-10-25T11:59:58.000Z"
-    },
-    "info_update": {
-      "sessionUpdate": "session_info_update",
-      "updatedAt": "2026-10-25T12:00:05.000Z",
-      "_meta": {
-        "creche/created_at": "2026-10-25T11:59:58.000Z",
-        "creche/job": "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK",
-        "creche/delegation": "01K5J9QWB2M4N6Q8S0V2W4Y6A8",
-        "creche/trigger": {
-          "kind": "dispatch",
-          "name": "scrum-lead",
-          "fired_at": "2026-10-25T12:00:00Z",
-          "chain": ["chat", "scrum-lead", "issue-worker"]
-        }
-      }
-    }
   }
 }

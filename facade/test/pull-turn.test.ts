@@ -1,60 +1,49 @@
 // The pull of the family state in a turn (decision CH23 rule 2), with a
-// stand-in pull: a prompt that fails at the pull keeps no `_meta`, a
-// cancel during the pull answers `cancelled`, and a pull that throws
-// leaves the session free for the next prompt. A prompt that ends before
-// its turn sends nothing on the local link (decisions CH21, CH32 rule 6).
+// stand-in pull: a fault fails the prompt, a cancel during the pull answers
+// `cancelled`, and a pull that throws leaves the session free for the next
+// prompt. A prompt that ends before its turn sends nothing on the local
+// link (decisions CH21, CH32 rule 6).
 
-import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { facadeApp } from "../src/acp.js";
 import { FLUE_STOP_MS, LocalLink } from "../src/local-link.js";
-import { SBX } from "../src/mode.js";
 import { sessionService } from "../src/service.js";
-import { SessionIndex } from "../src/session-index.js";
 import type { Refresh } from "../src/turns.js";
 import { Wire } from "./acp-wire.js";
 import { faux, Probe, startFlue } from "./faux-flue.js";
 import { closeGuestInits, guestInit, NO_HANDLERS, until } from "./guest-init.js";
 import type { GuestInit } from "./guest-init.js";
 
-const { trigger } = vectors.session_meta;
 const NO_HOOKS = { onBeat: () => undefined, onShutdown: () => undefined };
 
 const flue = await startFlue();
 afterAll(() => flue.stop());
 afterEach(closeGuestInits);
 
-let index: SessionIndex;
+let id: string;
 let wire: Wire;
 let refresh: Refresh;
 
+// Each test gets a session of its own: one VM's id, on the one Flue of the file.
 beforeEach(() => {
-  index = new SessionIndex(new DatabaseSync(":memory:"));
-  const service = sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, link: null, store: flue.store, refresh: (id) => refresh(id) });
+  id = randomUUID();
+  const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store, refresh: (one) => refresh(one) });
   wire = new Wire(facadeApp(NO_HOOKS, service));
 });
 
-async function newSession(): Promise<string> {
-  return (await wire.request("session/new", { cwd: "/work", mcpServers: [] })).result?.["sessionId"] as string;
-}
-
-function prompt(sessionId: string, meta?: Record<string, unknown>): ReturnType<Wire["request"]> {
-  return wire.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "Weather?" }], _meta: meta });
+function prompt(sessionId: string): ReturnType<Wire["request"]> {
+  return wire.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "Weather?" }] });
 }
 
 describe("the pull in a turn", () => {
-  it("keeps no _meta when the pull fails the prompt", async () => {
+  it("fails the prompt with the fault of the pull", async () => {
     refresh = () => Promise.resolve("creds_missing");
-    const id = await newSession();
 
-    const answer = await prompt(id, { [trigger.key]: trigger.value });
-
-    expect(answer.error?.message).toContain("creds_missing");
-    expect(index.get(id)?.trigger).toBeNull();
+    expect((await prompt(id)).error?.message).toContain("creds_missing");
   });
 
   it("answers cancelled to a cancel during the pull", async () => {
@@ -65,7 +54,6 @@ describe("the pull in a turn", () => {
       entered();
       return new Promise((resolve) => (finish = () => resolve(null)));
     };
-    const id = await newSession();
 
     const answer = prompt(id);
     await inPull;
@@ -78,7 +66,6 @@ describe("the pull in a turn", () => {
 
   it("frees the session when the pull throws", async () => {
     refresh = () => Promise.reject(new Error("FIXTURE-THROW"));
-    const id = await newSession();
     const thrown = await prompt(id);
 
     refresh = () => Promise.resolve(null);
@@ -98,7 +85,7 @@ describe("the local link in a turn", () => {
     const link = new LocalLink(guest.path, FLUE_STOP_MS, () => undefined);
     link.open(NO_HANDLERS);
     await guest.peer();
-    const service = sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, link, store: flue.store, refresh: (id) => refresh(id) });
+    const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link, store: flue.store, refresh: (one) => refresh(one) });
     wire = new Wire(facadeApp(NO_HOOKS, service));
 
     return guest;
@@ -114,13 +101,10 @@ describe("the local link in a turn", () => {
     return guest.received();
   }
 
-  it("sends nothing for a prompt that fails at the pull or at _meta", async () => {
+  it("sends nothing for a prompt that fails at the pull", async () => {
     const guest = await linked();
-    const id = await newSession();
     refresh = () => Promise.resolve("creds_missing");
     expect((await prompt(id)).error?.message).toContain("creds_missing");
-    refresh = () => Promise.resolve(null);
-    expect((await prompt(id, { [trigger.key]: { ...trigger.value, kind: "cron" } })).error).toBeDefined();
 
     expect(await oneTurn(guest, id)).toMatch(START_AND_END);
   });
@@ -134,7 +118,6 @@ describe("the local link in a turn", () => {
       entered();
       return new Promise((resolve) => (finish = () => resolve(null)));
     };
-    const id = await newSession();
     const answer = prompt(id);
     await inPull;
     wire.notify("session/cancel", { sessionId: id });

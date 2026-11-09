@@ -1,6 +1,6 @@
 // The live updates of each session, sent to every peer on it. A peer is on
-// a session after `session/new`, `session/load` or `session/prompt` there,
-// until its link closes.
+// a session after `session/load` or `session/prompt` there, until its link
+// closes.
 //
 // A peer that loads a session gets the replay first. Live items that come
 // during the replay wait, and only the ones after the last replayed chunk

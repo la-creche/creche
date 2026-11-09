@@ -4,15 +4,16 @@
 // and reads no `AGENT_*` variable (`agent/src/guest-start.ts`, decisions
 // CH5e, CH80, CH81 rule 5). A refusal exits with a status of its own and
 // one stderr line. Once the supervisor holds the lock, `serveFamily`
-// starts Flue on the start's `flue.db` and opens `creche_sessions` there.
-// Before each prompt the facade pulls the family state into the agent: on
-// sbx from the mounts, under CH from the vmm (decision CH5a). A pulled
-// `model_alias` that differs switches the model at that prompt (decisions
-// CH5c, CH5c-2).
+// starts Flue on the start's `flue.db`. Under CH it opens the one session
+// of `CRECHE_SESSION_ID` (decision CH21-8). On sbx it serves no session
+// after the cut (decisions CH52 rule 2, CH79 rule 3). Before each prompt
+// the facade pulls the family state into the agent: on sbx from the
+// mounts, under CH from the vmm (decision CH5a). A pulled `model_alias`
+// that differs switches the model at that prompt (decisions CH5c,
+// CH5c-2).
 
 import { mkdirSync } from "node:fs";
 import type { Readable } from "node:stream";
-import { DatabaseSync } from "node:sqlite";
 
 import { start } from "@flue/runtime/node";
 import {
@@ -36,7 +37,6 @@ import { SupervisorLock } from "./lock.js";
 import { readMode } from "./mode.js";
 import type { FacadeMode } from "./mode.js";
 import { sessionService } from "./service.js";
-import { SessionIndex } from "./session-index.js";
 import { say } from "./stdio.js";
 import type { ServingStart, Supervision } from "./supervisor.js";
 import type { Refresh } from "./turns.js";
@@ -166,7 +166,7 @@ function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refr
 }
 
 /**
- * Flue on the composed store, and the session methods on the same file.
+ * Flue on the composed store, and under CH the methods of the one session.
  * `link` is the local link of guest init under CH, or null on sbx.
  */
 export async function serveFamily({ mode, composed, backend }: Family, link: LocalLink | null): Promise<ServingStart> {
@@ -174,9 +174,11 @@ export async function serveFamily({ mode, composed, backend }: Family, link: Loc
     mkdirSync(composed.workspace, { recursive: true });
     const tapped = tapStores(composed.db);
     const runtime = await start({ agents: [composed.agent], db: tapped.adapter, providers: composed.providers });
-    const index = new SessionIndex(new DatabaseSync(composed.store));
     const refresh = refreshOf(backend, composed);
-    const sessions = sessionService({ agent: composed.agent, agentName: AGENT_NAME, index, mode, link, store: tapped.store, refresh });
+    const sessions =
+      mode.kind === "ch"
+        ? sessionService({ agent: composed.agent, agentName: AGENT_NAME, sessionId: mode.sessionId, link, store: tapped.store, refresh })
+        : null;
 
     return { ok: true, serving: { runtime, sessions } };
   } catch (error) {

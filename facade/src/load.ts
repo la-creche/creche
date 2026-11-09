@@ -10,11 +10,11 @@ import { readHistory } from "./flue-history.js";
 import type { Live } from "./live.js";
 import { replay } from "./replay.js";
 import { sessionFault } from "./sessions.js";
-import type { Sessions } from "./sessions.js";
+import type { OneSession } from "./sessions.js";
 
 export class Loader {
   public constructor(
-    private readonly sessions: Sessions,
+    private readonly session: OneSession,
     private readonly live: Live,
     private readonly store: () => ConversationStreamStore | null,
     private readonly agentName: string,
@@ -27,7 +27,7 @@ export class Loader {
     }
 
     const { sessionId } = params;
-    if (!this.sessions.known(sessionId)) {
+    if (!this.session.known(sessionId)) {
       return { ok: false, refusal: { kind: "unknown_session", sessionId } };
     }
 

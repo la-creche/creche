@@ -1518,8 +1518,9 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
   session, so the second prompt calls that tool, and its `tools/call`
   hits the chaperone after the restore.
 - The steps: a cold boot with start 1, `running` with the same pid within
-  120 s, then on 1201 `initialize`, `session/new` with the host's id and a
-  prompt that ends with `end_turn` and the stub text. Each stub gets a
+  120 s, then on 1201 `initialize` and a prompt of the host's id with no
+  `session/new` (decision CH21-8) that ends with `end_turn` and the stub
+  text. Each stub gets a
   request through the guest splice with the bearer of `creds.json`. Then
   a sleep with one snapshot, a restore with the same pid and start 1 and
   no `up` line, and a fresh 1201 link with `session/load`, which replays

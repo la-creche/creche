@@ -1,16 +1,14 @@
 // `session/prompt` and `session/cancel` over the facade's own wire, on Flue
 // with an in-memory store and the faux model.
 
-import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 
 import { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
 import { defineTool, useModel, useTool } from "@flue/runtime";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { facadeApp } from "../src/acp.js";
-import { SBX } from "../src/mode.js";
 import { sessionService } from "../src/service.js";
-import { SessionIndex } from "../src/session-index.js";
 import { Wire } from "./acp-wire.js";
 import { FAUX_MODEL, faux } from "./faux-flue.js";
 import { startFlue } from "./faux-flue.js";
@@ -34,16 +32,14 @@ Echoer.durability = { maxAttempts: 1 };
 const flue = await startFlue([Echoer]);
 afterAll(() => flue.stop());
 
+let id: string;
 let wire: Wire;
 
+// Each test gets a session of its own: one VM's id, on the one Flue of the file.
 beforeEach(() => {
-  const index = new SessionIndex(new DatabaseSync(":memory:"));
-  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Echoer, agentName: "Echoer", index, mode: SBX, link: null, store: flue.store })));
+  id = randomUUID();
+  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Echoer, agentName: "Echoer", sessionId: id, link: null, store: flue.store })));
 });
-
-async function newSession(): Promise<string> {
-  return (await wire.request("session/new", { cwd: "/work", mcpServers: [] })).result?.["sessionId"] as string;
-}
 
 function prompt(sessionId: string, text: string): ReturnType<Wire["request"]> {
   return wire.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] });
@@ -65,7 +61,6 @@ function story(updates: Record<string, unknown>[]): string[] {
 
 describe("session/prompt", () => {
   it("streams the turn as updates and ends with end_turn", async () => {
-    const id = await newSession();
     faux.setResponses([
       fauxAssistantMessage([fauxThinking("Think first."), fauxToolCall("echo", {}, { id: "call-1" })], { stopReason: "toolUse" }),
       fauxAssistantMessage([fauxText("All done.")]),
@@ -87,11 +82,10 @@ describe("session/prompt", () => {
       "session_info_update",
     ]);
     expect(said).toBe("All done.");
-    expect(updates.at(-1)).toEqual({ sessionUpdate: "session_info_update", title: "Echo, please.", updatedAt: expect.any(String), _meta: { "creche/created_at": expect.any(String) } });
+    expect(updates.at(-1)).toEqual({ sessionUpdate: "session_info_update", title: "Echo, please.", updatedAt: expect.any(String) });
   });
 
-  it("sends only the second turn's updates on the second turn", async () => {
-    const id = await newSession();
+  it("sends only the second turn's updates on the second turn, with no title", async () => {
     faux.setResponses([fauxAssistantMessage("One."), fauxAssistantMessage("Two.")]);
     await prompt(id, "First.");
     const before = wire.updates(id).length;
@@ -99,11 +93,10 @@ describe("session/prompt", () => {
     const second = wire.updates(id).slice(before);
 
     expect(story(second)).toEqual(["agent_message_chunk", "session_info_update"]);
-    expect(second.at(-1)).toEqual({ sessionUpdate: "session_info_update", updatedAt: expect.any(String), _meta: { "creche/created_at": expect.any(String) } });
+    expect(second.at(-1)).toEqual({ sessionUpdate: "session_info_update", updatedAt: expect.any(String) });
   });
 
   it("answers a failed turn with a JSON-RPC error, never a stop reason", async () => {
-    const id = await newSession();
     faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "model down" })]);
     const answer = await prompt(id, "Fail.");
 
@@ -112,7 +105,6 @@ describe("session/prompt", () => {
   });
 
   it("refuses an unknown session, an empty prompt and an image", async () => {
-    const id = await newSession();
     const answers = [
       await prompt("no-such-session", "Hi"),
       await prompt(id, "  "),
@@ -125,7 +117,6 @@ describe("session/prompt", () => {
 
 describe("session/cancel", () => {
   it("aborts the running turn, and the prompt answers cancelled", async () => {
-    const id = await newSession();
     let release: () => void = () => undefined;
     let started: () => void = () => undefined;
     const running = new Promise<void>((resolve) => (started = resolve));

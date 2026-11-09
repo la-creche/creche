@@ -1,17 +1,16 @@
 // The session methods of one facade, as acp.ts serves them. One service
-// serves every link of the facade, so a session's live updates reach each
+// serves every link of the facade, so the session's live updates reach each
 // peer on it.
 
 import type { Agent } from "@flue/runtime";
 import type { ConversationStreamStore } from "@flue/runtime/adapter";
+import type { Wire } from "agent/wire-read";
 
 import type { SessionService } from "./acp.js";
 import { Live } from "./live.js";
 import { Loader } from "./load.js";
 import type { LocalLink } from "./local-link.js";
-import type { FacadeMode } from "./mode.js";
-import type { SessionIndex } from "./session-index.js";
-import { Sessions } from "./sessions.js";
+import { OneSession } from "./sessions.js";
 import { Turns } from "./turns.js";
 import type { Refresh } from "./turns.js";
 
@@ -20,10 +19,9 @@ export interface ServiceOptions {
   readonly agent: Agent;
   /** The identity under which `start()` registers the agent. */
   readonly agentName: string;
-  readonly index: SessionIndex;
-  /** Where the id of a new session comes from (`src/mode.ts`). */
-  readonly mode: FacadeMode;
-  /** The local link of guest init under CH, or null on sbx (`src/local-link.ts`). */
+  /** The host's id of the one session, from `CRECHE_SESSION_ID` (`src/mode.ts`). */
+  readonly sessionId: Wire<"SessionId">;
+  /** The local link of guest init, as the supervisor gives it (`src/local-link.ts`). */
   readonly link: LocalLink | null;
   /** The conversation store of the started runtime (`tapStores`). */
   readonly store: () => ConversationStreamStore | null;
@@ -33,22 +31,13 @@ export interface ServiceOptions {
 }
 
 export function sessionService(options: ServiceOptions): SessionService {
-  const sessions = new Sessions(options.agent, options.index, options.mode, options.now);
+  const session = new OneSession(options.agent, options.sessionId, options.now);
   const live = new Live();
-  const turns = new Turns(sessions, live, options.link, options.refresh);
-  const loader = new Loader(sessions, live, options.store, options.agentName);
+  const turns = new Turns(session, live, options.link, options.refresh);
+  const loader = new Loader(session, live, options.store, options.agentName);
 
   return {
-    newSession: async (params, peer) => {
-      const made = await sessions.newSession(params);
-      if (made.ok) {
-        live.attach(made.value.sessionId, peer);
-      }
-
-      return made;
-    },
     loadSession: (params, peer) => loader.loadSession(params, peer),
-    listSessions: (params) => sessions.listSessions(params),
     prompt: (params, peer) => turns.prompt(params, peer),
     cancel: (params) => turns.cancel(params),
   };

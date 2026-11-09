@@ -1,11 +1,11 @@
 // The relay socket: one facade in process, on faux Flue, and the built
 // `acp-relay` bin as each door connection's pipe to it.
 
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
@@ -13,9 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { SupervisorLock } from "../src/lock.js";
-import { SBX } from "../src/mode.js";
 import { sessionService } from "../src/service.js";
-import { SessionIndex } from "../src/session-index.js";
 import { EXIT_OK, runSupervisor } from "../src/supervisor.js";
 import { RELAY_BIN, shortTmp, startFacade } from "./facade-process.js";
 import type { FacadeProcess } from "./facade-process.js";
@@ -30,6 +28,8 @@ vi.setConfig({ testTimeout: 15_000 });
 const flue = await startFlue([Probe]);
 
 interface Facade {
+  /** The id of the facade's one session. */
+  readonly id: string;
   readonly tmp: string;
   readonly socket: string;
   readonly input: PassThrough;
@@ -55,7 +55,7 @@ async function facade(): Promise<Facade> {
   const socket = join(tmp, "creche-facade", "acp.sock");
   const input = new PassThrough();
   const said: string[] = [];
-  const index = new SessionIndex(new DatabaseSync(":memory:"));
+  const id = randomUUID();
   let listening: () => void = () => undefined;
   const ready = new Promise<void>((resolve) => (listening = resolve));
   // The supervisor link beats as attendance does. With no beat, the facade
@@ -75,14 +75,14 @@ async function facade(): Promise<Facade> {
       deadlineMs: DEADLINE_MS,
       serve: async () => ({
         ok: true,
-        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, link: null, store: flue.store }) },
+        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store }) },
       }),
       socketPath: socket,
     });
   });
   void exited.then(() => clearInterval(beating));
   await ready;
-  const made = { tmp, socket, input, said, exited };
+  const made = { id, tmp, socket, input, said, exited };
   facades.push(made);
 
   return made;
@@ -139,8 +139,7 @@ describe("the relay socket", () => {
   it("fans a turn out to every connection on the session", async () => {
     const on = await facade();
     const [first, second] = [relay(on), relay(on)];
-    const made = await request(first, 1, "session/new", { cwd: "/work", mcpServers: [] });
-    const sessionId = (made["result"] as { sessionId: string }).sessionId;
+    const sessionId = on.id;
     expect((await request(second, 1, "session/load", { sessionId, cwd: "/work", mcpServers: [] }))["result"]).toEqual({});
 
     faux.setResponses([fauxAssistantMessage("Hello, both.")]);
