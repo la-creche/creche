@@ -20,12 +20,13 @@
 # vmm. It runs as the operator. Its `--env-file` is the EnvironmentFile= of
 # creche-vmm.service (contract 06 §4 rule 7), pinned equal by
 # handover/tests/test_handover_r7r_verify_env.py. Timeout 300 s: the hook
-# decompresses about 2.5 GB, and nobody measured the time on the host. It
+# decompresses about 6 GB with the coding disk (CH79 rule 1), and nobody
+# measured the time on the host. It
 # equals `follow::HOOK_TIMEOUT` of the vmm, the wait of its digests follow
 # (CH77 rule 2), pinned equal by bin/tests/test_disks_manifest.py.
 #
-# `restore.keep = 1`: about 1 GB a release, so the host keeps one previous
-# tree (fact 51).
+# `restore.keep = 1`: about 1.6 GB a release with the coding disk, so the
+# host keeps one previous tree (fact 51).
 manifest_version = "0.23"
 name = "disks"
 repo = "creche"

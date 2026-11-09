@@ -1218,7 +1218,8 @@ export const wire = {
           "description": "The image flavor: `sandbox.image` of the family file.",
           "enum": [
             "base",
-            "python"
+            "python",
+            "coding"
           ],
           "title": "SandboxFlavor",
           "type": "string"

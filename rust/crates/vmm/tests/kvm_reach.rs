@@ -909,7 +909,7 @@ fn kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk() {
     let disk = format!(r#"{{"file":"root2.img","sha256":"{new}"}}"#);
     let kernel = sha256(&image.join("vmlinux"));
     let text = format!(
-        r#"{{"kernel":{{"file":"vmlinux","sha256":"{kernel}"}},"base":{disk},"python":{disk}}}"#
+        r#"{{"kernel":{{"file":"vmlinux","sha256":"{kernel}"}},"base":{disk},"python":{disk},"coding":{disk}}}"#
     );
     let staged = image.join("digests.json.new");
     fs::write(&staged, text).unwrap();
@@ -924,7 +924,7 @@ fn kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk() {
     // `IDLE_CHECK`, and the vmm log says so. Its snapshot holds the key of
     // its start on the old disk, also when it sleeps after the swap.
     let swap = format!(
-        "vmm: new starts use the new {DIGESTS_FILE}: kernel {kernel}, base {new}, python {new}"
+        "vmm: new starts use the new {DIGESTS_FILE}: kernel {kernel}, base {new}, python {new}, coding {new}"
     );
     let slept = format!("vmm: the VM of {SESSION} sleeps");
     let settle = HOOK_TIMEOUT + POLL..HOOK_TIMEOUT + POLL * 4;

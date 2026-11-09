@@ -54,10 +54,10 @@ from handover_disk_fixtures import (
 from handover_executor_fixtures import REQUEST_ID, FakeRun, fake_host, request_body, this_uid
 from handover_fixtures import manifest_text
 
-#: `shasum -a 256 <the four files of DISK_BYTES> | LC_ALL=C sort | shasum -a
-#: 256`, run once by hand. A change of the rule or of the line form moves
-#: it.
-GOLDEN_DIGEST = "f1ab13f7660d3c978e2197f684e3e776b441f95da3f6b41d14544320ad0a80ae"
+#: `shasum -a 256 <the five files of DISK_BYTES> | LC_ALL=C sort | shasum -a
+#: 256`, run once by hand. A change of the rule, of the line form or of the
+#: files of the row moves it.
+GOLDEN_DIGEST = "900bcc9567f0c508947baaf3c649848347e1dadb6196da9001fec88af063c393"
 
 
 # ---- 1. the approval digest ----------------------------------------------------

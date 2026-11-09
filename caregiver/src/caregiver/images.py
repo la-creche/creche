@@ -27,6 +27,13 @@ from typing import Final
 
 from agent_family import SandboxFlavor
 
+#: The flavors that have an sbx image, one field of `SandboxImages` each.
+#: `coding` has none: it is a root disk of the disks row only (CH7-1, CH53
+#: rule 1), so a family that names it on sbx gets
+#: `IMAGE_FLAVOR_UNCONFIGURED`. No family names it before the cut (CH79
+#: rule 1).
+SBX_FLAVORS: Final = (str(SandboxFlavor.BASE), str(SandboxFlavor.PYTHON))
+
 #: Contract 05 §3.3. This host was given no image for a flavor a family
 #: asked for. Not `sandbox_start_failed`: nothing was attempted, and the
 #: fix is a platform argument, not a retry.
@@ -37,10 +44,10 @@ IMAGE_FLAVOR_UNCONFIGURED: Final = "image_flavor_unconfigured"
 class SandboxImages:
     """What this `caregiver` may create a sandbox from, by flavor.
 
-    One field per member of `SandboxFlavor`, because a third flavor is a
-    third `playpen/Dockerfile` target, a third build in the cutover
-    and a third argument — a platform change, released together, never a
-    mapping a caller can widen at runtime.
+    One field per member of `SBX_FLAVORS`, because a flavor with an sbx
+    image is a `playpen/Dockerfile` target, a build in the cutover and an
+    argument — a platform change, released together, never a mapping a
+    caller can widen at runtime.
 
     An empty string means "this host was not given one", which is what
     every deployment before the second image is."""
@@ -63,4 +70,4 @@ class SandboxImages:
         return tuple(name for name, reference in self._by_flavor().items() if reference)
 
     def _by_flavor(self) -> dict[str, str]:
-        return {str(SandboxFlavor.BASE): self.base, str(SandboxFlavor.PYTHON): self.python}
+        return dict(zip(SBX_FLAVORS, (self.base, self.python), strict=True))

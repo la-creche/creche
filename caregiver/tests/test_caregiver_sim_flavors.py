@@ -52,6 +52,13 @@ def test_a_flavor_with_no_reference_resolves_to_none() -> None:
     assert BASE_ONLY.resolve(str(SandboxFlavor.PYTHON)) is None
 
 
+def test_coding_has_no_sbx_image() -> None:
+    """`coding` is a root disk of the disks row only (CH7-1, CH53 rule 1,
+    CH79 rule 1). A host with both images still has none for it."""
+    assert BOTH.resolve(str(SandboxFlavor.CODING)) is None
+    assert str(SandboxFlavor.CODING) not in BOTH.configured()
+
+
 def test_an_unknown_flavor_resolves_to_none() -> None:
     """The validator refuses one, so this can only be a file that reached
     the reconciler another way. It still never falls back to `base`."""
@@ -162,6 +169,17 @@ def unconfigured(fleet: Fleet) -> Fleet:
     fleet.images = BASE_ONLY
     fleet.write(sandbox={"cpus": 2, "memory": "2g", "image": "python"})
     return fleet
+
+
+def test_a_family_that_asks_for_coding_on_sbx_gets_the_fault(fleet: Fleet) -> None:
+    """No family names `coding` before the cut (CH79 rule 1). One that does
+    gets no sandbox on sbx, and the fault names what sbx can serve."""
+    fleet.write(sandbox={"cpus": 2, "memory": "2g", "image": "coding"})
+    result = fleet.run()
+    assert fleet.created() == ()
+    assert [one.code for one in result.status.faults] == [IMAGE_FLAVOR_UNCONFIGURED]
+    assert result.status.faults[0].detail["flavor"] == "coding"
+    assert result.status.faults[0].detail["configured"] == ["base", "python"]
 
 
 def test_an_unconfigured_flavor_raises_a_fault_a_reader_can_act_on(fleet: Fleet) -> None:

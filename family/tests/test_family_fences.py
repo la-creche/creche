@@ -572,7 +572,7 @@ def test_the_default_image_flavor_is_base() -> None:
     assert load("chat").sandbox.image == "base"
 
 
-@pytest.mark.parametrize("flavor", ["base", "python"])
+@pytest.mark.parametrize("flavor", ["base", "python", "coding"])
 def test_every_flavor_the_platform_builds_is_accepted(flavor: str) -> None:
     assert not errors(check("chat", sandbox={"cpus": 2, "memory": "2g", "image": flavor}))
 
@@ -581,7 +581,7 @@ def test_an_unknown_image_flavor_is_an_error_naming_the_set() -> None:
     report = check("chat", sandbox={"cpus": 2, "memory": "2g", "image": "rust"})
     assert errors(report)
     assert "sandbox.image" in messages(report)
-    assert "base, python" in messages(report)
+    assert "base, python, coding" in messages(report)
 
 
 def test_an_image_reference_is_not_a_flavor() -> None:

@@ -185,12 +185,14 @@ host where something has gone wrong.
 - A fault's `blocks_turns` comes from `faults.BLOCKS_TURNS_BY_CODE`, never
   from the file.
 - A flavor with no image creates nothing. The fault does not block turns.
+  `coding` never has an sbx image (`images.SBX_FLAVORS`, decisions CH53
+  rule 1, CH79 rule 1).
 - The images of a `playpen` release win over `--image` and `--image-python`.
   `released.py` reads `/opt/components/playpen/images.env` once per pass.
 - A released file that is absent or does not read keeps the last good
   answer. Only a process that never read one uses the flags.
-- A released reference is a digest. A file that holds a tag, an unknown
-  flavor or no `base` line is refused whole.
+- A released reference is a digest. A file that holds a tag, a flavor
+  outside `SBX_FLAVORS` or no `base` line is refused whole.
 - A run with a `--state-root` of its own reads no released file, unless
   `--released-images` names one.
 - Never name a fixed in-VM path. `sbx create` mounts a host directory at the

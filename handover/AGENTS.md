@@ -459,8 +459,10 @@ Kind.BINARY, Releases.YES)` (CH7-5, CH9, item 12 (1)). Its manifest is
    It opens no socket and reads no disk (CH76 rule 2). `bin/fleet-up up`
    writes `vmm.env` (CH59 rule 1). The file must exist before the first
    vmm release.
-5. The manifest requires `family-file` 0.16, the first minor with the
-   reach files that the vmm reads (CH76 rule 3).
+5. The manifest requires `family-file` 0.17. Minor 16 is the first with
+   the reach files that the vmm reads (CH76 rule 3), and minor 17 adds the
+   flavor `coding` (CH79 rule 1). Each floor is the current minor of its
+   provider (`tests/test_handover_repo_manifests.py`).
 6. The AppArmor slot profile does not ship in the archive. A change to
    `rust/crates/vmm-confine/apparmor/cloud-hypervisor-slots.profile` is a
    one-off sudo step on the host, which the PR names.
@@ -491,9 +493,10 @@ CH76 rules 1 and 5). Its manifest is `disks/component.toml`, and
    holds the list and the limits: `DISK_FILE_MAX_BYTES` (2 GiB - 1) for a
    disk and the kernel, `DIGESTS_MAX_BYTES` (64 KiB, the `DIGESTS_CAP` of
    the vmm) for `digests.json`, and `BUNDLE_MAX_BYTES` for each bundle.
-3. `DISK_FLAVORS` is `base` and `python`, the values of the wire enum
-   `SandboxFlavor`. `tests/test_handover_disk_flavors.py` holds the two
-   equal (CH58 rule 4, CH76 rule 7).
+3. `DISK_FLAVORS` is `base`, `python` and `coding`, the values of the wire
+   enum `SandboxFlavor`. `tests/test_handover_disk_flavors.py` holds the
+   two equal (CH58 rule 4, CH76 rule 7). `coding` joined before the cut
+   (CH79 rule 1).
 4. A disk-image manifest names no unit, and its `runs_as` is `none`. Its
    `build` argv starts with an absolute path, and only CI runs it, with
    `DISK_OUT` set (`catalog.DISK_OUT_ENV`).
@@ -556,10 +559,10 @@ CH76 rules 1 and 5). Its manifest is `disks/component.toml`, and
     the 2 GiB - 1 cap needs about 2.06 GiB.
 16. `bin/allocate-tags.sh` takes every asset of the `--assets` lines, in
     pairs of a file and its bundle. It runs the verifier once for each
-    pair, and the Release of a disk-image component holds the eight assets
+    pair, and the Release of a disk-image component holds the ten assets
     (CH35 (2), CH76 rule 5). `bin/build-artifacts.sh` skips a planned
     disk-image row, and the `sign` job of `release.yml` signs each of the
-    four files.
+    five files.
 17. The job `disks` of `release.yml` runs the build of the row,
     `disks/bin/playpen-release-disks`, when the plan tags `disks`. Then
     `bin/check-disk-files.sh` refuses a file past its limit of
@@ -732,8 +735,8 @@ that wants a refusal changes one field.
 - When the network connection of the host cannot fetch an archive inside
   one run of the follower, the follower never fetches it. One run has 270
   seconds, and the fetch resumes no partial file. `handover request` fetches
-  with 600 seconds (`cli.py`). A disk file of 415 to 506 MiB needs about
-  1.9 MiB/s in one run. Not checked: the rate from the host to the code
+  with 600 seconds (`cli.py`). A disk file of 415 to 562 MiB needs about
+  2.1 MiB/s in one run. Not checked: the rate from the host to the code
   host (plan risk 10).
 - The follower does not ask again for a request that root never ledgered.
   A newer tag or a request by hand recovers (`follow/`).

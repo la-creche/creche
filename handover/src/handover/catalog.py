@@ -292,7 +292,7 @@ CONTRACT_OWNER: dict[ContractId, str] = {
 #: the two numbers is the `provides` row of `handover/component.yaml`.
 #: `tests/test_handover_contract_version.py` fails when they differ from it.
 MANIFEST_CONTRACT_MAJOR = 0
-MANIFEST_CONTRACT_MINOR = 24
+MANIFEST_CONTRACT_MINOR = 25
 
 #: `handover` deploys last whatever `depends_on` says (contract 06 §1.1).
 LAST_IN_ORDER = "handover"
@@ -318,9 +318,10 @@ ARCHIVE_MAX_UNPACKED_BYTES = 512 * 1024 * 1024
 #: The flavors of a root disk, one file `<flavor>.ext4.zst` each. They are
 #: the values of the wire enum `SandboxFlavor`, and the vmm refuses a
 #: `digests.json` with any other key (CH58 rule 4, CH76 rule 7).
-#: `tests/test_handover_disk_flavors.py` holds the two equal. Coding joins
-#: at the cut, with the PR that adds it to the enum.
-DISK_FLAVORS: tuple[str, ...] = ("base", "python")
+#: `tests/test_handover_disk_flavors.py` holds the two equal. Coding joined
+#: with the PR that added it to the enum, before the cut (CH76 rule 7, CH79
+#: rule 1).
+DISK_FLAVORS: tuple[str, ...] = ("base", "python", "coding")
 
 #: The end of the name of the root disk of a flavor: `<flavor><this>`. An
 #: ext4 file, compressed with zstd. Root installs it unchanged (CH35 (4)).

@@ -30,7 +30,8 @@ The `coding` flavor of `code` and `creche` is the python flavor plus uv,
 pnpm through corepack, and cargo with Rust 1.92.0, rustfmt and clippy
 (CH7-1, for now). Agents install a repo's locked dependencies through the
 egress proxy and run its checks. It ships as a root disk only (CH53
-rule 1): no sbx image and no `SandboxFlavor` member.
+rule 1): no sbx image. Its `SandboxFlavor` member joined before the cut
+(CH79 rule 1), and caregiver maps it to no image.
 
 The Python flavor ships no Python package installer. `pip`, `uv` and
 `ensurepip` exist in build steps only. The test venv excludes `nodeenv`.
@@ -90,8 +91,9 @@ CI builds each flavor on each code change (`bin/playpen-ci`).
 5. `bin/playpen-verify` changes nothing and reaches nothing outside the
    host. It asks the registry for each digest in `images.env`.
 6. Keep the flavor lists equal: the flavors in `bin/playpen-build` and
-   `SandboxFlavor` in `family/`. `bin/playpen-ci` lists those, then the
-   flavors that ship as a root disk only (today `coding`). The targets of
+   `SBX_FLAVORS` in `caregiver/images.py`, the members of `SandboxFlavor`
+   with an sbx image. `bin/playpen-ci` lists those, then the flavors that
+   ship as a root disk only (today `coding`). The targets of
    `Dockerfile` are the `bin/playpen-ci` list.
 7. `bin/tests/test_playpen_release.py` runs both scripts against a stub
    `docker` and a stub registry. `bin/tests/test_playpen_image.py` reads the

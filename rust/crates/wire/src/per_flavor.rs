@@ -16,6 +16,7 @@ use crate::SandboxFlavor;
 pub struct PerFlavor<T> {
     base: T,
     python: T,
+    coding: T,
 }
 
 impl<T> PerFlavor<T> {
@@ -34,6 +35,7 @@ impl<T> PerFlavor<T> {
         Ok(Self {
             base: value(SandboxFlavor::Base)?,
             python: value(SandboxFlavor::Python)?,
+            coding: value(SandboxFlavor::Coding)?,
         })
     }
 
@@ -43,6 +45,7 @@ impl<T> PerFlavor<T> {
         match flavor {
             SandboxFlavor::Base => &self.base,
             SandboxFlavor::Python => &self.python,
+            SandboxFlavor::Coding => &self.coding,
         }
     }
 
@@ -51,13 +54,23 @@ impl<T> PerFlavor<T> {
         match flavor {
             SandboxFlavor::Base => &mut self.base,
             SandboxFlavor::Python => &mut self.python,
+            SandboxFlavor::Coding => &mut self.coding,
         }
     }
 
     /// Each flavor with its value, in the order of the enum.
     pub fn iter(&self) -> impl Iterator<Item = (SandboxFlavor, &T)> {
-        let Self { base, python } = self;
-        [(SandboxFlavor::Base, base), (SandboxFlavor::Python, python)].into_iter()
+        let Self {
+            base,
+            python,
+            coding,
+        } = self;
+        [
+            (SandboxFlavor::Base, base),
+            (SandboxFlavor::Python, python),
+            (SandboxFlavor::Coding, coding),
+        ]
+        .into_iter()
     }
 
     /// The set with `map` applied to each value, in the order of the enum.
@@ -89,6 +102,7 @@ mod tests {
             [
                 (SandboxFlavor::Base, &SandboxFlavor::Base),
                 (SandboxFlavor::Python, &SandboxFlavor::Python),
+                (SandboxFlavor::Coding, &SandboxFlavor::Coding),
             ]
         );
         for (flavor, value) in every.iter() {
@@ -102,6 +116,7 @@ mod tests {
         *values.get_mut(SandboxFlavor::Python) = 1;
         assert_eq!(*values.get(SandboxFlavor::Base), 0);
         assert_eq!(*values.get(SandboxFlavor::Python), 1);
+        assert_eq!(*values.get(SandboxFlavor::Coding), 0);
     }
 
     #[test]

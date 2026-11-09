@@ -53,6 +53,7 @@ def test_a_host_with_one_flavor_names_one() -> None:
         f"base={REGISTRY}/agent-sandbox@sha256:{'a' * 63}\n",
         f"base={BASE}\nbase={LATER}\n",
         f"base={BASE}\ngpu={PYTHON}\n",
+        f"base={BASE}\ncoding={PYTHON}\n",
         f"base={BASE} --privileged\n",
         f"base {BASE}\n",
         f"base={BASE}\npython=\n",
