@@ -103,6 +103,10 @@ VMM_PROTOCOL_MISMATCH: Final = FaultCode.VMM_PROTOCOL_MISMATCH.value
 #: (decisions CH21-9, CH33 rule 5).
 NOT_FOUND: Final = "not_found"
 
+#: The code of the `acp` route when the host has no room for the VM. The
+#: vmm never queues (decision CH21-3).
+HOST_FULL: Final = "host_full"
+
 #: How much of the ACP stream one read takes.
 READ_CHUNK_BYTES: Final = 65_536
 

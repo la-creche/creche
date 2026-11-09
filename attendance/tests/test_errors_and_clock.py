@@ -56,6 +56,12 @@ def test_no_retry_key_when_the_code_is_final() -> None:
     assert "retry_after_s" not in error.body()
 
 
+def test_host_full_is_unavailable_with_no_retry() -> None:
+    """Contract 02 §14 minor 15, decision CH83 rule 2."""
+    assert http_status(ErrorCode.HOST_FULL) == HTTP_UNAVAILABLE
+    assert retry_after_s(ErrorCode.HOST_FULL) is None
+
+
 def test_degraded_is_unavailable() -> None:
     assert http_status(ErrorCode.FAMILY_DEGRADED) == HTTP_UNAVAILABLE
 

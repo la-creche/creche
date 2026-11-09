@@ -23,7 +23,11 @@ inside the VM, which carries Node.
 4. Runs one thin job per delegate call (`acp_jobs.py`): it mints a session
    id, makes the row with the `delegate` origin, opens the session's vmm
    stream, runs the handshake and one `session/prompt`, and drops the
-   session at the end (decisions CH21-2, CH21-4).
+   session at the end (decisions CH21-2, CH21-4). One deadline, the
+   family's `job.timeout`, holds the whole job. The vmm never queues: on
+   `host_full` the job asks for the stream again until the deadline, then
+   the door answers `host_full`, 503 with no `retry_after_s` (contract 02
+   §12 rule 4, decisions CH21-3, CH83 rule 2).
 5. Serves the dispatch door: `enqueue` and `job_status`. Each job is one
    session with the `auto` origin, as a thin job is. Only an autonomous
    family has a limit and a queue.
@@ -195,6 +199,10 @@ conversation and the one-writer rule (Flue's queue).
    its row, and the entry's `acp_session` maps one to the other.
 8. The outcome record is written, then noted in the ledger, then the slot
    is freed and the next queued job starts.
+9. A dispatched or triggered job that meets `host_full` writes no outcome
+   and drops its row. It frees its slot and goes back to its family's
+   queue, in front of each job that arrived after it. The upkeep loop
+   tries it again (contract 02 §6 rule 4, decision CH21-3).
 
 ## Mount rules
 
@@ -326,6 +334,13 @@ is marked `slow`.
   names no step for a vmm that does not answer then. A list or a drop that
   the vmm refuses leaves the rows, and the log names the family. The next
   start tries again (`service.py`).
+- CONTRACT-QUESTION: decision CH21-3 gives a delegate job a retry loop
+  inside its `job.timeout`, and no row names the pause between two tries.
+  A job pauses `HOST_FULL_PAUSE_S` (1 s), the tick of the dispatch queue
+  pump, and starts a try only before its deadline (`acp_jobs.py`).
+- Contract 02 minor 15 adds `host_full` to the delegate door, and this
+  package still provides session-api 0.14. Plan PR CR11 claims minor 15
+  with `session/delete`.
 - `caregiver` reads only the codes of minor 17 from the fault file of this
   service, so it drops `vmm_protocol_mismatch` until plan PR CR10 adds the
   code to its table.

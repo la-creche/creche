@@ -45,7 +45,7 @@ from starlette.websockets import WebSocket
 
 from . import acp_door, acp_view, dispatch, jobs, outcomes
 from .acp_door import DoorPrompts
-from .acp_jobs import CANCEL_WAIT_S, JobEnd, JobPlan, drop_job_session, run_job
+from .acp_jobs import CANCEL_WAIT_S, HostFull, JobEnd, JobPlan, drop_job_session, run_job
 from .atomic import read_json
 from .auth import Access, Principal, check_access, check_family_kind
 from .clock import now
@@ -270,7 +270,10 @@ class SessionService:
         """Contract 04 §7.3 and contract 02 §12: one session, one prompt.
 
         The PEP is the one caller. The answer travels in this response. The
-        session drops at the end of the job (decision CH21-2).
+        session drops at the end of the job (decision CH21-2). A job that
+        met `host_full` for its whole deadline answers `host_full`, 503 with
+        no `retry_after_s` (contract 02 §12 rule 4, decisions CH21-3, CH83
+        rule 2).
         """
         check_access(principal, Access.WRITE)
         self._check_delegate_door(principal)
@@ -290,13 +293,23 @@ class SessionService:
             cwd=cwd,
             message=request.message,
             deadline_s=jobs.job_timeout_s(status.job_timeout_s),
+            waits_for_room=True,
             cancel_wait_s=self._cancel_wait_s,
         )
-        return jobs.answer(job, await self._run_job(plan))
+        end = await self._run_job(plan)
+
+        if isinstance(end, HostFull):
+            raise ApiError(
+                ErrorCode.HOST_FULL,
+                f"the host had no room for the job within {plan.deadline_s:g} s: {end.error}",
+                family=family,
+            )
+
+        return jobs.answer(job, end)
 
     async def _run_job(
         self, plan: JobPlan, on_session: Callable[[str], None] | None = None
-    ) -> JobEnd:
+    ) -> JobEnd | HostFull:
         """One job, counted in `busy` while it runs."""
         self._job_prompts += 1
 
@@ -532,22 +545,39 @@ class SessionService:
         `message` becomes the prompt as DATA. The calling model wrote it, so
         nothing here reads it as an instruction (invariant 14). The trigger
         rides in the origin of the row, never in the prompt's text.
+
+        A job that meets `host_full` writes no outcome. It goes back to the
+        queue in its place, and the upkeep loop tries it again within
+        `PUMP_INTERVAL_S` (contract 02 §6 rule 4, decision CH21-3). Its end
+        starts no queued job, because the host has no room.
         """
         entry = job.entry
         started = now()
+        end: JobEnd | HostFull | None = None
 
         try:
             end = await self._dispatch_prompt(job)
-            record = outcomes.from_job(
-                entry.family, entry.session, entry.trigger(), started, end, NO_SANDBOX
-            )
-            outcomes.write(self._config.state_root, record)
-            self._ledger_of(entry).note_outcome(entry.caller_family, entry.session, record.id)
-        finally:
-            self._jobs.release(entry.family, entry.session)
-            self._upkeep_step("the dispatch pump", lambda: self._pump_dispatch(entry.family))
 
-    async def _dispatch_prompt(self, job: DispatchJob) -> JobEnd:
+            if isinstance(end, JobEnd):
+                record = outcomes.from_job(
+                    entry.family, entry.session, entry.trigger(), started, end, NO_SANDBOX
+                )
+                outcomes.write(self._config.state_root, record)
+                self._ledger_of(entry).note_outcome(entry.caller_family, entry.session, record.id)
+        finally:
+            if isinstance(end, HostFull):
+                _LOG.info(
+                    "family=%s job=%s waits in the queue: %s",
+                    entry.family,
+                    entry.session,
+                    end.error,
+                )
+                self._jobs.requeue(entry.family, entry.session, job)
+            else:
+                self._jobs.release(entry.family, entry.session)
+                self._upkeep_step("the dispatch pump", lambda: self._pump_dispatch(entry.family))
+
+    async def _dispatch_prompt(self, job: DispatchJob) -> JobEnd | HostFull:
         entry = job.entry
         plan = JobPlan(
             family=entry.family,
@@ -555,6 +585,7 @@ class SessionService:
             cwd=self._session_cwd(entry.family),
             message=job.message,
             deadline_s=DEFAULT_DEADLINE_S,
+            waits_for_room=False,
             cancel_wait_s=self._cancel_wait_s,
         )
         return await self._run_job(

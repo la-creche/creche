@@ -50,6 +50,10 @@ class ErrorCode(StrEnum):
     PAYLOAD_TOO_LARGE = "payload_too_large"
     QUEUE_FULL = "queue_full"
     FAMILY_DEGRADED = "family_degraded"
+    #: Contract 02 §14, minor 15: the vmm had no room for the VM of a
+    #: delegate job for its whole deadline. 503 and no retry hint, because
+    #: attendance already tried again (decisions CH21-3, CH83 rule 2).
+    HOST_FULL = "host_full"
     SANDBOX_UNAVAILABLE = "sandbox_unavailable"
     INTERNAL = "internal"
     # Contract 02 §14: 501 and no retry hint, for an operation the contract
@@ -98,6 +102,7 @@ _STATUS: dict[ErrorCode, int] = {
     ErrorCode.PAYLOAD_TOO_LARGE: HTTP_PAYLOAD_TOO_LARGE,
     ErrorCode.QUEUE_FULL: HTTP_TOO_MANY_REQUESTS,
     ErrorCode.FAMILY_DEGRADED: HTTP_UNAVAILABLE,
+    ErrorCode.HOST_FULL: HTTP_UNAVAILABLE,
     ErrorCode.SANDBOX_UNAVAILABLE: HTTP_UNAVAILABLE,
     ErrorCode.INTERNAL: HTTP_INTERNAL,
     ErrorCode.NOT_IMPLEMENTED: HTTP_NOT_IMPLEMENTED,

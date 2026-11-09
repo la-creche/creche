@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from attendance.acp_link import METHOD_CANCEL, METHOD_INITIALIZE, METHOD_PROMPT
 from attendance.auth import Principal
-from attendance.errors import ApiError, ErrorCode
+from attendance.errors import HTTP_UNAVAILABLE, ApiError, ErrorCode
 from attendance.ids import is_session_id, is_ulid, new_ulid
 from attendance.jobs import (
     DEFAULT_JOB_TIMEOUT_S,
@@ -24,6 +24,7 @@ from attendance.jobs import (
 )
 from attendance.paths import SANDBOX_MOUNT_ENV, sandbox_sessions_mount
 from attendance.requests import DelegateRequest, read_delegate
+from attendance.vmm import HOST_FULL
 from attendance_harness import (
     CHAT_SESSION,
     FAMILY,
@@ -230,17 +231,52 @@ async def test_a_stop_reason_other_than_end_turn_answers_failed(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("route", ["create", "acp"])
-@pytest.mark.parametrize("code", ["host_full", "unreachable", "sandbox_start_failed"])
+@pytest.mark.parametrize("code", ["unreachable", "sandbox_start_failed"])
 async def test_a_vmm_refusal_answers_failed_with_its_code(
     tmp_path: Path, route: str, code: str
 ) -> None:
-    """The vmm never queues (decision CH21-3). A refusal ends the job."""
+    """A refusal other than `host_full` ends the job at once."""
     harness = DelegateHarness(tmp_path)
     harness.vmm.refuse[route] = code
     body = await harness.delegate(harness.call())
 
     assert body["status"] == JobStatus.FAILED.value
     assert str(body["error"]).startswith(code)
+    assert harness.vmm.rows == {}
+    await harness.stop()
+
+
+async def test_a_job_asks_again_after_host_full(tmp_path: Path) -> None:
+    """Decision CH21-3: the vmm never queues, and a delegate job tries again
+    inside its deadline. The row stays between tries."""
+    harness = DelegateHarness(tmp_path)
+    harness.vmm.refuse["acp"] = HOST_FULL
+    task = asyncio.create_task(harness.delegate(harness.call()))
+    await wait_until(lambda: len(harness.vmm.opened) == 1)
+    del harness.vmm.refuse["acp"]
+    body = await task
+
+    assert body["status"] == JobStatus.OK.value
+    assert len(harness.vmm.creates) == 1
+    assert harness.vmm.opened == [harness.create().id.root] * 2
+    assert harness.vmm.rows == {}
+    await harness.stop()
+
+
+async def test_host_full_for_the_whole_deadline_answers_503(tmp_path: Path) -> None:
+    """Contract 02 §12 rule 4, decision CH83 rule 2: past the deadline the
+    door answers `host_full`, 503 with no `retry_after_s`. A try starts only
+    before the deadline, so a 2 s deadline holds two tries."""
+    harness = DelegateHarness(tmp_path, job_timeout_s=2)
+    harness.vmm.refuse["acp"] = HOST_FULL
+
+    with pytest.raises(ApiError) as refused:
+        await harness.delegate(harness.call())
+
+    assert refused.value.code is ErrorCode.HOST_FULL
+    assert refused.value.status == HTTP_UNAVAILABLE
+    assert "retry_after_s" not in refused.value.body()
+    assert harness.vmm.opened == [harness.create().id.root] * 2
     assert harness.vmm.rows == {}
     await harness.stop()
 
