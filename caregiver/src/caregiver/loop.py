@@ -338,9 +338,9 @@ class LoopConfig:
 
     registry_root: Path
     state_root: Path
-    #: The allowed mount roots and the platform families of the host
-    #: (`agent_family.fences`). Required: a loop with no fences would apply
-    #: a family that the fences refuse.
+    #: The platform families of the host (`agent_family.fences`).
+    #: Required: a loop with no fences would apply a family that the fences
+    #: refuse.
     fences: Fences
     #: The vmm that the delete of a family drops its sessions on (decision
     #: CH21-10). Required: a delete with no vmm would leave the VMs of the

@@ -24,7 +24,6 @@ kind = "thin"
 description = "Answers questions about the vault."
 model.router = "fast"
 model.budget_usd_per_day = 2.5
-files = [{ path = "/srv/agents/vault", mode = "ro" }]
 egress = []
 """
 
@@ -34,9 +33,9 @@ kind = "attended"
 description = "General assistant."
 model.router = "agent-router"
 model.budget_usd_per_day = 15
-files = [
+repos = [
   # A comment of the TOML text.
-  { path = "/srv/agents/vault", mode = "ro" },
+  "notes",
 ]
 tools.kagi = ["kagi_search_fetch"]
 tools.ha = "all"

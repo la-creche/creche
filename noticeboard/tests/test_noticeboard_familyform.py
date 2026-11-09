@@ -66,7 +66,8 @@ def test_every_schema_field_gets_a_control() -> None:
     assert "sandbox.cpus" in names
     assert "shell" in names
     assert "egress" in names
-    assert "files" in names
+    assert "repos" in names
+    assert "verbs" in names
 
 
 def test_the_annotation_picks_the_control() -> None:
@@ -76,7 +77,7 @@ def test_the_annotation_picks_the_control() -> None:
     assert control_of(form, "model.budget_usd_per_day") is Control.NUMBER
     assert control_of(form, "description") is Control.TEXT
     assert control_of(form, "egress") is Control.LINES
-    assert control_of(form, "files") is Control.BLOCK
+    assert control_of(form, "tools") is Control.BLOCK
 
 
 def test_a_fence_block_is_never_flattened() -> None:
@@ -198,7 +199,7 @@ def test_a_lines_control_reads_one_name_per_line() -> None:
 def test_a_broken_block_becomes_a_report_not_an_exception() -> None:
     form = form_of(family(), CHAT_INDEX)
     posted = posted_from(form)
-    posted["files"] = "files = [\n"
+    posted["verbs"] = "verbs.ha_call.allow = [\n"
 
     after, issues = parse_posted(form, posted)
 
@@ -221,7 +222,7 @@ def test_the_form_of_an_answer_gives_the_document_of_the_post() -> None:
     posted["sandbox.cpus"] = "6"
     posted["shell"] = "on"
     posted["egress"] = "example.test\n"
-    posted["files"] = 'files = [{ path = "/srv/agents/vault", mode = "rw" }]'
+    posted["verbs"] = 'verbs.ha_call.allow = [{ domain = "light", service = "turn_off" }]'
     del posted["system_prompt"]
 
     again = posted_from(with_posted(form, posted))
@@ -253,7 +254,7 @@ def test_a_control_that_the_post_does_not_name_shows_no_text_of_the_reader() -> 
 
     assert value_of(shown, "description") == ""
     assert value_of(shown, "egress") == ""
-    assert value_of(shown, "files") == value_of(form, "files")
+    assert value_of(shown, "verbs") == value_of(form, "verbs")
     assert taken.sandbox_tools != ["read"]
     assert value_of(shown, "sandbox_tools") == "".join(f"{one}\n" for one in taken.sandbox_tools)
 

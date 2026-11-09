@@ -10,12 +10,6 @@ description = "Retrieval. Searches the indexed corpora and answers with citation
 model.router = "agent-router"
 model.budget_usd_per_day = 5
 
-files = [
-    { path = "/srv/agents/vault", mode = "ro" },
-    { path = "/srv/agents/code", mode = "ro" },
-    { path = "/srv/agents/state/index", mode = "ro" },
-]
-
 tools = {}
 
 verbs.embed = {} # the semantic half of a vault search

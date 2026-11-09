@@ -21,7 +21,7 @@ import shutil
 import tempfile
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -103,15 +103,10 @@ def _notes(file: str) -> tuple[str, ...]:
 
 NOTES: Final = _notes(TOML_FILE)
 
-#: The host of the `family_file.host` surface: the aliases LiteLLM serves,
-#: and one symbolic link out of an allowed root.
+#: The host of the `family_file.host` surface: the aliases LiteLLM serves.
+#: Contract 01 minor 18 drops `files`, so the host resolves no link
+#: (decision CH10-10).
 HOST_ALIASES: Final = ("agent-router", "code-router", "fast")
-HOST_LINKS: Final = {
-    "/srv/agents/vault/linked-out": "/etc/shadow",
-    "/srv/agents/vault/linked-in": "/srv/agents/code/example",
-    "/srv/agents/vault/linked-platform": "/srv/agents/work/platform/creche",
-    "/srv/agents/sessions/linked-store": "/etc/shadow",
-}
 
 #: The start of a name that is no file of a registry. A file browser writes
 #: such a file into a directory, and git does not track it.
@@ -137,31 +132,18 @@ def registry_files(base: Path) -> list[Path]:
     )
 
 
-#: The fences of the written host (`agent_family.fences`).
-HOST_FENCES: Final = Fences(
-    mount_roots=(
-        "/srv/agents/vault",
-        "/srv/agents/code",
-        "/srv/agents/state/index",
-        "/srv/agents/work/projects",
-        "/srv/agents/work/coding-sandbox",
-    ),
-    platform_families=frozenset({"code"}),
-)
+#: The fence of the written host (`agent_family.fences`).
+HOST_FENCES: Final = Fences(platform_families=frozenset({"code"}))
 
 
 @dataclass(frozen=True)
 class WrittenHost:
-    """A host as data: the aliases it serves and where its links point."""
+    """A host as data: the aliases it serves."""
 
     aliases: frozenset[str]
-    links: dict[str, str] = field(default_factory=dict[str, str])
 
     def model_aliases(self) -> frozenset[str]:
         return self.aliases
-
-    def real_path(self, path: str) -> str:
-        return self.links.get(path, path)
 
 
 def _params(registry: str, case: Case) -> dict[str, Json]:
@@ -289,21 +271,6 @@ HOST_CASES: Final = (
         "host-alias-unknown",
         _HOST_HEAD + b'model = { router = "no-such-alias", budget_usd_per_day = 1 }\n',
     ),
-    Case(
-        "host-links",
-        _HOST_HEAD + b'model = { router = "fast", budget_usd_per_day = 1 }\n'
-        b"files = [\n"
-        b'    { path = "/srv/agents/vault/linked-out", mode = "ro" },\n'
-        b'    { path = "/srv/agents/vault/linked-in", mode = "ro" },\n'
-        b'    { path = "/srv/agents/vault/linked-platform", mode = "ro" },\n'
-        b'    { path = "/srv/agents/vault/plain", mode = "ro" },\n'
-        b"]\n",
-    ),
-    Case(
-        "host-link-session-store",
-        _HOST_HEAD + b'model = { router = "fast", budget_usd_per_day = 1 }\n'
-        b'files = [{ path = "/srv/agents/sessions/linked-store", mode = "ro" }]\n',
-    ),
 )
 
 
@@ -326,7 +293,7 @@ def render_registries() -> str:
 
 
 def surfaces() -> tuple[Surface, ...]:
-    host = WrittenHost(frozenset(HOST_ALIASES), dict(HOST_LINKS))
+    host = WrittenHost(frozenset(HOST_ALIASES))
     with tempfile.TemporaryDirectory(prefix="vectors-family-") as scratch_name:
         scratch = Path(scratch_name)
         hosted = _fixture_vectors(TOML_REGISTRY, host)
@@ -343,8 +310,6 @@ def surfaces() -> tuple[Surface, ...]:
     host_context = normalize(
         {
             "model_aliases": sorted(HOST_ALIASES),
-            "links": HOST_LINKS,
-            "mount_roots": list(HOST_FENCES.mount_roots),
             "platform_families": sorted(HOST_FENCES.platform_families),
         }
     )
@@ -357,8 +322,7 @@ def surfaces() -> tuple[Surface, ...]:
             contract=CONTRACT,
             notes=(
                 *NOTES,
-                "context.host is the host: the aliases it serves, the paths that are "
-                "symbolic links with the path each one resolves to, and its two fences.",
+                "context.host is the host: the aliases it serves and its fence.",
             ),
             context={"host": host_context},
             vectors=tuple(hosted),

@@ -26,7 +26,7 @@ STYLED = FIXTURE.with_name("styled-family.toml")
 #: end-of-line comment.
 KEPT_COMMENTS = (
     "# A family file with a comment of every shape a save must keep: this",
-    "    # The whole vault to read, and one memories directory per vault area to",
+    "    # The lights to switch, and one room's heat to set. Each other call of",
     "# The four reads contract 01 §8.1 names.",
     "egress = [] # every reach goes through the PEP, so every reach is audited",
 )
@@ -108,7 +108,7 @@ def test_an_untouched_field_keeps_its_layout() -> None:
     text = saved(description="A new description.")
 
     assert 'model.router = "agent-router"' in text.splitlines()
-    assert '    { path = "/srv/agents/vault", mode = "ro" },' in text.splitlines()
+    assert '    { domain = "light", service = "turn_on" },' in text.splitlines()
     assert 'tools.kagi = ["kagi_search_fetch", "kagi_extract"]' in text.splitlines()
 
 
@@ -162,11 +162,12 @@ def test_a_table_that_loses_each_key_and_gains_one_takes_the_edit() -> None:
 
 def test_a_replaced_list_has_the_layout_of_the_writer() -> None:
     """A list goes whole. Its new text is the text of `tomlout.py`."""
-    files = [{"path": "/srv/agents/vault", "mode": "rw"}]
-    text = saved(files=files)
+    verbs = dict(model_of(original())["verbs"])
+    verbs["ha_call"] = {"allow": [{"domain": "light", "service": "turn_off", "entity_id": None}]}
+    text = saved(verbs=verbs)
 
-    assert model_of(text)["files"] == files
-    assert '    { path = "/srv/agents/vault", mode = "rw" },' in text.splitlines()
+    assert model_of(text)["verbs"] == verbs
+    assert '    { domain = "light", service = "turn_off" },' in text.splitlines()
 
 
 def test_a_key_with_no_value_leaves_the_file() -> None:
@@ -268,7 +269,7 @@ def test_an_edited_line_keeps_its_end_of_line_comment() -> None:
 def test_an_item_of_a_list_keeps_its_end_of_line_comment() -> None:
     text = styled(shell=True)
 
-    assert '    { path = "/srv/agents/vault", mode = "ro" }, # the whole vault, to read' in (
+    assert '    { domain = "light", service = "turn_on" }, # the lights, to switch' in (
         text.splitlines()
     )
 

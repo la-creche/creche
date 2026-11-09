@@ -34,7 +34,6 @@ EXACT_VERSION_FORM: Final = "[0-9][0-9A-Za-z.]{0,63}"
 TOOL_NAME: Final = re.compile(rf"^{TOOL_NAME_FORM}\Z")
 SKILL_NAME: Final = FAMILY_NAME
 MODEL_ALIAS: Final = re.compile(r"^[a-z0-9][a-z0-9._/-]*\Z")
-MOUNT_PATH: Final = re.compile(r"^[A-Za-z0-9._/-]+\Z")
 ENV_VAR_NAME: Final = re.compile(rf"^{ENV_VAR_NAME_FORM}\Z")
 HA_IDENTIFIER: Final = re.compile(r"^[a-z][a-z0-9_]*\Z")
 HA_ENTITY_ID: Final = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+\Z")
@@ -115,11 +114,6 @@ class Kind(StrEnum):
     ATTENDED = "attended"
     THIN = "thin"
     AUTONOMOUS = "autonomous"
-
-
-class Mode(StrEnum):
-    RO = "ro"
-    RW = "rw"
 
 
 class SandboxTool(StrEnum):
@@ -231,8 +225,9 @@ LOCAL_HOUR_MAX: Final = 23
 
 # --- host facts held by the manager, not by the registry ---
 
-# The allowed mount roots (contract 01 §5.4) and the platform families
-# (§5.5 rule 1) are host config: `fences.py` reads them from the site file.
+# The platform families (contract 01 §5.5 rule 1) are host config:
+# `fences.py` reads them from the site file. Minor 18 drops the allowed
+# mount roots with `files` (decision CH10-10).
 
 #: Contract 01 §5.5 rule 7: the platform's own GitHub server, and the tools no
 #: family is ever granted from it. A registry's `main` may carry no branch
@@ -240,20 +235,6 @@ LOCAL_HOUR_MAX: Final = 23
 #: looking. The platform family proposes and the operator lands.
 PLATFORM_SERVER: Final = "github-platform"
 PLATFORM_WITHHELD: Final = frozenset({"merge_pull_request"})
-
-#: Contract 01 §3.3 rule 6: the runtime mounts the session store. A family file
-#: that declares it is claiming what is not its own (invariant 5).
-SESSION_ROOT: Final = "/srv/agents/sessions"
-
-
-def is_under(path: str, root: str) -> bool:
-    """Segment-wise prefix. `/srv/agents/work/platform-x` is NOT under
-    `/srv/agents/work/platform`, which a string prefix would get wrong."""
-    if path == root:
-        return True
-
-    return path.startswith(root + "/")
-
 
 #: The most digits of a count that `int` reads here. Each range of a count
 #: in this file ends below six digits. `int` raises on a run of digits past

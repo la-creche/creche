@@ -490,7 +490,7 @@ def test_a_valid_edit_makes_exactly_one_commit(board: Harness) -> None:
     assert commit_count(board.config.registry_dir) == before + 1
 
 
-def test_a_save_keeps_the_files_comments(board: Harness) -> None:
+def test_a_save_keeps_the_comments_of_the_file(board: Harness) -> None:
     """The file explains each grant where it sits, and regenerating the
     document from the model would drop every line of that on the first save."""
     board.get("/families/chat/edit")
@@ -504,7 +504,7 @@ def test_a_save_keeps_the_files_comments(board: Harness) -> None:
     assert CHAT_COMMENT in saved
     assert "the house assistant, rewritten" in saved
     # The style the author wrote, on a line the edit never touched.
-    assert '{ path = "/srv/agents/vault", mode = "ro" },' in saved
+    assert '{ domain = "light", service = "turn_on" },' in saved
 
 
 @pytest.mark.parametrize(
@@ -664,7 +664,7 @@ TYPED = {
     "number": ("sandbox.cpus", "6"),
     "box": ("shell", "on"),
     "lines": ("egress", "example.test\nsecond.example.test\n"),
-    "block": ("files", 'files = [{ path = "/srv/agents/vault", mode = "rw" }]\n'),
+    "block": ("verbs", 'verbs.ha_call.allow = [{ domain = "light", service = "turn_off" }]\n'),
 }
 
 
@@ -706,7 +706,7 @@ def test_a_box_that_the_reader_cleared_stays_clear_after_a_preview(board: Harnes
 #: An edit that the save refuses, at each of its three steps: the form,
 #: the schema and the rules of the registry.
 REFUSED = {
-    "a-block-with-another-key": ("files", 'mounts = [{ path = "/srv", mode = "ro" }]\n'),
+    "a-block-with-another-key": ("verbs", 'grants = [{ domain = "light", service = "x" }]\n'),
     "a-word-for-a-number": ("sandbox.cpus", "many"),
     "a-budget-below-zero": ("model.budget_usd_per_day", "-4"),
 }

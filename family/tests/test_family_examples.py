@@ -37,15 +37,16 @@ def test_contract_server_validates(name: str) -> None:
     assert registry.servers[name].name == name
 
 
-def test_no_host_downgrades_two_checks() -> None:
-    """§5.1 and §5.4: without host context each is a warning, and the report
-    says which check was downgraded. Nothing else changes."""
+def test_no_host_downgrades_the_alias_check() -> None:
+    """§5.1: without host context the check is a warning, and the report
+    says which check was downgraded. Nothing else changes. Minor 18 drops
+    the mount check of §5.4 (decision CH10-10)."""
     registry = load_registry(FIXTURES)
     report = registry.reports["chat"]
     assert report.errors == 0, messages(report)
 
     downgraded = {issue.loc for issue in report.issues if issue.downgraded}
-    assert downgraded == {"model.router", "files"}
+    assert downgraded == {"model.router"}
     assert report.state is FamilyState.RECONCILING
 
 

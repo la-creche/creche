@@ -3,11 +3,12 @@
 Nothing here raises on bad input (invariant 19). Every check appends to one
 accumulator, so one parse reports every violation it can see.
 
-Two checks need facts only the host has: the model alias list (§5.1) and the
-resolved path behind a mount (§5.4, §3.3 rule 5). Without a host they report a
-downgraded warning and the report says which check was downgraded. Two more
-need the fences of the host (`fences.py`): the allowed mount roots and the
-platform families. Without them, each reports one downgraded warning."""
+One check needs a fact only the host has: the model alias list (§5.1).
+Without a host it reports a downgraded warning and the report says which
+check was downgraded. The fence checks need the fence of the host
+(`fences.py`): the platform families. Without it, each reports one
+downgraded warning. Minor 18 drops `files` and the mount checks with it
+(decision CH10-10)."""
 
 from __future__ import annotations
 
@@ -41,7 +42,6 @@ from .grammar import (
     MEMORY_MAX_MB,
     MEMORY_MIN_MB,
     MODEL_ALIAS,
-    MOUNT_PATH,
     PLATFORM_SERVER,
     PLATFORM_WITHHELD,
     PROBE_FAMILY,
@@ -53,21 +53,18 @@ from .grammar import (
     SANDBOX_FLAVORS,
     SERVER_FILE,
     SERVER_NAME,
-    SESSION_ROOT,
     SKILL_NAME,
     SURVEY_TOOL,
     TOOL_NAME,
     TOOL_NAME_FORM,
     EgressProblem,
     Kind,
-    Mode,
     SandboxTool,
     SystemPrompt,
     Verb,
     duration_s,
     egress_problem,
     is_repo_name,
-    is_under,
     memory_mb,
 )
 from .model import DailyCall, FamilyFile
@@ -107,15 +104,11 @@ INVOKE_AGENT: Final = "invoke_agent"
 
 
 class HostFacts(Protocol):
-    """What only the host knows. `caregiver` implements it against LiteLLM and
-    the real filesystem. Tests implement it in three lines."""
+    """What only the host knows. `caregiver` implements it against LiteLLM.
+    Tests implement it in a few lines."""
 
     def model_aliases(self) -> frozenset[str]:
         """Every alias LiteLLM serves right now."""
-        ...
-
-    def real_path(self, path: str) -> str:
-        """`path` with every symlink resolved."""
         ...
 
 
@@ -148,7 +141,6 @@ def check_family(
     """Every rule contract 01 states for one file, in file order."""
     _check_identity(family, directory, issues)
     _check_model(family, issues, host)
-    _check_files(family, issues, host, fences)
     _check_tools(family, index, issues, fences)
     _check_verbs(family, index, issues, fences)
     _check_delegates(family, index, issues)
@@ -227,93 +219,6 @@ def _check_model(family: FamilyFile, issues: Issues, host: HostFacts | None) -> 
 
     if router not in host.model_aliases():
         issues.error("model.router", f"'{router}' is not an alias LiteLLM serves")
-
-
-def _check_files(
-    family: FamilyFile, issues: Issues, host: HostFacts | None, fences: Fences | None
-) -> None:
-    seen: set[str] = set()
-    for index, mount in enumerate(family.files):
-        loc = f"files[{index}]"
-        if mount.path in seen:
-            issues.error(loc, f"'{mount.path}' is mounted twice")
-
-        seen.add(mount.path)
-        if mount.mode not in tuple(Mode):
-            issues.error(f"{loc}.mode", f"'{mount.mode}' is not a mode; use 'ro' or 'rw'")
-
-        if not _path_shape_ok(mount.path, loc, issues):
-            continue
-
-        _check_root(mount.path, loc, issues, host, fences)
-
-    # §5.4 and §3.3 rule 5: resolving a symlink needs the host, so without one
-    # the complete check downgrades. One line per family, not one per mount.
-    if host is None and family.files:
-        issues.warn("files", "no host context: no mount's symlinks were resolved", downgraded=True)
-
-    if fences is None and family.files:
-        issues.warn("files", "no host fences: no mount root was checked", downgraded=True)
-
-
-def _path_shape_ok(path: str, loc: str, issues: Issues) -> bool:
-    """Absolute, no `.` or `..` segment, no `//`, and no glob (§3.3)."""
-    if APPROVAL_WILDCARD in path or "?" in path or "[" in path:
-        issues.error(
-            f"{loc}.path",
-            f"'{path}' is a glob; name each directory, because a glob widens a family silently "
-            "when a new directory appears",
-        )
-        return False
-
-    if not path.startswith("/"):
-        issues.error(f"{loc}.path", f"'{path}' must be an absolute path")
-        return False
-
-    if "//" in path or any(part in (".", "..") for part in path.split("/")[1:]):
-        issues.error(f"{loc}.path", f"'{path}' must hold no '.', '..' or empty segment")
-        return False
-
-    if MOUNT_PATH.fullmatch(path) is None:
-        issues.error(f"{loc}.path", f"'{path}' holds a character outside [A-Za-z0-9._/-]")
-        return False
-
-    return True
-
-
-def _check_root(
-    path: str, loc: str, issues: Issues, host: HostFacts | None, fences: Fences | None
-) -> None:
-    """§5.4 the allowed roots, §5.5 the platform fence, §3.3 rule 6 the
-    session store. The literal path is checked with or without a host. The
-    resolved path needs one, and a symlink out of a root is an error there,
-    not a silent escape (§3.3 rule 5)."""
-    if is_under(path, SESSION_ROOT):
-        issues.error(
-            f"{loc}.path",
-            f"'{path}' is the session store; the runtime mounts it, and a family file never "
-            "declares it",
-        )
-        return
-
-    if fences is None:
-        return
-
-    _check_one_root(path, loc, issues, fences)
-    if host is None:
-        return
-
-    resolved = host.real_path(path)
-    if resolved != path:
-        _check_one_root(resolved, loc, issues, fences)
-
-
-def _check_one_root(path: str, loc: str, issues: Issues, fences: Fences) -> None:
-    if not any(is_under(path, root) for root in fences.mount_roots):
-        issues.error(
-            f"{loc}.path",
-            f"'{path}' is under no allowed root; the roots are {', '.join(fences.mount_roots)}",
-        )
 
 
 def _check_tools(family: FamilyFile, index: Index, issues: Issues, fences: Fences | None) -> None:
@@ -748,7 +653,6 @@ def _check_job(family: FamilyFile, kind: Kind, issues: Issues) -> None:
         issues.error("job", f"'job' is thin only; this family is '{kind}'")
         return
 
-    _check_caller_root(family, family.job.caller_root, issues)
     seconds = duration_s(family.job.timeout)
     if seconds is None:
         issues.error("job.timeout", f"'{family.job.timeout}' must match [1-9][0-9]*[smh]")
@@ -764,18 +668,6 @@ def _check_job(family: FamilyFile, kind: Kind, issues: Issues) -> None:
             f"'{family.job.timeout}' is past the PEP's {DELEGATE_LIMIT_S}s delegate limit; the "
             "caller gives up first",
         )
-
-
-def _check_caller_root(family: FamilyFile, root: str | None, issues: Issues) -> None:
-    """Contract 02 §12.1: a job of a chat runs in a directory under this
-    path. The path must be a mount the family may write, or the directory
-    is not inside the sandbox."""
-    if root is None:
-        return
-
-    writable = {mount.path for mount in family.files if mount.mode == Mode.RW}
-    if root not in writable:
-        issues.error("job.caller_root", f"'{root}' is not the path of an 'rw' entry of files")
 
 
 def _check_triggers(family: FamilyFile, kind: Kind, issues: Issues) -> None:

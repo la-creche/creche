@@ -32,17 +32,8 @@ from noticeboard.tomlout import to_toml
 
 from caregiver import paths
 
-#: The fences of the test host (`agent_family.fences`).
-FENCES: Final = Fences(
-    mount_roots=(
-        "/srv/agents/vault",
-        "/srv/agents/code",
-        "/srv/agents/state/index",
-        "/srv/agents/work/projects",
-        "/srv/agents/work/coding-sandbox",
-    ),
-    platform_families=frozenset({"code"}),
-)
+#: The fence of the test host (`agent_family.fences`).
+FENCES: Final = Fences(platform_families=frozenset({"code"}))
 
 FAMILY: Final = "chat"
 SKILL: Final = "kitchen"

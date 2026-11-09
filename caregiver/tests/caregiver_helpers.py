@@ -26,24 +26,12 @@ from caregiver.vmm import VmmError
 
 from caregiver import paths
 
-#: The fences of the test host (`agent_family.fences`): the roots and the
-#: platform family that the fixture registries use.
-FENCES: Final = Fences(
-    mount_roots=(
-        "/srv/agents/vault",
-        "/srv/agents/code",
-        "/srv/agents/state/index",
-        "/srv/agents/work/projects",
-        "/srv/agents/work/coding-sandbox",
-    ),
-    platform_families=frozenset({"code"}),
-)
+#: The fence of the test host (`agent_family.fences`): the platform family
+#: that the fixture registries use.
+FENCES: Final = Fences(platform_families=frozenset({"code"}))
 
-#: The same fences as the site file gives them to the process.
-FENCE_ENV: Final = {
-    "AGENT_MOUNT_ROOTS": ",".join(FENCES.mount_roots),
-    "AGENT_PLATFORM_FAMILIES": ",".join(sorted(FENCES.platform_families)),
-}
+#: The same fence as the site file gives it to the process.
+FENCE_ENV: Final = {"AGENT_PLATFORM_FAMILIES": ",".join(sorted(FENCES.platform_families))}
 
 FAMILY_BODY: dict[str, Any] = {
     "name": "chat",

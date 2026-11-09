@@ -108,12 +108,13 @@ host where something has gone wrong.
 - No secret on argv, in a URL or in a log line. The master key comes from
   `LITELLM_MASTER_KEY` in the environment.
 - Each verb that applies the registry (`serve`, `reconcile-once`,
-  `rotate`, `apply-once`) reads the fences of the host from its environment:
-  `AGENT_MOUNT_ROOTS` and `AGENT_PLATFORM_FAMILIES`
-  (`agent_family.fences`). The unit reads them from the site file. With no
-  `AGENT_MOUNT_ROOTS`, or an entry of the wrong shape, the verb writes one
-  line that names the key, and its exit code is 78. `LoopConfig` and
-  `apply_once` take the fences, with no default.
+  `rotate`, `apply-once`) reads the fence of the host from its environment:
+  `AGENT_PLATFORM_FAMILIES` (`agent_family.fences`). The unit reads it from
+  the site file. With an entry of the wrong shape, the verb writes one line
+  that names the key, and its exit code is 78. `LoopConfig` and
+  `apply_once` take the fences, with no default. Contract 01 minor 18 drops
+  `AGENT_MOUNT_ROOTS` (decision CH10-10), and the `limits` block carries
+  no `caller_root`.
 - A verb that acts refuses to start with no master key. It writes one
   line that names the variable, and its exit code is 1.
 - The chaperone watch probes once per interval for the whole fleet. A probe

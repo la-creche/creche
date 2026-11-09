@@ -46,11 +46,6 @@ class ModelBlock(Strict):
     budget_usd_per_day: float
 
 
-class FileMount(Strict):
-    path: str
-    mode: str
-
-
 class SandboxBlock(Strict):
     cpus: int = DEFAULT_CPUS
     memory: str = DEFAULT_MEMORY
@@ -61,11 +56,10 @@ class SandboxBlock(Strict):
 
 
 class JobBlock(Strict):
+    # The one field (contract 01 §3.12). A job runs in a VM of its own,
+    # dropped at job end, so no field names a caller root (decisions CH1
+    # and CH21-2).
     timeout: str = DEFAULT_JOB_TIMEOUT
-    # Contract 02 §12.1: each calling chat gets its own directory under this
-    # mount, and its jobs run there. None: each job runs in the sessions
-    # mount of the family. `validate.py` holds it to an `rw` entry of `files`.
-    caller_root: str | None = None
 
 
 class Trigger(Strict):
@@ -143,7 +137,8 @@ class FamilyFile(Strict):
     kind: str
     description: str
     model: ModelBlock
-    files: list[FileMount] = Field(default_factory=list[FileMount])
+    # Contract 01 minor 18 drops `files` (decision CH10-10). A VM mounts no
+    # host folder, so `files` is an unknown field and refused.
     tools: dict[str, ToolGrant] = Field(default_factory=dict[str, ToolGrant])
     verbs: VerbsBlock = Field(default_factory=VerbsBlock)
     delegates: list[str] = Field(default_factory=list[str])

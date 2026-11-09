@@ -5,13 +5,6 @@ description = "Refines, points and splits board tickets, dispatches workers, ema
 model.router = "agent-router"
 model.budget_usd_per_day = 10
 
-files = [
-    { path = "/srv/agents/code", mode = "ro" },
-    { path = "/srv/agents/vault/house", mode = "ro" },
-    # The lead's own memory between wakes: dispatch ledger, standup timestamp.
-    { path = "/srv/agents/vault/house/scrum", mode = "rw" },
-]
-
 # Named tools, not `all`: an autonomous family may not say `all` (§3.4.5).
 tools.board-lead = [
     "survey_board",

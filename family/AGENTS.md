@@ -42,14 +42,18 @@ instead of the first.
 - A field that needs a regex, a range or another file's content is a value
   rule. It is never a pydantic field validator.
 - One pattern per identifier, in `grammar.py`.
-- The allowed mount roots and the platform families are host config, not
-  code and not registry files. A fence the fenced family could edit is not a
-  fence. `fences.py` reads them from the site keys `AGENT_MOUNT_ROOTS` and
-  `AGENT_PLATFORM_FAMILIES`. No family name is in this package.
-- The two host-dependent checks downgrade, never skip. With no `HostFacts`
-  they report a warning with `downgraded=True`. The two fence checks do the
-  same with no `Fences`. Only the reader that applies the registry passes
-  them: `caregiver`.
+- The platform families are host config, not code and not registry files.
+  A fence the fenced family could edit is not a fence. `fences.py` reads
+  them from the site key `AGENT_PLATFORM_FAMILIES`. No family name is in
+  this package.
+- Contract 01 minor 18 drops `files`, `job.caller_root`, the allowed mount
+  roots and the site key `AGENT_MOUNT_ROOTS` (decisions CH10-10, CH1,
+  CH21-2). A VM mounts no host folder. `files` and `job.caller_root` are
+  unknown fields, and an unknown field is refused.
+- The host-dependent check downgrades, never skips. With no `HostFacts` it
+  reports a warning with `downgraded=True`. The fence checks do the same
+  with no `Fences`. Only the reader that applies the registry passes them:
+  `caregiver`.
 - `classify.py` stays pure. No clock, no disk, no import of `validate.py`.
 - An `approval` entry only narrows. Adding one removes reach. Do not treat
   `approval` like `tools` or `egress`.
@@ -178,7 +182,6 @@ refuses each one, and so does the validator.
 |---|---|
 | Unknown fields | refused on every model |
 | `name` | `[a-z][a-z0-9-]{1,30}`, equal to the directory name |
-| Mounts | absolute, no glob, under an allowed root. No root holds a working copy of the platform. |
 | `tools` | the server is declared, and each tool is in its catalog. Only a platform family of the host holds `github-platform` |
 | Tool name | `[A-Za-z][A-Za-z0-9_-]{0,63}`, in a family file and in a server file |
 | `run.env` name | `[A-Z][A-Z0-9_]{0,63}` |
@@ -186,14 +189,14 @@ refuses each one, and so does the validator.
 | `tools: all` on `autonomous` | refused |
 | `delegates` | each target exists and is `kind: thin` |
 | `max_inflight_delegations` | 1 to 8, default 2 |
-| `job.caller_root` | thin only. The path of an `rw` entry of `files`. Each calling chat gets a directory under it. |
+| `job` | thin only. `timeout` is the one field: a job runs in a VM of its own, dropped at job end. |
 | `egress` | no IP literal, no wildcard, port 1 to 65535 |
 | `repos` | a bare mirror dir name: `[A-Za-z0-9][A-Za-z0-9._-]{0,99}`, no `..`, no `.git` at the end. No name two times. 32 at most. Every kind. The mirror is not checked: the vmm checks at serve. `wire/tests/test_wire_grammar.py` holds the pattern equal to the wire type `RepoName` |
 | `sandbox_tools` | Flue's six names only: `read`, `write`, `edit`, `bash`, `grep`, `glob`. No name two times. The default is empty. `codemode` is not a name: the agent mounts it for every family. |
 | `triggers` cron | five fields of ASCII digits and `*`, `,`, `-`, `/`, or one of the three short forms |
 | `approval` | every entry names something the file grants. No two overlap. |
 
-Absence is denial. No mount, no read. No tool grant, no call.
+Absence is denial. No repo, no clone. No tool grant, no call.
 
 ## Use
 
@@ -221,7 +224,8 @@ uv run pytest family/tests
 ## Known gaps
 
 - The schema has no per-job budget and no per-job turn cap (`model.py`).
-- No rule refuses `embed` without an index mount (`validate.py`).
+- No rule refuses `embed`. Minor 18 drops mounts, so no family holds an
+  index mount and `index_search` (contract 01 §9 item 5, `validate.py`).
 - Contract 01 §3.8 names other sandbox tools: `find`, `ls`, `codemode`,
   with a default of `read`, `grep`, `find`, `ls`, and `shell` as the only
   way to get `bash`. The owner decided on Flue's six names and an empty

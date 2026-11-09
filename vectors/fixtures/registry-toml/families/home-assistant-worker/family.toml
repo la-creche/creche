@@ -7,10 +7,6 @@ description = "Works one home-assistant ticket per wake, on that epic only."
 model.router = "agent-router"
 model.budget_usd_per_day = 5
 
-files = [
-    { path = "/srv/agents/vault/house", mode = "ro" },
-]
-
 tools.vikunja-home-assistant = [
     "list_ready_tickets",
     "get_ticket",

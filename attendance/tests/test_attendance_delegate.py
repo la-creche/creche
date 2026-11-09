@@ -24,7 +24,6 @@ from attendance.jobs import (
 )
 from attendance.paths import SANDBOX_MOUNT_ENV, sandbox_sessions_mount
 from attendance.requests import DelegateRequest, read_delegate
-from attendance.workspace import owner_dir
 from attendance_harness import (
     CHAT_SESSION,
     FAMILY,
@@ -57,17 +56,11 @@ class DelegateHarness:
         mode: PromptMode = PromptMode.OK,
     ) -> None:
         self.config = make_config(tmp_path)
-        #: The `job.caller_root` of `coding-sandbox`. `vault-oracle` has none.
-        self.caller_root = tmp_path / "work" / CODING_SANDBOX_FAMILY
         write_status(self.config.state_root)
 
-        for family, root in ((ORACLE, None), (CODING_SANDBOX_FAMILY, self.caller_root)):
+        for family in (ORACLE, CODING_SANDBOX_FAMILY):
             write_status(
-                self.config.state_root,
-                family=family,
-                kind="thin",
-                job_timeout_s=job_timeout_s,
-                caller_root=root,
+                self.config.state_root, family=family, kind="thin", job_timeout_s=job_timeout_s
             )
 
         self.vmm = FakeVmm(prompt_mode=mode)
@@ -275,7 +268,7 @@ async def test_a_non_thin_family_is_refused(tmp_path: Path) -> None:
 
 async def test_a_family_of_no_known_kind_takes_no_delegate_call(tmp_path: Path) -> None:
     """Contract 02 §3.1. A status document that states no known kind proves no
-    thin family. The refusal comes before the work directory exists."""
+    thin family. The refusal comes before a session is made."""
     harness = DelegateHarness(tmp_path)
     write_status(harness.config.state_root, family=CODING_SANDBOX_FAMILY, kind="robot")
 
@@ -285,7 +278,6 @@ async def test_a_family_of_no_known_kind_takes_no_delegate_call(tmp_path: Path) 
     assert refused.value.code is ErrorCode.FORBIDDEN
     assert refused.value.detail == {"kind": None}
     assert harness.vmm.creates == []
-    assert not owner_dir(harness.caller_root, CHAT_SESSION).exists()
     await harness.stop()
 
 
@@ -300,53 +292,16 @@ async def test_only_the_delegate_door_may_call_it(tmp_path: Path) -> None:
     await harness.stop()
 
 
-@pytest.mark.parametrize("owner", ["../../etc", "a/b", ".."])
-async def test_a_hostile_calling_session_id_is_refused(tmp_path: Path, owner: str) -> None:
-    """It becomes a path component, so it is checked before anything runs."""
+@pytest.mark.parametrize("owner", [CHAT_SESSION, None])
+async def test_a_job_works_in_the_family_mount(tmp_path: Path, owner: str | None) -> None:
+    """Contract 01 minor 18 drops `job.caller_root` (decision CH10-10). A job
+    runs in a VM of its own, dropped at job end (decisions CH1, CH21-2), so
+    the calling chat makes no directory and names no cwd."""
     harness = DelegateHarness(tmp_path)
-
-    with pytest.raises(ApiError) as refused:
-        await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY, owner=owner))
-
-    assert refused.value.code is ErrorCode.BAD_REQUEST
-    assert harness.vmm.creates == []
-    assert not harness.caller_root.exists()
-    await harness.stop()
-
-
-async def test_coding_sandbox_works_in_the_calling_chats_directory(tmp_path: Path) -> None:
-    """Contract 02 §12.1 rules 2 and 3. The chat's directory is the cwd."""
-    harness = DelegateHarness(tmp_path)
-    await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY))
-    made = owner_dir(harness.caller_root, CHAT_SESSION)
-
-    assert made.is_dir()
-    assert harness.create().cwd.root == str(made)
-    await harness.stop()
-
-
-async def test_coding_sandbox_with_no_calling_chat_works_in_the_family_mount(
-    tmp_path: Path,
-) -> None:
-    harness = DelegateHarness(tmp_path)
-    await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY, owner=None))
+    await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY, owner=owner))
     mount = sandbox_sessions_mount(harness.config.sessions_root, CODING_SANDBOX_FAMILY)
 
     assert harness.create().cwd.root == mount
-    await harness.stop()
-
-
-async def test_the_chat_directory_outlives_the_job(tmp_path: Path) -> None:
-    """§12.1 rule 4. The directory belongs to the chat, not to the job."""
-    harness = DelegateHarness(tmp_path)
-    await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY))
-
-    made = owner_dir(harness.caller_root, CHAT_SESSION)
-    (made / "clean.py").write_text("import pandas", encoding="utf-8")
-
-    await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY))
-
-    assert (made / "clean.py").read_text(encoding="utf-8") == "import pandas"
     await harness.stop()
 
 

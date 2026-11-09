@@ -8,9 +8,9 @@ description = "General assistant. It knows the operator, it searches the web, it
 model.router = "agent-router"
 model.budget_usd_per_day = 15 # the chat router
 
-files = [
-    { path = "/srv/agents/vault", mode = "ro" }, # the whole vault, to read
-    { path = "/srv/agents/vault/house/memories", mode = "rw" },
+verbs.ha_call.allow = [
+    { domain = "light", service = "turn_on" }, # the lights, to switch
+    { domain = "light", service = "turn_off" },
 ]
 
 # Search only. No other server is granted.

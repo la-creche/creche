@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from typing import Any
 
 from creche_wire import (
@@ -59,7 +58,6 @@ from .queueing import MAX_QUEUED_TURNS, JobQueue
 from .requests import DelegateRequest, DispatchRequest, JobQuery, TriggerRequest
 from .tasks import report_failure
 from .vmm import Vmm
-from .workspace import make_owner_dir, owner_dir
 
 _LOG = logging.getLogger("attendance")
 
@@ -198,7 +196,7 @@ class SessionService:
             raise ApiError(ErrorCode.NOT_FOUND, "no such session", family=family)
 
         self._status.require(family)
-        cwd = self._session_cwd(family, None, None)
+        cwd = self._session_cwd(family)
         return await acp_view.load_transcript(self._vmm, family, session, cwd, page)
 
     def busy(self, principal: Principal) -> dict[str, Any]:
@@ -236,9 +234,7 @@ class SessionService:
         check_family_kind(principal, family, served_kind(status))
         check_may_serve(status)
 
-        owner = request.claimed_session_id
-        cwd = self._session_cwd(family, status.caller_root, owner)
-        self._prepare_work_dir(status.caller_root, owner)
+        cwd = self._session_cwd(family)
         job = jobs.new_job_session()
         delegate = Delegate(delegation=DelegationId(request.delegation_id), job=JobId(job))
         plan = JobPlan(
@@ -262,19 +258,17 @@ class SessionService:
         finally:
             self._job_prompts -= 1
 
-    def _session_cwd(self, family: str, caller_root: Path | None, owner: str | None) -> str:
-        """The `cwd` of one session (contract 02 §12.1 rule 3).
+    def _session_cwd(self, family: str) -> str:
+        """The `cwd` of one session: the family's sessions mount.
 
-        A family with a caller root works in the calling chat's directory.
-        Every other session works in the family's sessions mount. The row
-        keeps it as a display value, never a guest path (decision CH21-4).
-        The config makes it, so a cwd that the wire refuses (decision CH21)
+        `attendance` chooses it (contract 02 §6 rule 1). The row keeps it as
+        a display value, never a guest path (decision CH21-4). Contract 01
+        minor 18 drops `job.caller_root`, so no job works in a directory of
+        its calling chat (contract 02 §12.1, decisions CH1, CH10-10). The
+        config makes the cwd, so a cwd that the wire refuses (decision CH21)
         is an internal fault.
         """
-        if caller_root is not None and owner is not None:
-            cwd = str(owner_dir(caller_root, owner))
-        else:
-            cwd = sandbox_sessions_mount(self._config.sessions_root, family)
+        cwd = sandbox_sessions_mount(self._config.sessions_root, family)
 
         if not is_session_cwd(cwd):
             raise ApiError(
@@ -286,16 +280,6 @@ class SessionService:
             )
 
         return cwd
-
-    def _prepare_work_dir(self, caller_root: Path | None, owner: str | None) -> None:
-        """Contract 02 §12.1 rule 2. A family with a caller root works in the
-        chat's own directory, made at that chat's first delegate call and at
-        no other moment. The id is validated before it becomes a path
-        component."""
-        if caller_root is None or owner is None:
-            return
-
-        make_owner_dir(caller_root, owner)
 
     def _check_delegate_door(self, principal: Principal) -> None:
         """Contract 02 §1: the delegate door serves this one path.
@@ -521,7 +505,7 @@ class SessionService:
         plan = JobPlan(
             family=entry.family,
             origin=job.origin,
-            cwd=self._session_cwd(entry.family, None, None),
+            cwd=self._session_cwd(entry.family),
             message=job.message,
             deadline_s=DEFAULT_DEADLINE_S,
             cancel_wait_s=self._cancel_wait_s,

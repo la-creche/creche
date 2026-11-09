@@ -9,10 +9,6 @@ description = "Works one finance ticket per wake, on the finance epic only."
 model.router = "agent-router"
 model.budget_usd_per_day = 5
 
-files = [
-    { path = "/srv/agents/vault/house", mode = "ro" },
-]
-
 tools.vikunja-finance = [
     "list_ready_tickets",
     "get_ticket",

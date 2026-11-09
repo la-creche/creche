@@ -32,6 +32,8 @@ from agent_door_acp import config as door_acp
 from creche_env.envfile import (
     DEFAULT_FILE,
     EXAMPLE_FILE,
+    EnvError,
+    Fault,
     FileKind,
     Text,
     load,
@@ -121,20 +123,34 @@ def test_each_example_value_is_a_value_of_its_type(
         site.forget()
 
 
-def test_the_site_file_sets_the_two_fences() -> None:
-    """caregiver reads the two fences from the site file. They have no
-    default, so a host that sets neither gives neither."""
+def test_the_site_file_sets_the_fence() -> None:
+    """caregiver reads the fence from the site file. It has no default, so
+    a host that does not set it gives none."""
     pair = pair_in(PAIR_DIR)
-    fences = "AGENT_MOUNT_ROOTS=/srv/agents/vault,/srv/agents/code\nAGENT_PLATFORM_FAMILIES=code\n"
+    fence = "AGENT_PLATFORM_FAMILIES=code\n"
     home = {"operator": EXAMPLE_HOME}.get
 
     bare = load(pair, Text(".env", _example_env().encode()), home)
-    fenced = load(pair, Text(".env", (_example_env() + fences).encode()), home)
+    fenced = load(pair, Text(".env", (_example_env() + fence).encode()), home)
 
-    assert "AGENT_MOUNT_ROOTS" not in bare.values
     assert "AGENT_PLATFORM_FAMILIES" not in bare.values
-    assert fenced.values["AGENT_MOUNT_ROOTS"] == "/srv/agents/vault,/srv/agents/code"
     assert fenced.values["AGENT_PLATFORM_FAMILIES"] == "code"
+
+
+def test_the_mount_roots_key_is_outside_the_catalog() -> None:
+    """Contract 01 minor 18 drops `AGENT_MOUNT_ROOTS` (decision CH10-10).
+    A site file that still sets it is refused, so the site PR drops it in
+    the window (CH48 rules 3 and 6)."""
+    pair = pair_in(PAIR_DIR)
+    home = {"operator": EXAMPLE_HOME}.get
+    text = _example_env() + "AGENT_MOUNT_ROOTS=/srv/agents/vault\n"
+
+    with pytest.raises(EnvError) as refused:
+        load(pair, Text(".env", text.encode()), home)
+
+    assert [(one.fault, one.key) for one in refused.value.problems] == [
+        (Fault.UNKNOWN_KEY, "AGENT_MOUNT_ROOTS")
+    ]
 
 
 def test_the_cutover_keys_have_the_defaults_of_their_programs() -> None:

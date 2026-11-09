@@ -85,16 +85,7 @@ CONVERGE_DEADLINE_S: Final = 60.0
 
 _POLL_S: Final = 0.02
 
-#: The fences of the test host, as the site file gives them.
-FIXTURE_MOUNT_ROOTS: Final = ",".join(
-    (
-        "/srv/agents/vault",
-        "/srv/agents/code",
-        "/srv/agents/state/index",
-        "/srv/agents/work/projects",
-        "/srv/agents/work/coding-sandbox",
-    )
-)
+#: The fence of the test host, as the site file gives it.
 FIXTURE_PLATFORM_FAMILIES: Final = "code"
 
 
@@ -103,16 +94,14 @@ def caregiver_env(tree: Tree) -> dict[str, str]:
     and the one that it sets itself.
 
     The unit also puts `AGENT_PEP_URL` into its command line. systemd does
-    that, so here the value is an argument of `serve_words`. The two fences
-    come from the site file, as on the host: the roots and the platform
-    family that the fixture registries use. The unit sets
-    `CAREGIVER_VMM_SOCKET` from `%t` (decision CH20). Here it names the
-    socket of the vmm stand-in.
+    that, so here the value is an argument of `serve_words`. The fence comes
+    from the site file, as on the host: the platform family that the
+    fixture registries use. The unit sets `CAREGIVER_VMM_SOCKET` from `%t`
+    (decision CH20). Here it names the socket of the vmm stand-in.
     """
     return {
         "AGENT_LAN_ADDRESS": LAN_ADDRESS,
         "LITELLM_MASTER_KEY": MASTER_KEY,
-        "AGENT_MOUNT_ROOTS": FIXTURE_MOUNT_ROOTS,
         "AGENT_PLATFORM_FAMILIES": FIXTURE_PLATFORM_FAMILIES,
         "CAREGIVER_VMM_SOCKET": str(tree.vmm_socket),
     }

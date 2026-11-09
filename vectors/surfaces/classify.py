@@ -52,10 +52,6 @@ name = "base"
 kind = "attended"
 description = "One written input."
 model = { router = "fast", budget_usd_per_day = 2.5 }
-files = [
-    { path = "/srv/agents/vault", mode = "ro" },
-    { path = "/srv/agents/code/example", mode = "rw" },
-]
 tools = { kagi = ["kagi_search_fetch", "kagi_extract"], ha-read = "all" }
 verbs = { embed = {}, ha_call = { allow = [{ domain = "notify", service = "send" }] } }
 delegates = ["vault-oracle"]
@@ -68,10 +64,6 @@ sandbox = { cpus = 2, memory = "2g", max_resident_processes = 12, image = "base"
 skills = ["handoff"]
 approval = ["embed"]
 """
-
-#: The mounts of a case, one line for each.
-VAULT_RO: Final = 'files = [{ path = "/srv/agents/vault", mode = "ro" }]\n'
-VAULT_RW: Final = 'files = [{ path = "/srv/agents/vault", mode = "rw" }]\n'
 
 
 def _swap(text: str, old: str, new: str) -> str:
@@ -222,43 +214,6 @@ PAIRS: Final[tuple[tuple[str, str, str], ...]] = (
         AUTONOMOUS + "quiet = { floor_hours = 3 }\n",
     ),
     # --- the sandbox: a replacement ---
-    ("files-add", BASE, BASE + VAULT_RO),
-    ("files-remove", BASE + VAULT_RO, BASE),
-    ("files-to-rw", BASE + VAULT_RO, BASE + VAULT_RW),
-    ("files-to-ro", BASE + VAULT_RW, BASE + VAULT_RO),
-    (
-        "files-every-move",
-        FULL,
-        _swap(
-            _swap(
-                FULL,
-                '"/srv/agents/code/example", mode = "rw"',
-                '"/srv/agents/code/other", mode = "ro"',
-            ),
-            '"/srv/agents/vault", mode = "ro"',
-            '"/srv/agents/vault", mode = "rw"',
-        ),
-    ),
-    (
-        "files-order",
-        FULL,
-        _swap(
-            FULL,
-            '    { path = "/srv/agents/vault", mode = "ro" },\n'
-            '    { path = "/srv/agents/code/example", mode = "rw" },\n',
-            '    { path = "/srv/agents/code/example", mode = "rw" },\n'
-            '    { path = "/srv/agents/vault", mode = "ro" },\n',
-        ),
-    ),
-    (
-        "files-twice",
-        BASE + VAULT_RO,
-        BASE
-        + "files = [\n"
-        + '    { path = "/srv/agents/vault", mode = "ro" },\n'
-        + '    { path = "/srv/agents/vault", mode = "rw" },\n'
-        + "]\n",
-    ),
     ("image", BASE, BASE + 'sandbox = { image = "python" }\n'),
     ("cpus-up", BASE, BASE + "sandbox = { cpus = 4 }\n"),
     ("cpus-down", BASE, BASE + "sandbox = { cpus = 1 }\n"),
@@ -278,7 +233,6 @@ name = "other"
 kind = "autonomous"
 description = "Another text."
 model = { router = "slow", budget_usd_per_day = 1 }
-files = [{ path = "/srv/agents/vault", mode = "rw" }]
 tools = { kagi = "all" }
 verbs = { job_status = {} }
 delegates = []
