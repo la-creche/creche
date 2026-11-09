@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 from attendance.faults import FaultCode, FaultReporter
+from attendance.paths import fault_file
 from attendance.vmm import (
     MISMATCH_TRIES,
     UNREACHABLE,
@@ -208,6 +209,35 @@ async def test_a_reply_with_no_mismatch_clears_the_fault(rig: Rig) -> None:
 
     assert page.rows == []
     assert rig.faults.open_faults(FAMILY) == []
+
+
+async def test_a_fault_file_that_cannot_be_written_changes_no_call(
+    rig: Rig, tmp_path: Path
+) -> None:
+    """A failed write leaves each call its own result, a 101 its stream,
+    and the open fault in memory, so a later reply writes the file again."""
+    faults_dir = tmp_path / "faults"
+    faults_dir.write_text("a file where the directory goes", encoding="utf-8")
+
+    for _ in range(MISMATCH_TRIES):
+        rig.stub.answer("/list", MISMATCH_STATUS, {"code": "protocol_mismatch", "protocol": 3})
+
+    with pytest.raises(VmmRefused) as refused:
+        await rig.vmm.list_page(ListSessions(cursor=None, cwd=None, family=FamilyName(FAMILY)))
+
+    rig.stub.answer("/acp", 101, b"")
+    stream = await rig.vmm.open_acp(FAMILY, SESSION, 1024)
+    await stream.close()
+    kept = rig.faults.open_faults(FAMILY)
+    faults_dir.unlink()
+    rig.stub.answer("/drop", 200, {})
+    await rig.vmm.drop(FAMILY, SESSION)
+
+    assert refused.value.code == VMM_PROTOCOL_MISMATCH
+    assert [fault.code for fault in kept] == [FaultCode.VMM_PROTOCOL_MISMATCH]
+    assert rig.faults.open_faults(FAMILY) == []
+    written = json.loads(fault_file(tmp_path, FAMILY).read_text(encoding="utf-8"))
+    assert written["faults"] == []
 
 
 async def test_an_absent_socket_is_unreachable(tmp_path: Path) -> None:
