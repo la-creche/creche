@@ -322,8 +322,8 @@ fn reads_creds_and_config_into_one_state() {
     }});
     assert_eq!(reply(&read), expected);
     assert!(!read.line().contains(&b'\n'));
-    // 2026-11-06T12:00:10Z.
-    let live = UNIX_EPOCH + Duration::from_secs(1_793_966_410);
+    // 2026-11-06T12:00:10Z, as integer milliseconds (decision CH22-1).
+    let live = UNIX_EPOCH + Duration::from_millis(1_793_966_410_000);
     assert_eq!(read.model_live_at(), Some(live));
     // The skills go in ascending name order, whatever the dir order.
     let text = String::from_utf8(read.line().to_vec()).unwrap();
@@ -441,7 +441,10 @@ fn a_bad_runtime_file_is_not_valid() {
         runtime(|body| drop(body.insert("shell".into(), json!("yes")))),
         runtime(|body| drop(body.insert("system_prompt".into(), json!("prepend")))),
         runtime(|body| drop(body.insert("model_live_at".into(), Value::Null))),
-        runtime(|body| drop(body.insert("model_live_at".into(), json!("2026-11-06T12:00:10.5Z")))),
+        runtime(|body| drop(body.insert("model_live_at".into(), json!("2026-11-06T12:00:10Z")))),
+        runtime(|body| drop(body.insert("model_live_at".into(), json!(1_793_966_410_000.5)))),
+        runtime(|body| drop(body.insert("model_live_at".into(), json!(-1)))),
+        runtime(|body| drop(body.insert("model_live_at".into(), json!(1_u64 << 53)))),
         runtime(|body| drop(body.insert("config_rev".into(), json!(1)))),
         r#"{"shell":true,"shell":true,"sandbox_tools":[],"model_alias":"m"}"#.to_owned(),
     ];

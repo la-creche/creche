@@ -194,6 +194,21 @@ host where something has gone wrong.
   `step` is a `status.ReconcileStep`, one of the six names of contract 05
   §3.4 minor 20.
 - `config_rev` and `applied_rev` are the same value: the registry revision.
+- `runtime.json` holds `model_live_at` next to `model_alias`, its one home
+  (decision CH23-1). A first write leaves the key out (decision CH45 rule
+  1). A write with a new alias sets it `MODEL_CACHE_S` (10 s) ahead, in the
+  same swap, as integer milliseconds since 1970 in UTC (contract 01 §6.1
+  rule 5, decisions CH22-1, CH31). It is the one time of this package that
+  is not RFC 3339, because the vmm reads it. A write with the same alias carries the old value. The sync
+  check of a pass reads it from there, and `applied.json` holds `rev` and
+  `applied_at` alone.
+- `config/shape.json` is `FamilyShape` of `creche-wire`: `cpus`, `flavor`
+  and `memory_mib` from `sandbox.cpus`, `sandbox.image` and
+  `sandbox.memory`, with `1g` as 1024 MiB (decisions CH36 G6, CH43 rule
+  3). It changes in the same swap as the rest of `config/` (decision CH45
+  rule 2). The vmm reads it, and the guest does not.
+  `test_config_mount.py` reads it back as each accepted `FamilyShape`
+  vector of `rust/crates/wire/vectors/wire.json`.
 - `runtime.json` holds `sandbox_tools` as the list of the family file, in
   file order. The names are Flue's six: `read`, `write`, `edit`, `bash`,
   `grep`, `glob`. A family file with no `sandbox_tools` gets `[]`.

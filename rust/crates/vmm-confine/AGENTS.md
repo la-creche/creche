@@ -96,7 +96,9 @@ table of the three vmm crates.
   `FAMILY_STATE_CAP` is `too_large` (decision CH31 rule 3), and the
   instructions and skills share one budget of that cap, so no read holds
   more. `StateRead` holds the checked reply text and `model_live_at` of
-  `runtime.json` (decision CH23-1), and its `Debug` writes no secret.
+  `runtime.json` (decision CH23-1), integer milliseconds since 1970 in
+  UTC (contract 01 §6.1 rule 5, decision CH22-1), and its `Debug` writes
+  no secret.
   Nothing keeps a last good state (decision CH53 rule 2). No live host
   writes `model_live_at` before the cut (decision CH45 rule 2), so the
   tests read the fixture root `tests/fixtures/family`.

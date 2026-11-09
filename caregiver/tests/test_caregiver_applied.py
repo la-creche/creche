@@ -5,6 +5,7 @@ the reconciler keeps a verbatim copy of the revision it last applied."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -134,24 +135,10 @@ def test_forgetting_removes_the_snapshot(tmp_path: Path) -> None:
     assert read_applied_text(tmp_path, "chat") == ""
 
 
-def test_a_snapshot_carries_no_model_deadline_by_default(tmp_path: Path) -> None:
+def test_the_meta_file_holds_no_model_live_at(tmp_path: Path) -> None:
+    """Decision CH23-1: `config/runtime.json` is the one home of
+    `model_live_at`, so `applied.json` holds the revision and its time
+    alone."""
     write_chat(tmp_path)
-    applied = read_applied(tmp_path, "chat")
-    assert applied is not None
-    assert applied.model_live_at is None
-
-
-def test_it_round_trips_the_model_deadline(tmp_path: Path) -> None:
-    """Contract 05 §7 rule 6: a `/key/update` may be served stale for up to
-    10 seconds, so the moment it becomes live outlives the pass that made
-    it. The snapshot is where that moment survives a restart."""
-    write_applied(
-        tmp_path,
-        "chat",
-        rev="reg-aaaaaa",
-        family_text=family_toml(),
-        model_live_at="2026-09-19T10:00:10Z",
-    )
-    applied = read_applied(tmp_path, "chat")
-    assert applied is not None
-    assert applied.model_live_at == "2026-09-19T10:00:10Z"
+    meta = json.loads(paths.applied_meta_path(tmp_path, "chat").read_text(encoding="utf-8"))
+    assert sorted(meta) == ["applied_at", "rev"]

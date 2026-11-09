@@ -11,11 +11,10 @@ use std::io::{self, ErrorKind};
 use std::net::Shutdown;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use creche_vmm::family_state::{HOLD_CAP, LINK_CAP, Server, bind, fd_need};
 use creche_vmm_confine::family::FamilyRoot;
-use creche_vmm_confine::rfc3339;
 use creche_vmm_store::layout::{RunRoot, Slot, VmRunDir};
 use creche_wire::{FAMILY_STATE_CAP, HostPort, SessionId, strict};
 use tokio::net::UnixStream;
@@ -78,10 +77,12 @@ impl Scratch {
         self.dir.join("families/chat").join(path)
     }
 
-    /// Writes `config/runtime.json`, with `model_live_at` when given.
+    /// Writes `config/runtime.json`, with `model_live_at` when given, in
+    /// integer milliseconds (decision CH22-1).
     fn runtime_json(&self, live_at: Option<SystemTime>) {
         let live = live_at.map_or(String::new(), |at| {
-            format!(r#","model_live_at":"{}""#, rfc3339::format(at))
+            let millis = at.duration_since(UNIX_EPOCH).unwrap().as_millis();
+            format!(r#","model_live_at":{millis}"#)
         });
         let text = format!(
             r#"{{"shell":true,"sandbox_tools":["read"],"model_alias":"litellm/test"{live}}}"#

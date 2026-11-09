@@ -46,11 +46,6 @@ class AppliedState:
     rev: str
     applied_at: str
     family: FamilyFile
-    #: When a `/key/update` may be treated as live on every LiteLLM worker
-    #: (contract 05 §7 rule 6). `None` when no model change is outstanding.
-    #: It lives in the snapshot because the 10 seconds outlive the pass that
-    #: started them, and a restart in between must not forget them.
-    model_live_at: str | None = None
 
 
 def write_applied(
@@ -59,7 +54,6 @@ def write_applied(
     *,
     rev: str,
     family_text: str,
-    model_live_at: str | None = None,
 ) -> None:
     """Record this revision as the live one. The caller writes it only
     after every step of the reconcile succeeded."""
@@ -69,11 +63,9 @@ def write_applied(
         mode=APPLIED_FILE_MODE,
     )
 
-    meta = {
-        "rev": rev,
-        "applied_at": now_rfc3339(),
-        "model_live_at": model_live_at,
-    }
+    # Decision CH23-1: `model_live_at` lives in `config/runtime.json`
+    # alone, so the meta file holds no copy.
+    meta = {"rev": rev, "applied_at": now_rfc3339()}
     atomic_write(
         paths.applied_meta_path(state_root, family_name),
         json.dumps(meta, indent=2).encode("utf-8") + b"\n",
@@ -96,12 +88,10 @@ def read_applied(state_root: Path, family_name: str) -> AppliedState | None:
     if family is None:
         return None
 
-    live_at = meta.get("model_live_at")
     return AppliedState(
         rev=str(meta.get("rev", "")),
         applied_at=str(meta.get("applied_at", "")),
         family=family,
-        model_live_at=live_at if isinstance(live_at, str) else None,
     )
 
 

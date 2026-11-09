@@ -103,7 +103,7 @@ fn creds() -> String {
 
 /// `runtime.json` with a past `model_live_at`, so the `state` reply
 /// waits for no hold (decisions CH23-1, CH31 rule 1).
-const RUNTIME: &str = r#"{"shell":true,"sandbox_tools":["read"],"model_alias":"litellm/test","model_live_at":"2026-01-01T00:00:00Z"}"#;
+const RUNTIME: &str = r#"{"shell":true,"sandbox_tools":["read"],"model_alias":"litellm/test","model_live_at":1767225600000}"#;
 
 /// One vmm at a time: each proof uses the session `SESSION`, the run root
 /// of `RuntimeDirectory=vmm` and the state root of the runner, and the

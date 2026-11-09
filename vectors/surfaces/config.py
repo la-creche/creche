@@ -19,6 +19,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Final
 
+from creche_wire import FamilyShape
 from handover.errors import Refusal
 
 from attendance import config as attendance_config
@@ -297,6 +298,10 @@ RUNTIME_CONTRACT: Final = "contract 01 §6.1"
 _DEFAULT_TOOLS: Final[tuple[str, ...]] = ()
 _ALL_TOOLS: Final = ("read", "write", "edit", "bash", "grep", "glob")
 _ALIAS: Final = "agent-router"
+#: The shape of the default `sandbox` fields. The entry point writes
+#: `shape.json` beside `runtime.json`, and these vectors read only
+#: `runtime.json`.
+_SHAPE: Final = FamilyShape.model_validate({"cpus": 2, "flavor": "base", "memory_mib": 2048})
 
 
 @dataclass(frozen=True)
@@ -328,7 +333,9 @@ def _runtime_vector(runtime: Runtime, scratch: Path) -> Vector:
     target = scratch / runtime.id / "config"
     config = config_mount.RuntimeConfig(**args)
     outcome = attempt(
-        lambda: config_mount.write_config_mount(target, instructions="", skills={}, runtime=config)
+        lambda: config_mount.write_config_mount(
+            target, instructions="", skills={}, runtime=config, shape=_SHAPE
+        )
     )
     if isinstance(outcome, Raised):
         return raised(runtime.id, given, outcome.exc)

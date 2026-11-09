@@ -20,7 +20,7 @@ import pytest
 from agent_family import FamilyState, load_registry
 from agent_family.registry import FAMILY_FILE
 from caregiver.applied import read_applied
-from caregiver.clock import seconds_from_now
+from caregiver.clock import ms_from_now, seconds_from_now
 from caregiver.litellm_keys import FakeLiteLLMKeys, HttpLiteLLMKeys, LiteLLMError, Spend
 from caregiver.reach_files import EGRESS_CAP
 from caregiver.reconcile import (
@@ -324,9 +324,50 @@ def test_a_model_change_is_not_in_sync_until_the_cache_turns_over(fleet: Fleet) 
     fleet.write(model={"router": "agent-fast", "budget_usd_per_day": 15})
     result = fleet.run()
     assert result.status.state is FamilyState.RECONCILING
-    applied = read_applied(fleet.state_root, FAMILY)
-    assert applied is not None
-    assert applied.model_live_at is not None
+    assert runtime_json(fleet)["model_live_at"] is not None
+
+
+def runtime_json(fleet: Fleet) -> dict[str, object]:
+    path = paths.config_dir(fleet.state_root, FAMILY) / "runtime.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_the_sync_check_reads_model_live_at_from_runtime_json(fleet: Fleet) -> None:
+    """Decision CH23-1: `runtime.json` is the one home of the field. The
+    next pass keeps the deadline, and a deadline that passed is
+    `in_sync`."""
+    fleet.run()
+    fleet.write(model={"router": "agent-fast", "budget_usd_per_day": 15})
+    fleet.run()
+    live_at = runtime_json(fleet)["model_live_at"]
+    again = fleet.run()
+    assert again.status.state is FamilyState.RECONCILING
+    assert runtime_json(fleet)["model_live_at"] == live_at
+
+    path = paths.config_dir(fleet.state_root, FAMILY) / "runtime.json"
+    passed = {**runtime_json(fleet), "model_live_at": ms_from_now(-1)}
+    path.write_text(json.dumps(passed, indent=2) + "\n", encoding="utf-8")
+    assert fleet.run().status.state is FamilyState.IN_SYNC
+
+
+def test_a_pass_writes_shape_json_and_moves_it_with_the_sandbox(fleet: Fleet) -> None:
+    """Decisions CH36 G6, CH45 rule 2: the shape is in `config/`, so a
+    shape edit is a `write_config`."""
+    fleet.run()
+    shape = paths.config_dir(fleet.state_root, FAMILY) / "shape.json"
+    assert json.loads(shape.read_text(encoding="utf-8")) == {
+        "cpus": 2,
+        "flavor": "base",
+        "memory_mib": 2048,
+    }
+    fleet.write(sandbox={"cpus": 4, "memory": "4g"})
+    result = fleet.run()
+    assert ReconcileStep.WRITE_CONFIG in result.ran
+    assert json.loads(shape.read_text(encoding="utf-8")) == {
+        "cpus": 4,
+        "flavor": "base",
+        "memory_mib": 4096,
+    }
 
 
 def test_a_budget_change_is_in_sync_at_once(fleet: Fleet) -> None:
