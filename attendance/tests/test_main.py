@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import shutil
@@ -16,7 +17,7 @@ from attendance.__main__ import EXIT_BAD_CONFIG, EXIT_OK, _prepare_socket_dir, m
 from attendance.auth import Principal, TokenBook
 from attendance.config import LAN_ADDRESS_ENV, from_env
 from attendance.paths import token_file
-from attendance_harness import wait_until, write_tokens
+from attendance_harness import FAMILY, wait_until, write_status, write_tokens
 
 
 def env_for(tmp_path: Path, **extra: str) -> dict[str, str]:
@@ -142,6 +143,98 @@ async def test_serve_binds_the_socket_at_0660_under_a_setgid_dir(tmp_path: Path)
                 await task
     finally:
         shutil.rmtree(socket_dir, ignore_errors=True)
+
+
+async def test_serve_drops_each_job_row_before_it_binds(tmp_path: Path) -> None:
+    """Contract 02 §6 rule 5, decision CH83 rule 5: the job rows drop at
+    start, before any socket binds, so no request meets a job that is over.
+
+    The vmm here holds one delegate row of the family. Its drop sees no
+    socket of attendance yet."""
+    write_tokens(tmp_path / "state")
+    write_status(tmp_path / "state")
+    socket_dir = Path(tempfile.mkdtemp(prefix="attendance-sock-"))
+    vmm_socket = socket_dir / "vmm.sock"
+    attendance_socket = socket_dir / "attendance.sock"
+    stub = _JobRowVmm(attendance_socket)
+    server = await asyncio.start_unix_server(stub.handle, str(vmm_socket))
+
+    try:
+        env = env_for(
+            tmp_path,
+            ATTENDANCE_SOCKET=str(attendance_socket),
+            ATTENDANCE_VMM_SOCKET=str(vmm_socket),
+        )
+        config = from_env(env)
+        tokens = TokenBook(config.state_root)
+        tokens.load()
+        task = asyncio.create_task(serve(config, tokens))
+
+        try:
+            await wait_until(lambda: _mode_of(attendance_socket) == 0o660)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+    finally:
+        server.close()
+        await server.wait_closed()
+        shutil.rmtree(socket_dir, ignore_errors=True)
+
+    assert stub.dropped == [(FAMILY, _JOB_ROW)]
+    assert stub.bound_at_drop == [False]
+
+
+#: The one delegate row of the vmm of `test_serve_drops_each_job_row_before_it_binds`.
+_JOB_ROW = "0b9d6f4e-8a51-4c3e-9f57-3d2b1c0a9e88"
+
+
+class _JobRowVmm:
+    """A vmm on a Unix socket with one delegate row. It answers `list` and
+    `drop`, and notes whether the socket of attendance exists at the drop."""
+
+    def __init__(self, attendance_socket: Path) -> None:
+        self._attendance_socket = attendance_socket
+        self.dropped: list[tuple[str, str]] = []
+        self.bound_at_drop: list[bool] = []
+
+    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        head = await reader.readuntil(b"\r\n\r\n")
+        lines = head.decode().split("\r\n")
+        path = lines[0].split(" ")[1]
+        length = next(
+            int(line.split(":", 1)[1])
+            for line in lines
+            if line.lower().startswith("content-length")
+        )
+        body = json.loads(await reader.readexactly(length))
+        answer: dict[str, object] = {}
+
+        if path == "/list":
+            answer = {"next": None, "rows": [] if body["family"] != FAMILY else [_delegate_row()]}
+        elif path == "/drop":
+            key = body["session"]
+            self.dropped.append((key["family"], key["id"]))
+            self.bound_at_drop.append(self._attendance_socket.exists())
+
+        text = json.dumps(answer).encode()
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n")
+        writer.write(f"Content-Length: {len(text)}\r\nConnection: close\r\n\r\n".encode() + text)
+        await writer.drain()
+        writer.close()
+
+
+def _delegate_row() -> dict[str, object]:
+    job = {"delegation": "01HZY3K7Q0V8X2N4M6P9R1T3W5", "job": "job-01HZY3K7Q0V8X2N4M6P9R1T3W5"}
+    return {
+        "created_at": 1_794_153_600_000,
+        "cwd": "/srv/agents/sessions/chat",
+        "family": FAMILY,
+        "id": _JOB_ROW,
+        "origin": {"delegate": job},
+        "title": None,
+        "updated_at": 1_794_153_600_000,
+    }
 
 
 def test_prepare_socket_dir_warns_when_it_cannot_set_the_bit(
