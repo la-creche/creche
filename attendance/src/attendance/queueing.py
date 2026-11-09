@@ -5,6 +5,10 @@ autonomous family. A job runs at once while the family has a free slot.
 Otherwise it waits in the family's FIFO, and the head starts when a running
 job ends.
 
+The vmm never queues (decision CH21-3). A job that meets `host_full` goes
+back to its family's queue, in front of each job that came after it, and
+the pump tries it again.
+
 The queue lives in memory. A restart therefore forgets every job waiting in
 it, and the ledger entry of such a job reads `ended` with a null outcome.
 """
@@ -12,6 +16,7 @@ it, and the ledger entry of such a job reads `ended` with a null outcome.
 from __future__ import annotations
 
 from collections import deque
+from itertools import count
 
 from .errors import ApiError, ErrorCode
 
@@ -31,6 +36,10 @@ class JobQueue[JobT]:
         self._max_queued = max_queued
         self._running: dict[str, set[str]] = {}
         self._waiting: dict[str, deque[tuple[str, JobT]]] = {}
+        #: The place of each live job in the order of arrival. A job that
+        #: goes back to the queue keeps its place (`requeue`).
+        self._places = count()
+        self._place: dict[str, int] = {}
 
     def depth(self, family: str) -> int:
         return len(self._waiting.get(family, ()))
@@ -69,12 +78,24 @@ class JobQueue[JobT]:
         if max_running is not None and self.running(family) >= max_running:
             return False
 
+        self._arrive(job)
         self._running.setdefault(family, set()).add(job)
         return True
 
     def add(self, family: str, job: str, item: JobT) -> None:
         """Put one job at the back. `check_room` decides whether it fits."""
+        self._arrive(job)
         self._waiting.setdefault(family, deque()).append((job, item))
+
+    def requeue(self, family: str, job: str, item: JobT) -> None:
+        """A running job met `host_full` (decision CH21-3). It frees its
+        slot and waits again, in front of each job that arrived after it.
+        `check_room` counted it when it arrived, so no cap refuses it now."""
+        self._running.get(family, set()).discard(job)
+        queue = self._waiting.setdefault(family, deque())
+        place = self._place[job]
+        later = (at for at, (one, _) in enumerate(queue) if self._place[one] > place)
+        queue.insert(next(later, len(queue)), (job, item))
 
     def head(self, family: str) -> tuple[str, JobT] | None:
         queue = self._waiting.get(family)
@@ -89,7 +110,12 @@ class JobQueue[JobT]:
     def release(self, family: str, job: str) -> None:
         """A running job ended. Its slot is free."""
         self._running.get(family, set()).discard(job)
+        self._place.pop(job, None)
 
     def families(self) -> list[str]:
         """Every family with something waiting."""
         return [family for family, queue in self._waiting.items() if queue]
+
+    def _arrive(self, job: str) -> None:
+        if job not in self._place:
+            self._place[job] = next(self._places)

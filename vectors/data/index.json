@@ -153,7 +153,7 @@
   {"accepted":5,"entry":"attendance.requests.read_dispatch","path":"session/request.dispatch.json","raised":0,"refused":64,"surface":"session.request.dispatch","vectors":69},
   {"accepted":75,"entry":"attendance.requests.read_jobs","path":"session/request.jobs.json","raised":0,"refused":59,"surface":"session.request.jobs","vectors":134},
   {"accepted":12,"entry":"attendance.requests.read_delegate","path":"session/request.delegate.json","raised":0,"refused":36,"surface":"session.request.delegate","vectors":48},
-  {"accepted":36,"entry":"attendance.errors.ApiError.body","path":"session/error_body.json","raised":0,"refused":0,"surface":"session.error_body","vectors":36},
+  {"accepted":37,"entry":"attendance.errors.ApiError.body","path":"session/error_body.json","raised":0,"refused":0,"surface":"session.error_body","vectors":37},
   {"accepted":17,"entry":"attendance.outcomes.write","path":"session/outcome.write.json","raised":0,"refused":0,"surface":"session.outcome.write","vectors":17},
   {"accepted":32,"entry":"agent_door_trigger.untrusted.is_object","path":"runtime/untrusted.door_trigger.is_object.json","raised":0,"refused":0,"surface":"runtime.untrusted.door_trigger.is_object","vectors":32},
   {"accepted":32,"entry":"agent_door_trigger.untrusted.is_list","path":"runtime/untrusted.door_trigger.is_list.json","raised":0,"refused":0,"surface":"runtime.untrusted.door_trigger.is_list","vectors":32},

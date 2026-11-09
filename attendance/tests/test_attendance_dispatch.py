@@ -30,6 +30,7 @@ from attendance.outcomes import SPEND_NO_USAGE_REASON
 from attendance.paths import dispatch_file
 from attendance.requests import DispatchRequest, JobQuery, read_dispatch, read_jobs
 from attendance.service import SessionService
+from attendance.vmm import HOST_FULL
 from attendance_harness import make_config, make_service, wait_until, write_status
 from creche_wire import AutoOrigin, CreateSession, DispatchTrigger
 from fake_facade import PromptMode
@@ -455,14 +456,39 @@ async def test_the_job_session_drops_at_its_end(tmp_path: Path) -> None:
 
 async def test_a_vmm_refusal_writes_a_failed_outcome(tmp_path: Path) -> None:
     harness = await build(tmp_path)
-    harness.vmm.refuse["acp"] = "host_full"
+    harness.vmm.refuse["acp"] = "sandbox_start_failed"
 
     try:
         answer = await harness.enqueue()
         outcome = await harness.ended(str(answer["session_id"]))
 
         assert outcome["status"] == "failed"
-        assert str(outcome["error"]).startswith("host_full")
+        assert str(outcome["error"]).startswith("sandbox_start_failed")
+    finally:
+        await harness.stop()
+
+
+async def test_a_job_that_meets_host_full_waits_in_the_queue(tmp_path: Path) -> None:
+    """Contract 02 §6 rule 4, decision CH21-3: the job writes no outcome,
+    drops its row and waits in its family's queue. The pump tries again."""
+    harness = await build(tmp_path)
+    harness.vmm.refuse["acp"] = HOST_FULL
+
+    try:
+        answer = await harness.enqueue()
+        session = str(answer["session_id"])
+        await wait_until(lambda: harness.service.dispatch_depth(TARGET) == 1)
+
+        assert harness.jobs(session=session)[0]["status"] == "queued"
+        assert harness.entry(session).outcome_id is None
+        assert harness.vmm.rows == {}
+
+        del harness.vmm.refuse["acp"]
+        harness.service.pump_queues()
+        outcome = await harness.ended(session)
+
+        assert outcome["status"] == "ok"
+        assert len(harness.vmm.creates) == 2
     finally:
         await harness.stop()
 
