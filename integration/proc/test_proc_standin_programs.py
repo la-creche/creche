@@ -1,8 +1,8 @@
 """The stand-in programs of this directory, each run by itself.
 
-Three of them belong to the `caregiver` topology: `systemctl`, LiteLLM and
-the vmm. The fourth one is the TEI stand-in of the index builder. The `sbx`
-wrapper of the first topology has one test here too.
+Two of them belong to the `caregiver` topology: `systemctl` and LiteLLM.
+The vmm stand-in serves `attendance` and `caregiver`. The fourth one is the
+TEI stand-in of the index builder.
 
 A stand-in is not under test. A stand-in that is too kind makes a wrong
 service look right, so each rule that a scenario relies on has one test here.
@@ -19,19 +19,25 @@ import socket
 import struct
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
 
 import httpx
 import pytest
 import standin_tei
-from creche_wire.routes import DROP, HOST_API_HEADER, HOST_API_PROTOCOL, MISMATCH_STATUS
+from creche_wire.routes import (
+    ACP,
+    CREATE,
+    DROP,
+    HOST_API_HEADER,
+    HOST_API_PROTOCOL,
+    LIST,
+    MISMATCH_STATUS,
+)
 from proc_caregiver import wait_until
 from proc_harness import LOOPBACK, Finished, ProcError, Supervisor
 from proc_stack import base_env
 from proc_standins import (
     LITELLM,
     MASTER_KEY,
-    SBX,
     SYSTEMCTL,
     TEI,
     TEI_DIMS,
@@ -41,9 +47,7 @@ from proc_standins import (
     TEI_MODEL,
     TEI_NO_MODEL_ID,
     VMM,
-    SandboxTmp,
     enabled_units,
-    install_sbx,
     install_systemctl,
     litellm_calls,
     litellm_keys,
@@ -53,12 +57,14 @@ from proc_standins import (
     tei_calls,
     tune,
     untune,
-    vm_tmp,
     vmm_calls,
 )
 from proc_tree import Tree, build_bare_tree
 
-BOX = "chat-s1"
+#: Three session ids (contract 02 §5.3: a UUID of version 4).
+FIRST_ID = "0b9d6f4e-8a51-4c3e-9f57-3d2b1c0a9e81"
+SECOND_ID = "0b9d6f4e-8a51-4c3e-9f57-3d2b1c0a9e82"
+THIRD_ID = "0b9d6f4e-8a51-4c3e-9f57-3d2b1c0a9e83"
 ALIAS = "family-chat"
 UNIT = "creche-door-trigger-chat-t1.timer"
 
@@ -155,30 +161,6 @@ def tei(tree: Tree, supervisor: Supervisor) -> Tei:
     return Tei(tree, port)
 
 
-# ------------------------------------------------------------------------ sbx
-
-
-def test_sbx_exec_gives_each_sandbox_a_tmpdir_of_its_own(
-    tree: Tree, supervisor: Supervisor
-) -> None:
-    """The `sbx` of the exit topology. Each VM has its own `/tmp`, and the
-    facade of a sandbox listens on a socket under `TMPDIR`."""
-    build_bare_tree(tree)
-    install_sbx(tree, SandboxTmp.OWN)
-    boxes = (BOX, "vault-oracle-s1")
-    show = 'test -d "$TMPDIR" && echo "$TMPDIR"'
-    seen: list[str] = []
-
-    for box in boxes:
-        words = ("exec", "--env-file", str(_env_file(tree)), box, "--", "/bin/sh", "-c", show)
-        done = _sbx(tree, supervisor, *words, env={"TMPDIR": "/caller/tmp"})
-
-        assert done.exit_code == 0, done.stderr
-        seen.append(done.stdout.strip())
-
-    assert seen == [str(vm_tmp(tree, box)) for box in boxes]
-
-
 # ------------------------------------------------------------------------ vmm
 
 
@@ -204,6 +186,42 @@ def test_vmm_refuses_a_body_of_another_shape(vmm: Tree) -> None:
 
     assert answer.json() == {"code": "not_valid"}
     assert vmm_calls(vmm) == []
+
+
+def test_vmm_lists_the_rows_of_a_family_newest_first(vmm: Tree) -> None:
+    """Decision CH21-5: one page, newest created first. A `cwd` keeps its rows."""
+    first = _create_row(vmm, FIRST_ID, "/work/a", 1_000)
+    second = _create_row(vmm, SECOND_ID, "/work/b", 2_000)
+    _create_row(vmm, THIRD_ID, "/work/a", 3_000, family="ops")
+
+    every = _vmm_post(vmm, LIST.path, {"family": "chat", "cursor": None, "cwd": None})
+    kept = _vmm_post(vmm, LIST.path, {"family": "chat", "cursor": None, "cwd": "/work/a"})
+
+    assert every.json() == {"next": None, "rows": [second, first]}
+    assert kept.json() == {"next": None, "rows": [first]}
+
+
+def test_vmm_drops_one_session_and_then_finds_none(vmm: Tree) -> None:
+    """Decision CH33 rule 5: a session with no row of its family is `not_found`."""
+    _create_row(vmm, FIRST_ID, "/work/a", 1_000)
+    key = {"session": {"family": "chat", "id": FIRST_ID}}
+
+    dropped = _vmm_post(vmm, DROP.path, key)
+    again = _vmm_post(vmm, DROP.path, key)
+
+    assert (dropped.status_code, dropped.json()) == (HTTP_OK, {})
+    assert again.json() == {"code": "not_found"}
+
+
+def test_vmm_boots_no_vm_for_a_row(vmm: Tree) -> None:
+    """The `acp` route of a row is `sandbox_start_failed`, and of no row `not_found`."""
+    _create_row(vmm, FIRST_ID, "/work/a", 1_000)
+
+    held = _vmm_post(vmm, ACP.path, {"family": "chat", "id": FIRST_ID})
+    unknown = _vmm_post(vmm, ACP.path, {"family": "chat", "id": SECOND_ID})
+
+    assert held.json() == {"code": "sandbox_start_failed"}
+    assert unknown.json() == {"code": "not_found"}
 
 
 def test_vmm_fails_a_drop_when_a_test_says_so(vmm: Tree) -> None:
@@ -595,23 +613,8 @@ def _words(tree: Tree, name: str, *args: str) -> list[str]:
     return [str(tree.bin_dir / name), *args]
 
 
-def _sbx(
-    tree: Tree, supervisor: Supervisor, *args: str, env: dict[str, str] | None = None
-) -> Finished:
-    whole = base_env(tree) | (env or {})
-
-    return supervisor.run(SBX, _words(tree, SBX, *args), whole, tree.root)
-
-
 def _systemctl(tree: Tree, supervisor: Supervisor, *args: str) -> Finished:
     return supervisor.run(SYSTEMCTL, _words(tree, SYSTEMCTL, *args), base_env(tree), tree.root)
-
-
-def _env_file(tree: Tree) -> Path:
-    path = tree.root / "a.env"
-    path.write_text(f"AGENT_CONTROL_DIR=/a/control\nAGENT_SANDBOX={BOX}\n", encoding="utf-8")
-
-    return path
 
 
 def _vmm_post(
@@ -623,6 +626,24 @@ def _vmm_post(
 
     with httpx.Client(transport=transport, timeout=VMM_TIMEOUT_S) as client:
         return client.post(f"http://vmm{path}", json=body, headers=headers)
+
+
+def _create_row(
+    tree: Tree, session: str, cwd: str, created_at: int, family: str = "chat"
+) -> dict[str, object]:
+    """One row made through the create route. Answers the row of the reply."""
+    body = {
+        "created_at": created_at,
+        "cwd": cwd,
+        "family": family,
+        "id": session,
+        "origin": {"door": {}},
+    }
+    answer = _vmm_post(tree, CREATE.path, body)
+    assert answer.status_code == HTTP_OK, answer.text
+    row: dict[str, object] = answer.json()
+
+    return row
 
 
 def _unit_file(tree: Tree) -> None:

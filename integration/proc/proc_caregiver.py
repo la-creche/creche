@@ -178,7 +178,6 @@ class CaregiverStack(Stack):
     caregiver: Child | None = None
     litellm: Child | None = None
     litellm_port: int = 0
-    vmm: Child | None = None
 
     # ------------------------------------------------------------------ start
 
