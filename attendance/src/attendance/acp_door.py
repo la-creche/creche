@@ -1,15 +1,16 @@
 """The ACP door: one WebSocket connection, every session of one family.
 
 One door connection serves every session of its family (contract 02
-§5.1 rule 4). attendance answers three methods itself, from the host
-session list, with no boot (decision CH21-7). It routes each other request
-and notification by its `sessionId`, over one vmm ACP stream per session
-(decisions CH20, CH33 rule 7):
+§5.1 rule 4). attendance answers four methods itself, from the host
+session list, with no boot (decisions CH21-7, CH27). It routes each other
+request and notification by its `sessionId`, over one vmm ACP stream per
+session (decisions CH20, CH33 rule 7):
 
-    initialize    -> INITIALIZE_RESPONSE
-    session/new   -> mint an id -> vmm create, origin door -> {"sessionId"}
-    session/list  -> vmm list -> {"sessions", "nextCursor"}
-    each other    -> the vmm ACP stream of its sessionId -> the facade of that VM
+    initialize      -> INITIALIZE_RESPONSE
+    session/new     -> mint an id -> vmm create, origin door -> {"sessionId"}
+    session/list    -> vmm list -> {"sessions", "nextCursor"}
+    session/delete  -> vmm drop -> {}
+    each other      -> the vmm ACP stream of its sessionId -> the facade of that VM
 
 A message whose `params._meta` holds a key that starts with `creche/`
 gets `invalidParams` (-32602) and reaches no stream (contract 02 §5.1 rule
@@ -137,19 +138,26 @@ RELAY_ENDED = "the relay ended"
 
 METHOD_NEW = "session/new"
 METHOD_LIST = "session/list"
+METHOD_DELETE = "session/delete"
 
 #: The prefix of a creche key of `_meta`. A door client sends none
 #: (decision CH21-4).
 CRECHE_META_PREFIX: Final = "creche/"
 
-#: The methods that attendance answers itself (decision CH21-7).
-_ANSWERED: Final = frozenset({METHOD_INITIALIZE, METHOD_NEW, METHOD_LIST})
+#: The methods that attendance answers itself (decisions CH21-7, CH27).
+_ANSWERED: Final = frozenset({METHOD_INITIALIZE, METHOD_NEW, METHOD_LIST, METHOD_DELETE})
 
-#: The one answer to `initialize` (decision CH21-7, contract 02 §5.2). The
-#: facade answers the same one to the handshake of each stream.
+#: The one answer to `initialize` (decision CH21-7, contract 02 §5.2). It
+#: lists `delete` from minor 15, so Panda shows its delete button (decision
+#: CH27). The facade's answer to the handshake of a stream lists no
+#: `delete`, and the door keeps that answer: `session/delete` never reaches
+#: a facade.
 INITIALIZE_RESPONSE: Final[dict[str, Any]] = {
     "protocolVersion": PROTOCOL_VERSION,
-    "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"list": {}}},
+    "agentCapabilities": {
+        "loadSession": True,
+        "sessionCapabilities": {"list": {}, "delete": {}},
+    },
     "authMethods": [],
 }
 
@@ -472,6 +480,9 @@ class _Door:
         if method == METHOD_LIST:
             return await self._list_sessions(params)
 
+        if method == METHOD_DELETE:
+            return await self._delete_session(params)
+
         session = params.get("sessionId") if params is not None else None
 
         if not isinstance(session, str):
@@ -560,6 +571,38 @@ class _Door:
 
         return answer
 
+    async def _delete_session(self, params: dict[str, Any] | None) -> dict[str, Any]:
+        """Contract 02 §5.6, decision CH27: the vmm drop route, with no boot.
+
+        The vmm stops the session's open stream first (decision CH26 rule
+        5), runs the graceful stop of a running VM, then drops the snapshot,
+        the session disk and the row (decision CH21-10). It cannot be
+        undone. An id that is not a session id gets `resourceNotFound`
+        before the vmm call, and an id with no row of the family gets it
+        from the vmm (§5.6 rule 4).
+
+        CONTRACT-QUESTION: contract 02 §5.6 does not say what a delete does
+        to a request in flight on the session's stream of this same
+        connection. The reading here: nothing new. The vmm stops that
+        stream, and a stream that ends with a request in flight closes the
+        connection with `Close.RELAY_GONE` (decision CH19 (6)). The answer
+        of the delete is then lost. The vmm runs the drop to its end after
+        the hang-up, and the client sees the row gone at its next
+        `session/list`."""
+        session = params.get("sessionId") if params is not None else None
+
+        if not isinstance(session, str):
+            raise _Refusal(RPC_INVALID_PARAMS, "session/delete names no session")
+
+        _check_session_id(session)
+
+        try:
+            await self._vmm.drop(self._family, session)
+        except VmmRefused as error:
+            raise _vmm_refusal(error) from error
+
+        return {}
+
     async def _stream(self, session: str) -> _Held:
         """The open stream of `session`, or a new one after its handshake.
         A new one waits until the last stream of the session has closed."""
@@ -568,8 +611,7 @@ class _Door:
         if held is not None:
             return held
 
-        if not is_session_id(session):
-            raise _Refusal(RPC_NOT_FOUND, f"no session {session}")
+        _check_session_id(session)
 
         closing = self._closing.get(session)
 
@@ -777,6 +819,13 @@ def _check_meta(params: dict[str, Any] | None) -> None:
 
     if meta is not None and any(key.startswith(CRECHE_META_PREFIX) for key in meta):
         raise _Refusal(RPC_INVALID_PARAMS, "a door client sets no creche key of _meta")
+
+
+def _check_session_id(session: str) -> None:
+    """Decision CH10-9: an id that is not a session id of contract 02 §2,
+    such as an sbx-era id, is `resourceNotFound` before the vmm call."""
+    if not is_session_id(session):
+        raise _Refusal(RPC_NOT_FOUND, f"no session {session}")
 
 
 def _list_cursor(value: object) -> ListCursor | None:
