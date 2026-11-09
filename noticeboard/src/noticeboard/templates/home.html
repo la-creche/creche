@@ -6,12 +6,14 @@
 {{ problem(page.problem) }}
 
 {# Spend is ONE number per family. The budget belongs to the family key,
-   never to a sandbox (contract 05 §7 rule 1), so it is on this row and
-   nowhere near the sandbox column. #}
+   never to a VM or a session (contract 05 §7 rule 1), so it is on this
+   row. No VM column: this page reads files and dials no service, and the
+   VM state of a session comes from `attendance` (decision CH21-1). The
+   family page shows it. #}
 <table class="families">
 <thead>
 <tr>
-  <th>family</th><th>kind</th><th>status</th><th>serving</th>
+  <th>family</th><th>kind</th><th>status</th>
   <th>queue cap</th><th>spend today</th><th>faults</th>
 </tr>
 </thead>
@@ -24,9 +26,6 @@
     <span class="badge">{{ row.health.label }}</span>
     {% if row.reason %}<span class="reason">{{ row.reason }}</span>{% endif %}
     {% if row.stale %}<span class="flag">stale</span>{% endif %}
-  </td>
-  <td>
-    {% if row.serving %}{{ row.serving.id }} ({{ row.serving.state }}){% else %}none{% endif %}
   </td>
   {# No running count here: `caregiver` cannot count a running turn. The
      only true one is `attendance`'s, and this
@@ -54,7 +53,7 @@
   </td>
 </tr>
 {% else %}
-<tr><td colspan="7">no families</td></tr>
+<tr><td colspan="6">no families</td></tr>
 {% endfor %}
 </tbody>
 </table>

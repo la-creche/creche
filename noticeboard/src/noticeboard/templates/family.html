@@ -24,42 +24,22 @@
 </ul>
 {% endif %}
 
-<h2>sandboxes</h2>
-<table>
-{# No "turns" column: `caregiver` cannot count a family's running turns. #}
-<thead><tr><th>id</th><th>state</th><th>power</th><th>image</th><th>size</th>
-<th>channel</th><th>ready</th></tr></thead>
-<tbody>
-{% for box in row.live_sandboxes %}
-<tr>
-  <td>{{ box.id }}</td>
-  <td>{{ box.state }}{% if box.serves_new_turns %} <span class="flag">serving</span>{% endif %}</td>
-  <td>{{ box.power }}</td>
-  <td><code>{{ box.image }}</code></td>
-  <td>{{ box.cpus }} cpu, {{ box.memory }}</td>
-  <td>{{ box.channel }}{% if not box.has_playpen_env %}
-      <span class="flag">no playpen env</span>{% endif %}</td>
-  <td>{{ when(box.ready_at) }}</td>
-</tr>
-{% else %}
-<tr><td colspan="7">no sandboxes</td></tr>
-{% endfor %}
-</tbody>
-</table>
-
 <h2>sessions</h2>
 {{ problem(page.sessions.problem) }}
+{# The VM state comes from `attendance`, which passes on the vmm list row
+   (decisions CH21-1, CH33 rule 9). The status document names no VM. #}
 <table>
-<thead><tr><th>title</th><th>started by</th><th>last activity</th></tr></thead>
+<thead><tr><th>title</th><th>started by</th><th>vm</th><th>last activity</th></tr></thead>
 <tbody>
 {% for one in page.sessions.rows %}
 <tr>
   <td><a href="/sessions/{{ one.family }}/{{ one.session }}">{{ one.title or one.session }}</a></td>
   <td>{{ one.origin or "—" }}</td>
+  <td>{{ one.vm.value }}</td>
   <td>{{ when(one.updated) }}</td>
 </tr>
 {% else %}
-<tr><td colspan="3">no sessions</td></tr>
+<tr><td colspan="4">no sessions</td></tr>
 {% endfor %}
 </tbody>
 </table>

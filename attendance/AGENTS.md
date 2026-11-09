@@ -102,9 +102,11 @@ JSON-RPC and a read past 30 s each answer 503 `sandbox_unavailable`.
 | `GET /families/{f}/sessions/{id}?start=&limit=` | the vmm `acp`, then `session/load` | `{"session_id", "entries": [entry], "next": int \| null, "truncated": bool}` |
 | `GET /busy` | nothing | `{"busy": bool, "prompts_in_flight": int, "jobs_running": int, "jobs_queued": int}` |
 
-1. A row is `{id, title, created, updated, job_id, delegation, trigger}`,
-   made from the host row (contract 02 §7 rule 2). The cursor is the
-   decimal text of the vmm cursor.
+1. A row is `{id, title, created, updated, job_id, delegation, trigger,
+   vm}`, made from the vmm list row (contract 02 §7 rule 2). `vm` is the
+   vmm's `none`, `off`, `asleep` or `running` as it is (minor 16, decisions
+   CH33 rule 9, CH79 rule 4). The cursor is the decimal text of the vmm
+   cursor.
 2. An entry has a `position` from 0 and a `kind`. `user`, `agent` and
    `thought` carry `text`: consecutive chunks of one kind join. A
    `tool_call` carries `tool_call_id`, `title`, `status` and `result`, the

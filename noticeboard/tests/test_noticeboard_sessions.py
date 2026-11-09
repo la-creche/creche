@@ -14,6 +14,7 @@ from noticeboard.sessions import (
     SESSION_ID_MAX,
     EntryKind,
     SessionReader,
+    VmState,
     is_session,
 )
 from noticeboard_helpers import (
@@ -66,7 +67,46 @@ def test_the_session_list_reads_the_view_route(tmp_path: Path) -> None:
     assert answer.rows[1].title == ""
     assert [one.origin for one in answer.rows] == ["", "trigger dispatch scrum-lead", "delegation"]
     assert answer.rows[1].job_id == "job-1"
+    assert [one.vm for one in answer.rows] == [VmState.ASLEEP] * 3
     assert answer.next_cursor == "c-2"
+
+
+@pytest.mark.parametrize("sent", ["none", "off", "asleep", "running"])
+def test_each_vm_state_of_the_contract_reads_as_it_is(tmp_path: Path, sent: str) -> None:
+    """Contract 02 §7 rule 2 minor 16: the four values of `vm` (decision
+    CH79 rule 4)."""
+    fake = FakeAttendance()
+    fake.answer(LIST_PATH, {"sessions": [view_row(vm=sent)], "next_cursor": None})
+
+    (row,) = reader(tmp_path, fake).sessions(CHAT).rows
+
+    assert row.vm is VmState(sent)
+    assert row.vm.value == sent
+
+
+@pytest.mark.parametrize("sent", ["sleeping", "RUNNING", "", None, 1, True, ["running"]])
+def test_a_vm_outside_the_contract_reads_unreadable(tmp_path: Path, sent: object) -> None:
+    """CONTRACT-QUESTION (noticeboard Known gaps): the row stays, and its
+    `vm` reads `unreadable`."""
+    fake = FakeAttendance()
+    fake.answer(LIST_PATH, {"sessions": [view_row(vm=sent)], "next_cursor": None})
+
+    (row,) = reader(tmp_path, fake).sessions(CHAT).rows
+
+    assert row.vm is VmState.UNREADABLE
+    assert row.session == SESSION
+
+
+def test_a_row_with_no_vm_reads_unreadable(tmp_path: Path) -> None:
+    """An `attendance` before minor 16 sends no `vm`."""
+    fake = FakeAttendance()
+    row = view_row()
+    del row["vm"]
+    fake.answer(LIST_PATH, {"sessions": [row], "next_cursor": None})
+
+    (read,) = reader(tmp_path, fake).sessions(CHAT).rows
+
+    assert read.vm is VmState.UNREADABLE
 
 
 def test_a_cursor_goes_to_the_query(tmp_path: Path) -> None:

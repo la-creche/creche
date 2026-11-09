@@ -611,6 +611,7 @@ def _row(**fields: object) -> dict[str, object]:
         "job_id": None,
         "delegation": None,
         "trigger": None,
+        "vm": "asleep",
     }
     row.update(fields)
 
@@ -640,6 +641,9 @@ def _listed(body_id: str, *rows: object, **fields: object) -> Answer:
 UNREACHABLE: Final = "cannot reach attendance: ConnectError: the stand-in has no socket"
 
 _ANSWER_CAP: Final = sessions.MAX_ANSWER_BYTES
+
+#: The four values of `vm` of contract 02 §7 rule 2, minor 16.
+_VM_STATES: Final = ("none", "off", "asleep", "running")
 
 LISTS: Final[tuple[Answer, ...]] = (
     _listed("one-session", _row()),
@@ -676,6 +680,12 @@ LISTS: Final[tuple[Answer, ...]] = (
     _listed("origin-delegation", _row(delegation="vault-oracle")),
     _listed("origin-job", _row(job_id=JOB_SESSION)),
     _listed("origin-each", _row(trigger=_TRIGGER, delegation="vault-oracle", job_id=JOB_SESSION)),
+    # --- the VM state of a row (contract 02 §7 rule 2 minor 16) ---
+    _listed("vm-each", *(_row(id=f"vm-{one}", vm=one) for one in _VM_STATES)),
+    _listed("vm-unknown-word", _row(vm="sleeping")),
+    _listed("vm-upper", _row(vm="RUNNING")),
+    _listed("vm-number", _row(vm=1)),
+    _listed("vm-null", _row(vm=None)),
     # --- each field of a row ---
     _listed("row-empty-object", {}),
     _listed(

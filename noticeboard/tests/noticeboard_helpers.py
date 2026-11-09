@@ -2,7 +2,7 @@
 
 Everything the noticeboard reads is a file another service wrote, plus one HTTP
 call to `attendance`. So a test needs a state root on disk and a fake session
-service, and nothing else: no host, no `caregiver`, no sandbox.
+service, and nothing else: no host, no `caregiver`, no VM.
 """
 
 from __future__ import annotations
@@ -89,7 +89,6 @@ def status_doc(
         },
         "faults": [],
         "reconcile": None,
-        "sandboxes": [sandbox_doc(f"{family}-s3")],
         "credentials": {
             "epoch": 7,
             "key_id": f"sk-live-{family}-7",
@@ -109,27 +108,6 @@ def status_doc(
     }
     doc.update(extra)
     return doc
-
-
-def sandbox_doc(sandbox_id: str, state: str = "ready", **extra: Any) -> dict[str, Any]:
-    family = sandbox_id.rsplit("-s", 1)[0]
-    row: dict[str, Any] = {
-        "id": sandbox_id,
-        "state": state,
-        "power": "running",
-        "image": "sha256:4c1f00ddeeff0011223344556677",
-        "spec_hash": "9f21c401",
-        "cpus": 4,
-        "memory": "8g",
-        "created_at": stamp(600),
-        "ready_at": stamp(590),
-        "channel": "open",
-        "supervisor_env": (
-            f"/srv/agents/state/creche/families/{family}/supervisor-{sandbox_id}.env"
-        ),
-    }
-    row.update(extra)
-    return row
 
 
 def fault_doc(
@@ -215,6 +193,7 @@ def view_row(session: str = SESSION, **extra: Any) -> dict[str, Any]:
         "job_id": None,
         "delegation": None,
         "trigger": None,
+        "vm": "asleep",
     }
     row.update(extra)
     return row

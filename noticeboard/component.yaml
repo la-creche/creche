@@ -19,11 +19,13 @@ install:
   prev: ~/.local/components/noticeboard.prev
 provides: []
 requires:
-  # Contract 02: it reads the view of each family's sessions. Minor 15
-  # changes no view route (decision CH27).
-  - { contract: session-api, major: 0, min_minor: 15 }
-  # Contract 05: it reads the per-family status document.
-  - { contract: manager-status, major: 0, min_minor: 17 }
+  # Contract 02: it reads the view of each family's sessions. Minor 16 adds
+  # the `vm` of a view row, the one VM state it shows (decisions CH21-1,
+  # CH79 rule 4).
+  - { contract: session-api, major: 0, min_minor: 16 }
+  # Contract 05: it reads the per-family status document. Minor 18 drops the
+  # `sandboxes` list and minor 20 drops `needs_switch` (decision CH21-1).
+  - { contract: manager-status, major: 0, min_minor: 20 }
   # Contract 04: it reads the audit record.
   - { contract: pep-grant, major: 0, min_minor: 11 }
 depends_on: [attendance, caregiver]

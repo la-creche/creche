@@ -4,11 +4,13 @@
     GET /families/{f}/sessions/{id}   vmm ACP stream: initialize, session/load, close
 
 The page of sessions comes from the host session list, with no boot
-(contract 02 §7 rule 1). A transcript comes from the facade of the
-session: the view opens the session's vmm stream, sends `initialize` and
-`session/load`, and closes the stream. So the read boots or restores the
-VM, and it can meet `host_full` or `busy` (decision CH21-9, CH83 rule 4).
-It never sends `session/prompt`.
+(contract 02 §7 rule 1). Each row passes on the `vm` of its vmm list row
+(contract 02 §7 rule 2 minor 16, decisions CH33 rule 9, CH79 rule 4).
+A transcript comes from the facade of the session: the view opens the
+session's vmm stream, sends `initialize` and `session/load`, and closes
+the stream. So the read boots or restores the VM, and it can meet
+`host_full` or `busy` (decision CH21-9, CH83 rule 4). It never sends
+`session/prompt`.
 
 Every line from the stream is a claim. A line that is not one strict
 JSON-RPC answer or update ends the read in `sandbox_unavailable`. Each text
@@ -264,7 +266,8 @@ def _unavailable(family: str, why: str) -> ApiError:
 
 
 def _view_row(row: ListRow) -> dict[str, Any]:
-    """Contract 02 §7 rule 2: one view row of one host row."""
+    """Contract 02 §7 rule 2: one view row of one host row. `vm` is the
+    vmm's word as it is (minor 16, decision CH79 rule 4)."""
     origin = row.origin.root
     job: str | None = None
     delegation: str | None = None
@@ -285,6 +288,7 @@ def _view_row(row: ListRow) -> dict[str, Any]:
         "job_id": job,
         "delegation": delegation,
         "trigger": trigger,
+        "vm": row.vm.value,
     }
 
 
