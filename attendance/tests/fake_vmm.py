@@ -84,6 +84,12 @@ class FakeVmm:
         if row is None or row.family.root != family:
             raise VmmRefused(NOT_FOUND, "no row")
 
+        # The drop stops an open stream first (decision CH26 rule 5).
+        held = self.channels.get(session)
+
+        if held is not None and not held.closed:
+            await held.drop()
+
         del self.rows[session]
 
     async def open_acp(self, family: str, session: str, max_line_bytes: int) -> FakeChannel:

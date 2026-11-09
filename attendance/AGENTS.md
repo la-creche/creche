@@ -32,16 +32,18 @@ inside the VM, which carries Node.
    session with the `auto` origin, as a thin job is. Only an autonomous
    family has a limit and a queue.
 6. Serves the ACP door (`acp_door.py`). One connection serves every session
-   of its family. attendance answers `initialize`, `session/new` and
-   `session/list` itself, from the host list, with no boot (decision
-   CH21-7). It routes each other request and notification by its
-   `sessionId`, over one vmm stream per session. A message whose
-   `params._meta` holds a key that starts with `creche/` gets
-   `invalidParams` (-32602) and reaches no stream (contract 02 §5.1 rule
-   5, decision CH21-4). An id that is not a
-   session id gets `resourceNotFound` (-32002) before attendance calls the
-   vmm, and an id with no row gets it from the vmm with no boot (decisions
-   CH10-9, CH21-9). Each other vmm refusal is `internalError` (-32603) with
+   of its family. attendance answers `initialize`, `session/new`,
+   `session/list` and `session/delete` itself, from the host list, with no
+   boot (decisions CH21-7, CH27). `initialize` lists `delete`, and
+   `session/delete` calls the vmm `drop` and answers `{}`. A delete cannot
+   be undone (contract 02 §5.6). It routes each other request and
+   notification by its `sessionId`, over one vmm stream per session. A
+   message whose `params._meta` holds a key that starts with `creche/`
+   gets `invalidParams` (-32602) and reaches no stream (contract 02 §5.1
+   rule 5, decision CH21-4). An id that is not a session id gets
+   `resourceNotFound` (-32002) before attendance calls the vmm, and an id
+   with no row gets it from the vmm with no boot (decisions CH10-9,
+   CH21-9). Each other vmm refusal is `internalError` (-32603) with
    the vmm code as `data.code` (decision CH83 rule 1). The door closes the
    stream of a session when no request is in flight on it, in either
    direction, and the connection stays open (contract 02 §5.5 rule 5,
@@ -246,7 +248,7 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `channel.py`, `lines.py` | a record stream to a facade, the LF framing and the byte cut |
 | `acp_link.py`, `acp/schema-v1.json` | the handshake and the ACP link of one session, and the pinned ACP schema |
 | `acp_jobs.py` | one job: the row, the stream, one prompt, the deadline and its cancel, the drop |
-| `acp_door.py` | `WS /acp/{family}` on the Unix socket: the answers from the host list, one stream per session, the envelope check, the count of its prompts |
+| `acp_door.py` | `WS /acp/{family}` on the Unix socket: the answers from the host list, the delete, one stream per session, the envelope check, the count of its prompts |
 | `acp_view.py` | the view: a page of the host list, or one stream and `session/load`, the transcript and its caps |
 | `jobs.py`, `dispatch.py` | thin jobs, the dispatch and trigger ledgers |
 | `family_status.py`, `faults.py` | the status document, the fault file |
@@ -317,7 +319,8 @@ is marked `slow`.
   `internalError` with `data.code` `protocol_violation` (`acp_door.py`).
 - The ACP door opens the stream of a session in the read loop of its
   connection. A boot of one session therefore delays the next frame of
-  each session of that connection.
+  each session of that connection. A `session/delete` waits in the same loop
+  for the vmm drop, which runs the graceful stop of a running VM.
 - A vmm stream that ends with a request in flight closes the door
   connection, as a relay that ended did. The client opens the session again
   with `session/load` (decision CH19 (6)).
@@ -338,9 +341,12 @@ is marked `slow`.
   inside its `job.timeout`, and no row names the pause between two tries.
   A job pauses `HOST_FULL_PAUSE_S` (1 s), the tick of the dispatch queue
   pump, and starts a try only before its deadline (`acp_jobs.py`).
-- Contract 02 minor 15 adds `host_full` to the delegate door, and this
-  package still provides session-api 0.14. Plan PR CR11 claims minor 15
-  with `session/delete`.
+- CONTRACT-QUESTION: contract 02 §5.6 does not say what a
+  `session/delete` does to a request in flight on that session's stream of
+  the same connection. The vmm stops the stream (decision CH26 rule 5),
+  and a stream that ends with a request in flight closes the connection
+  with 1001, so the answer of the delete is lost. The vmm runs the drop to
+  its end after the hang-up (`acp_door.py`).
 - `caregiver` reads only the codes of minor 17 from the fault file of this
   service, so it drops `vmm_protocol_mismatch` until plan PR CR10 adds the
   code to its table.

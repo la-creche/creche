@@ -1,9 +1,9 @@
 """`WS /acp/{family}`: the bearer, the answers from the host list, the routes.
 
-Contract 02 §5. attendance answers `initialize`, `session/new` and
-`session/list` itself, with no boot, and routes each other method by its
-`sessionId` over one vmm ACP stream per session (decisions CH21-7, CH21-9,
-CH10-9, CH83 rule 1).
+Contract 02 §5. attendance answers `initialize`, `session/new`,
+`session/list` and `session/delete` itself, with no boot, and routes each
+other method by its `sessionId` over one vmm ACP stream per session
+(decisions CH21-7, CH21-9, CH27, CH10-9, CH83 rule 1).
 """
 
 from __future__ import annotations
@@ -278,6 +278,143 @@ async def test_a_cursor_no_page_gave_is_invalid_params(door: Door, cursor: objec
 
     assert answer["error"]["code"] == RPC_INVALID_PARAMS
     assert door.vmm.lists == []
+
+
+def delete(request_id: object, session: str) -> str:
+    params = {"sessionId": session}
+    return json.dumps(
+        {"jsonrpc": "2.0", "id": request_id, "method": "session/delete", "params": params}
+    )
+
+
+@pytest.mark.slow
+async def test_initialize_lists_delete(door: Door) -> None:
+    """Decision CH27: Panda shows its delete button when the answer lists it."""
+    async with door.door_acp() as connection:
+        answer = await ask(connection, 1, "initialize", protocolVersion=1)
+
+    sessions = answer["result"]["agentCapabilities"]["sessionCapabilities"]
+    assert sessions == {"list": {}, "delete": {}}
+
+
+@pytest.mark.slow
+async def test_session_delete_drops_the_row_with_no_boot(door: Door) -> None:
+    """Contract 02 §5.6, decision CH27: the vmm drop, then `{}`."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        await connection.send(delete(2, session))
+        answer = json.loads(await asyncio.wait_for(connection.recv(), 5))
+        listed = (await ask(connection, 3, "session/list"))["result"]
+
+    assert answer == {"jsonrpc": "2.0", "id": 2, "result": {}}
+    assert door.vmm.drops == [(FAMILY, session)]
+    assert listed["sessions"] == []
+    assert door.vmm.opened == []
+
+
+@pytest.mark.slow
+async def test_a_delete_after_an_answered_prompt_drops_the_row(door: Door) -> None:
+    """The stream of an idle session is closed, so the delete meets none."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        await connection.send(prompt(1, session))
+
+        for _ in range(3):
+            await asyncio.wait_for(connection.recv(), 5)
+
+        await wait_for(lambda: door.vmm.channels[session].closed)
+        await connection.send(delete(2, session))
+        answer = json.loads(await asyncio.wait_for(connection.recv(), 5))
+
+    assert answer == {"jsonrpc": "2.0", "id": 2, "result": {}}
+    assert session not in door.vmm.rows
+    assert door.vmm.opened == [session]
+
+
+@pytest.mark.slow
+async def test_a_delete_of_an_sbx_era_id_is_not_found_with_no_vmm_call(door: Door) -> None:
+    """Contract 02 §5.6 rule 4, decision CH10-9."""
+    async with door.door_acp() as connection:
+        await connection.send(delete(2, SBX_ERA_ID))
+        answer = json.loads(await asyncio.wait_for(connection.recv(), 5))
+
+    assert answer["error"]["code"] == RPC_NOT_FOUND
+    assert door.vmm.drops == []
+
+
+@pytest.mark.slow
+async def test_a_delete_of_an_unknown_session_is_not_found(door: Door) -> None:
+    """Contract 02 §5.6 rule 4: the vmm answers `not_found` (decision CH21-9)."""
+    unknown = new_session_id()
+
+    async with door.door_acp() as connection:
+        await connection.send(delete(2, unknown))
+        answer = json.loads(await asyncio.wait_for(connection.recv(), 5))
+
+    assert answer["error"]["code"] == RPC_NOT_FOUND
+    assert door.vmm.drops == [(FAMILY, unknown)]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("code", ["internal", "unreachable"])
+async def test_a_refused_delete_is_an_internal_error_with_its_code(door: Door, code: str) -> None:
+    """Decision CH83 rule 1. The row stays."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        door.vmm.refuse["drop"] = code
+        await connection.send(delete(2, session))
+        answer = json.loads(await asyncio.wait_for(connection.recv(), 5))
+
+    assert answer["error"]["code"] == RPC_INTERNAL_ERROR
+    assert answer["error"]["data"] == {"code": code}
+    assert session in door.vmm.rows
+
+
+@pytest.mark.slow
+async def test_a_delete_that_names_no_session_is_invalid_params(door: Door) -> None:
+    async with door.door_acp() as connection:
+        answer = await ask(connection, 2, "session/delete")
+
+    assert answer["error"]["code"] == RPC_INVALID_PARAMS
+    assert door.vmm.drops == []
+
+
+@pytest.mark.slow
+async def test_a_delete_notification_drops_nothing(door: Door) -> None:
+    """A notification of a method that attendance answers does nothing."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        params = {"sessionId": session}
+        await connection.send(
+            json.dumps({"jsonrpc": "2.0", "method": "session/delete", "params": params})
+        )
+        assert (await ask(connection, 3, "initialize"))["result"] == INITIALIZE_RESPONSE
+
+    assert door.vmm.drops == []
+    assert session in door.vmm.rows
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("door", [PromptMode.HOLD], indirect=True)
+async def test_a_delete_under_a_held_prompt_closes_the_connection(door: Door) -> None:
+    """The CONTRACT-QUESTION of `_delete_session`: the vmm stops the stream
+    (decision CH26 rule 5), and a stream that ends with a request in flight
+    closes the connection (decision CH19 (6)). The row is gone."""
+    async with door.door_acp() as connection:
+        session = await held_prompt(door, connection, 1)
+        await connection.send(delete(2, session))
+
+        with pytest.raises(ConnectionClosed) as closed:
+            async with asyncio.timeout(5):
+                while True:
+                    await connection.recv()
+
+    received = closed.value.rcvd
+    assert received is not None
+    assert received.code == Close.RELAY_GONE
+    assert door.vmm.drops == [(FAMILY, session)]
+    assert session not in door.vmm.rows
+    await wait_for(lambda: door.service.busy(Principal.NOTICEBOARD)["prompts_in_flight"] == 0)
 
 
 @pytest.mark.slow

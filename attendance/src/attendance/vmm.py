@@ -1,8 +1,8 @@
 """The client of the vmm host API (decisions CH20, CH21-7, CH25).
 
 The vmm keeps the host session list and one VM per session (decision CH1).
-attendance makes each row, reads the list, drops the row of a job, and
-opens one ACP stream per session:
+attendance makes each row, reads the list, drops the row of a job or of a
+client `session/delete`, and opens one ACP stream per session:
 
     attendance --- POST /create, /list, /drop ---------> vmm
                --- POST /acp + Upgrade: creche-acp ---> vmm --- guest port 1201 --> facade
@@ -219,7 +219,8 @@ class Vmm(Protocol):
         ...
 
     async def drop(self, family: str, session: str) -> None:
-        """Drop one session: its VM, snapshot, disk and row (decision CH21-2)."""
+        """Drop one session: its VM, snapshot, disk and row (decisions CH21-2,
+        CH27)."""
         ...
 
     async def open_acp(self, family: str, session: str, max_line_bytes: int) -> Channel:
