@@ -15,10 +15,15 @@ from attendance.lines import MAX_LINE_BYTES, LineSplitter, RawLine
 class FakeChannel:
     """The far side of one vmm ACP stream."""
 
-    def __init__(self, max_line_bytes: int = MAX_LINE_BYTES) -> None:
+    def __init__(
+        self, max_line_bytes: int = MAX_LINE_BYTES, close_gate: asyncio.Event | None = None
+    ) -> None:
         self._to_host: asyncio.Queue[RawLine | None] = asyncio.Queue()
         self._to_far: asyncio.Queue[str] = asyncio.Queue()
         self._splitter = LineSplitter(max_line_bytes)
+        #: A close waits for this event, as a close waits for the vmm.
+        self._close_gate = close_gate
+        self.closing = False
         self.closed = False
 
     async def send(self, line: str) -> None:
@@ -37,8 +42,13 @@ class FakeChannel:
         return item
 
     async def close(self) -> None:
-        if self.closed:
+        if self.closing:
             return
+
+        self.closing = True
+
+        if self._close_gate is not None:
+            await self._close_gate.wait()
 
         self.closed = True
         await self._to_host.put(None)

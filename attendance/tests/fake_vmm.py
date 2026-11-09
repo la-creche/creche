@@ -37,6 +37,8 @@ class FakeVmm:
     replays: dict[str, list[dict[str, Any]]] = field(
         default_factory=dict[str, list[dict[str, Any]]]
     )
+    #: Each close of a stream waits for this event, when it is set.
+    close_gate: asyncio.Event | None = None
     #: An open of a session with a gate here waits for the gate.
     open_gates: dict[str, asyncio.Event] = field(default_factory=dict[str, asyncio.Event])
     #: A list of a family with a gate here waits for the gate.
@@ -114,7 +116,7 @@ class FakeVmm:
         if held is not None and not held.closed:
             raise VmmRefused(BUSY, "the session has a stream")
 
-        channel = FakeChannel(max_line_bytes)
+        channel = FakeChannel(max_line_bytes, self.close_gate)
         facade = FakeFacade(
             prompt_mode=self.prompt_mode,
             protocol_version=self.protocol_version,

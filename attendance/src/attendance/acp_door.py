@@ -35,8 +35,21 @@ Before the first frame of a session, the door runs the handshake on its new
 stream: `initialize`, with the answer kept by the door. The facade sends no
 beat deadline in a VM (decision CH80), so the door sends no beat.
 
-A stream that ends closes the connection with `Close.RELAY_GONE`, and the
-client opens the session again with `session/load` (decision CH19 (6)).
+The door closes the stream of a session when no request is in flight on
+it, so the vmm can snapshot an idle VM (contract 02 §5.5 rule 5, decisions
+CH21-8, CH19 (6)). A request is in flight in either direction: a client
+request routed to the stream until the stream answers it, and a facade
+request until the client answers it. A `session/load` counts like a
+`session/prompt`. A notification opens no call. It reaches an open
+stream, and it opens no stream: with no stream no request is in flight, so
+it has nothing to act on, and an open would boot or restore the VM. The
+door connection stays open, and the next request of the session opens a
+new stream with a new handshake. That open waits until the old stream has
+closed, so the vmm meets one holder only (decision CH83 rule 4).
+
+A stream that ends with a request in flight closes the connection with
+`Close.RELAY_GONE`, and the client opens the session again with
+`session/load` (decision CH19 (6)).
 
 The frames of one session keep their order, and no session waits for
 another. The door reads each frame and puts it in the lane of its session:
@@ -53,10 +66,11 @@ and the stream's answer with the same id closes it. A connection that ends
 closes each of its own. The count reads the lines and changes none.
 
 The facade is JavaScript. It reads each JSON number as a double and writes
-that double in its answer, so the count keys a number id by its double:
+that double in its answer, so each count keys a number id by its double:
 `1`, `1.0` and `1e0` are one id. A string id stays apart from a number id.
-A prompt with a number id past the double range closes with
-`Close.BAD_FRAME`, because its answer cannot carry the same id.
+A request that attendance does not answer itself, with a number id past the
+double range, closes with `Close.BAD_FRAME`, because its answer cannot
+carry the same id.
 """
 
 from __future__ import annotations
@@ -67,6 +81,7 @@ import json
 import math
 import re
 from collections.abc import Generator
+from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Final, Literal
 
@@ -184,18 +199,15 @@ class _OpenPrompts:
     def __init__(self) -> None:
         self.ids: set[_RpcIdKey] = set()
 
-    def sent(self, record: dict[str, Any]) -> Close | None:
-        """A client request. None when it may pass."""
+    def sent(self, record: dict[str, Any]) -> None:
+        """A client request."""
         if record.get("method") != METHOD_PROMPT or "id" not in record:
-            return None
+            return
 
         key = _rpc_id_key(record["id"])
 
-        if key is None:
-            return Close.BAD_FRAME
-
-        self.ids.add(key)
-        return None
+        if key is not None:
+            self.ids.add(key)
 
     def refused(self, record: dict[str, Any]) -> None:
         """A client request that attendance refused. It reached no stream."""
@@ -205,14 +217,9 @@ class _OpenPrompts:
             if key is not None:
                 self.ids.discard(key)
 
-    def answered(self, text: str) -> None:
-        """A stream line. A prompt answer holds `stopReason` or `error`."""
-        if not self.ids or ("stopReason" not in text and '"error"' not in text):
-            return
-
-        record = as_object(loads_strict(text)) or {}
-
-        if "method" not in record and "id" in record:
+    def answered(self, record: dict[str, Any]) -> None:
+        """A stream line. An answer has an id and no method."""
+        if self.ids and "method" not in record and "id" in record:
             key = _rpc_id_key(record["id"])
 
             if key is not None:
@@ -257,6 +264,36 @@ def _rpc_id_key(value: object) -> _RpcIdKey | None:
         return None
 
     return ("number", double) if math.isfinite(double) else None
+
+
+@dataclass(slots=True, eq=False)
+class _Held:
+    """One open vmm stream of a door connection, and the requests in
+    flight on it (contract 02 §5.5 rule 5)."""
+
+    channel: Channel
+    reader: asyncio.Task[Close | None] | None = None
+    #: The client requests that wait for the facade's answer.
+    client_calls: set[_RpcIdKey] = field(default_factory=set[_RpcIdKey])
+    #: The facade requests that wait for the client's answer.
+    facade_calls: set[_RpcIdKey] = field(default_factory=set[_RpcIdKey])
+
+    @property
+    def idle(self) -> bool:
+        return not self.client_calls and not self.facade_calls
+
+    def read(self, record: dict[str, Any]) -> None:
+        """One stream line: a facade request opens a call, an answer ends a
+        client call."""
+        key = _rpc_id_key(record["id"]) if "id" in record else None
+
+        if key is None:
+            return
+
+        if "method" in record:
+            self.facade_calls.add(key)
+        else:
+            self.client_calls.discard(key)
 
 
 def refusal_code(error: ApiError) -> int:
@@ -315,11 +352,10 @@ class _Door:
         self._vmm = vmm
         self._prompts = prompts
         self._write = asyncio.Lock()
-        self._streams: dict[str, Channel] = {}
-        self._readers: dict[str, asyncio.Task[Close]] = {}
-        #: The session of each request a facade sent to the client, by id,
-        #: so that the client's answer reaches the same stream.
-        self._asked: dict[_RpcIdKey, str] = {}
+        self._held: dict[str, _Held] = {}
+        #: The stream of each session that closes now. The next open of the
+        #: session waits for the event.
+        self._closing: dict[str, asyncio.Event] = {}
         #: The frames of each lane, and the task that works them.
         self._lanes: dict[str, asyncio.Queue[str]] = {}
         self._workers: list[asyncio.Task[None]] = []
@@ -350,7 +386,8 @@ class _Door:
 
         if "method" not in record:
             key = _rpc_id_key(record.get("id"))
-            return self._asked.get(key, _DOOR_LANE) if key is not None else _DOOR_LANE
+            asked = (session for session, one in self._held.items() if key in one.facade_calls)
+            return next(asked, _DOOR_LANE) if key is not None else _DOOR_LANE
 
         params = as_object(record.get("params"))
         session = params.get("sessionId") if params is not None else None
@@ -398,10 +435,10 @@ class _Door:
         if not isinstance(method, str):
             return await self._to_asker(record, line)
 
-        refused = self._prompts.sent(record)
+        if "id" in record and method not in _ANSWERED and _rpc_id_key(record["id"]) is None:
+            return Close.BAD_FRAME
 
-        if refused is not None:
-            return refused
+        self._prompts.sent(record)
 
         try:
             answer = await self._answer(method, record, line)
@@ -440,8 +477,22 @@ class _Door:
         if not isinstance(session, str):
             raise _Refusal(RPC_METHOD_NOT_FOUND, f"{method} names no session")
 
-        stream = await self._stream(session)
-        await stream.send(line + "\n")
+        if "id" not in record and session not in self._held:
+            # A notification, in practice `session/cancel`, for a session
+            # with no open stream. The stream closes when no request is in
+            # flight (decision CH21-8), so the notification has nothing to
+            # act on. An open would boot or restore the VM for nothing, and
+            # a `host_full` there has no answer to carry it.
+            return None
+
+        held = await self._stream(session)
+        key = _rpc_id_key(record["id"]) if "id" in record else None
+
+        if key is not None:
+            held.client_calls.add(key)
+
+        await held.channel.send(line + "\n")
+        await self._close_if_idle(session, held)
         return None
 
     async def _new_session(self, params: dict[str, Any] | None) -> dict[str, Any]:
@@ -509,15 +560,21 @@ class _Door:
 
         return answer
 
-    async def _stream(self, session: str) -> Channel:
-        """The stream of `session`, opened and shaken hands with once."""
-        stream = self._streams.get(session)
+    async def _stream(self, session: str) -> _Held:
+        """The open stream of `session`, or a new one after its handshake.
+        A new one waits until the last stream of the session has closed."""
+        held = self._held.get(session)
 
-        if stream is not None:
-            return stream
+        if held is not None:
+            return held
 
         if not is_session_id(session):
             raise _Refusal(RPC_NOT_FOUND, f"no session {session}")
+
+        closing = self._closing.get(session)
+
+        if closing is not None:
+            await closing.wait()
 
         try:
             stream = await self._vmm.open_acp(self._family, session, MAX_FRAME_BYTES)
@@ -536,17 +593,20 @@ class _Door:
             await stream.close()
             raise
 
-        self._streams[session] = stream
-        reader = asyncio.create_task(self._from_stream(session, stream), name="acp door out")
+        held = _Held(stream)
+        self._held[session] = held
+        reader = asyncio.create_task(self._from_stream(session, held), name="acp door out")
         reader.add_done_callback(report_failure)
         reader.add_done_callback(self._stream_ended)
-        self._readers[session] = reader
-        return stream
+        held.reader = reader
+        return held
 
-    async def _from_stream(self, session: str, stream: Channel) -> Close:
+    async def _from_stream(self, session: str, held: _Held) -> Close | None:
+        """Each stream line to the client. None when the door closed the
+        stream because it fell idle."""
         while True:
             try:
-                raw = await stream.receive()
+                raw = await held.channel.receive()
             except ChannelClosed:
                 return Close.RELAY_GONE
 
@@ -561,11 +621,15 @@ class _Door:
             if refused is not None:
                 return refused
 
-            self._note_ask(session, raw.text)
-            self._prompts.answered(raw.text)
+            record = as_object(loads_strict(raw.text)) or {}
+            held.read(record)
+            self._prompts.answered(record)
             await self._send_text(raw.text)
 
-    def _stream_ended(self, task: asyncio.Task[Close]) -> None:
+            if await self._close_if_idle(session, held):
+                return None
+
+    def _stream_ended(self, task: asyncio.Task[Close | None]) -> None:
         if self.ended.done():
             return
 
@@ -573,36 +637,58 @@ class _Door:
             return
 
         error = task.exception()
-        self.ended.set_result(Close.RELAY_GONE if error is not None else task.result())
+        why = Close.RELAY_GONE if error is not None else task.result()
 
-    def _note_ask(self, session: str, text: str) -> None:
-        """A request of the facade to the client: its answer goes back here."""
-        if '"method"' not in text:
-            return
+        if why is not None:
+            self.ended.set_result(why)
 
-        record = as_object(loads_strict(text)) or {}
+    async def _close_if_idle(self, session: str, held: _Held) -> bool:
+        """Close the stream of `session` when no request is in flight on it
+        (contract 02 §5.5 rule 5, decision CH21-8). True when it closed.
 
-        if "method" in record and "id" in record:
-            key = _rpc_id_key(record["id"])
+        The reader of the stream may run this itself. Each other caller
+        stops the reader first, under the write lock, so no send is cut."""
+        if not held.idle or self._held.get(session) is not held:
+            return False
 
-            if key is not None:
-                self._asked[key] = session
+        del self._held[session]
+        closed = asyncio.Event()
+        self._closing[session] = closed
+        reader = held.reader
+
+        try:
+            if reader is not None and reader is not asyncio.current_task():
+                async with self._write:
+                    reader.cancel()
+                    await asyncio.gather(reader, return_exceptions=True)
+
+            await held.channel.close()
+        finally:
+            closed.set()
+
+            if self._closing.get(session) is closed:
+                del self._closing[session]
+
+        return True
 
     async def _to_asker(self, record: dict[str, Any], line: str) -> Close | None:
         """A client answer goes to the stream whose facade asked. An answer
         to no request of a facade is dropped."""
         key = _rpc_id_key(record.get("id"))
-        session = self._asked.pop(key, None) if key is not None else None
-        stream = self._streams.get(session) if session is not None else None
+        asked = [(session, one) for session, one in self._held.items() if key in one.facade_calls]
 
-        if stream is None:
+        if key is None or not asked:
             return None
 
+        session, held = asked[0]
+        held.facade_calls.discard(key)
+
         try:
-            await stream.send(line + "\n")
+            await held.channel.send(line + "\n")
         except ChannelClosed:
             return Close.RELAY_GONE
 
+        await self._close_if_idle(session, held)
         return None
 
     async def _refuse(self, record: dict[str, Any], refusal: _Refusal) -> None:
@@ -625,15 +711,21 @@ class _Door:
             await self._websocket.send_text(text)
 
     async def close(self) -> None:
-        tasks: list[asyncio.Task[object]] = [*self._workers, *self._readers.values()]
+        held = list(self._held.values())
+        self._held.clear()
+        readers = [one.reader for one in held if one.reader is not None]
+        tasks: list[asyncio.Task[object]] = [*self._workers, *readers]
 
         for task in tasks:
             task.cancel()
 
         await asyncio.gather(*tasks, return_exceptions=True)
 
-        for stream in self._streams.values():
-            await stream.close()
+        for one in held:
+            await one.channel.close()
+
+        for closing in list(self._closing.values()):
+            await closing.wait()
 
 
 async def serve(websocket: WebSocket, family: str, vmm: Vmm, prompts: DoorPrompts) -> None:

@@ -7,6 +7,7 @@ connection and answers what the test scripted for its path.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import shutil
 import tempfile
@@ -86,6 +87,15 @@ class Stub:
         default_factory=dict[str, list[tuple[int, bytes]]]
     )
     seen: list[Seen] = field(default_factory=list[Seen])
+    #: Set: after the echo the stream reads to the client's end, sets
+    #: `saw_end` and waits for `release` before it ends too.
+    release: asyncio.Event | None = None
+    saw_end: asyncio.Event = field(default_factory=asyncio.Event)
+    #: True: after `saw_end` the stream writes one line each 10 ms, in the
+    #: place of the wait for `release`, and sets `saw_close` once a write
+    #: fails because the client released its socket.
+    probe_close: bool = False
+    saw_close: asyncio.Event = field(default_factory=asyncio.Event)
 
     def answer(self, path: str, status: int, body: object) -> None:
         text = body if isinstance(body, bytes) else json.dumps(body).encode()
@@ -110,6 +120,16 @@ class Stub:
             line = await reader.readline()
             writer.write(b"echo " + line)
             await writer.drain()
+
+            if self.release is not None:
+                await reader.read()
+                self.saw_end.set()
+
+                if self.probe_close:
+                    await _probe_writes(self, writer)
+                else:
+                    await self.release.wait()
+
             writer.close()
             return
 
@@ -119,6 +139,16 @@ class Stub:
         writer.write(b"Connection: close\r\n\r\n" + text)
         await writer.drain()
         writer.close()
+
+
+async def _probe_writes(stub: Stub, writer: asyncio.StreamWriter) -> None:
+    try:
+        while True:
+            writer.write(b"{}\n")
+            await writer.drain()
+            await asyncio.sleep(0.01)
+    except (ConnectionError, OSError):
+        stub.saw_close.set()
 
 
 @dataclass(slots=True)
@@ -278,3 +308,57 @@ async def test_an_acp_refusal_before_101_raises_its_code(rig: Rig) -> None:
         await rig.vmm.open_acp(FAMILY, SESSION, 1024)
 
     assert refused.value.code == "not_found"
+
+
+async def test_a_close_ends_the_write_half_and_waits_for_the_vmm(rig: Rig) -> None:
+    """Decision CH83 rule 4: the vmm holds the claim until both directions
+    end, so the close returns only after the vmm ended the stream."""
+    rig.stub.answer("/acp", 101, b"")
+    rig.stub.release = asyncio.Event()
+    stream = await rig.vmm.open_acp(FAMILY, SESSION, 1024)
+    await stream.send('{"jsonrpc":"2.0","id":0}\n')
+    await stream.receive()
+    closing = asyncio.create_task(stream.close())
+
+    await asyncio.wait_for(rig.stub.saw_end.wait(), 5)
+    await asyncio.sleep(0.05)
+    assert not closing.done()
+    rig.stub.release.set()
+    await asyncio.wait_for(closing, 5)
+
+
+async def test_a_cancelled_close_still_releases_the_socket(rig: Rig) -> None:
+    """A cancel in the wait of a close still releases the socket, so the
+    vmm drops the claim of the session (decision CH83 rule 4). A second
+    close then has nothing left to do."""
+    rig.stub.answer("/acp", 101, b"")
+    rig.stub.release = asyncio.Event()
+    rig.stub.probe_close = True
+    stream = await rig.vmm.open_acp(FAMILY, SESSION, 1024)
+    await stream.send('{"jsonrpc":"2.0","id":0}\n')
+    await stream.receive()
+    closing = asyncio.create_task(stream.close())
+
+    await asyncio.wait_for(rig.stub.saw_end.wait(), 5)
+    closing.cancel()
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await closing
+
+    await asyncio.wait_for(rig.stub.saw_close.wait(), 5)
+    await asyncio.wait_for(stream.close(), 5)
+
+
+async def test_a_close_waits_for_the_vmm_at_most_its_bound(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(vmm_module, "CLOSE_WAIT_S", 0.05)
+    rig.stub.answer("/acp", 101, b"")
+    rig.stub.release = asyncio.Event()
+    stream = await rig.vmm.open_acp(FAMILY, SESSION, 1024)
+    await stream.send('{"jsonrpc":"2.0","id":0}\n')
+    await stream.receive()
+
+    await asyncio.wait_for(stream.close(), 5)
+    assert rig.stub.saw_end.is_set()
+    rig.stub.release.set()

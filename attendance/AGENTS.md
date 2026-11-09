@@ -31,15 +31,22 @@ inside the VM, which carries Node.
    of its family. attendance answers `initialize`, `session/new` and
    `session/list` itself, from the host list, with no boot (decision
    CH21-7). It routes each other request and notification by its
-   `sessionId`, over one vmm stream per session. A message whose
+   `sessionId`, over one vmm stream per session. A notification for a
+   session with no open stream does nothing: no request is in flight
+   there (decision CH21-8). A message whose
    `params._meta` holds a key that starts with `creche/` gets
    `invalidParams` (-32602) and reaches no stream (contract 02 §5.1 rule
    5, decision CH21-4). An id that is not a
    session id gets `resourceNotFound` (-32002) before attendance calls the
    vmm, and an id with no row gets it from the vmm with no boot (decisions
    CH10-9, CH21-9). Each other vmm refusal is `internalError` (-32603) with
-   the vmm code as `data.code` (decision CH83 rule 1). A stream that ends
-   closes the connection with code 1001 and the reason `the relay ended`.
+   the vmm code as `data.code` (decision CH83 rule 1). The door closes the
+   stream of a session when no request is in flight on it, in either
+   direction, and the connection stays open (contract 02 §5.5 rule 5,
+   decision CH21-8). The next request of the session opens a new stream
+   after the old one has closed. A stream that ends with a request in
+   flight closes the connection with code 1001 and the reason `the relay
+   ended`.
 7. Serves the view for `noticeboard` (`acp_view.py`). The session list is a
    page of the host list, with no boot. A transcript opens the session's
    vmm stream, sends `initialize` and `session/load`, and closes the
@@ -161,6 +168,9 @@ conversation and the one-writer rule (Flue's queue).
 3. One vmm stream per session and per holder: one door connection, one job
    or one view read (decisions CH33 rule 7, CH83 rule 4). attendance never
    sends an internal `session/new` or `session/load` (decision CH21-8).
+   A stream closes when no request is in flight on it, so no holder keeps
+   an idle VM awake (decision CH21-8). Its close waits for the vmm to end
+   the stream (`AcpStream.close`).
 4. Layers talk downward only: `api` to `service` to the door, the jobs and
    the view, to `vmm` and `acp_link`, to `channel` and primitives.
 5. Nothing here needs Node.
@@ -306,9 +316,14 @@ is marked `slow`.
 - The ACP door opens the stream of a session in the read loop of its
   connection. A boot of one session therefore delays the next frame of
   each session of that connection.
-- A vmm stream that ends closes the door connection, as a relay that ended
-  did. The client opens the session again with `session/load` (decision
-  CH19 (6)).
+- A vmm stream that ends with a request in flight closes the door
+  connection, as a relay that ended did. The client opens the session again
+  with `session/load` (decision CH19 (6)).
+- CONTRACT-QUESTION: decision CH83 rule 4 gives a session one holder, and
+  no row says how a holder ends its stream so that its next Upgrade meets
+  no claim of its own. `AcpStream.close` ends the write half, reads to the
+  vmm's end and waits at most `CLOSE_WAIT_S` (5 s). Then it releases the
+  socket (`vmm.py`).
 - The outcome record's `sandbox` is the empty text: a job runs in a VM of
   its own session, which no sandbox id names (decision CH83 rule 3).
 - A job whose vmm drop fails leaves its row. The log names it. The next
