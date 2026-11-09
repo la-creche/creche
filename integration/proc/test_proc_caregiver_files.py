@@ -89,7 +89,6 @@ STATUS_FIELDS = {
     "validation",
     "faults",
     "reconcile",
-    "sandboxes",
     "credentials",
     "spend",
     "limits",
@@ -135,10 +134,6 @@ def test_the_status_document_holds_each_field(caregiver_alone: CaregiverStack) -
     assert document["validation"]["ok"] is True
     assert document["validation"]["report_path"] == str(tree.validation_file())
     assert tree.validation_file().is_file()
-
-    # The vmm keeps the VMs (decision CH1), so caregiver lists none. The
-    # list leaves the document at manager-status minor 20 (plan PR CR10).
-    assert document["sandboxes"] == []
 
 
 def test_the_spend_of_litellm_is_in_the_document(caregiver_prepared: CaregiverStack) -> None:
