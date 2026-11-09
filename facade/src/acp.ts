@@ -64,8 +64,8 @@ export interface Peer {
 
 /**
  * The session methods of the one session (`src/sessions.ts`). Null on sbx,
- * which serves no session after the cut (decisions CH52 rule 2, CH79 rule
- * 3). attendance answers `session/new` and `session/list` from the host
+ * which serves no session (the CONTRACT-QUESTION of `serveFamily` in
+ * `src/family.ts`). attendance answers `session/new` and `session/list` from the host
  * list (decision CH21-7), so no link of the facade serves them, and the SDK
  * answers each with method not found.
  */

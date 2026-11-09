@@ -52,13 +52,14 @@ use std::marker::PhantomData;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::path::{Component, Path, PathBuf};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use creche_vmm_store::layout::RootError;
 use creche_wire::{
     FAMILY_EGRESS_FILE, FAMILY_REPOS_FILE, FAMILY_SHAPE_FILE, FAMILY_STATE_CAP, FamilyConfig,
     FamilyCreds, FamilyEgress, FamilyName, FamilyRepos, FamilyShape, FamilySkills, FamilyState,
-    FamilyStateReply, LitellmKey, ModelAlias, PepToken, SandboxGrant, SystemPrompt, strict,
+    FamilyStateReply, LitellmKey, ModelAlias, PepToken, SandboxGrant, SystemPrompt, UnixMillis,
+    strict,
 };
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
 use rustix::io::Errno;
@@ -66,8 +67,6 @@ use rustix::path::Arg;
 use serde::de::value::{Error as ValueError, MapDeserializer};
 use serde::de::{DeserializeOwned, IgnoredAny};
 use serde::{Deserialize, Deserializer};
-
-use crate::rfc3339;
 
 /// The name of the config dir in each family dir (contract 01 §6.1).
 pub const CONFIG_DIR: &str = "config";
@@ -330,13 +329,13 @@ enum SandboxTool {
     Write,
 }
 
-/// `model_live_at` in the form of `rfc3339::format`. A `null` or any other
-/// text refuses the file.
+/// `model_live_at`: integer milliseconds since 1970-01-01T00:00:00Z, UTC,
+/// `UnixMillis` of `creche-wire` (contract 01 §6.1 rule 5, decisions
+/// CH22-1, CH23-1, CH31). A `null`, a text or a number past 2^53 - 1
+/// refuses the file.
 fn live_at<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<SystemTime>, D::Error> {
-    let text = String::deserialize(deserializer)?;
-    rfc3339::parse(&text)
-        .map(Some)
-        .ok_or_else(|| serde::de::Error::custom("model_live_at is not YYYY-MM-DDTHH:MM:SSZ"))
+    let millis = UnixMillis::deserialize(deserializer)?;
+    Ok(Some(UNIX_EPOCH + Duration::from_millis(millis.as_u64())))
 }
 
 /// The grant of a tool list. The validator refuses a tool listed twice

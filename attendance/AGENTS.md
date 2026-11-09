@@ -38,7 +38,8 @@ inside the VM, which carries Node.
    `session/delete` calls the vmm `drop` and answers `{}`. A delete cannot
    be undone (contract 02 §5.6). It routes each other request and
    notification by its `sessionId`, over one vmm stream per session. A
-   message whose `params._meta` holds a key that starts with `creche/`
+   notification for a session with no open stream does nothing: no request
+   is in flight there (decision CH21-8). A message whose `params._meta` holds a key that starts with `creche/`
    gets `invalidParams` (-32602) and reaches no stream (contract 02 §5.1
    rule 5, decision CH21-4). An id that is not a session id gets
    `resourceNotFound` (-32002) before attendance calls the vmm, and an id
@@ -150,6 +151,10 @@ conversation and the one-writer rule (Flue's queue).
    break closes the connection. It keys a prompt id as the JavaScript
    facade reads it: a number by its double, a string apart from a number.
    It closes on a prompt whose number id is past the double range.
+10. The ACP door holds no session behind another. The read of the frames
+    awaits no vmm call and no stream open. It puts each frame in the lane
+    of its session, and each lane keeps its frames in order. A stream that
+    opens is closed on each way out of its handshake, a cancel included.
 
 ## Security rules
 
@@ -335,7 +340,9 @@ is marked `slow`.
   start of attendance drops it (contract 02 §6 rule 5).
 - CONTRACT-QUESTION: decision CH83 rule 5 drops each job row at start and
   names no step for a vmm that does not answer then. A list or a drop that
-  the vmm refuses leaves the rows, and the log names the family. The next
+  the vmm refuses leaves the rows, and the log names the family. The
+  families run at once, and the step ends within `JOB_ROWS_BOUND_S`. Past
+  it the rows that are left stay, and the log names each family. The next
   start tries again (`service.py`).
 - CONTRACT-QUESTION: decision CH21-3 gives a delegate job a retry loop
   inside its `job.timeout`, and no row names the pause between two tries.
@@ -347,6 +354,13 @@ is marked `slow`.
   and a stream that ends with a request in flight closes the connection
   with 1001, so the answer of the delete is lost. The vmm runs the drop to
   its end after the hang-up (`acp_door.py`).
+- CONTRACT-QUESTION: no row bounds the start of a dispatch or a trigger
+  job, and decision CH50 rule 1 gives a VM start no outer bound. The start
+  of each job, its stream and its handshake, ends within the job's
+  deadline from the job's start, or the job ends `timeout`. A delegate
+  prompt gets what is left of that deadline (contract 04 §7.5). Any other
+  prompt gets its whole deadline from the prompt, as before the vmm
+  (`acp_jobs.py`).
 - `caregiver` reads only the codes of minor 17 from the fault file of this
   service, so it drops `vmm_protocol_mismatch` until plan PR CR10 adds the
   code to its table.

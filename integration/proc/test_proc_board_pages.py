@@ -32,7 +32,6 @@ from proc_tree import (
     FAMILY,
     NO_ARGUMENTS_SHA256,
     NOTICEBOARD_KEY,
-    SANDBOX,
     Validity,
     append_audit,
     audit_record,
@@ -95,7 +94,6 @@ async def test_the_home_page_lists_each_family_of_the_root(board_alone: BoardSta
     assert rows[REVIEW]["kind"].text == "autonomous"
     # Contract 05 §2.2: `in_sync` in the file, "in sync" on the page.
     assert rows[FAMILY]["status"].text == "in sync"
-    assert SANDBOX in rows[FAMILY]["serving"].text
     # Contract 05 §2.1: the queue limit of `attendance`, only where a queue is.
     assert rows[REVIEW]["queue cap"].text == "100"
     assert rows[FAMILY]["queue cap"].text != "100"
@@ -186,7 +184,7 @@ async def test_a_page_answers_while_attendance_is_down(board_alone: BoardStack) 
         missing = await page_of(browser, f"/sessions/{FAMILY}/{session}")
 
     assert len(table_rows(home.one("table", "families"))) == 2
-    assert table_rows(family.all("table")[0])[0]["id"].text == SANDBOX
+    assert family.one("h1").text.startswith(FAMILY)
     assert family.all("p", "problem") != []
     assert missing.one("ul", "problems").all("li") != []
 

@@ -20,7 +20,7 @@ import pytest
 from agent_family import FamilyState, load_registry
 from agent_family.registry import FAMILY_FILE
 from caregiver.applied import read_applied
-from caregiver.clock import seconds_from_now
+from caregiver.clock import ms_from_now, seconds_from_now
 from caregiver.litellm_keys import FakeLiteLLMKeys, HttpLiteLLMKeys, LiteLLMError, Spend
 from caregiver.reach_files import EGRESS_CAP
 from caregiver.reconcile import (
@@ -345,7 +345,7 @@ def test_the_sync_check_reads_model_live_at_from_runtime_json(fleet: Fleet) -> N
     assert runtime_json(fleet)["model_live_at"] == live_at
 
     path = paths.config_dir(fleet.state_root, FAMILY) / "runtime.json"
-    passed = {**runtime_json(fleet), "model_live_at": seconds_from_now(-1)}
+    passed = {**runtime_json(fleet), "model_live_at": ms_from_now(-1)}
     path.write_text(json.dumps(passed, indent=2) + "\n", encoding="utf-8")
     assert fleet.run().status.state is FamilyState.IN_SYNC
 

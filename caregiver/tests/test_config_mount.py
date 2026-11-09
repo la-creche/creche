@@ -262,7 +262,7 @@ def test_a_new_alias_sets_model_live_at_in_the_same_swap(tmp_path: Path) -> None
     runtime = _runtime_of(tmp_path, _FAMILY_HEAD.replace("agent-router", "agent-fast"))
     assert runtime["model_alias"] == "agent-fast"
     live_at = runtime["model_live_at"]
-    assert isinstance(live_at, str)
+    assert isinstance(live_at, int)
     assert model_live_at("chat", tmp_path) == live_at
 
 
@@ -278,23 +278,33 @@ def test_an_alias_that_stays_keeps_its_model_live_at(tmp_path: Path) -> None:
 
 
 def test_model_live_at_is_written_in_the_form_of_the_vmm(tmp_path: Path) -> None:
-    """`live_at` of the vmm reads only `YYYY-MM-DDTHH:MM:SSZ` (see the
-    CONTRACT-QUESTION of `RuntimeConfig`)."""
+    """Contract 01 §6.1 rule 5, decision CH22-1: integer milliseconds since
+    1970, the form that `live_at` of the vmm reads. The value is the one of
+    the vmm fixture `tests/fixtures/family/code/config/runtime.json`."""
     target = tmp_path / "config"
-    runtime = RuntimeConfig(False, (), "agent-fast", model_live_at="2026-11-06T12:00:10Z")
+    runtime = RuntimeConfig(False, (), "agent-fast", model_live_at=1_793_966_410_000)
     write_config_mount(target, instructions="x", skills={}, runtime=runtime, shape=SHAPE)
     model = read_model(target)
     assert model is not None
-    assert (model.alias, model.live_at) == ("agent-fast", "2026-11-06T12:00:10Z")
+    assert (model.alias, model.live_at) == ("agent-fast", 1_793_966_410_000)
     assert json.loads((target / "runtime.json").read_text(encoding="utf-8")) == {
         "shell": False,
         "sandbox_tools": [],
         "model_alias": "agent-fast",
-        "model_live_at": "2026-11-06T12:00:10Z",
+        "model_live_at": 1_793_966_410_000,
     }
 
 
-@pytest.mark.parametrize("body", ["[]", '{"model_live_at": "x"}', '{"model_alias": 1}'])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "[]",
+        '{"model_live_at": "x"}',
+        '{"model_alias": "m", "model_live_at": "2026-11-06T12:00:10Z"}',
+        '{"model_alias": "m", "model_live_at": true}',
+        '{"model_alias": 1}',
+    ],
+)
 def test_a_runtime_json_of_another_shape_has_no_model(tmp_path: Path, body: str) -> None:
     target = tmp_path / "config"
     target.mkdir()

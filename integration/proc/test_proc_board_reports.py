@@ -94,7 +94,7 @@ OLD_SPEND_AGE = timedelta(hours=1)
 RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
 
 #: Contract 05 §3.4: one step of a pass. No other part of a page holds it.
-STEP = "create_sandbox"
+STEP = "write_config"
 
 #: `NOTICEBOARD_PAGE_SIZE` of the paging scenario, and the tool of each call that
 #: the scenario writes, the oldest first.

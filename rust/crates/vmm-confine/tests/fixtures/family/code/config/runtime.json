@@ -7,5 +7,5 @@
   ],
   "model_alias": "litellm/fixture-model",
   "system_prompt": "replace",
-  "model_live_at": "2026-11-06T12:00:10Z"
+  "model_live_at": 1793966410000
 }

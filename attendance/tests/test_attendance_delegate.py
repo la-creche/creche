@@ -9,6 +9,7 @@ stream, sends one `session/prompt`, and drops the session at its end
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,9 @@ CODING_SANDBOX_FAMILY = "coding-sandbox"
 
 MESSAGE = "Which note holds the boiler service date?"
 CANCEL_WAIT_S = 0.2
+
+#: The margin of a clock check, for a loaded machine.
+CLOCK_MARGIN_S = 0.6
 
 
 class DelegateHarness:
@@ -277,6 +281,24 @@ async def test_host_full_for_the_whole_deadline_answers_503(tmp_path: Path) -> N
     assert refused.value.status == HTTP_UNAVAILABLE
     assert "retry_after_s" not in refused.value.body()
     assert harness.vmm.opened == [harness.create().id.root] * 2
+    assert harness.vmm.rows == {}
+    await harness.stop()
+
+
+async def test_one_clock_holds_the_host_full_tries_and_the_prompt(tmp_path: Path) -> None:
+    """Contract 04 §7.5: the PEP gives up on one 120 s clock. Two
+    `host_full` tries take 2 s of a 3 s deadline, and the prompt that never
+    answers gets the 1 s that is left, not a new 3 s."""
+    harness = DelegateHarness(tmp_path, job_timeout_s=3, mode=PromptMode.HANG)
+    harness.vmm.refuse["acp"] = HOST_FULL
+    started = time.monotonic()
+    task = asyncio.create_task(harness.delegate(harness.call()))
+    await wait_until(lambda: len(harness.vmm.opened) == 2, timeout=5)
+    del harness.vmm.refuse["acp"]
+    body = await task
+
+    assert body["status"] == JobStatus.TIMEOUT.value
+    assert time.monotonic() - started < 3 + CANCEL_WAIT_S + CLOCK_MARGIN_S
     assert harness.vmm.rows == {}
     await harness.stop()
 

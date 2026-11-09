@@ -20,7 +20,7 @@ from agent_family import FamilyFile, Index, Kind, duration_s, memory_mb
 from creche_wire import FamilyShape
 
 from . import paths
-from .clock import seconds_from_now
+from .clock import ms_from_now
 from .config_mount import (
     LiveModel,
     RuntimeConfig,
@@ -261,7 +261,7 @@ def write_config(
     return True
 
 
-def model_live_at(family_name: str, state_root: Path) -> str | None:
+def model_live_at(family_name: str, state_root: Path) -> int | None:
     """`model_live_at` of the `runtime.json` of the family, its one home
     (decision CH23-1). The sync check of a pass reads it here. `None` when
     no model change set it."""
@@ -269,7 +269,7 @@ def model_live_at(family_name: str, state_root: Path) -> str | None:
     return model.live_at if model is not None else None
 
 
-def _live_at(written: LiveModel | None, alias: str) -> str | None:
+def _live_at(written: LiveModel | None, alias: str) -> int | None:
     """The `model_live_at` of a new `runtime.json` with `alias`. A first
     write sets none: the key of a new family is minted with its model, so
     no LiteLLM worker holds an old one. A `runtime.json` that does not read
@@ -280,7 +280,7 @@ def _live_at(written: LiveModel | None, alias: str) -> str | None:
     if written.alias == alias:
         return written.live_at
 
-    return seconds_from_now(MODEL_CACHE_S)
+    return ms_from_now(MODEL_CACHE_S)
 
 
 def _shape_of(family: FamilyFile) -> FamilyShape:
