@@ -175,7 +175,7 @@ def test_one_malformed_entry_does_not_drop_the_rest(tmp_path: Path) -> None:
             "faults": [
                 "not even an object",
                 {
-                    "code": "orphan_processes",
+                    "code": "audit_unreadable",
                     "since": "2026-09-19T11:58:00Z",
                     "source": "attendance",
                 },
@@ -185,7 +185,7 @@ def test_one_malformed_entry_does_not_drop_the_rest(tmp_path: Path) -> None:
     )
     result = read_fault_file(path, "attendance", now=NOW)
     assert result is not None
-    assert [f.code for f in result.faults] == ["orphan_processes"]
+    assert [f.code for f in result.faults] == ["audit_unreadable"]
 
 
 def test_a_fresh_file_is_not_stale(tmp_path: Path) -> None:
@@ -233,39 +233,103 @@ def test_an_unparseable_written_at_counts_as_stale(tmp_path: Path) -> None:
     assert result.faults[0].stale is True
 
 
-# --- `sandbox_start_failed`, the code two services report (section 3.3.1) -----
+# --- the vmm, the third writer (section 3.3.1, decision CH21-1) ---------------
+
+#: The bytes that the vmm writes for one `sandbox_start_failed`. The Rust
+#: test `the_bytes_match_the_caregiver_fixture` holds the writer of
+#: `vmm-confine` equal to this file.
+VMM_FIXTURE = (
+    Path(__file__).resolve().parents[2]
+    / "rust"
+    / "crates"
+    / "vmm-confine"
+    / "tests"
+    / "fixtures"
+    / "caregiver_fault.json"
+)
 
 
-def attendance_file(path: Path, sandbox: str) -> None:
+def one_fault(path: Path, source: str, code: str) -> None:
     write(
         path,
         {
             "family": "chat",
-            "source": "attendance",
+            "source": source,
             "written_at": (NOW - timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
             "faults": [
-                {
-                    "code": "sandbox_start_failed",
-                    "blocks_turns": True,
-                    "since": "2026-09-19T11:58:41Z",
-                    "source": "attendance",
-                    "message": "playpen answered fatal: mount_dir_unset",
-                    "sandbox": sandbox,
-                }
+                {"code": code, "blocks_turns": True, "since": "2026-09-19T11:58:41Z"},
             ],
         },
     )
 
 
-def test_attendance_may_raise_sandbox_start_failed(tmp_path: Path) -> None:
-    """Contract 05 section 3.3.1 names FOUR codes for this writer. The reader
-    allowed three, so a playpen that answered `fatal` reached the status
-    document through nothing at all."""
+def test_the_bytes_the_vmm_writes_read_as_one_fault(tmp_path: Path) -> None:
     path = tmp_path / "chat.json"
-    attendance_file(path, "chat-s1")
+    path.write_bytes(VMM_FIXTURE.read_bytes())
+
+    result = read_fault_file(path, "vmm", now=NOW)
+
+    assert result is not None
+    assert result.family == "chat"
+    [fault] = result.faults
+    assert fault.code == "sandbox_start_failed"
+    assert fault.source == "vmm"
+    assert fault.blocks_turns is False
+    assert fault.detail == {"message": "playpen answered fatal: mount_dir_unset"}
+
+
+VMM_CODES = ("sandbox_start_failed", "egress_assert_failed", "serial_log_full")
+
+
+@pytest.mark.parametrize("code", VMM_CODES)
+def test_no_fault_of_the_vmm_blocks_turns(tmp_path: Path, code: str) -> None:
+    """Decision CH82 rules 2 and 6: the next turn tries a start, and each
+    start reruns every check, which fails closed. The file says `true`, and
+    the table of section 3.3 wins."""
+    path = tmp_path / "chat.json"
+    one_fault(path, "vmm", code)
+
+    result = read_fault_file(path, "vmm", now=NOW)
+
+    assert result is not None
+    assert [(one.code, one.blocks_turns) for one in result.faults] == [(code, False)]
+
+
+def test_attendance_reports_a_vmm_mismatch_that_blocks_no_turn(tmp_path: Path) -> None:
+    """Decisions CH25 rule 1 and CH82 rule 3."""
+    path = tmp_path / "chat.json"
+    one_fault(path, "attendance", "vmm_protocol_mismatch")
 
     result = read_fault_file(path, "attendance", now=NOW)
 
     assert result is not None
-    assert [one.code for one in result.faults] == ["sandbox_start_failed"]
-    assert result.faults[0].detail["sandbox"] == "chat-s1"
+    assert [(one.code, one.blocks_turns) for one in result.faults] == [
+        ("vmm_protocol_mismatch", False)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source", "code"),
+    [
+        # The start faults are the vmm's since minor 18 (decision CH21-1).
+        ("attendance", "sandbox_start_failed"),
+        ("attendance", "egress_assert_failed"),
+        ("pep", "serial_log_full"),
+        ("vmm", "vmm_protocol_mismatch"),
+        ("vmm", "grants_stale"),
+        # Minor 18 drops the codes whose only source went at the cut.
+        ("attendance", "protocol_mismatch"),
+        ("attendance", "protocol_violation"),
+        ("attendance", "orphan_processes"),
+        ("vmm", "image_behind"),
+    ],
+)
+def test_a_code_the_writer_may_not_raise_is_dropped(tmp_path: Path, source: str, code: str) -> None:
+    """Rule 6: a code of another writer, or a code outside the table."""
+    path = tmp_path / "chat.json"
+    one_fault(path, source, code)
+
+    result = read_fault_file(path, source, now=NOW)
+
+    assert result is not None
+    assert result.faults == ()

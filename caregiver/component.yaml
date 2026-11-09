@@ -24,8 +24,11 @@ provides:
   # drops `sandbox.max_resident_processes` (CH8-6).
   - { contract: family-file, major: 0, minor: 19 }
   # Contract 05: per-family status. caregiver makes no switch call and
-  # creates no sandbox (decisions CH1, CH21-1).
-  - { contract: manager-status, major: 0, minor: 17 }
+  # creates no sandbox (decisions CH1, CH21-1). Minor 18 drops the
+  # `sandboxes` list and adds the vmm fault file. Minor 19 drops the sbx
+  # create and its egress probe. Minor 20 drops the VM steps and
+  # `needs_switch` from the reconcile block (decision CH21-1).
+  - { contract: manager-status, major: 0, minor: 20 }
 # Contract 02 is not required: the switch call to attendance is gone
 # (decision CH21-1), so caregiver calls no route of attendance.
 requires: []

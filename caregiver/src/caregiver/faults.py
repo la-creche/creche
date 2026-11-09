@@ -1,6 +1,6 @@
 """Fault files another service writes (contract 05 section 3.3, section
-3.3.1). `attendance` and the PEP see faults `caregiver` cannot see for itself
-and report them in a file, never a call.
+3.3.1). `attendance`, the PEP and the vmm see faults `caregiver` cannot see
+for itself and report them in a file, never a call.
 
 `read_fault_file` is the reader. Every reconcile pass reads the files
 through `steps.read_faults` and folds the result into the status
@@ -18,36 +18,36 @@ from .atomic import read_json
 
 log = logging.getLogger("caregiver.faults")
 
-#: Contract 05 section 3.3.1: which service may raise which code. caregiver
-#: itself raises the other six codes of section 3.3's table directly, from
-#: its own reconcile loop, never through a fault file.
+#: Contract 05 section 3.3.1: which service may raise which code. The vmm
+#: is the third writer since minor 18 (decision CH21-1). caregiver itself
+#: raises the other codes of section 3.3's table directly, from its own
+#: reconcile loop, never through a fault file.
 FAULT_CODES_BY_SOURCE: Final[dict[str, frozenset[str]]] = {
-    "attendance": frozenset(
-        {
-            "protocol_mismatch",
-            "protocol_violation",
-            "orphan_processes",
-            "audit_unreadable",
-            # The fourth code section 3.3.1 names for this writer, and the one
-            # code two services may report. `attendance` raises it for a sandbox
-            # whose playpen answered `fatal` (contract 03 section 5.7), so
-            # the handshake it runs can never pass.
-            "sandbox_start_failed",
-        }
-    ),
+    # Each of 3 tries of a vmm call got the mismatch reply (decisions CH25
+    # rule 1, CH33 rule 10), or the PEP's audit does not read.
+    "attendance": frozenset({"vmm_protocol_mismatch", "audit_unreadable"}),
     "pep": frozenset({"grants_stale"}),
+    # The two start faults of decision CH6-3 and the serial log cap of
+    # decisions CH79 rule 7 and CH82 rule 1.
+    "vmm": frozenset({"sandbox_start_failed", "egress_assert_failed", "serial_log_full"}),
 }
+
+#: The writers of section 3.3.1, in the order a pass folds their files.
+FAULT_SOURCES: Final = tuple(FAULT_CODES_BY_SOURCE)
 
 #: Contract 05 section 3.3's table, fixed per code. The reader sets this
 #: from the code, never from the untrusted file's own claim (00-common-
 #: rules "Everything that crosses a process boundary is untrusted input").
+#: No vmm fault and no `vmm_protocol_mismatch` stops turns: the next turn
+#: tries a start, and each start reruns every check, which fails closed
+#: (decision CH82 rules 2, 3 and 6).
 BLOCKS_TURNS_BY_CODE: Final[dict[str, bool]] = {
-    "protocol_mismatch": True,
-    "protocol_violation": True,
-    "grants_stale": True,
-    "sandbox_start_failed": True,
-    "orphan_processes": False,
+    "vmm_protocol_mismatch": False,
     "audit_unreadable": False,
+    "grants_stale": True,
+    "sandbox_start_failed": False,
+    "egress_assert_failed": False,
+    "serial_log_full": False,
 }
 
 #: Contract 05 section 3.3.1 rule 7.
@@ -59,7 +59,7 @@ _KNOWN_KEYS: Final = frozenset({"code", "blocks_turns", "since", "source", "stal
 @dataclass(frozen=True)
 class FaultEntry:
     """Section 3.3's fault object. `detail` carries whatever extra keys the
-    writer sent (`attempts`, `message`, `sandbox`, `rev`, ...) -- "a reader
+    writer sent (`message`, `rev`, ...) -- "a reader
     ignores a key it does not know", not "a reader refuses one"."""
 
     code: str

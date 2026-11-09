@@ -21,7 +21,7 @@ from agent_family import FamilyFile, Index, Kind, duration_s
 from . import paths
 from .config_mount import RuntimeConfig, config_mount_matches, write_config_mount
 from .credentials import Credentials, mint_token, read_creds, token_sha256, write_creds
-from .faults import FaultEntry, read_fault_file
+from .faults import FAULT_SOURCES, FaultEntry, read_fault_file
 from .litellm_keys import LiteLLMError, LiteLLMKeys
 from .policy_file import build_app
 from .policy_fleet import FleetPolicy, Standing, land_app, land_digests
@@ -46,16 +46,14 @@ log = logging.getLogger("caregiver.steps")
 #: this name. Another text costs this constant and one test.
 WHOLE_FILE: Final = "<document>"
 
-#: Contract 05 §3.3.1: the two services that write a fault file.
-FAULT_SOURCES: Final = ("attendance", "pep")
-
 #: One digest, for a check of the shape of an app table before the key
 #: step gives the family its token.
 _ONE_DIGEST: Final = token_sha256("")
 
 
 def read_faults(state_root: Path, family_name: str) -> tuple[FaultEntry, ...]:
-    """Contract 05 §3.3.1: fold both writers' open faults. A missing file
+    """Contract 05 §3.3.1: fold the open faults of the three writers,
+    `attendance`, the PEP and the vmm (decision CH21-1). A missing file
     (no fault raised) or an unreadable one contributes nothing —
     `read_fault_file` already treats both as "no fault", never as a reason
     to stop. Each fault keeps the `blocks_turns` of its code."""

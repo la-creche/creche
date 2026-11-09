@@ -184,6 +184,15 @@ host where something has gone wrong.
 - A cron line with no `OnCalendar` spelling gets no unit.
 - A fault's `blocks_turns` comes from `faults.BLOCKS_TURNS_BY_CODE`, never
   from the file.
+- Each pass folds three fault files into the document: `faults/attendance/`,
+  `faults/pep/` and `faults/vmm/` (contract 05 §3.3.1, decision CH21-1).
+  `faults.FAULT_CODES_BY_SOURCE` names the codes each writer may raise. An
+  entry with a code of another writer is dropped. No fault of the vmm and
+  no `vmm_protocol_mismatch` blocks turns (decision CH82 rules 2, 3 and 6).
+- The status document holds no `sandboxes` list (contract 05 minor 18,
+  decision CH21-1). The reconcile block holds no `needs_switch`, and its
+  `step` is a `status.ReconcileStep`, one of the six names of contract 05
+  §3.4 minor 20.
 - `config_rev` and `applied_rev` are the same value: the registry revision.
 - `runtime.json` holds `sandbox_tools` as the list of the family file, in
   file order. The names are Flue's six: `read`, `write`, `edit`, `bash`,
@@ -366,8 +375,6 @@ Nothing here touches a real vmm or LiteLLM.
 - `apply-once` publishes no chaperone fault (`apply.py`).
 - `settle` and `rotate_serving` write token digests while a family file is
   invalid. Contract 05 §3.1 and §6.3 do not agree on this (`loop.py`).
-- A pass publishes the step name `write_timers`. Contract 05 §3.4 lists
-  eight step names, and that name is not one of them (`reconcile.py`).
 - A pass that raises publishes no fault. Contract 05 §3.3 has no code for
   it. The log holds the error, and the status document keeps its last
   content (`loop.py`).

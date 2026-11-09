@@ -34,15 +34,12 @@ from attendance.paths import fault_file, outcome_file
 from caregiver.chaperone_watch import PepReach, PepReport
 from caregiver.faults import FaultEntry, read_fault_file
 from caregiver.litellm_keys import SPEND_WINDOW
-from caregiver.reconcile import TIMERS_STEP
 from caregiver.status import (
-    ChannelState,
     CredentialsBlock,
     LimitsBlock,
+    ReconcileBlock,
+    ReconcileStep,
     RotationState,
-    SandboxLifecycle,
-    SandboxPower,
-    SandboxStatus,
     StatusDocument,
     TriggersBlock,
     ValidationBlock,
@@ -71,7 +68,6 @@ from vectors.surfaces.status import CONTRACT, FAMILY, FRESH, HUGE_DIGITS, NOW, O
 
 STATE_ROOT: Final = "/srv/agents/state/creche"
 _FAMILY_DIR: Final = f"{STATE_ROOT}/families/{FAMILY}"
-_IMAGE: Final = "registry.example/playpen@sha256:" + "0123456789abcdef" * 4
 _REV: Final = "reg-9f21c4"
 _OLD_REV: Final = "reg-8c01aa"
 _PEP_URL: Final = "http://192.0.2.10:8300"
@@ -81,7 +77,21 @@ VERY_DEEP: Final = 400_000
 
 SOURCE_ATTENDANCE: Final = "attendance"
 SOURCE_PEP: Final = "pep"
+SOURCE_VMM: Final = "vmm"
 SOURCE_CAREGIVER: Final = "caregiver"
+
+#: The bytes that the fault writer of the vmm makes for one fault. The Rust
+#: test `the_bytes_match_the_caregiver_fixture` of `vmm-confine` holds the
+#: writer equal to this file.
+_VMM_FIXTURE: Final = (
+    Path(__file__).resolve().parents[2]
+    / "rust"
+    / "crates"
+    / "vmm-confine"
+    / "tests"
+    / "fixtures"
+    / "caregiver_fault.json"
+)
 
 #: Each character class that a JSON writer treats in its own way: a letter
 #: outside ASCII, a character outside the first plane, a line separator, a
@@ -91,29 +101,6 @@ _ODD_TEXT: Final = 'caf\u00e9 \U0001f600 \u2028 "quoted" back\\slash a/b \n\r\t\
 
 
 # --- status.write ---------------------------------------------------------------
-
-
-def _sandbox(
-    number: int, state: SandboxLifecycle = SandboxLifecycle.READY, **changes: object
-) -> SandboxStatus:
-    """One sandbox row of contract 05 minor 17, as `caregiver.status.SandboxStatus` holds it."""
-    name = f"{FAMILY}-s{number}"
-    running = state in (SandboxLifecycle.READY, SandboxLifecycle.DRAINING)
-    row = SandboxStatus(
-        id=name,
-        state=state,
-        power=SandboxPower.RUNNING if running else SandboxPower.STOPPED,
-        image=_IMAGE,
-        spec_hash="0123456789abcdef",
-        cpus=2,
-        memory="2g",
-        created_at=FRESH,
-        ready_at=FRESH if running else None,
-        channel=ChannelState.OPEN if running else ChannelState.CLOSED,
-        playpen_env=f"{_FAMILY_DIR}/supervisor-{name}.env",
-    )
-
-    return replace(row, **changes)
 
 
 def _validation(**changes: object) -> ValidationBlock:
@@ -158,17 +145,10 @@ def _spend(
 
 
 def _reconcile(
-    step: str, *, from_rev: str = _OLD_REV, attempts: int = 1, needs_switch: bool = False
-) -> dict[str, object]:
-    """The reconcile block, with its keys in the order `caregiver.reconcile` writes."""
-    return {
-        "since": FRESH,
-        "from_rev": from_rev,
-        "to_rev": _REV,
-        "step": step,
-        "attempts": attempts,
-        "needs_switch": needs_switch,
-    }
+    step: ReconcileStep, *, from_rev: str = _OLD_REV, attempts: int = 1
+) -> ReconcileBlock:
+    """The reconcile block of contract 05 minor 20: no `needs_switch`."""
+    return ReconcileBlock(since=FRESH, from_rev=from_rev, to_rev=_REV, step=step, attempts=attempts)
 
 
 def _fault(
@@ -198,7 +178,6 @@ _SERVING: Final = StatusDocument(
     applied_rev=_REV,
     config_rev=_REV,
     validation=_validation(),
-    sandboxes=(_sandbox(1),),
     credentials=_credentials(),
     spend=_spend(1.25),
     chaperone=_PEP_OK,
@@ -276,36 +255,24 @@ WRITTEN: Final[tuple[Written, ...]] = (
     ),
     Written("spend-no-budget", _spent(0.0, None)),
     # --- reconciling and invalid --------------------------------------------
-    Written(
-        "reconciling-switch",
-        _document(
-            state=FamilyState.RECONCILING,
-            applied_rev=_OLD_REV,
-            config_rev=_OLD_REV,
-            reconcile=_reconcile("switch_sandbox", needs_switch=True),
-            sandboxes=(
-                _sandbox(3, SandboxLifecycle.DRAINING),
-                _sandbox(4, SandboxLifecycle.CREATING),
+    *(
+        Written(
+            f"reconciling-{step.value.replace('_', '-')}",
+            _document(
+                state=FamilyState.RECONCILING,
+                applied_rev=_OLD_REV,
+                config_rev=_OLD_REV,
+                reconcile=_reconcile(step),
             ),
-        ),
+        )
+        for step in ReconcileStep
     ),
+    # A step in flight with no new revision (contract 05 §3.4).
     Written(
-        "reconciling-image",
+        "reconciling-same-rev",
         _document(
             state=FamilyState.RECONCILING,
-            reconcile=_reconcile("create_sandbox", from_rev=_REV, attempts=2),
-            sandboxes=(_sandbox(1), _sandbox(2, SandboxLifecycle.PLANNED, playpen_env="")),
-        ),
-    ),
-    # `caregiver.reconcile` publishes the last step of a pass, and
-    # `TIMERS_STEP` is one of them. Contract 05 §3.4 does not name it.
-    Written(
-        "reconciling-timers",
-        _document(
-            state=FamilyState.RECONCILING,
-            applied_rev=_OLD_REV,
-            config_rev=_OLD_REV,
-            reconcile=_reconcile(TIMERS_STEP),
+            reconcile=_reconcile(ReconcileStep.WRITE_CONFIG, from_rev=_REV, attempts=2),
         ),
     ),
     Written(
@@ -329,7 +296,6 @@ WRITTEN: Final[tuple[Written, ...]] = (
             validation=_validation(
                 ok=False, never_valid=True, error_count=1, warning_count=0, first_error="kind: bad"
             ),
-            sandboxes=(),
             credentials=None,
             spend=None,
         ),
@@ -341,11 +307,7 @@ WRITTEN: Final[tuple[Written, ...]] = (
             applied_rev=_OLD_REV,
             config_rev=_OLD_REV,
             validation=_validation(ok=False, error_count=1, first_error="egress: bad host"),
-            faults=(
-                _fault(
-                    "orphan_processes", blocks=False, source=SOURCE_ATTENDANCE, sandbox="chat-s1"
-                ),
-            ),
+            faults=(_fault("audit_unreadable", blocks=False, source=SOURCE_ATTENDANCE),),
         ),
     ),
     Written(
@@ -355,51 +317,35 @@ WRITTEN: Final[tuple[Written, ...]] = (
             validation=_validation(ok=False, error_count=1, first_error="e" * 199 + "\u00e9"),
         ),
     ),
-    # --- sandboxes -------------------------------------------------------------
-    Written(
-        "sandbox-each-state",
-        _document(
-            sandboxes=tuple(
-                _sandbox(number, state) for number, state in enumerate(SandboxLifecycle, start=1)
-            )
-        ),
-    ),
-    Written(
-        "sandbox-channel-lost",
-        _document(sandboxes=(_sandbox(1, channel=ChannelState.LOST),)),
-    ),
-    Written("sandbox-none", _document(sandboxes=())),
     # --- faults ----------------------------------------------------------------
     Written(
         "fault-of-caregiver",
         _degraded(
-            _fault(
-                "sandbox_start_failed",
-                blocks=True,
-                attempts=3,
-                message="the sandbox did not start",
-                sandbox="chat-s4",
-            ),
             _fault("spend_unknown", blocks=False, message="read_spend: no answer"),
             _fault("key_mint_failed", blocks=True, message="key/generate: 500"),
-            _fault("egress_assert_failed", blocks=True, message="example.com:443 is reachable"),
+            _fault("token_publish_failed", blocks=True),
         ),
     ),
     Written(
         "fault-of-other-writers",
         _degraded(
             _fault(
-                "orphan_processes",
+                "vmm_protocol_mismatch",
                 blocks=False,
                 source=SOURCE_ATTENDANCE,
                 stale=True,
-                message="foreign_pi_processes=2",
-                sandbox="chat-s3",
+                message="the vmm speaks host API protocol 3",
             ),
-            _fault("protocol_mismatch", blocks=True, source=SOURCE_ATTENDANCE),
-            _fault("protocol_violation", blocks=True, source=SOURCE_ATTENDANCE),
             _fault("audit_unreadable", blocks=False, source=SOURCE_ATTENDANCE),
             _fault("grants_stale", blocks=True, source=SOURCE_PEP, message="not read", rev=None),
+            _fault(
+                "sandbox_start_failed",
+                blocks=False,
+                source=SOURCE_VMM,
+                message="playpen answered fatal: mount_dir_unset",
+            ),
+            _fault("egress_assert_failed", blocks=False, source=SOURCE_VMM, message="--net"),
+            _fault("serial_log_full", blocks=False, source=SOURCE_VMM),
         ),
     ),
     Written(
@@ -445,7 +391,6 @@ WRITTEN: Final[tuple[Written, ...]] = (
                 nested=_NESTED,
                 message="",
             ),
-            _fault("image_behind", blocks=False),
             _fault("token_publish_failed", blocks=True),
         ),
     ),
@@ -455,11 +400,9 @@ WRITTEN: Final[tuple[Written, ...]] = (
             _fault(
                 "sandbox_start_failed",
                 blocks=False,
-                source=SOURCE_ATTENDANCE,
+                source=SOURCE_VMM,
                 message="the playpen answered fatal",
-                sandbox="chat-s2",
             ),
-            sandboxes=(_sandbox(1), _sandbox(2, SandboxLifecycle.CREATING)),
         ),
     ),
     Written(
@@ -491,16 +434,7 @@ WRITTEN: Final[tuple[Written, ...]] = (
             validation=_validation(ok=False, error_count=1, first_error="e" * 201),
         ),
     ),
-    Written("lax-reconcile-in-sync", _document(reconcile=_reconcile("validate"))),
-    Written(
-        "lax-reconcile-step-unknown",
-        _document(state=FamilyState.RECONCILING, reconcile=_reconcile("wait")),
-    ),
-    Written("lax-sandbox-of-other-family", _document(sandboxes=(_sandbox(1, id="code-s1"),))),
-    Written(
-        "lax-sandbox-twice",
-        _document(sandboxes=(_sandbox(1), _sandbox(1, SandboxLifecycle.DRAINING))),
-    ),
+    Written("lax-reconcile-in-sync", _document(reconcile=_reconcile(ReconcileStep.VALIDATE))),
     Written("lax-never-valid-in-sync", _document(validation=_validation(never_valid=True))),
     Written("lax-fault-code-unknown", _degraded(_fault("sandbox_lost", blocks=True))),
     Written("lax-fault-blocks-against-table", _degraded(_fault("key_mint_failed", blocks=False))),
@@ -524,22 +458,6 @@ WRITTEN: Final[tuple[Written, ...]] = (
 
 def _document_args(document: StatusDocument) -> dict[str, Json]:
     """The fields of the document, by the names of contract 05 §2.1."""
-    sandboxes = [
-        {
-            "id": one.id,
-            "state": one.state,
-            "power": one.power,
-            "image": one.image,
-            "spec_hash": one.spec_hash,
-            "cpus": one.cpus,
-            "memory": one.memory,
-            "created_at": one.created_at,
-            "ready_at": one.ready_at,
-            "channel": one.channel,
-            "supervisor_env": one.playpen_env,
-        }
-        for one in document.sandboxes
-    ]
     faults = [
         {
             "code": one.code,
@@ -565,7 +483,6 @@ def _document_args(document: StatusDocument) -> dict[str, Json]:
         "validation": document.validation,
         "faults": faults,
         "reconcile": document.reconcile,
-        "sandboxes": sandboxes,
         "credentials": document.credentials,
         "spend": document.spend,
         "limits": document.limits,
@@ -725,7 +642,7 @@ class FaultDocument:
         return repeat_input(self.parts) if self.parts else bytes_input(self.raw)
 
 
-def _entry(code: object = "orphan_processes", **fields: object) -> dict[str, object]:
+def _entry(code: object = "audit_unreadable", **fields: object) -> dict[str, object]:
     return {
         "code": code,
         "blocks_turns": False,
@@ -758,16 +675,20 @@ def _fault_without(doc_id: str, name: str) -> FaultDocument:
 
 
 def _written_fault_files(scratch: Path) -> tuple[FaultDocument, ...]:
-    """Files that the two writers made, each read from its own directory and
-    from the directory of the other writer."""
+    """Files that the three writers made, each read from its own directory
+    and from the directory of another writer."""
     each_code = next(one for one in REPORTED if one.id == "each-code")
     _, of_attendance = _reported_file(each_code, scratch / "written" / "attendance")
+
+    of_vmm = _VMM_FIXTURE.read_bytes()
 
     return (
         FaultDocument("written-by-attendance", of_attendance),
         FaultDocument("written-by-attendance-read-as-pep", of_attendance, SOURCE_PEP),
         FaultDocument("written-by-chaperone", _OF_CHAPERONE, SOURCE_PEP),
         FaultDocument("written-by-chaperone-read-as-attendance", _OF_CHAPERONE),
+        FaultDocument("written-by-vmm", of_vmm, SOURCE_VMM),
+        FaultDocument("written-by-vmm-read-as-attendance", of_vmm),
     )
 
 
@@ -794,40 +715,71 @@ FAULT_DOCUMENTS: Final[tuple[FaultDocument, ...]] = (
     _fault_without("written-missing", "written_at"),
     # --- the list ---
     _fault_without("faults-missing", "faults"),
-    _fault_doc("faults-object", faults={"orphan_processes": True}),
+    _fault_doc("faults-object", faults={"audit_unreadable": True}),
     _fault_doc("faults-null", faults=None),
-    _fault_doc("faults-not-objects", faults=["orphan_processes", None, 5, [_entry()]]),
-    _fault_doc("fault-two", faults=[_entry(), _entry("protocol_mismatch")]),
+    _fault_doc("faults-not-objects", faults=["audit_unreadable", None, 5, [_entry()]]),
+    _fault_doc("fault-two", faults=[_entry(), _entry("vmm_protocol_mismatch")]),
     _fault_doc("fault-twice", faults=[_entry(), _entry(message="again")]),
     # --- one entry ---
     _fault_doc("code-unknown", faults=[_entry("sandbox_lost")]),
     _fault_doc("code-of-other-writer", faults=[_entry("grants_stale")]),
     _fault_doc("code-of-caregiver", faults=[_entry("spend_unknown")]),
-    _fault_doc("code-upper", faults=[_entry("ORPHAN_PROCESSES")]),
+    _fault_doc("code-upper", faults=[_entry("AUDIT_UNREADABLE")]),
     _fault_doc("code-number", faults=[_entry(5)]),
     _fault_doc("code-missing", faults=[{"since": FRESH}]),
-    _fault_doc("since-missing", faults=[{"code": "orphan_processes"}]),
+    _fault_doc("since-missing", faults=[{"code": "audit_unreadable"}]),
     _fault_doc("since-number", faults=[_entry(since=5)]),
     _fault_doc("since-not-a-time", faults=[_entry(since="yesterday")]),
     _fault_doc("since-empty", faults=[_entry(since="")]),
-    _fault_doc("blocks-against-table", faults=[_entry("protocol_mismatch", blocks_turns=False)]),
+    _fault_doc(
+        "blocks-against-table",
+        SOURCE_PEP,
+        faults=[_entry("grants_stale", blocks_turns=False)],
+    ),
+    _fault_doc(
+        "blocks-against-table-vmm",
+        SOURCE_VMM,
+        faults=[_entry("serial_log_full", blocks_turns=True)],
+    ),
     _fault_doc("blocks-text", faults=[_entry(blocks_turns="true")]),
     _fault_doc("stale-claimed", faults=[_entry(stale=True)]),
     _fault_doc("source-claimed", faults=[_entry(source=SOURCE_PEP)]),
     _fault_doc("only-code-and-since", faults=[{"code": "audit_unreadable", "since": FRESH}]),
     _fault_doc(
         "detail-kept",
+        SOURCE_VMM,
         faults=[
             _entry(
                 "sandbox_start_failed",
                 message="the playpen answered fatal",
-                sandbox="chat-s4",
                 attempts=3,
                 nested=_NESTED,
             )
         ],
     ),
     _fault_doc("grants-stale", SOURCE_PEP, faults=[_entry("grants_stale", message="m", rev=None)]),
+    # The vmm is the third writer since contract 05 minor 18 (decision
+    # CH21-1). Minor 18 drops the codes whose only source went at the cut.
+    _fault_doc(
+        "vmm-each-code",
+        SOURCE_VMM,
+        faults=[
+            _entry("sandbox_start_failed"),
+            _entry("egress_assert_failed"),
+            _entry("serial_log_full"),
+        ],
+    ),
+    _fault_doc("vmm-code-of-attendance", SOURCE_VMM, faults=[_entry("vmm_protocol_mismatch")]),
+    _fault_doc("start-fault-from-attendance", faults=[_entry("sandbox_start_failed")]),
+    _fault_doc(
+        "codes-gone-at-the-cut",
+        faults=[
+            _entry("protocol_mismatch"),
+            _entry("protocol_violation"),
+            _entry("orphan_processes"),
+            _entry("image_behind"),
+        ],
+    ),
     _fault_doc("grants-stale-old", SOURCE_PEP, written_at=OLD, faults=[_entry("grants_stale")]),
     # --- the bytes and the JSON ---
     FaultDocument("bytes-empty", b""),
@@ -842,7 +794,7 @@ FAULT_DOCUMENTS: Final[tuple[FaultDocument, ...]] = (
     FaultDocument(
         "json-duplicate-code",
         _FAULT_TEXT.replace(
-            '"code": "orphan_processes"', '"code": "grants_stale", "code": "orphan_processes"'
+            '"code": "audit_unreadable"', '"code": "grants_stale", "code": "audit_unreadable"'
         ).encode(),
     ),
     FaultDocument(
@@ -1109,7 +1061,7 @@ def surfaces() -> tuple[Surface, ...]:
                 contract=f"{CONTRACT} §3.3.1",
                 notes=(
                     "The input is the bytes of one fault file. params.source is the writer "
-                    "whose directory holds the file: sessiond or pep.",
+                    "whose directory holds the file: attendance, pep or vmm.",
                     "The entry point takes the time now. The generator gives it "
                     f"{NOW.isoformat()}.",
                     "value is what the reader takes from the file. A refused vector is a file "

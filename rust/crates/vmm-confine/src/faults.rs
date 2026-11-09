@@ -18,13 +18,12 @@
 //! Every time is RFC 3339 in UTC with `Z`, to the second (root
 //! `AGENTS.md`, Time), from `rfc3339::format`.
 //!
-//! CONTRACT-QUESTION (decisions CH21-1, CH36 G18): contract 05 §3.3.1 has
-//! no row for the vmm yet. Until its amendment, three things are open: the
-//! group of the directory and the files (here the mode is 0750 and 0640,
-//! the group is the one the directory gets on the host), the `source`
-//! enum of §3.3, and the reader. caregiver reads only `attendance` and
-//! `pep` today, so it ignores this file. AGENTS.md lists this in Known
-//! gaps.
+//! Contract 05 0.18.0 gives the vmm its row of §3.3.1 (decisions CH21-1,
+//! CH36 G18). Its group is the user of caregiver. The vmm sets the modes
+//! only, and the group is the one the directory gets on the host.
+//! caregiver folds the file into the status document. Its test reads
+//! `tests/fixtures/caregiver_fault.json`, the bytes of
+//! `the_bytes_match_the_caregiver_fixture`.
 //!
 //! No vmm fault stops turns (decision CH82 rules 2 and 6): each entry
 //! carries `blocks_turns` false. The next turn tries a start, and each

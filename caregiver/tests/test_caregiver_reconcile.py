@@ -24,14 +24,13 @@ from caregiver.clock import seconds_from_now
 from caregiver.litellm_keys import FakeLiteLLMKeys, HttpLiteLLMKeys, LiteLLMError, Spend
 from caregiver.reach_files import EGRESS_CAP
 from caregiver.reconcile import (
-    TIMERS_STEP,
-    VALIDATE_STEP,
     Actors,
     FamilyNotFoundError,
     ReconcileResult,
     SpendRead,
     reconcile_family,
 )
+from caregiver.status import ReconcileStep
 from caregiver.timers import FakeUnits
 from caregiver_helpers import (
     fake_policy,
@@ -131,7 +130,7 @@ def family_text(fleet: Fleet) -> str:
 def test_a_first_pass_reaches_in_sync(fleet: Fleet) -> None:
     result = fleet.run()
     assert result.status.state is FamilyState.IN_SYNC
-    assert result.status.sandboxes == ()
+    assert "sandboxes" not in result.status.as_json()
 
 
 def test_a_first_pass_records_the_revision_it_applied(fleet: Fleet) -> None:
@@ -513,17 +512,6 @@ def test_a_directory_with_no_family_file_has_no_pass(fleet: Fleet) -> None:
 
 # --- the shape and the reconcile block -------------------------------------------
 
-#: Contract 05 §3.4's step names, and the name of the timer step that the
-#: CONTRACT-QUESTION of `reconcile.TIMERS_STEP` keeps.
-STEP_NAMES = (
-    VALIDATE_STEP,
-    "write_grants",
-    "update_key",
-    "write_config",
-    "set_egress",
-    TIMERS_STEP,
-)
-
 
 def test_a_shape_change_starts_no_vm(fleet: Fleet) -> None:
     """Contract 05 §3.5: a new shape reaches a VM at its next start. The
@@ -542,17 +530,19 @@ def test_a_reconciling_family_publishes_the_reconcile_block(fleet: Fleet) -> Non
     fleet.write(model={"router": "agent-fast", "budget_usd_per_day": 15})
     result = fleet.run()
     assert result.status.reconcile is not None
-    assert result.status.reconcile["needs_switch"] is False
-    assert result.status.reconcile["to_rev"] == result.status.registry_rev
+    assert "needs_switch" not in result.status.reconcile.as_json()
+    assert result.status.reconcile.to_rev == result.status.registry_rev
 
 
-def test_the_published_step_is_one_of_the_contracts_names(fleet: Fleet) -> None:
-    """Contract 05 §3.4 fixes the step names."""
+def test_the_published_step_is_the_last_step_the_pass_ran(fleet: Fleet) -> None:
+    """Contract 05 §3.4 fixes the step names (`ReconcileStep`). A model
+    change updates the key and rewrites `runtime.json`."""
     fleet.run()
     fleet.write(model={"router": "agent-fast", "budget_usd_per_day": 15})
     result = fleet.run()
+    assert result.ran == (ReconcileStep.UPDATE_KEY, ReconcileStep.WRITE_CONFIG)
     assert result.status.reconcile is not None
-    assert result.status.reconcile["step"] in STEP_NAMES
+    assert result.status.reconcile.step is ReconcileStep.WRITE_CONFIG
 
 
 def test_an_in_sync_family_publishes_no_reconcile_block(fleet: Fleet) -> None:
@@ -633,9 +623,20 @@ def test_an_enabled_timer_raises_nothing(fleet: Fleet) -> None:
 
 
 def test_a_attendance_fault_folds_into_the_document(fleet: Fleet) -> None:
-    write_fault_file(fleet.state_root, "attendance", "protocol_mismatch")
+    write_fault_file(fleet.state_root, "attendance", "vmm_protocol_mismatch")
     result = fleet.run()
-    assert [one.code for one in result.status.faults] == ["protocol_mismatch"]
+    assert [one.code for one in result.status.faults] == ["vmm_protocol_mismatch"]
+    assert result.status.state is FamilyState.DEGRADED
+
+
+def test_a_vmm_fault_folds_into_the_document(fleet: Fleet) -> None:
+    """Contract 05 §3.3.1: the vmm is the third writer (decision CH21-1).
+    Its fault makes the family `degraded` and stops no turn (decision CH82
+    rule 2)."""
+    write_fault_file(fleet.state_root, "vmm", "serial_log_full")
+    result = fleet.run()
+    assert [(one.code, one.source) for one in result.status.faults] == [("serial_log_full", "vmm")]
+    assert not any(one.blocks_turns for one in result.status.faults)
     assert result.status.state is FamilyState.DEGRADED
 
 

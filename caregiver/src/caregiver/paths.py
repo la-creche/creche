@@ -158,6 +158,6 @@ def webhook_token_path(root: Path, family: str, name: str) -> Path:
 
 def fault_path(root: Path, source: str, family: str) -> Path:
     """Contract 05 §3.3.1, contract 04 §1.6: one file per writer per family.
-    `source` is a wire name, `sessiond` or `pep` (attendance's and the PEP's)
-    — never `caregiver`, which reads these, never writes them."""
+    `source` is the writer: `attendance`, `pep` or `vmm` (decision CH21-1),
+    never `caregiver`, which reads these and writes none of them."""
     return root / FAULTS_DIR / source / f"{family}.json"
