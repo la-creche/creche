@@ -27,6 +27,10 @@ DIR_MODE_GROUP = 0o750
 # either a bug or an attempt to make this service read a file into memory.
 MAX_JSON_BYTES = 1_048_576
 
+#: The end of the name of a temporary file. A crash between the open and the
+#: rename leaves one behind.
+TEMP_SUFFIX = ".tmp"
+
 _counter = itertools.count()
 
 
@@ -40,7 +44,7 @@ def write_json(path: Path, payload: dict[str, Any], mode: int = MODE_PUBLIC_READ
 def write_text(path: Path, body: str, mode: int = MODE_PUBLIC_READ) -> None:
     """Same discipline for a document that is not JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.{os.getpid()}.{next(_counter)}.tmp")
+    temp = path.with_name(f".{path.name}.{os.getpid()}.{next(_counter)}{TEMP_SUFFIX}")
 
     try:
         handle = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
