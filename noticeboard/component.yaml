@@ -21,8 +21,9 @@ provides: []
 requires:
   # Contract 02: it reads the view of each family's sessions. Minor 16 adds
   # the `vm` of a view row, the one VM state it shows (decisions CH21-1,
-  # CH79 rule 4).
-  - { contract: session-api, major: 0, min_minor: 16 }
+  # CH79 rule 4). Minor 17 drops `approvals` and `sandbox` from the outcome
+  # record (§13.1, §16). It reads neither key.
+  - { contract: session-api, major: 0, min_minor: 17 }
   # Contract 05: it reads the per-family status document. Minor 18 drops the
   # `sandboxes` list and minor 20 drops `needs_switch` (decision CH21-1).
   - { contract: manager-status, major: 0, min_minor: 20 }
