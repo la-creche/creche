@@ -150,7 +150,7 @@
   {"accepted":33,"entry":"handover.resolve.build_document","path":"manifest/resolved.json","raised":0,"refused":12,"surface":"manifest.resolved","vectors":45},
   {"accepted":5,"entry":"handover.executor.approval.gate_id","path":"manifest/gate.json","raised":0,"refused":0,"surface":"manifest.gate","vectors":5},
   {"accepted":10,"entry":"handover.executor.approval.Summary.as_dict","path":"manifest/summary.json","raised":0,"refused":0,"surface":"manifest.summary","vectors":10},
-  {"accepted":23,"entry":"attendance.requests.read_dispatch","path":"session/request.dispatch.json","raised":0,"refused":46,"surface":"session.request.dispatch","vectors":69},
+  {"accepted":5,"entry":"attendance.requests.read_dispatch","path":"session/request.dispatch.json","raised":0,"refused":64,"surface":"session.request.dispatch","vectors":69},
   {"accepted":75,"entry":"attendance.requests.read_jobs","path":"session/request.jobs.json","raised":0,"refused":59,"surface":"session.request.jobs","vectors":134},
   {"accepted":12,"entry":"attendance.requests.read_delegate","path":"session/request.delegate.json","raised":0,"refused":36,"surface":"session.request.delegate","vectors":48},
   {"accepted":36,"entry":"attendance.errors.ApiError.body","path":"session/error_body.json","raised":0,"refused":0,"surface":"session.error_body","vectors":36},

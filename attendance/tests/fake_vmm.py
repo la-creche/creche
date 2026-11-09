@@ -39,6 +39,13 @@ class FakeVmm:
     )
     #: Each close of a stream waits for this event, when it is set.
     close_gate: asyncio.Event | None = None
+    #: An open of a session with a gate here waits for the gate.
+    open_gates: dict[str, asyncio.Event] = field(default_factory=dict[str, asyncio.Event])
+    #: A list of a family with a gate here waits for the gate.
+    list_gates: dict[str, asyncio.Event] = field(default_factory=dict[str, asyncio.Event])
+    #: The sessions whose stream has no facade on its far side: nothing
+    #: answers, the handshake included.
+    mute: set[str] = field(default_factory=set[str])
     rows: dict[str, SessionRow] = field(default_factory=dict[str, SessionRow])
     creates: list[CreateSession] = field(default_factory=list[CreateSession])
     lists: list[ListSessions] = field(default_factory=list[ListSessions])
@@ -65,6 +72,11 @@ class FakeVmm:
 
     async def list_page(self, query: ListSessions) -> SessionPage:
         self.lists.append(query)
+        gate = self.list_gates.get(query.family.root)
+
+        if gate is not None:
+            await gate.wait()
+
         self._refused("list")
         rows = [
             row
@@ -88,6 +100,11 @@ class FakeVmm:
 
     async def open_acp(self, family: str, session: str, max_line_bytes: int) -> FakeChannel:
         self.opened.append(session)
+        gate = self.open_gates.get(session)
+
+        if gate is not None:
+            await gate.wait()
+
         self._refused("acp")
         row = self.rows.get(session)
 
@@ -107,7 +124,10 @@ class FakeVmm:
         )
         self.channels[session] = channel
         self.facades[session] = facade
-        self._tasks.append(asyncio.create_task(serve(channel, facade)))
+
+        if session not in self.mute:
+            self._tasks.append(asyncio.create_task(serve(channel, facade)))
+
         return channel
 
     def only_session(self) -> str:

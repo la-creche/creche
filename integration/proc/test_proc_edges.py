@@ -50,6 +50,7 @@ from proc_harness import (
 )
 from proc_services import SERVICES, Service
 from proc_stack import Stack
+from proc_standins import vmm_calls
 from proc_tree import FAMILY
 from proc_trigger import TriggerStack, hook_path
 
@@ -382,10 +383,11 @@ def work_done(stack: Stack) -> list[str]:
 
     1. A session in the session store, while the session exists.
     2. An outcome record, after a job ended and its session went.
-    3. The record of the `sbx` stand-in, for each sandbox command that started.
+    3. A create call of the vmm stand-in, for each session row of a job.
     """
     tree = stack.tree
-    done = [f"sandbox command {call.pid}" for call in stack.sbx_calls()]
+    creates = [call for call in vmm_calls(tree) if call["route"] == "create"]
+    done = [f"session row {call['body']['id']}" for call in creates]
 
     for family in sorted(entry.name for entry in tree.sessions_root.iterdir()):
         done.extend(f"session {family}/{session}" for session in tree.sessions_of(family))
