@@ -72,10 +72,9 @@ type StartDb = ReturnType<typeof sqlite>;
 
 /**
  * What `composeAgent` takes: the edges of the runtime and the start state.
- * `store` is the path of `flue.db`, which the facade opens for
- * `creche_sessions` too. `workspace` is the working directory of the
- * granted sandbox tools. `indexRoot` is the `library/` index store, or
- * null for none.
+ * `store` is the path of `flue.db`. `workspace` is the working directory
+ * of the granted sandbox tools. `indexRoot` is the `library/` index store,
+ * or null for none.
  */
 export interface AgentStart {
   readonly store: string;
@@ -96,8 +95,6 @@ export interface ComposedAgent {
   readonly agent: Agent;
   readonly providers: readonly Provider[];
   readonly db: StartDb;
-  /** The path of `flue.db`, the file of `db`. */
-  readonly store: string;
   /** The working directory of the granted sandbox tools. */
   readonly workspace: string;
   /** The skill directories that were not valid, by name. The caller logs them to stderr. */
@@ -217,7 +214,6 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
     agent: FamilyAgent,
     providers: [model.provider],
     db: sqlite(start.store),
-    store: start.store,
     workspace,
     skippedSkills: start.skippedSkills,
     state,

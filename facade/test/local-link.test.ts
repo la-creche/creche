@@ -3,8 +3,8 @@
 // as guest init does: the turn events up, the stop line down, the loss of
 // the link, and the exit of the supervisor at a stop line or a lost link.
 
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { read } from "agent/wire-read";
@@ -15,9 +15,7 @@ import { facadeApp } from "../src/acp.js";
 import { CONTROL_LINE_CAP, FACADE_STOP_WAIT_MS, LOCAL_LINK_SOCKET } from "../src/guest.js";
 import { FLUE_STOP_MS, guestLink, LocalLink, turnLine } from "../src/local-link.js";
 import type { LinkHandlers } from "../src/local-link.js";
-import { SBX } from "../src/mode.js";
 import { sessionService } from "../src/service.js";
-import { SessionIndex } from "../src/session-index.js";
 import { EXIT_LOCAL_LINK, EXIT_OK, runSupervisor } from "../src/supervisor.js";
 import type { Runtime } from "../src/supervisor.js";
 import { Wire } from "./acp-wire.js";
@@ -101,10 +99,9 @@ describe("a prompt", () => {
     const guest = await guestInit();
     const facade = link(guest.path, []);
     facade.open(NO_HANDLERS);
-    const index = new SessionIndex(new DatabaseSync(":memory:"));
-    const service = sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, link: facade, store: flue.store });
+    const id = randomUUID();
+    const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: facade, store: flue.store });
     const wire = new Wire(facadeApp({ onBeat: () => undefined, onShutdown: () => undefined }, service));
-    const id = (await wire.request("session/new", { cwd: "/work", mcpServers: [] })).result?.["sessionId"] as string;
     // The start goes up while Flue runs the turn, not after: the vmm must
     // see a running turn (decisions CH19 rule 6, CH32 rule 6).
     let duringTurn = "";
@@ -130,25 +127,6 @@ describe("a prompt", () => {
       { start: {} },
       { end: { title: "Another thing", updated_at: times[1] } },
     ]);
-  });
-
-  it("sends the turn end when the row write throws", async () => {
-    const guest = await guestInit();
-    const facade = link(guest.path, []);
-    facade.open(NO_HANDLERS);
-    const db = new DatabaseSync(":memory:");
-    const service = sessionService({ agent: Probe, agentName: "Probe", index: new SessionIndex(db), mode: SBX, link: facade, store: flue.store });
-    const wire = new Wire(facadeApp({ onBeat: () => undefined, onShutdown: () => undefined }, service));
-    const id = (await wire.request("session/new", { cwd: "/work", mcpServers: [] })).result?.["sessionId"] as string;
-    // A real SQLite fault at the turn's write, as a full disk gives one.
-    db.exec("CREATE TRIGGER full BEFORE UPDATE OF updated_at ON creche_sessions BEGIN SELECT RAISE(ABORT, 'FIXTURE-FULL'); END");
-    faux.setResponses([fauxAssistantMessage("done")]);
-
-    const answer = await wire.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "Plan the garden" }] });
-    await until(() => guest.received().split("\n").length === 3);
-
-    expect(answer.result).toBeUndefined();
-    expect(guest.received().split("\n").slice(0, 2).map((line) => Object.keys(JSON.parse(line) as object))).toEqual([["start"], ["end"]]);
   });
 });
 

@@ -44,25 +44,12 @@ install here again.
 
 `vectors/creche-extensions.json` holds the creche extensions of ACP: the
 answer to `initialize`, `_creche/beat` and `_creche/shutdown`, the line cap
-and the beat cadence. The facade tests read it. The attendance tests read it
-too. Change a value there, and both sides change.
+and the beat cadence. The facade tests read it.
 
-Its `session_meta` holds the three keys of `_meta` that attendance sends,
-the method that carries each and the shape of each value, and the one key
-that the facade adds:
-
-| Key | Method | Column of `creche_sessions` |
-|---|---|---|
-| `creche/job` | `session/new` | `job_id` |
-| `creche/delegation` | the first `session/prompt` | `delegation`: the ID only |
-| `creche/trigger` | the first `session/prompt` | `trigger_json` |
-| `creche/created_at` | sent: `session/list`, `session_info_update` | `created_at`, as RFC 3339 UTC |
-
-`src/creche-meta.ts` checks each value. A bad value is refused with
-invalid params. A session keeps its first delegation and its first
-trigger, and a prompt that sends another one is refused. No key goes into
-the model's prompt. Each `session/list` row, and the `session_info_update`
-at the end of each turn, sends the keys of the session in its `_meta`.
+The facade reads no creche key of `_meta`. The host row carries the typed
+origin of each session, which replaces the keys `creche/job`,
+`creche/delegation`, `creche/trigger` and `creche/created_at` (decision
+CH21-4). attendance refuses each creche key from a door client.
 
 ## Environment
 
@@ -75,9 +62,12 @@ variable name, and `test/guest.test.ts` holds it equal to
 
 On sbx `src/family.ts` reads the family config one time at process
 start, with the agent module's `readFamilyConfig`. `agent/AGENTS.md` names
-each variable. The agent's store and the facade's `creche_sessions` share
-`$AGENT_SESSIONS_DIR/flue.db`. Flue starts only after the facade holds the
-lock.
+each variable. Flue keeps its store in `$AGENT_SESSIONS_DIR/flue.db`, and
+it starts only after the facade holds the lock. On sbx the facade serves
+no session after the cut: it answers `initialize`, `_creche/beat` and
+`_creche/shutdown`, and the SDK answers each session method with method
+not found. Known gaps holds the `CONTRACT-QUESTION`. playpen stays at its
+pre-cut tag for the 7 days of a rollback (decision CH79 rule 3).
 
 Under CH the facade reads no `AGENT_*` variable (decisions CH5e, CH80).
 A set one has no effect and gives no stderr line (decision CH81 rule 5).
@@ -136,15 +126,26 @@ variable or the field, never a value.
 ## Sessions
 
 A session is one Flue agent instance. Its ACP session id is the instance
-id. On sbx, `session/new` mints a fresh UUID until the cut (decision CH52
-rule 2). In CH mode the id is the host's `CRECHE_SESSION_ID`, and a VM
-serves one session (decisions CH1, CH25 rule 2), so a second
-`session/new` is refused with invalid params. Flue keeps no list of conversations, so the facade keeps one table,
-`creche_sessions` (id, title, cwd, created_at, updated_at, job_id,
-delegation, trigger_json), in `flue.db`
-beside Flue's own tables (`src/session-index.ts`). No other program of ours
-writes the file. The tests use `sqlite()` with no path and pi's
-`fauxProvider()`, as the agent tests do.
+id. A VM serves one session, and its id is the host's `CRECHE_SESSION_ID`
+(decisions CH1, CH25 rule 2). The facade opens that session at start and
+serves no other id (`src/sessions.ts`, decision CH21-8). Flue makes the
+instance at the first send, so a session with no turn loads an empty
+history.
+
+The vmm keeps the host list: cwd, title, times and origin (decision CH21).
+attendance answers `session/new` and `session/list` from that list
+(decision CH21-7), so the facade serves neither, and the SDK answers each
+with method not found. The facade keeps no table of its own in `flue.db`.
+
+At each turn end the facade sends `session_info_update` to each peer on
+the session. `updatedAt` is the time of the turn's last record. Only the
+first turn, the one that makes the Flue instance, carries `title`, because
+the vmm keeps the first title of the row (decision CH32 rule 4).
+
+The tests use `sqlite()` with no path and pi's `fauxProvider()`, as the
+agent tests do. Each test serves a fresh session id on the one Flue of its
+file. `test/served-family.ts` serves the real agent module in process: a
+CH start reads the fixed guest paths, which a test host lacks.
 
 One prompt runs per session at a time. `handle.read()` replays the whole
 conversation from its start, so `SubmissionChunks` keeps only the chunks
@@ -263,10 +264,23 @@ facade.
 
 ## Known gaps
 
-- The facade does not send `creche/delegation` to the chaperone. Flue's MCP
-  adapter sends no `_meta` on `tools/call`, and a connection has no
-  per-call header. So the chaperone cannot use the delegation ID for a
-  one-hop bound at run time. `src/sessions.ts` holds the
-  `CONTRACT-QUESTION`.
+- The facade does not send the delegation to the chaperone. The delegation
+  rides in the origin of the host row (decision CH21-4), and nothing gives
+  it to the facade. Flue's MCP adapter also sends no `_meta` on
+  `tools/call`, and a connection has no per-call header. So the chaperone
+  cannot use the delegation ID for a one-hop bound at run time.
+  `src/sessions.ts` holds the `CONTRACT-QUESTION`.
+- CONTRACT-QUESTION: the `initialize` answer lists
+  `sessionCapabilities.list`, and the facade serves no `session/list`.
+  attendance's handshake refuses a facade that does not list it
+  (`read_agent` in `attendance/src/attendance/acp_link.py`), and attendance
+  answers `session/list` itself (decision CH21-7). No row says which side
+  drops the claim. `src/acp.ts` holds it.
+- CONTRACT-QUESTION: no row says what the sbx path serves after the cut.
+  Decision CH21-4 drops `creche_sessions` in CH mode only, and decision
+  CH81 rule 7 keeps the sbx path until phase 11 item 7. The file list of
+  plan PR CR9 removes `session-index.ts`, the one session table of sbx.
+  The reading: on sbx the facade starts and serves no session.
+  `serveFamily` in `src/family.ts` holds it.
 - The workspace is one directory for every session. The playpen gave
   `coding-sandbox` one directory per chat (Phase 2 plan, risk 6).

@@ -10,9 +10,10 @@
 //
 //   session/cancel ──► abort() ──► the prompt answers `cancelled`
 //
-// Under CH the turn start and the turn end each go to guest init on the
-// local link (`src/local-link.ts`, decision CH21). The end carries the
-// title and `updatedAt` of the turn record.
+// The turn start and the turn end each go to guest init on the local link
+// (`src/local-link.ts`, decision CH21). The end carries the title and
+// `updatedAt` of the turn record. The same end goes to each peer as
+// `session_info_update`, and only the first turn names the session.
 //
 // One turn runs per session at a time. A second prompt is refused: Flue
 // would join it to the running response, and its reply would have no turn
@@ -34,7 +35,8 @@ import { byteLength } from "./line.js";
 import type { Live } from "./live.js";
 import type { LocalLink } from "./local-link.js";
 import { chunkToUpdates, forward, SubmissionChunks } from "./mapper.js";
-import type { Sessions } from "./sessions.js";
+import { infoOf } from "./sessions.js";
+import type { OneSession } from "./sessions.js";
 
 /** The largest prompt text, in UTF-8 bytes: attendance's prompt cap. */
 export const MAX_PROMPT_BYTES = 262_144;
@@ -121,9 +123,9 @@ function describe(error: unknown): string {
 export class Turns {
   private readonly running = new Map<string, Running>();
 
-  /** `link` is the local link of guest init under CH, and null on sbx (decision CH10-4). */
+  /** `link` is the local link of guest init, as the supervisor gives it to `serve` (`src/supervisor.ts`). */
   public constructor(
-    private readonly sessions: Sessions,
+    private readonly session: OneSession,
     private readonly live: Live,
     private readonly link: LocalLink | null,
     private readonly refresh: Refresh = NO_REFRESH,
@@ -132,7 +134,7 @@ export class Turns {
   /** The updates go to every peer on the session, the prompting one too. */
   public async prompt(params: PromptRequest, peer: Peer): Promise<Outcome<PromptResponse>> {
     const { sessionId } = params;
-    const handle = this.sessions.handle(sessionId);
+    const handle = this.session.handle(sessionId);
     if (handle === null) {
       return { ok: false, refusal: { kind: "unknown_session", sessionId } };
     }
@@ -158,7 +160,7 @@ export class Turns {
     }
   }
 
-  /** The pull, the keys of `_meta`, then the turn. The session is busy until the caller frees it. */
+  /** The pull, then the turn. The session is busy until the caller frees it. */
   private async pulledTurn(
     running: Running,
     params: PromptRequest,
@@ -166,8 +168,7 @@ export class Turns {
     text: string,
   ): Promise<Outcome<PromptResponse>> {
     const { sessionId } = params;
-    // A fault fails this prompt only (decision CH23 rule 2). The pull comes
-    // first, so a prompt that fails here keeps no `_meta`.
+    // A fault fails this prompt only (decision CH23 rule 2).
     const fault = await this.refresh(sessionId);
     if (running.cancelled) {
       return settle("aborted", "");
@@ -177,12 +178,8 @@ export class Turns {
       return settle("failed", `the family state did not read (${fault})`);
     }
 
-    // The keys go on the row, never into the text that the model reads.
-    const kept = this.sessions.keepPromptMeta(sessionId, params._meta);
-    if (!kept.ok) {
-      return kept;
-    }
-
+    // The first send makes the Flue instance, so this turn names the session.
+    const first = await this.session.fresh();
     this.live.attach(sessionId, peer);
     // Each start gets an end, so guest init sees each running turn
     // (decisions CH21, CH32 rule 6).
@@ -197,15 +194,9 @@ export class Turns {
     });
     this.running.delete(sessionId);
 
-    // The end goes up before the row write, so a write that throws still
-    // ends the turn for guest init.
-    const end = this.sessions.turnEndOf(text, lastRecordAt);
+    const end = this.session.turnEndOf(text, lastRecordAt);
     this.link?.turnEnd(end.title, end.updatedAt);
-    const update = this.sessions.recordTurn(sessionId, end);
-    if (update !== null) {
-      sent = this.live.publish(sessionId, [{ position: null, update: { sessionUpdate: "session_info_update", ...update } }]);
-    }
-
+    sent = this.live.publish(sessionId, [{ position: null, update: { sessionUpdate: "session_info_update", ...infoOf(end, first) } }]);
     await sent;
 
     return settle(settlement.outcome, settlement.detail);

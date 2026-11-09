@@ -557,16 +557,14 @@ fn kvm_real_facade_prompts_sleeps_restores_and_stops() {
     });
     through(&info, LITELLM_PORT, LITELLM_KEY, "step 2 limits");
 
-    // 3. On 1201: initialize, session/new, then session/prompt. The id is
-    // the host's (CH25 rule 2). The turn ends with `end_turn` and the stub
-    // text. Both stubs got a request through the guest splice with the
-    // bearer of creds.json, so the 1100 reply reached the agent (CH5a,
+    // 3. On 1201: initialize, then session/prompt of the host's id with no
+    // session/new, as attendance sends it. The facade opened that session
+    // at start (CH21-8, CH25 rule 2). The turn ends with `end_turn` and the
+    // stub text. Both stubs got a request through the guest splice with
+    // the bearer of creds.json, so the 1100 reply reached the agent (CH5a,
     // CH6-2).
     let mut link = Acp::open(&vsock, "step 3 open");
     initialize(&mut link, "step 3 initialize");
-    let params = json!({"cwd": "/root", "mcpServers": []});
-    let (_, made) = link.call("session/new", &params, "step 3 session/new");
-    assert_eq!(made["sessionId"], SESSION, "step 3 session/new: {made}");
     let (notes, stop, cold_ms) = prompt(&mut link, FIRST_PROMPT, "step 3 prompt");
     assert_eq!(stop, "end_turn", "step 3 prompt: {notes:?}");
     assert!(said(&notes).contains(HELLO), "step 3 prompt: {notes:?}");

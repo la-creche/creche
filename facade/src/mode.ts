@@ -1,6 +1,6 @@
 // The runtime that started the facade (decisions CH62 rule 6, CH52 rule 2).
 //
-//   CRECHE_SESSION_ID ──► absent ──────► sbx: session/new mints each id
+//   CRECHE_SESSION_ID ──► absent ──────► sbx: no session after the cut
 //                     ├─► a session id ─► CH: the host's id, for the one session of the VM
 //                     └─► other text ───► refused: the facade does not start
 //

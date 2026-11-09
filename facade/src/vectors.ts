@@ -32,14 +32,3 @@ export const LOCK_FILE = vectors.lock.file;
 /** How often the facade rewrites the lock with a counter one higher. */
 export const LOCK_BEAT_MS = vectors.lock.beat_s * 1000;
 
-/** The `_meta` key of the job id, on `session/new`. */
-export const META_JOB = vectors.session_meta.job.key;
-
-/** The `_meta` key of the delegation, on the first `session/prompt`. */
-export const META_DELEGATION = vectors.session_meta.delegation.key;
-
-/** The `_meta` key of the trigger, on the first `session/prompt`. */
-export const META_TRIGGER = vectors.session_meta.trigger.key;
-
-/** The `_meta` key of the creation time, on `session/list` and `session_info_update`. */
-export const META_CREATED = vectors.session_meta.created_at.key;

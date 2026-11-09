@@ -10,6 +10,7 @@ import { facadeEnv, shortTmp, startFacade } from "./facade-process.js";
 import type { FacadeProcess } from "./facade-process.js";
 
 const SESSION = "0123abcd-0000-4000-8000-00000000c7c7";
+const METHOD_NOT_FOUND = -32601;
 
 /** How long the CH test watches the start: past two start pulls. */
 const START_WATCH_MS = 1000;
@@ -75,15 +76,17 @@ describe("the built facade", () => {
     );
   });
 
-  it("mints a fresh id on sbx", async () => {
+  it("serves no session on sbx after the cut", async () => {
+    // attendance answers session/new from the host list (decision CH21-7),
+    // and on sbx the facade serves no session (the CONTRACT-QUESTION of
+    // `serveFamily`). So only initialize, the beat and the shutdown answer.
     running = startFacade();
     running.send(vectors.initialize.request);
     await running.nextMessage();
     running.send({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/work", mcpServers: [] } });
-    const answer = (await running.nextMessage()) as { result: { sessionId: string } };
+    const answer = (await running.nextMessage()) as { error: { code: number } };
 
-    expect(answer.result.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(answer.result.sessionId).not.toBe(SESSION);
+    expect(answer.error.code).toBe(METHOD_NOT_FOUND);
     // On sbx the facade opens no local link (decision CH10-4).
     expect(running.stderr()).not.toContain("local link");
   });
