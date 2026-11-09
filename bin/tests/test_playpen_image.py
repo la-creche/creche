@@ -73,8 +73,9 @@ def test_the_targets_are_the_flavors_the_release_builds() -> None:
 
 
 def test_each_facade_bin_has_a_shim_on_path() -> None:
-    """attendance runs both names with `sbx exec`, and the exit test runs
-    the same names out of `facade/dist` (integration/proc/proc_exit.py)."""
+    """guest-init runs `creche-facade` at `FACADE_PROGRAM`
+    (rust/crates/wire/src/guest.rs). The image also keeps the shim of
+    `acp-relay`, the other bin of the facade."""
     stage = _stage("agent-sandbox")
     bins = _facade_bins()
 
