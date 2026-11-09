@@ -338,7 +338,9 @@ is marked `slow`.
   start of attendance drops it (contract 02 §6 rule 5).
 - CONTRACT-QUESTION: decision CH83 rule 5 drops each job row at start and
   names no step for a vmm that does not answer then. A list or a drop that
-  the vmm refuses leaves the rows, and the log names the family. The next
+  the vmm refuses leaves the rows, and the log names the family. The
+  families run at once, and the step ends within `JOB_ROWS_BOUND_S`. Past
+  it the rows that are left stay, and the log names each family. The next
   start tries again (`service.py`).
 - CONTRACT-QUESTION: decision CH21-3 gives a delegate job a retry loop
   inside its `job.timeout`, and no row names the pause between two tries.
