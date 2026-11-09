@@ -11,7 +11,9 @@
 //! as a transient user service (decisions CH60 rule 1, CH62 rule 29), with
 //! the stand-in facade in mode `linked-relay` on the root disk (CH62 rule
 //! 12) and Rust stub planes in the test (CH62 rule 28). Its numbered steps
-//! name what each one proves. The boot helpers sit in `tests/common/mod.rs`
+//! name what each one proves. `kvm_serial_cap_stops_the_vm_and_writes_the_fault`
+//! proves the serial log cap of the idle tick (plan PR CP3, decision CH79
+//! rule 7). The boot helpers sit in `tests/common/mod.rs`
 //! and `tests/stand_in/mod.rs` (plan PR E3), which `tests/kvm_reach.rs`
 //! shares.
 //!
@@ -25,7 +27,7 @@
 mod common;
 mod stand_in;
 
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead as _, BufReader, Write as _};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -35,6 +37,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use creche_vmm::guest_init::write_initramfs;
+use creche_vmm::sleep::SERIAL_CAP;
 use creche_vmm_confine::command::CMDLINE;
 use creche_vmm_store::claim::CONSUMED;
 use creche_vmm_store::images::ImageStore;
@@ -42,7 +45,7 @@ use creche_vmm_store::layout::StateRoot;
 use creche_wire::guest::{CHAPERONE_PORT, FACADE_STOP_WAIT, LITELLM_PORT, SESSION_DISK_MOUNT};
 use creche_wire::{FacadeState, GuestPort};
 
-use common::{BOOT, UP, files, lines, sudo};
+use common::{BOOT, FAMILY, UP, files, lines, sudo, work};
 use stand_in::{ROOT_DIRS, boot, ext4, stub_plane};
 
 /// The image env of the test root disk (decision CH7-7).
@@ -320,5 +323,71 @@ fn kvm_phase3_pulls_sleeps_restores_and_stops() {
         .unwrap();
     assert!(check.status.success(), "step 7 stop: e2fsck -fn: {check:?}");
 
+    drop(vmm);
+}
+
+/// The serial log cap of the idle tick (plan PR CP3, decisions CH62 rule
+/// 26, CH79 rule 7). The test writes the serial log of a running VM past
+/// `SERIAL_CAP`, as a runaway guest would. The cap check stops the VM
+/// with the graceful stop and writes `serial_log_full`, which does not
+/// stop turns. The next start boots with a new log (decision CH59 rule 2),
+/// and its `ControlReady` clears the fault.
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_serial_cap_stops_the_vm_and_writes_the_fault() {
+    let (litellm, _litellm_heads) = stub_plane();
+    let (chaperone, _chaperone_heads) = stub_plane();
+    let booted = boot("serial-cap", "linked-relay", (litellm, chaperone));
+    let (mut vmm, session) = (booted.vmm, booted.session);
+    let faults = work("serial-cap").join(format!("faults/vmm/{FAMILY}.json"));
+
+    // 1. Cold boot.
+    vmm.start_vm("step 1 cold boot");
+
+    // 2. The log passes the cap. CH writes at its own offset, so its
+    // later lines land inside these filler lines, each on a line of its
+    // own.
+    let mut filler = vec![b'x'; 1 << 20];
+    for line_end in filler.iter_mut().skip(1023).step_by(1024) {
+        *line_end = b'\n';
+    }
+    let mut log = OpenOptions::new()
+        .append(true)
+        .open(session.serial_log())
+        .unwrap();
+    for _ in 0..=SERIAL_CAP >> 20 {
+        log.write_all(&filler).unwrap();
+    }
+    drop(log);
+    assert!(fs::metadata(session.serial_log()).unwrap().len() > SERIAL_CAP);
+
+    // 3. The cap check stops the VM gracefully (CH19 rule 3) and writes
+    // the fault (CH79 rule 7).
+    assert_eq!(vmm.ask("cap"), "capped 1", "step 3 cap (CH79 rule 7)");
+    let serial = lines(&session.serial_log());
+    for line in ["standin: stop line", "guest-init: power off"] {
+        assert!(
+            serial.iter().any(|each| each == line),
+            "step 3 cap (CH19 rule 3): no {line}"
+        );
+    }
+    let body: serde_json::Value = serde_json::from_slice(&fs::read(&faults).unwrap()).unwrap();
+    assert_eq!(body["faults"][0]["code"], "serial_log_full", "step 3 cap");
+    assert_eq!(body["faults"][0]["blocks_turns"], false, "step 3 cap");
+
+    // 4. The next start cold-boots with a new log, and its ControlReady
+    // clears the fault (CH59 rule 2, contract 05 §3.3.1 rule 8).
+    vmm.start_vm("step 4 next start (CH59 rule 2)");
+    assert!(
+        fs::metadata(session.serial_log()).unwrap().len() < 1 << 20,
+        "step 4 next start (CH59 rule 2): the log is not new"
+    );
+    assert!(
+        lines(&session.serial_log()).iter().any(|line| line == UP),
+        "step 4 next start: no cold boot"
+    );
+    let body: serde_json::Value = serde_json::from_slice(&fs::read(&faults).unwrap()).unwrap();
+    assert_eq!(body["faults"], serde_json::json!([]), "step 4 next start");
+    assert!(vmm.ask("stop").starts_with("stopped "), "step 5 stop");
     drop(vmm);
 }

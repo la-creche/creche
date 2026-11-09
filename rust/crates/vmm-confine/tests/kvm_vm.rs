@@ -465,7 +465,14 @@ impl Setup {
     /// The key of the VM. The take writes it into the snapshot (decision
     /// CH44, item 42).
     fn key(&self) -> SnapshotKey {
-        SnapshotKey::current(self.checked_ch, &self.kernel, &self.initramfs, &self.root)
+        let shape: FamilyShape = serde_json::from_str(SHAPE).unwrap();
+        SnapshotKey::current(
+            self.checked_ch,
+            &self.kernel,
+            &self.initramfs,
+            &self.root,
+            shape,
+        )
     }
 
     /// Checks the key of `snapshot` and claims it.

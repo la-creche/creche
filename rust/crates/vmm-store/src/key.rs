@@ -1,6 +1,6 @@
 //! The key of a memory snapshot (decision CH7-6). A snapshot restores only
-//! into the same Cloud Hypervisor, kernel, initramfs, root disk and guest
-//! init protocol that wrote it. The key names those five parts:
+//! into the same Cloud Hypervisor, kernel, initramfs, root disk, guest init
+//! protocol and family shape that wrote it. The key names those six parts:
 //!
 //! 1. The CH rev: the constant `CH_REV`, equal to the rev of the CH7-4
 //!    build argv (decision CH35 rule 3). CH7-6 keys on the rev, not on a
@@ -20,6 +20,10 @@
 //! 4. The SHA-256 of the root disk, from its checked store copy (PR D6).
 //! 5. `GUEST_INIT_PROTOCOL` of the wire crate. A port renumber bumps it
 //!    (decision CH14).
+//! 6. The family shape: the vCPUs, the guest RAM and the flavor of
+//!    `config/shape.json` (decision CH82 rule 7). A running VM keeps its
+//!    shape until it sleeps or stops, so a restore with another shape
+//!    drops the snapshot and cold-boots, as a disk digest change does.
 //!
 //! `Snapshotter::take` writes the key with `write_key` into its temp dir
 //! before the rename, so no snapshot exists without a key (decision CH44,
@@ -48,7 +52,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::Duration;
 
-use creche_wire::GUEST_INIT_PROTOCOL;
+use creche_wire::{FamilyShape, GUEST_INIT_PROTOCOL};
 use serde::{Deserialize, Serialize};
 
 use crate::ch_remote::output_until;
@@ -183,6 +187,9 @@ struct KeyFile {
     initramfs: String,
     root_disk: String,
     guest_init_protocol: u32,
+    cpus: u8,
+    memory_mib: u16,
+    flavor: String,
 }
 
 /// The key of the VM that the vmm starts now (decision CH7-6).
@@ -191,13 +198,15 @@ pub struct SnapshotKey(KeyFile);
 
 impl SnapshotKey {
     /// The key of a VM with the checked `kernel`, `initramfs` and
-    /// `root_disk` (decisions CH61 rule 3, CH62 rules 18 and 24).
+    /// `root_disk` (decisions CH61 rule 3, CH62 rules 18 and 24) and the
+    /// family `shape` (decision CH82 rule 7).
     #[must_use]
     pub fn current(
         _ch: CheckedCh,
         kernel: &CheckedImage,
         initramfs: &CheckedImage,
         root_disk: &CheckedImage,
+        shape: FamilyShape,
     ) -> Self {
         Self(KeyFile {
             ch_rev: CH_REV.to_owned(),
@@ -205,6 +214,9 @@ impl SnapshotKey {
             initramfs: initramfs.digest().to_string(),
             root_disk: root_disk.digest().to_string(),
             guest_init_protocol: GUEST_INIT_PROTOCOL,
+            cpus: shape.cpus.get(),
+            memory_mib: shape.memory_mib.get(),
+            flavor: shape.flavor.name().to_owned(),
         })
     }
 }

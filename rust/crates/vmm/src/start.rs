@@ -61,12 +61,14 @@
 //! empty it (decision CH56 rule 1).
 //!
 //! The idle sleep and the snapshot sweep of plan PR L18 use the same
-//! table (`ColdBoot::sleep_idle`, `ColdBoot::sweep`, `sleep::run`). So
+//! table (`ColdBoot::sleep_idle`, `ColdBoot::sweep`, `sleep::run`), and
+//! so does the serial log cap of the idle tick (`ColdBoot::cap_serial`,
+//! decision CH79 rule 7). So
 //! do the `StopVm` hook of the drop route (plan PR L18b) and the `VmSet`
 //! of the shutdown (plan PR L19).
 
 use std::collections::{HashMap, HashSet};
-use std::fs::DirBuilder;
+use std::fs::{self, DirBuilder};
 use std::io;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
@@ -115,6 +117,7 @@ use crate::planes::{Bound, Planes, Upstreams, bind};
 use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
 use crate::shutdown::{Taken, VmSet};
+use crate::sleep::SERIAL_CAP;
 use crate::stop::{VmProcess, stop};
 
 /// The mode of the run dir and the snapshots dir of a VM.
@@ -224,6 +227,8 @@ impl Launcher for Spawner {
 struct Vm<P> {
     /// The launched process.
     process: P,
+    /// The family of the session, for the fault file (decision CH21-1).
+    family: FamilyName,
     /// The run dir of the VM.
     run: VmRunDir,
     /// The configured guest RAM in bytes, for admission.
@@ -265,8 +270,9 @@ struct Listeners {
 enum Slot<P> {
     /// A start passed admission and holds this much guest RAM.
     Starting(u64, PoolSlot),
-    /// The VM runs, or its stop failed (decision CH50 rule 4).
-    Running(Vm<P>),
+    /// The VM runs, or its stop failed (decision CH50 rule 4). The box
+    /// keeps the enum small.
+    Running(Box<Vm<P>>),
     /// Admission evicts the VM, which holds this much guest RAM.
     Evicting(u64, PoolSlot),
     /// The `StopVm` hook stops the VM, which holds this much guest RAM.
@@ -392,6 +398,7 @@ struct Pending<P: VmProcess> {
     in_use: Arc<Mutex<InUse>>,
     root: RunRoot,
     id: SessionId,
+    family: FamilyName,
     guest_ram: u64,
     slot: PoolSlot,
     run: VmRunDir,
@@ -407,6 +414,7 @@ impl<P: VmProcess> Pending<P> {
         if let Some(process) = self.process.take() {
             let vm = Vm {
                 process,
+                family: self.family.clone(),
                 run: self.run.clone(),
                 guest_ram: self.guest_ram,
                 slot: self.slot,
@@ -416,7 +424,7 @@ impl<P: VmProcess> Pending<P> {
                 listeners: Some(Box::new(listeners)),
                 last_use: Instant::now(),
             };
-            lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
+            lock(&self.table).insert(self.id.clone(), Slot::Running(Box::new(vm)));
             self.done = true;
         }
     }
@@ -435,6 +443,7 @@ impl<P: VmProcess> Drop for Pending<P> {
                 let _ = process.kill();
                 let vm = Vm {
                     process,
+                    family: self.family.clone(),
                     run: self.run.clone(),
                     guest_ram: self.guest_ram,
                     slot: self.slot,
@@ -444,7 +453,7 @@ impl<P: VmProcess> Drop for Pending<P> {
                     listeners: None,
                     last_use: Instant::now(),
                 };
-                table.insert(self.id.clone(), Slot::Running(vm));
+                table.insert(self.id.clone(), Slot::Running(Box::new(vm)));
             }
             None => {
                 release(&self.in_use, &self.root, &self.id);
@@ -468,7 +477,7 @@ impl<P: VmProcess> Eviction<P> {
     /// Puts the VM back in the table as it is.
     fn put_back(mut self) {
         if let Some(vm) = self.vm.take() {
-            lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
+            lock(&self.table).insert(self.id.clone(), Slot::Running(Box::new(vm)));
         }
     }
 
@@ -496,7 +505,7 @@ impl<P: VmProcess> Drop for Eviction<P> {
             let _ = vm.process.kill();
             vm.link = None;
             vm.listeners = None;
-            lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
+            lock(&self.table).insert(self.id.clone(), Slot::Running(Box::new(vm)));
         }
     }
 }
@@ -689,7 +698,7 @@ fn take_out<P: VmProcess>(
     Some(Eviction {
         table: Arc::clone(table),
         id: session,
-        vm: Some(vm),
+        vm: Some(*vm),
     })
 }
 
@@ -888,11 +897,16 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
-    /// Reserves `guest_ram` and a pool slot for `id` when admission admits
-    /// it, and takes out each VM that admission evicts first, in its
-    /// order. With no free slot, the start takes the slot of its first
-    /// eviction (plan PR L16b, decision CH58 rule 2).
-    fn admit(&self, id: &SessionId, guest_ram: u64, free: u64) -> Option<Admitted<L::Process>> {
+    /// Reserves `guest_ram` and a pool slot for `id` of `family` when
+    /// admission admits it, and takes out each VM that admission evicts
+    /// first, in its order. With no free slot, the start takes the slot of
+    /// its first eviction (plan PR L16b, decision CH58 rule 2).
+    fn admit(
+        &self,
+        (id, family): (&SessionId, &FamilyName),
+        guest_ram: u64,
+        free: u64,
+    ) -> Option<Admitted<L::Process>> {
         let mut table = lock(&self.table);
         // A start that read the table before the refusal of a shutdown
         // stops here, so it adds no slot (plan PR L19).
@@ -937,6 +951,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             in_use: Arc::clone(&self.in_use),
             root: self.config.run.clone(),
             id: id.clone(),
+            family: family.clone(),
             guest_ram,
             slot,
             run: self.config.run.vm(id),
@@ -1033,18 +1048,71 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         .unwrap_or_else(|_| Err(io::Error::other("the sweep panicked")))
     }
 
-    /// Writes `code` with `message` to the fault file of `family` and
-    /// returns the fault (decision CH21-1).
-    async fn fault(&self, family: &FamilyName, code: FaultCode, message: String) -> StartFault {
-        eprintln!("vmm: a VM of {family} did not start: {message}");
-        self.book(family, move |book, family, now| {
-            book.raise(family, code, message, now)
+    /// Stops each VM whose serial log passed `SERIAL_CAP`, with the
+    /// graceful stop, and writes `serial_log_full` to the fault file of
+    /// its family (decisions CH62 rule 26, CH79 rule 7). Only a VM whose
+    /// start committed its control link counts. Every other VM got SIGKILL
+    /// already. The next start of the session writes a new log (decision
+    /// CH59 rule 2).
+    /// Returns the sessions whose VM stopped.
+    // The size reads run in `spawn_blocking` (decision CH36 G21). Each
+    // stop runs in a task of its own, as a retire does (`detached`).
+    pub async fn cap_serial(&self) -> Vec<SessionId> {
+        let running: Vec<_> = lock(&self.table)
+            .iter()
+            .filter_map(|(id, slot)| match slot {
+                Slot::Running(vm) => vm
+                    .link_id
+                    .map(|link| ((id.clone(), link), vm.family.clone())),
+                _ => None,
+            })
+            .collect();
+        let state = self.config.state.clone();
+        let full = blocking(move || {
+            let full = running.into_iter().filter_map(|(session, family)| {
+                let path = state.session(&session.0).serial_log();
+                match fs::metadata(&path) {
+                    Ok(meta) if meta.len() > SERIAL_CAP => Some((session, family, meta.len())),
+                    Ok(_) => None,
+                    Err(error) => {
+                        eprintln!("vmm: cannot read the size of {}: {error}", path.display());
+                        None
+                    }
+                }
+            });
+            Ok(full.collect::<Vec<_>>())
         })
         .await;
-        match code {
-            FaultCode::SandboxStartFailed => StartFault::SandboxStartFailed,
-            FaultCode::EgressAssertFailed => StartFault::EgressAssertFailed,
+        let full = full.unwrap_or_else(|message| {
+            eprintln!("vmm: the serial log check failed: {message}");
+            Vec::new()
+        });
+        let mut stopped = Vec::new();
+        for (session, family, size) in full {
+            let id = session.0.clone();
+            eprintln!("vmm: the serial log of {id} holds {size} bytes, past {SERIAL_CAP}");
+            let parts = (self.stopper(), Arc::clone(&self.faults));
+            let mib = SERIAL_CAP >> 20;
+            let message =
+                format!("serial.log passed {mib} MiB ({size} bytes), so the vmm stops the VM");
+            let fault = (FaultCode::SerialLogFull, message);
+            if detached(fault_stop(parts, family, session, fault)).await {
+                stopped.push(id);
+            }
         }
+        stopped
+    }
+
+    /// Writes `code` with `message` to the fault file of `family` and
+    /// returns its start fault (decision CH21-1).
+    async fn fault(&self, family: &FamilyName, code: StartCode, message: String) -> StartFault {
+        eprintln!("vmm: a VM of {family} did not start: {message}");
+        let fault = code.code();
+        self.book(family, move |book, family, now| {
+            book.raise(family, fault, message, now)
+        })
+        .await;
+        code.fault()
     }
 
     /// Runs `change` on the fault book for `family` (`write_book`).
@@ -1068,7 +1136,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         link: LinkId,
         control: Option<&ControlLink>,
         family: &FamilyName,
-        code: FaultCode,
+        code: StartCode,
         message: String,
     ) -> StartFault {
         self.control().closed(&pending.id, link);
@@ -1089,7 +1157,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         match AcpLink::dial(vsock).await {
             Ok(link) => Ok(link),
             Err(error) => Err(self
-                .fault(family, FaultCode::SandboxStartFailed, dial_text(error))
+                .fault(family, StartCode::Sandbox, dial_text(error))
                 .await),
         }
     }
@@ -1106,8 +1174,8 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         &self,
         run: &VmRunDir,
         expected: Expected,
-    ) -> Result<(), (FaultCode, String)> {
-        let (sandbox, egress) = (FaultCode::SandboxStartFailed, FaultCode::EgressAssertFailed);
+    ) -> Result<(), (StartCode, String)> {
+        let (sandbox, egress) = (StartCode::Sandbox, StartCode::Egress);
         let deadline = Instant::now() + READY_WAIT;
         let info = loop {
             let (api, vm) = (Arc::clone(&self.api), run.clone());
@@ -1135,6 +1203,35 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     }
 }
 
+/// A start fault that writes a fault file: one of the two of decision
+/// CH6-3. `host_full` writes none, so it has no `StartCode`.
+#[derive(Debug, Clone, Copy)]
+enum StartCode {
+    /// The VM did not boot or restore, or guest init sent no
+    /// `ControlReady`.
+    Sandbox,
+    /// The VM failed the deny-by-default check.
+    Egress,
+}
+
+impl StartCode {
+    /// The code of the fault file.
+    const fn code(self) -> FaultCode {
+        match self {
+            Self::Sandbox => FaultCode::SandboxStartFailed,
+            Self::Egress => FaultCode::EgressAssertFailed,
+        }
+    }
+
+    /// The fault of the reply before 101.
+    const fn fault(self) -> StartFault {
+        match self {
+            Self::Sandbox => StartFault::SandboxStartFailed,
+            Self::Egress => StartFault::EgressAssertFailed,
+        }
+    }
+}
+
 /// Runs `change` on the fault book `faults` for `family` in
 /// `spawn_blocking`. A failed write is logged: the book keeps the faults,
 /// and its next refresh writes them again.
@@ -1156,50 +1253,75 @@ async fn write_book(
 
 /// The end of the follow of the VM of `id` on the control link `link`: a
 /// bind or a deny check after an edit of a reach file failed with
-/// `message`. It takes the VM out of the table, writes
-/// `egress_assert_failed` to the fault file of `family` and stops the VM
-/// of that link (decisions CH21-1, CH69 rule 12). The stop sends the
-/// graceful stop first (decision CH19 (3)), and a later VM of the session
-/// has another link, so the stop leaves it alone (decision CH54 rule 6).
+/// `message`. It writes `egress_assert_failed` and stops the VM of that
+/// link with `fault_stop` (decisions CH21-1, CH69 rule 12).
 ///
 /// The VM entry, and so the follow, lives on while a stop or a retire
 /// ends its CH. A check in that window reads the command line of a CH
-/// that exited, so it fails with no fault in the VM. So the fault goes
-/// to the book only when this task takes the VM and its CH runs, or when
-/// the stop that it joined failed, so the VM may still run. A stop that
-/// ends the VM, a retire that ends it and a CH that exited on its own
-/// write no fault.
+/// that exited, so it fails with no fault in the VM. `fault_stop` writes
+/// no fault for a CH that exited.
 async fn reach_failed<P: VmProcess>(
+    parts: (Stopper<P>, Arc<Mutex<FaultBook>>),
+    family: FamilyName,
+    session: (SessionId, LinkId),
+    message: String,
+) {
+    eprintln!(
+        "vmm: the deny check of {} failed after an edit: {message}",
+        session.0
+    );
+    let fault = (FaultCode::EgressAssertFailed, message);
+    fault_stop(parts, family, session, fault).await;
+}
+
+/// Takes the VM of `id` on the control link `link` out of the table,
+/// writes `code` with `message` to the fault file of `family` and stops
+/// the VM. The stop sends the graceful stop first (decision CH19 (3)),
+/// and a later VM of the session has another link, so the stop leaves it
+/// alone (decision CH54 rule 6). True when this call stopped a CH that
+/// ran.
+///
+/// The fault goes to the book only when this call takes the VM and its
+/// CH runs, or when the stop that it joined failed, so the VM may still
+/// run. A stop that ends the VM, a retire that ends it and a CH that
+/// exited on its own write no fault.
+async fn fault_stop<P: VmProcess>(
     (stopper, faults): (Stopper<P>, Arc<Mutex<FaultBook>>),
     family: FamilyName,
     (id, link): (SessionId, LinkId),
-    message: String,
-) {
-    eprintln!("vmm: the deny check of {id} failed after an edit: {message}");
+    (code, message): (FaultCode, String),
+) -> bool {
     let raise = |message| {
         write_book(&faults, &family, move |book, family, now| {
-            book.raise(family, FaultCode::EgressAssertFailed, message, now)
+            book.raise(family, code, message, now)
         })
     };
     match stopper.take(&id, Some(link)).await {
         Claim::Took(mut eviction, sender) => {
-            if eviction.exited() {
-                eprintln!("vmm: the CH of {id} exited before the check, so no fault is written");
-            } else {
+            let ran = !eviction.exited();
+            if ran {
                 raise(message).await;
+            } else {
+                eprintln!("vmm: the CH of {id} exited first, so no {code:?} is written");
             }
-            if let Err(VmStopFailed { pid, error }) = stopper.finish(*eviction, sender).await {
-                eprintln!(
-                    "vmm: the VM of {id} (pid {pid}) did not stop after a failed check: {error}"
-                );
+            match stopper.finish(*eviction, sender).await {
+                Ok(()) => ran,
+                Err(VmStopFailed { pid, error }) => {
+                    eprintln!(
+                        "vmm: the VM of {id} (pid {pid}) did not stop after {code:?}: {error}"
+                    );
+                    false
+                }
             }
         }
         Claim::Ended(Ok(())) => {
-            eprintln!("vmm: a stop or a retire ended the VM of {id}, so no fault is written");
+            eprintln!("vmm: a stop or a retire ended the VM of {id}, so no {code:?} is written");
+            false
         }
         Claim::Ended(Err(VmStopFailed { pid, error })) => {
             raise(message).await;
-            eprintln!("vmm: the VM of {id} (pid {pid}) did not stop after a failed check: {error}");
+            eprintln!("vmm: the VM of {id} (pid {pid}) did not stop after {code:?}: {error}");
+            false
         }
     }
 }
@@ -1669,7 +1791,7 @@ fn launch<L: Launcher>(
     let serial =
         SerialLog::fresh(&session).map_err(|error| format!("{error}: {}", error.source))?;
     let limits = VmLimits::from(shape);
-    let key = SnapshotKey::current(config.ch_version, &kernel, &initramfs, &root);
+    let key = SnapshotKey::current(config.ch_version, &kernel, &initramfs, &root, shape);
     // The initramfs of the ruleset. A snapshot with the current key names
     // this same `store/<sha256>` file, so a restore reads it as a boot
     // does (decision CH61 rule 3).
@@ -1727,7 +1849,7 @@ fn launch<L: Launcher>(
 impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
     async fn start(&self, row: &SessionRow) -> Result<AcpLink, StartFault> {
         let (id, family) = (&row.id, &row.family);
-        let sandbox = FaultCode::SandboxStartFailed;
+        let sandbox = StartCode::Sandbox;
         match self.find(id) {
             Ok(Found::Runs(vsock)) => return self.dial(family, &vsock).await,
             Ok(Found::Free) => {}
@@ -1746,7 +1868,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let guest_ram = VmLimits::from(shape).guest_ram();
         // `host_full` is no fault of decision CH6-3, so it writes none.
         let (mut pending, evictions) = self
-            .admit(id, guest_ram, free)
+            .admit((id, family), guest_ram, free)
             .ok_or(StartFault::HostFull)?;
         // The evictions run in the order of admission, in a task of their
         // own. After one that fails, the rest go back, and the start does
@@ -1877,7 +1999,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // 3, CH72 rule 3).
         let denied = follow.check(&reach).await;
         if let Err(message) = denied {
-            let egress = FaultCode::EgressAssertFailed;
+            let egress = StartCode::Egress;
             let control = Some(&control);
             return Err(self
                 .abort(pending, link, control, family, egress, message)
@@ -1928,7 +2050,7 @@ mod tests {
     use creche_vmm_store::key::{SnapshotKey, check_cloud_hypervisor, write_key};
     use creche_vmm_store::layout::{SnapshotGeneration, StateRoot};
     use creche_vmm_store::retention::InUse;
-    use creche_wire::SessionId;
+    use creche_wire::{FamilyShape, SessionId};
 
     use super::claim_newest;
 
@@ -1953,7 +2075,9 @@ mod tests {
             "/tests/fixtures/cloud-hypervisor"
         );
         let ch = check_cloud_hypervisor(stub.as_ref(), Duration::from_secs(10)).unwrap();
-        let key = SnapshotKey::current(ch, &empty, &empty, &empty);
+        let shape: FamilyShape =
+            serde_json::from_str(r#"{"cpus":1,"flavor":"base","memory_mib":256}"#).unwrap();
+        let key = SnapshotKey::current(ch, &empty, &empty, &empty, shape);
         let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
         let session = state.session(&id);
         let generation = SnapshotGeneration(1);

@@ -16,7 +16,7 @@ use creche_vmm_store::key::{
     KeyCheck, KeyedSnapshot, SnapshotKey, check_cloud_hypervisor, check_newest, write_key,
 };
 use creche_vmm_store::layout::{SessionDir, SnapshotGeneration, StateRoot};
-use creche_wire::SessionId;
+use creche_wire::{FamilyShape, SessionId};
 use sha2::{Digest, Sha256};
 
 const ID: &str = "0f8e2a4c-1b3d-4e5f-8a9b-0c1d2e3f4a5b";
@@ -54,7 +54,7 @@ impl Temp {
         let id: SessionId = ID.parse().expect("ID is a session id");
         Self {
             session: state.session(&id),
-            key: SnapshotKey::current(ch, &images[0], &images[1], &images[2]),
+            key: SnapshotKey::current(ch, &images[0], &images[1], &images[2], shape(SHAPE)),
             root,
         }
     }
@@ -251,4 +251,12 @@ fn a_failed_retire_is_stuck() {
     let error = claimed.expect_err("a failure");
     assert!(matches!(error, ClaimError::Stuck { .. }), "{error}");
     assert_eq!(temp.keyed().generation(), FIRST);
+}
+
+/// The family VM shape of each key.
+const SHAPE: &str = r#"{"cpus":1,"flavor":"base","memory_mib":256}"#;
+
+#[cfg(test)]
+fn shape(text: &str) -> FamilyShape {
+    serde_json::from_str(text).expect("a shape")
 }

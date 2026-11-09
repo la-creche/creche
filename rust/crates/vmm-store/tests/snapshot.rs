@@ -24,7 +24,7 @@ use creche_vmm_store::layout::{RunRoot, SessionDir, SnapshotGeneration, StateRoo
 use creche_vmm_store::snapshot::{
     MEMORY_RANGES, Snapshot, SnapshotError, SnapshotTimeouts, Snapshotter, generations,
 };
-use creche_wire::SessionId;
+use creche_wire::{FamilyShape, SessionId};
 
 const ID: &str = "0f8e2a4c-1b3d-4e5f-8a9b-0c1d2e3f4a5b";
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -114,7 +114,7 @@ fn key(root: &Path, state: &StateRoot) -> SnapshotKey {
     let ch = root.join("v54.0.0");
     symlink(fixture("cloud-hypervisor"), &ch).expect("the link");
     let ch = check_cloud_hypervisor(&ch, TIMEOUT).expect("the version check");
-    SnapshotKey::current(ch, &empty, &empty, &empty)
+    SnapshotKey::current(ch, &empty, &empty, &empty, shape(SHAPE))
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -383,4 +383,12 @@ fn the_dig_frees_the_zero_pages() {
     assert!(dug.allocated_bytes < MIB, "{}", dug.allocated_bytes);
     let memory = fs::metadata(dug.dir.join(MEMORY_RANGES)).expect("the file");
     assert_eq!(memory.len(), 16 * MIB);
+}
+
+/// The family VM shape of each key.
+const SHAPE: &str = r#"{"cpus":1,"flavor":"base","memory_mib":256}"#;
+
+#[cfg(test)]
+fn shape(text: &str) -> FamilyShape {
+    serde_json::from_str(text).expect("a shape")
 }
