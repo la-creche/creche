@@ -1,9 +1,10 @@
 //! The `create` and `list` handlers over raw bytes on a temp socket
-//! (decisions CH21-4, CH21-5, CH25 rule 2, CH33 rules 2, 3 and 12, CH34
-//! rule 4). The request bodies are vectors of
+//! (decisions CH21-4, CH21-5, CH25 rule 2, CH33 rules 2, 3, 9 and 12, CH34
+//! rule 4, CH79 rule 4). The request bodies are vectors of
 //! `rust/crates/wire/vectors/wire.json`. A scratch family root holds the
 //! family `chat` with its `config/`.
 
+use std::collections::HashSet;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -12,16 +13,18 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use creche_vmm::handlers::create::Creates;
-use creche_vmm::handlers::list::Lists;
+use creche_vmm::handlers::list::{Lists, RunningVms};
 use creche_vmm::relay::AcpRelay;
 use creche_vmm::server::{Stop, run_routes};
 use creche_vmm_confine::family::FamilyRoot;
+use creche_vmm_store::claim::CONSUMED;
+use creche_vmm_store::layout::SnapshotGeneration;
 use creche_vmm_store::layout::StateRoot;
 use creche_vmm_store::rows::{PAGE_ROWS, Rows};
 use creche_wire::{
     AcpError, AcpRoute, CheckError, CheckReply, CheckRequest, CheckRoute, CreateError, CreateRoute,
     CreateSession, DropError, DropRoute, DropTarget, Dropped, HOST_API_BODY_CAP, HOST_API_HEADER,
-    HOST_API_PROTOCOL, ListError, ListRoute, ListSessions, OpenAcp, Serve, ServeUpgrade,
+    HOST_API_PROTOCOL, ListError, ListRoute, ListSessions, OpenAcp, Serve, ServeUpgrade, SessionId,
     SessionPage, SessionRow,
 };
 use serde_json::{Value, json};
@@ -39,7 +42,17 @@ mod fake {
     /// A handler set with the real `create` and `list` handlers. The
     /// other routes are not under test.
     #[derive(Debug)]
-    pub(super) struct Set(Creates, Lists);
+    pub(super) struct Set(Creates, Lists<Running>);
+
+    /// The VM table of the test: the sessions that it names run.
+    #[derive(Debug, Clone, Default)]
+    pub(super) struct Running(pub(super) Arc<Mutex<HashSet<SessionId>>>);
+
+    impl RunningVms for Running {
+        fn running_sessions(&self) -> HashSet<SessionId> {
+            self.0.lock().unwrap().clone()
+        }
+    }
 
     impl Serve<CreateRoute> for Set {
         async fn serve(&self, request: CreateSession) -> Result<SessionRow, CreateError> {
@@ -92,10 +105,18 @@ mod fake {
         row
     }
 
+    /// The list row of the row `row` with the VM state `vm` (decision
+    /// CH79 rule 4).
+    pub(super) fn listed(mut row: Value, vm: &str) -> Value {
+        row["vm"] = json!(vm);
+        row
+    }
+
     /// The server of `Set` on a temp socket, with no rows.
     pub(super) struct Server {
         pub(super) dir: PathBuf,
         pub(super) state: StateRoot,
+        pub(super) running: Running,
         path: PathBuf,
         runtime: Runtime,
         stop: Stop,
@@ -111,7 +132,9 @@ mod fake {
             let state = StateRoot::new(dir.join("state")).unwrap();
             let rows = Arc::new(Mutex::new(Rows::open(state.clone()).unwrap()));
             let families = FamilyRoot::new(dir.join("families")).unwrap();
-            let set = Set(Creates::new(Arc::clone(&rows), families), Lists::new(rows));
+            let running = Running::default();
+            let lists = Lists::new(Arc::clone(&rows), state.clone(), running.clone());
+            let set = Set(Creates::new(rows, families), lists);
             let path = dir.join("vmm.sock");
             let runtime = Builder::new_multi_thread()
                 .enable_io()
@@ -126,6 +149,7 @@ mod fake {
             Self {
                 dir,
                 state,
+                running,
                 path,
                 runtime,
                 stop,
@@ -178,7 +202,7 @@ mod fake {
     }
 }
 
-use fake::{Server, row_of, vector};
+use fake::{Server, listed, row_of, vector};
 
 /// The same typed create twice gives the same row with the same status,
 /// even with its keys in another order (decisions CH25 rule 2, CH33 rule
@@ -199,7 +223,8 @@ fn the_same_create_twice_gives_the_same_row() {
         "list",
         &vector("ListSessions", "the first page of every row of a family"),
     );
-    assert_eq!(page, (200, format!(r#"{{"next":null,"rows":[{first}]}}"#)));
+    let listed = listed(serde_json::from_str(&first).unwrap(), "none");
+    assert_eq!(page, (200, format!(r#"{{"next":null,"rows":[{listed}]}}"#)));
     assert!(!server.state.sessions_dir().exists());
     server.end();
 }
@@ -222,7 +247,7 @@ fn a_different_create_of_the_id_gets_conflict() {
     let page = server.page("chat", None);
     assert_eq!(
         serde_json::to_value(&page.rows).unwrap(),
-        json!([row_of(&create)])
+        json!([listed(row_of(&create), "none")])
     );
     server.end();
 }
@@ -336,5 +361,74 @@ fn a_page_of_4096_character_cwds_ends_early_with_next() {
         .collect();
     let newest_first: Vec<String> = (0..PAGE_ROWS).rev().map(id).collect();
     assert_eq!(walked, newest_first);
+    server.end();
+}
+
+/// The `vm` of a list row follows the session dir and the VM table
+/// (decisions CH33 rule 9, CH79 rule 4). No disk is `none`, and a disk
+/// path that is a dir is no disk. A disk with no finished generation, or a
+/// newest one with the consumed mark, is `off`. A newest generation with
+/// no mark is `asleep`. A session of the VM table is `running`, whatever
+/// its dir holds.
+#[test]
+fn the_vm_state_follows_the_session_dir_and_the_vm_table() {
+    let server = Server::start("list-vm");
+    let create = vector("CreateSession", "a door session");
+    let (status, body) = server.ask("create", &create);
+    assert_eq!(status, 200, "{body}");
+    let id: SessionId = serde_json::from_value(row_of(&create)["id"].clone()).unwrap();
+    let session = server.state.session(&id);
+    let vm = || {
+        let page = server.page("chat", None);
+        let rows = serde_json::to_value(&page.rows).unwrap();
+        rows[0]["vm"].as_str().unwrap().to_owned()
+    };
+
+    assert_eq!(vm(), "none");
+    std::fs::create_dir_all(session.disk()).unwrap();
+    assert_eq!(vm(), "none");
+    std::fs::remove_dir(session.disk()).unwrap();
+    std::fs::write(session.disk(), b"").unwrap();
+    assert_eq!(vm(), "off");
+    std::fs::create_dir_all(session.snapshot_temp(SnapshotGeneration(1))).unwrap();
+    assert_eq!(vm(), "off");
+    std::fs::create_dir(session.snapshot(SnapshotGeneration(1))).unwrap();
+    assert_eq!(vm(), "asleep");
+    let newest = session.snapshot(SnapshotGeneration(2));
+    std::fs::create_dir(&newest).unwrap();
+    std::fs::write(newest.join(CONSUMED), b"").unwrap();
+    assert_eq!(vm(), "off");
+    server.running.0.lock().unwrap().insert(id);
+    assert_eq!(vm(), "running");
+    server.end();
+}
+
+/// A session dir that does not read fails the page with `internal` 500,
+/// because the four states hold no unknown one (CONTRACT-QUESTION of
+/// `vm_state`). A root user reads any dir, so the test skips.
+#[test]
+fn a_session_dir_that_does_not_read_gets_internal() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &std::path::Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    let server = Server::start("list-vm-internal");
+    let create = vector("CreateSession", "a door session");
+    let (status, body) = server.ask("create", &create);
+    assert_eq!(status, 200, "{body}");
+    let id: SessionId = serde_json::from_value(row_of(&create)["id"].clone()).unwrap();
+    let session = server.state.session(&id);
+    std::fs::create_dir_all(session.path()).unwrap();
+
+    mode(session.path(), 0o000);
+    if std::fs::read_dir(session.path()).is_ok() {
+        mode(session.path(), 0o755);
+        server.end();
+        return;
+    }
+    let request = json!({"cursor": null, "cwd": null, "family": "chat"});
+    let answer = server.ask("list", &request.to_string());
+    mode(session.path(), 0o755);
+    assert_eq!(answer, (500, r#"{"code":"internal"}"#.to_owned()));
     server.end();
 }

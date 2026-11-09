@@ -3523,6 +3523,68 @@
       "note": "the plain string form"
     }
   ],
+  "ListRow": [
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":null,\"updated_at\":1793577600000,\"vm\":\"none\"}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":null,\"updated_at\":1793577600000,\"vm\":\"none\"}",
+      "note": "a new session: no session disk yet"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"off\"}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"off\"}",
+      "note": "a session disk and no snapshot that can resume"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"asleep\"}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"asleep\"}",
+      "note": "a snapshot can resume"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"running\"}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"running\"}",
+      "note": "a CH process runs"
+    },
+    {
+      "json": "{\"vm\":\"running\",\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"running\"}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "no vm key: a SessionRow is no ListRow"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":null}",
+      "written": null,
+      "note": "a null vm"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"sleeping\"}",
+      "written": null,
+      "note": "a vm that is not one of the four"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"Running\"}",
+      "written": null,
+      "note": "a vm in another case"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":{\"running\":{}}}",
+      "written": null,
+      "note": "a vm as an object"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"running\",\"slot\":3}",
+      "written": null,
+      "note": "an extra key"
+    },
+    {
+      "json": "[1793577600000,\"/home/david/code/lacreche\",\"chat\",\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",{\"door\":{}},\"Fix the boiler alert\",1793577660000,\"running\"]",
+      "written": null,
+      "note": "the fields in order as an array, the array form of a struct"
+    }
+  ],
   "ListSessions": [
     {
       "json": "{\"cursor\":null,\"cwd\":null,\"family\":\"chat\"}",
@@ -4534,13 +4596,13 @@
       "note": "an empty page: a family with no rows, or one the vmm does not know"
     },
     {
-      "json": "{\"next\":null,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}]}",
-      "written": "{\"next\":null,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}]}",
+      "json": "{\"next\":null,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"asleep\"}]}",
+      "written": "{\"next\":null,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"asleep\"}]}",
       "note": "the last page"
     },
     {
-      "json": "{\"next\":41,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}]}",
-      "written": "{\"next\":41,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}]}",
+      "json": "{\"next\":41,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"asleep\"}]}",
+      "written": "{\"next\":41,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"vm\":\"asleep\"}]}",
       "note": "a page with a next page"
     },
     {
@@ -4576,7 +4638,12 @@
     {
       "json": "{\"next\":null,\"rows\":[{\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}]}",
       "written": null,
-      "note": "a row that is not a SessionRow"
+      "note": "a row that is not a ListRow"
+    },
+    {
+      "json": "{\"next\":null,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}]}",
+      "written": null,
+      "note": "a SessionRow with no vm: protocol 2 rows"
     },
     {
       "json": "{\"next\":null,\"nextCursor\":null,\"rows\":[]}",

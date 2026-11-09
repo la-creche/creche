@@ -1513,6 +1513,69 @@
         }
       ]
     },
+    "ListRow": {
+      "additionalProperties": false,
+      "description": "One row of a list page: the keys of a `SessionRow` and the state of its\nVM (decisions CH33 rule 9, CH79 rule 4). The row file and the create\nreply stay a `SessionRow`, because the vmm reads `vm` at each list and\nstores none.",
+      "properties": {
+        "created_at": {
+          "$ref": "#/$defs/UnixMillis",
+          "description": "When attendance created the session."
+        },
+        "cwd": {
+          "$ref": "#/$defs/SessionCwd",
+          "description": "The `cwd` that attendance sent in the create."
+        },
+        "family": {
+          "$ref": "#/$defs/FamilyName",
+          "description": "The family that serves the session."
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The id that attendance chose (decision CH25 rule 2)."
+        },
+        "origin": {
+          "$ref": "#/$defs/SessionOrigin",
+          "description": "Who made the session."
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionTitle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The `title` of the `SessionRow`."
+        },
+        "updated_at": {
+          "$ref": "#/$defs/UnixMillis",
+          "description": "The `updated_at` of the `SessionRow`."
+        },
+        "vm": {
+          "description": "The state of the VM of the session when the vmm read the page.",
+          "enum": [
+            "none",
+            "off",
+            "asleep",
+            "running"
+          ],
+          "title": "VmState",
+          "type": "string"
+        }
+      },
+      "required": [
+        "created_at",
+        "cwd",
+        "family",
+        "id",
+        "origin",
+        "title",
+        "updated_at",
+        "vm"
+      ],
+      "type": "object"
+    },
     "ListSessions": {
       "additionalProperties": false,
       "description": "What a client sends to the vmm for one page of the host session list\n(decisions CH21-5, CH21-7). The list is scoped to one family, as the\nlist entry of the route table plan gives it. A family with no rows, or\none the vmm does not know, gives an empty page, so the list route has no\nerror of its own.\n\nEach key is required, and `null` is the one form of no value.",
@@ -1735,9 +1798,9 @@
           "description": "The cursor of the next page, or `null` when no row follows."
         },
         "rows": {
-          "description": "The rows of this page.",
+          "description": "The rows of this page, each with the state of its VM (decision CH79\nrule 4).",
           "items": {
-            "$ref": "#/$defs/SessionRow"
+            "$ref": "#/$defs/ListRow"
           },
           "type": "array"
         }
@@ -1972,7 +2035,7 @@
       "reply": "ProtocolMismatch",
       "status": 412
     },
-    "protocol": 2,
+    "protocol": 3,
     "routes": {
       "acp": {
         "error": "AcpError",

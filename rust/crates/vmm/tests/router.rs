@@ -87,6 +87,7 @@ mod fake {
             // The longest cwd, so few rows pass the cap.
             let cwd = format!("/{}", "a".repeat(4095));
             let row = ROW.replace("/home/david/code/lacreche", &cwd);
+            let row = row.strip_suffix('}').unwrap().to_owned() + r#","vm":"running"}"#;
             let page = format!(r#"{{"next":null,"rows":[{}]}}"#, vec![row; rows].join(","));
             Ok(serde_json::from_str(&page).unwrap())
         }

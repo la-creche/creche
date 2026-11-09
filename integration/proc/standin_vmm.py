@@ -7,7 +7,7 @@ send the calls of the host session list (decisions CH20, CH21-4 to
 CH21-10). This program answers each one:
 
     POST /create   CreateSession                       SessionRow
-    POST /list     ListSessions                        SessionPage, one page
+    POST /list     ListSessions                        SessionPage, one page, VM none
     POST /drop     {"family": {"family": <name>}}      Dropped
                    {"session": {"family", "id"}}       Dropped, or `not_found`
     POST /acp      OpenAcp, with an Upgrade            `sandbox_start_failed`
@@ -24,7 +24,8 @@ does not boot gets it. A session with no row of the family gets
 `not_found` (decision CH21-9).
 
 The list holds each row of the family, newest created first, on one page.
-A `cwd` keeps the rows of that `cwd`.
+A `cwd` keeps the rows of that `cwd`. Each row lists its VM as `none`: no
+VM ever runs here (decision CH79 rule 4).
 
 Every fact is a file under the state directory:
 
@@ -55,11 +56,13 @@ from creche_wire import (
     CreateSession,
     DropTarget,
     FamilyDrop,
+    ListRow,
     ListSessions,
     OpenAcp,
     ProtocolMismatch,
     SessionPage,
     SessionRow,
+    VmState,
     read,
 )
 from creche_wire.routes import ACP, CREATE, DROP, HOST_API_BODY_CAP, HOST_API_HEADER, LIST
@@ -161,7 +164,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if isinstance(request, ListSessions):
             kept = [
-                row
+                ListRow(**dict(row), vm=VmState.NONE)
                 for row in reversed(rows)
                 if row.family == request.family and request.cwd in (None, row.cwd)
             ]

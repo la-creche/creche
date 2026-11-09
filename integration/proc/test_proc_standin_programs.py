@@ -197,8 +197,9 @@ def test_vmm_lists_the_rows_of_a_family_newest_first(vmm: Tree) -> None:
     every = _vmm_post(vmm, LIST.path, {"family": "chat", "cursor": None, "cwd": None})
     kept = _vmm_post(vmm, LIST.path, {"family": "chat", "cursor": None, "cwd": "/work/a"})
 
-    assert every.json() == {"next": None, "rows": [second, first]}
-    assert kept.json() == {"next": None, "rows": [first]}
+    listed = [{**second, "vm": "none"}, {**first, "vm": "none"}]
+    assert every.json() == {"next": None, "rows": listed}
+    assert kept.json() == {"next": None, "rows": listed[1:]}
 
 
 def test_vmm_drops_one_session_and_then_finds_none(vmm: Tree) -> None:

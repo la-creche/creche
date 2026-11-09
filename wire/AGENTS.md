@@ -284,6 +284,14 @@ table plan, and it is required (decision CH34 rule 4). The request is
 2. `cwd` is `null` for every row, or a cwd that each row of the page has.
 3. A family with no rows, or one the vmm does not know, gives an empty
    page. Any cursor reads. So `ListError` holds the shared codes only.
+4. Each row of a page is a `ListRow`: the keys of a `SessionRow` and `vm`,
+   the `VmState` of its VM (decisions CH33 rule 9, CH79 rule 4). It came
+   with `HOST_API_PROTOCOL` 3. `vm` is `none` (no session disk yet), `off`
+   (a disk and no snapshot that can resume), `asleep` (a snapshot can
+   resume) or `running` (a Cloud Hypervisor process runs). The vmm reads
+   it at each list and stores none, so the row file and the create reply
+   stay a `SessionRow`. How the vmm reads each value is a
+   CONTRACT-QUESTION of the vmm `AGENTS.md` Known gaps.
 
 ### The drop route
 

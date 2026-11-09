@@ -1,15 +1,17 @@
 //! A list page walks the rows of one family once each and ends early under
-//! the body cap. A turn end keeps the first title, and a remove drops the
-//! row (decisions CH21, CH21-5, CH32 rule 4, CH33 rule 2, CH34 rule 4, gap
-//! G30).
+//! the body cap. Each row of a page carries the VM state that the caller
+//! reads. A turn end keeps the first title, and a remove drops the row
+//! (decisions CH21, CH21-5, CH32 rule 4, CH33 rule 2, CH34 rule 4, CH79
+//! rule 4, gap G30).
 
+use std::convert::Infallible;
 use std::fs;
 
 use creche_vmm_store::layout::StateRoot;
 use creche_vmm_store::rows::{PAGE_ROWS, Rows};
 use creche_wire::{
-    CreateSession, HOST_API_BODY_CAP, ListCursor, ListSessions, SessionId, SessionPage, SessionRow,
-    TurnEnd,
+    CreateSession, HOST_API_BODY_CAP, ListCursor, ListRow, ListSessions, SessionId, SessionPage,
+    SessionRow, TurnEnd, VmState,
 };
 
 /// A state root in a new temp dir, removed on drop.
@@ -75,13 +77,19 @@ fn request(family: &str, cwd: Option<&str>, cursor: Option<ListCursor>) -> ListS
     .expect("a list request")
 }
 
+/// The page of `request`, with every VM `off`.
+fn off_page(rows: &Rows, request: &ListSessions) -> SessionPage {
+    let Ok(page) = rows.page(request, |_| Ok::<_, Infallible>(VmState::Off));
+    page
+}
+
 /// Every page of a walk from the first page until `next` is `null`.
 #[cfg(test)]
 fn walk(rows: &Rows, family: &str, cwd: Option<&str>) -> Vec<SessionPage> {
     let mut pages = Vec::new();
     let mut cursor = None;
     loop {
-        let page = rows.page(&request(family, cwd, cursor));
+        let page = off_page(rows, &request(family, cwd, cursor));
         cursor = page.next;
         pages.push(page);
         if cursor.is_none() {
@@ -189,12 +197,15 @@ fn row_json(index: usize, cwd: &str) -> serde_json::Value {
 }
 
 /// The bytes of the compact JSON of a page of `rows` with `next` at
-/// place 2.
+/// place 2, each VM `off` as `page` gives it.
 #[cfg(test)]
 fn page_bytes(rows: Vec<SessionRow>) -> usize {
     let page = SessionPage {
         next: Some(ListCursor::try_from(2).expect("a cursor")),
-        rows,
+        rows: rows
+            .into_iter()
+            .map(|row| ListRow::new(row, VmState::Off))
+            .collect(),
     };
     serde_json::to_vec(&page).expect("a page writes").len()
 }
@@ -246,7 +257,7 @@ fn a_page_ends_at_the_exact_body_cap() {
             rows.create(create).expect("a row");
         }
 
-        let page = rows.page(&request("anna", None, None));
+        let page = off_page(&rows, &request("anna", None, None));
 
         let size = serde_json::to_vec(&page).expect("a page writes").len();
         let fits = over == 0;
@@ -268,9 +279,57 @@ fn an_unknown_family_gives_an_empty_page() {
 
     for cursor in [None, Some(1), Some(4), Some((1 << 53) - 1)] {
         let cursor = cursor.map(|place: u64| ListCursor::try_from(place).expect("a cursor"));
-        let page = rows.page(&request("otto", None, cursor));
+        let page = off_page(&rows, &request("otto", None, cursor));
         assert_eq!((page.next, page.rows.len()), (None, 0));
     }
+}
+
+// The reader gets each row of the page in page order, and its state lands
+// on that row. The row file keeps no state.
+#[test]
+fn each_row_carries_the_state_of_the_reader() {
+    let state = TempState::new("vm");
+    let mut rows = state.open();
+    fill(&mut rows, 4, |_| "anna", |_| "/w".to_owned());
+    let states = [
+        VmState::None,
+        VmState::Off,
+        VmState::Asleep,
+        VmState::Running,
+    ];
+    let mut asked = Vec::new();
+
+    let page = rows.page(&request("anna", None, None), |row| {
+        asked.push(row.id.clone());
+        Ok::<_, Infallible>(states[asked.len() - 1])
+    });
+
+    let Ok(page) = page;
+    let newest_first: Vec<SessionId> = (0..4).rev().map(id).collect();
+    assert_eq!(asked, newest_first);
+    let vms: Vec<VmState> = page.rows.iter().map(|row| row.vm).collect();
+    assert_eq!(vms, states);
+    let file = fs::read_to_string(state.0.row_file(&id(0))).expect("a row file");
+    assert!(!file.contains("\"vm\""), "{file}");
+}
+
+// An error of the reader ends the page with that error, so a page never
+// holds a row with no state.
+#[test]
+fn an_error_of_the_reader_ends_the_page() {
+    let state = TempState::new("vm-error");
+    let mut rows = state.open();
+    fill(&mut rows, 3, |_| "anna", |_| "/w".to_owned());
+
+    let page = rows.page(&request("anna", None, None), |row| {
+        if row.id == id(1) {
+            Err("no state")
+        } else {
+            Ok(VmState::Off)
+        }
+    });
+
+    assert_eq!(page, Err("no state"));
 }
 
 #[cfg(test)]

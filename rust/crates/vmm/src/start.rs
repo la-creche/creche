@@ -112,6 +112,7 @@ use crate::egress::watch::{Follow, Reach, Served, Watch};
 use crate::family_state::{self, Server};
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
+use crate::handlers::list::RunningVms;
 use crate::mirror::{self, Mirror};
 use crate::planes::{Bound, Planes, Upstreams, bind};
 use crate::relay::{AcpLink, Door, Relays};
@@ -1566,6 +1567,20 @@ impl<L: Launcher, A: ChApi> StopVm for ColdBoot<L, A> {
     /// its outcome (caller duty 6 of `AGENTS.md`).
     async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
         self.stopper().stop(id, None).await
+    }
+}
+
+impl<L: Launcher, A: ChApi> RunningVms for ColdBoot<L, A> {
+    /// The sessions whose slot holds a CH process: a VM that runs or whose
+    /// stop failed, and a VM in an eviction or a stop, whose CH runs until
+    /// the stop ends (decision CH79 rule 4). A start before its launch
+    /// holds no CH yet.
+    fn running_sessions(&self) -> HashSet<SessionId> {
+        lock(&self.table)
+            .iter()
+            .filter(|(_, slot)| !matches!(slot, Slot::Starting(..)))
+            .map(|(id, _)| id.clone())
+            .collect()
     }
 }
 
