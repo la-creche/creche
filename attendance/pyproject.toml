@@ -3,7 +3,7 @@ name = "attendance"
 version = "0.1.0"
 description = "The host side of each family's facade: the supervisor link, the jobs over ACP, the ACP door and the view (contract 02)."
 requires-python = ">=3.12"
-dependencies = ["fastapi>=0.115", "uvicorn>=0.30", "httpx>=0.27", "websockets==17.2"]
+dependencies = ["creche-wire", "fastapi>=0.115", "uvicorn>=0.30", "httpx>=0.27", "websockets==17.2"]
 
 [project.scripts]
 # The component's verify hook. `attendance/component.yaml` names it, and
@@ -17,6 +17,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/attendance"]
 
+
+[tool.uv.sources]
+creche-wire = { workspace = true }
 
 [tool.uv]
 # uv rebuilds a local package only when pyproject.toml, setup.py or setup.cfg
