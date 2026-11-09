@@ -173,8 +173,9 @@ conversation and the one-writer rule (Flue's queue).
 5. A caller never names itself. `caller_family` comes from the token.
 6. A dispatched job runs over ACP (`JobQueue`, `acp_jobs.py`). Its ledger
    entry is written only after every refusal, so a refusal leaves none. A
-   dispatch with no chain is refused, because the `dispatch` trigger of the
-   origin needs 1 to 8 families (decision CH21-4a).
+   dispatch with no chain is refused at `POST /dispatch`, because the
+   `dispatch` trigger of the origin needs 1 to 8 families (decision
+   CH21-4a). The ledger reader drops a dispatch entry with no chain.
 7. The job keeps its `auto-<ulid>` id. attendance mints the session id of
    its row, and the entry's `acp_session` maps one to the other.
 8. The outcome record is written, then noted in the ledger, then the slot
