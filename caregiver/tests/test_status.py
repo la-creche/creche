@@ -13,13 +13,11 @@ from agent_family import FamilyState, Issue, Markup, Report, Severity, parse_fam
 from caregiver.faults import FaultEntry
 from caregiver.status import (
     STATUS_FILE_MODE,
-    ChannelState,
     CredentialsBlock,
     LimitsBlock,
+    ReconcileBlock,
+    ReconcileStep,
     RotationState,
-    SandboxLifecycle,
-    SandboxPower,
-    SandboxStatus,
     StatusDocument,
     ValidationBlock,
     now_rfc3339,
@@ -60,28 +58,34 @@ def test_validation_block_as_json() -> None:
     }
 
 
-def test_sandbox_status_stringifies_its_enums() -> None:
-    sandbox = SandboxStatus(
-        id="chat-s1",
-        state=SandboxLifecycle.READY,
-        power=SandboxPower.RUNNING,
-        image="sha256:abc",
-        spec_hash="deadbeef",
-        cpus=4,
-        memory="8g",
-        created_at="2026-09-19T00:00:00Z",
-        ready_at="2026-09-19T00:00:10Z",
-        channel=ChannelState.OPEN,
+def test_the_reconcile_block_holds_no_needs_switch() -> None:
+    """Contract 05 minor 20: caregiver switches no VM (decision CH21-1)."""
+    block = ReconcileBlock(
+        since="2026-09-19T00:00:00Z",
+        from_rev="reg-8c01aa",
+        to_rev="reg-9f21c4",
+        step=ReconcileStep.WRITE_CONFIG,
+        attempts=1,
     )
-    body = sandbox.as_json()
-    assert body["state"] == "ready"
-    assert body["power"] == "running"
-    assert body["channel"] == "open"
-    # No `turns_running`: `caregiver` may not call `GET /v1/sessions`
-    # (contract 02 §3.1), and a session row's `sandbox` names the sandbox
-    # that served the LAST turn. A field that cannot be kept true is left
-    # out, never written.
-    assert "turns_running" not in body
+    assert block.as_json() == {
+        "since": "2026-09-19T00:00:00Z",
+        "from_rev": "reg-8c01aa",
+        "to_rev": "reg-9f21c4",
+        "step": "write_config",
+        "attempts": 1,
+    }
+
+
+def test_the_steps_are_the_six_of_minor_20() -> None:
+    """Contract 05 §3.4 drops the three VM steps (decisions CH1, CH21-1)."""
+    assert [str(one) for one in ReconcileStep] == [
+        "validate",
+        "write_grants",
+        "update_key",
+        "write_config",
+        "set_egress",
+        "write_timers",
+    ]
 
 
 def test_credentials_block_as_json() -> None:
@@ -135,7 +139,9 @@ def test_status_document_assembles_the_full_shape() -> None:
     body = doc.as_json()
     assert body["family"] == "chat"
     assert body["state"] == "in_sync"
-    assert body["sandboxes"] == []
+    # Minor 18: the vmm owns each VM, and no sandbox row is published
+    # (decision CH21-1).
+    assert "sandboxes" not in body
     assert body["credentials"] is None
     assert body["reconcile"] is None
     assert body["spend"] is None

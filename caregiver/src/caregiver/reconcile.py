@@ -57,6 +57,8 @@ from .policy_fleet import FleetPolicy, LeftOut
 from .status import (
     CredentialsBlock,
     LimitsBlock,
+    ReconcileBlock,
+    ReconcileStep,
     StatusDocument,
     TriggersBlock,
     ValidationBlock,
@@ -78,24 +80,6 @@ MODEL_CACHE_S: Final = 10
 
 #: Contract 05 §3.2: `first_error` is a convenience for the noticeboard.
 FIRST_ERROR_CHARS: Final = 200
-
-#: Contract 05 §3.4's first step. A pass that is `reconciling` and ran no
-#: other step names it: the pass validated the file, and it waits for the
-#: model cache (§7 rule 6) or for a family file named `family.toml`.
-VALIDATE_STEP: Final = "validate"
-
-#: `triggers:` lands in the timer set, which is
-#: why contract 01 §6's table gives the field `Step.NONE`: no step of
-#: contract 05 §3.4 touches it.
-#:
-#: CONTRACT-QUESTION: contract 05 §3.4 lists eight step names, and this
-#: name is not one of them. A pass that wrote the timer set last publishes
-#: it in `reconcile.step`. The name stays as it is: no name of §3.4 says
-#: what this step does, and each reader takes the name today. To follow
-#: §3.4, the pass must publish one of the eight names for this step, or
-#: §3.4 must list this name. A reader with the eight names alone refuses
-#: the document that holds it.
-TIMERS_STEP: Final = "write_timers"
 
 #: Contract 05 §3.3. A generated timer systemd does not report as enabled.
 #: It never fires, and a schedule that does not run leaves no other trace.
@@ -153,7 +137,7 @@ class ReconcileResult:
 
     family: str
     status: StatusDocument
-    ran: tuple[str, ...]
+    ran: tuple[ReconcileStep, ...]
     note: str
 
     @property
@@ -236,7 +220,7 @@ def _converge(
     spend: SpendRead,
     chaperone: PepReport,
 ) -> ReconcileResult:
-    ran: list[str] = []
+    ran: list[ReconcileStep] = []
     faults = list(folded)
 
     # The app table of `policy.toml` has a shape check, and it comes before
@@ -283,7 +267,7 @@ def _converge(
         )
 
     if refresh is KeyRefresh.UPDATE and applied is not None:
-        ran.append(str(Step.UPDATE_KEY))
+        ran.append(ReconcileStep.UPDATE_KEY)
 
     # The table of the family in `policy.toml` is landed on each pass. A
     # server file moves what `all` grants while the family file stays put,
@@ -301,10 +285,10 @@ def _converge(
         ).noted("refused: left out of policy.toml")
 
     if _needs(diff, Step.WRITE_GRANTS):
-        ran.append(str(Step.WRITE_GRANTS))
+        ran.append(ReconcileStep.WRITE_GRANTS)
 
     if steps.write_config(family, state_root, *_config_text(registry, family)):
-        ran.append(str(Step.WRITE_CONFIG))
+        ran.append(ReconcileStep.WRITE_CONFIG)
 
     # Contract 01 §6.1.1, contract 05 §3.4's `set_egress`: on every pass,
     # so each file holds the list of the revision this pass converges to
@@ -312,11 +296,11 @@ def _converge(
     egress_moved = reach_files.write_egress_file(egress_file, state_root)
     repos_moved = reach_files.write_repos_file(family, state_root)
     if egress_moved or repos_moved:
-        ran.append(str(Step.SET_EGRESS))
+        ran.append(ReconcileStep.SET_EGRESS)
 
     timers = apply_timers(family, actors.units)
     if timers.changed:
-        ran.append(TIMERS_STEP)
+        ran.append(ReconcileStep.WRITE_TIMERS)
 
     timer_faults = _timer_faults(family, timers)
     faults.extend(timer_faults)
@@ -488,7 +472,7 @@ def _publish(
     faults: tuple[FaultEntry, ...],
     credentials: CredentialsBlock | None,
     *,
-    ran: tuple[str, ...],
+    ran: tuple[ReconcileStep, ...],
     note: str,
     spend_block: dict[str, Any] | None,
     settled: str | None = None,
@@ -552,23 +536,21 @@ def _state_of(
 
 
 def _reconcile_block(
-    state: FamilyState, applied_rev: str, revision: str, ran: tuple[str, ...]
-) -> dict[str, Any] | None:
-    """Contract 05 §3.4. Null unless `reconciling` (§2.1)."""
+    state: FamilyState, applied_rev: str, revision: str, ran: tuple[ReconcileStep, ...]
+) -> ReconcileBlock | None:
+    """Contract 05 §3.4. Null unless `reconciling` (§2.1). A pass that ran
+    no step names `validate`: it validated the file, and it waits for the
+    model cache (§7 rule 6) or for a family file named `family.toml`."""
     if state is not FamilyState.RECONCILING:
         return None
 
-    return {
-        "since": now_rfc3339(),
-        "from_rev": applied_rev,
-        "to_rev": revision,
-        "step": ran[-1] if ran else VALIDATE_STEP,
-        "attempts": 1,
-        # Contract 05 minor 17 still holds the field, and caregiver
-        # provides minor 17. It switches no VM (decision CH21-1), so the
-        # value is false.
-        "needs_switch": False,
-    }
+    return ReconcileBlock(
+        since=now_rfc3339(),
+        from_rev=applied_rev,
+        to_rev=revision,
+        step=ran[-1] if ran else ReconcileStep.VALIDATE,
+        attempts=1,
+    )
 
 
 def _spend_block(
@@ -710,12 +692,14 @@ def _text(path: Path) -> str:
         return ""
 
 
-def _model_live_at(applied: AppliedState | None, diff: Diff | None, ran: list[str]) -> str | None:
+def _model_live_at(
+    applied: AppliedState | None, diff: Diff | None, ran: list[ReconcileStep]
+) -> str | None:
     """When a `/key/update` may be treated as live everywhere (§7 rule 6).
 
     An unchanged pass keeps the deadline the last model change set, so the
     10 seconds are counted once and not restarted by every poll."""
-    if str(Step.UPDATE_KEY) in ran and _model_moved(diff):
+    if ReconcileStep.UPDATE_KEY in ran and _model_moved(diff):
         return seconds_from_now(MODEL_CACHE_S)
 
     return applied.model_live_at if applied is not None else None

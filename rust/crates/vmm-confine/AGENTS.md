@@ -418,12 +418,13 @@ table of the three vmm crates.
      beyond the fixed two, and a vsock path other than the VM's own.
   3. `ch-remote resume`.
   4. The wait for `ControlReady`.
-- CONTRACT-QUESTION (decisions CH21-1, CH36 G18): contract 05 §3.3.1 has
-  no row for the vmm until its amendment. Open until then: the group of
-  `faults/vmm/` and its files (the vmm sets modes 0750 and 0640 only),
-  the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
-  reads only the `attendance` and `pep` files today, so it ignores the
-  vmm file.
+- Closed by contract 05 0.18.0 (plan PR PD1) and plan PR CR10 (decisions
+  CH21-1, CH36 G18): §3.3.1 has a row for the vmm, and the value `vmm`
+  is in the `source` enum of §3.3. §3.3.1 names the group of
+  `faults/vmm/` and its files: the user of caregiver. The vmm sets the
+  modes 0750 and 0640 only, and the group is the one the faults root
+  gives on the host. caregiver folds the file into the status document,
+  and its test reads `tests/fixtures/caregiver_fault.json`.
 - Closed by decision CH82 rules 1, 2 and 6: the code of the serial log
   cap is `serial_log_full`, and no vmm code stops turns. Contract 05
   0.18.0 (plan PR PD1) states both, so the merge of this code waits for

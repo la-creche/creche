@@ -56,6 +56,9 @@ def test_repos_path() -> None:
 def test_fault_path_is_keyed_by_source_and_family() -> None:
     assert fault_path(ROOT, "pep", "chat") == ROOT / "faults" / "pep" / "chat.json"
     assert fault_path(ROOT, "attendance", "chat") == ROOT / "faults" / "attendance" / "chat.json"
+    # `VMM_FAULTS_ROOT` is `${CAREGIVER_STATE_ROOT}/faults` (env/default.env),
+    # and the vmm writes `vmm/<family>.json` under it (decision CH21-1).
+    assert fault_path(ROOT, "vmm", "chat") == ROOT / "faults" / "vmm" / "chat.json"
 
 
 def test_every_family_path_lives_under_the_family_directory() -> None:

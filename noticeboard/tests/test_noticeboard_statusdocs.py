@@ -273,6 +273,35 @@ def test_reconciling_names_the_step(tmp_path: Path) -> None:
     assert row.reconcile.needs_switch
 
 
+def test_a_minor_20_document_reads_whole(tmp_path: Path) -> None:
+    """Contract 05 minor 18 drops `sandboxes`, and minor 20 drops
+    `needs_switch` (plan PR CR10). The reader takes such a document whole:
+    no problem, no sandbox, and the step of minor 20."""
+    root = tmp_path / "state"
+    doc = status_doc(
+        state="reconciling",
+        reconcile={
+            "since": "2026-09-19T11:59:40Z",
+            "from_rev": "reg-8c01aa",
+            "to_rev": "reg-9f21c4",
+            "step": "write_config",
+            "attempts": 1,
+        },
+    )
+    del doc["sandboxes"]
+    write_json(root / "families" / "chat" / "status.json", doc)
+
+    row = read_family(root / "families", "chat", NOW)
+
+    assert row.problem == ""
+    assert row.health is Health.RECONCILING
+    assert row.reason == "step write_config, attempt 1"
+    assert row.sandboxes == ()
+    assert row.serving is None
+    assert row.reconcile is not None
+    assert not row.reconcile.needs_switch
+
+
 def test_the_serving_sandbox_is_ready_before_creating(tmp_path: Path) -> None:
     """Contract 05 §4.2 rule 1: a `ready` sandbox always wins."""
     root = tmp_path / "state"

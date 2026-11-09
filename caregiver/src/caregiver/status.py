@@ -43,27 +43,19 @@ STALE_AFTER_S: Final = 90
 ATTENDANCE_MAX_QUEUED_TURNS: Final = 100
 
 
-class SandboxLifecycle(StrEnum):
-    """Contract 05 section 4.2."""
+class ReconcileStep(StrEnum):
+    """Contract 05 §3.4's `step`: the step in flight. Minor 20 drops
+    `create_sandbox`, `switch_sandbox` and `destroy_sandbox`, because
+    caregiver creates, switches and destroys no VM (decisions CH1,
+    CH21-1). `set_egress` writes `egress.json` and `repos.json` (decision
+    CH69 rule 6)."""
 
-    PLANNED = "planned"
-    CREATING = "creating"
-    READY = "ready"
-    DRAINING = "draining"
-    STOPPING = "stopping"
-    GONE = "gone"
-    FAILED = "failed"
-
-
-class SandboxPower(StrEnum):
-    RUNNING = "running"
-    STOPPED = "stopped"
-
-
-class ChannelState(StrEnum):
-    OPEN = "open"
-    CLOSED = "closed"
-    LOST = "lost"
+    VALIDATE = "validate"
+    WRITE_GRANTS = "write_grants"
+    UPDATE_KEY = "update_key"
+    WRITE_CONFIG = "write_config"
+    SET_EGRESS = "set_egress"
+    WRITE_TIMERS = "write_timers"
 
 
 class RotationState(StrEnum):
@@ -100,38 +92,23 @@ class ValidationBlock:
 
 
 @dataclass(frozen=True)
-class SandboxStatus:
-    """Contract 05 section 4.1."""
+class ReconcileBlock:
+    """Contract 05 §3.4. Minor 20 drops `needs_switch`: caregiver switches
+    no VM (decision CH21-1)."""
 
-    id: str
-    state: SandboxLifecycle
-    power: SandboxPower
-    image: str
-    spec_hash: str
-    cpus: int
-    memory: str
-    created_at: str
-    ready_at: str | None
-    channel: ChannelState
-    #: Contract 05 section 4.1: the host path of this sandbox's
-    #: `supervisor.env`. `attendance` hands it to `sbx exec --env-file`, which
-    #: is the only way the playpen learns where its mounts are
-    #: (contract 03 section 7.1).
-    playpen_env: str = ""
+    since: str
+    from_rev: str
+    to_rev: str
+    step: ReconcileStep
+    attempts: int
 
     def as_json(self) -> dict[str, Any]:
         return {
-            "id": self.id,
-            "state": str(self.state),
-            "power": str(self.power),
-            "image": self.image,
-            "spec_hash": self.spec_hash,
-            "cpus": self.cpus,
-            "memory": self.memory,
-            "created_at": self.created_at,
-            "ready_at": self.ready_at,
-            "channel": str(self.channel),
-            "supervisor_env": self.playpen_env,
+            "since": self.since,
+            "from_rev": self.from_rev,
+            "to_rev": self.to_rev,
+            "step": str(self.step),
+            "attempts": self.attempts,
         }
 
 
@@ -206,7 +183,9 @@ class LimitsBlock:
 class StatusDocument:
     """Contract 05 section 2.1. `reconcile` and `spend` are optional:
     apply-once never sets a reconcile block (that is the watch loop's own
-    state), and never reads live spend."""
+    state), and never reads live spend. Minor 18 drops the `sandboxes`
+    list: the vmm owns each VM, and the noticeboard reads VM state from
+    `attendance` (decisions CH1, CH21-1)."""
 
     family: str
     kind: str
@@ -216,12 +195,11 @@ class StatusDocument:
     applied_rev: str
     config_rev: str
     validation: ValidationBlock
-    sandboxes: tuple[SandboxStatus, ...] = ()
     credentials: CredentialsBlock | None = None
     limits: LimitsBlock = field(default_factory=LimitsBlock)
     triggers: TriggersBlock = field(default_factory=TriggersBlock)
     faults: tuple[FaultEntry, ...] = ()
-    reconcile: dict[str, Any] | None = None
+    reconcile: ReconcileBlock | None = None
     spend: dict[str, Any] | None = None
     #: Contract 05 section 2.1's `pep` block. The default is `off`, which
     #: is the truth for every caller that runs one pass in one process
@@ -241,8 +219,7 @@ class StatusDocument:
             "config_rev": self.config_rev,
             "validation": self.validation.as_json(),
             "faults": [one.as_json() for one in self.faults],
-            "reconcile": self.reconcile,
-            "sandboxes": [one.as_json() for one in self.sandboxes],
+            "reconcile": self.reconcile.as_json() if self.reconcile is not None else None,
             "credentials": self.credentials.as_json() if self.credentials is not None else None,
             "spend": self.spend,
             "limits": self.limits.as_json(),
