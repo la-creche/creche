@@ -459,9 +459,10 @@ Kind.BINARY, Releases.YES)` (CH7-5, CH9, item 12 (1)). Its manifest is
    It opens no socket and reads no disk (CH76 rule 2). `bin/fleet-up up`
    writes `vmm.env` (CH59 rule 1). The file must exist before the first
    vmm release.
-5. The manifest requires `family-file` 0.18. Minor 16 is the first with
+5. The manifest requires `family-file` 0.19. Minor 16 is the first with
    the reach files that the vmm reads (CH76 rule 3), minor 17 adds the
-   flavor `coding` (CH79 rule 1), and minor 18 drops `files` (CH10-10).
+   flavor `coding` (CH79 rule 1), minor 18 drops `files` (CH10-10), and
+   minor 19 drops `sandbox.max_resident_processes` (CH8-6).
    Each floor is the current minor of its provider
    (`tests/test_handover_repo_manifests.py`).
 6. The AppArmor slot profile does not ship in the archive. A change to

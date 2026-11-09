@@ -392,20 +392,6 @@ def _sandbox(old: FamilyFile, new: FamilyFile, changes: list[FieldChange]) -> No
             f"sandbox.memory changed: {old.sandbox.memory} to {new.sandbox.memory}",
         )
 
-    old_resident = old.sandbox.max_resident_processes
-    new_resident = new.sandbox.max_resident_processes
-    if old_resident != new_resident:
-        # Contract 01 §6: it rides the channel's `hello` (§3.9), which a new
-        # sandbox always delivers, so it is classified as a replacement.
-        _add(
-            changes,
-            "sandbox.max_resident_processes",
-            Landing.REPLACE,
-            _number(old_resident, new_resident),
-            Step.CREATE_SANDBOX,
-            f"sandbox.max_resident_processes changed: {old_resident} to {new_resident}",
-        )
-
 
 def _number(old: float | None, new: float | None) -> Direction:
     if old is None or new is None:

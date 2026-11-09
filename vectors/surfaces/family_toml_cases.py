@@ -209,7 +209,6 @@ sandbox_tools = ["read", "write", "edit", "bash", "grep", "glob"]
 system_prompt = "replace"
 sandbox.cpus = 4
 sandbox.memory = "8g"
-sandbox.max_resident_processes = 16
 sandbox.image = "python"
 skills = ["handoff", "grill-me"]
 approval = ["ha_call", "invoke_agent", "kagi__kagi_extract", "ha-read__*"]
@@ -290,13 +289,13 @@ quiet.daily = { hour = 7 }
             budget_usd_per_day='"2.5"',
         )
         + 'shell = "yes"\nmax_inflight_delegations = "2"\n'
-        + 'sandbox.cpus = 2.0\nsandbox.max_resident_processes = " 12 "\n',
+        + "sandbox.cpus = 2.0\n",
     ),
     _case(
         "lax-refused",
         _head(budget_usd_per_day='"cheap"')
         + "shell = 2\nmax_inflight_delegations = 2.5\n"
-        + 'sandbox.cpus = "two"\nsandbox.max_resident_processes = [12]\n',
+        + 'sandbox.cpus = "two"\n',
     ),
     _case("lax-quoted-int", HEAD + 'sandbox.cpus = "2"\n'),
     _case("lax-bool-words", HEAD + 'shell = "on"\n'),
@@ -565,21 +564,19 @@ verbs.release.components = ["chaperone", "not-a-component"]
     _case(
         "rule-sandbox",
         HEAD
-        + 'sandbox.cpus = 99\nsandbox.memory = "64g"\nsandbox.max_resident_processes = 0\n'
+        + 'sandbox.cpus = 99\nsandbox.memory = "64g"\n'
         + 'sandbox.image = "registry.example/x/y"\n',
     ),
+    # Minor 19 drops the field (CH8-6): it is unknown and the text is refused.
+    _case("rule-sandbox-resident", HEAD + "sandbox.max_resident_processes = 12\n"),
     _case(
         "rule-sandbox-memory",
-        HEAD + 'sandbox.memory = "2x"\nsandbox.max_resident_processes = 33\n',
-    ),
-    _case(
-        "rule-sandbox-carry",
-        HEAD + 'sandbox.memory = "256m"\nsandbox.max_resident_processes = 12\n',
+        HEAD + 'sandbox.memory = "2x"\n',
     ),
     _case("rule-sandbox-small", HEAD + 'sandbox.memory = "255m"\nsandbox.cpus = 0\n'),
     _case(
         "rule-sandbox-max",
-        HEAD + 'sandbox.memory = "16g"\nsandbox.cpus = 8\nsandbox.max_resident_processes = 32\n',
+        HEAD + 'sandbox.memory = "16g"\nsandbox.cpus = 8\n',
     ),
     _case("rule-sandbox-memory-forms", HEAD + 'sandbox.memory = "02g"\n'),
     _case("rule-sandbox-memory-upper", HEAD + 'sandbox.memory = "2G"\n'),
@@ -675,27 +672,27 @@ quiet.floor_hours = 168
     # --- more texts that the lax mode of pydantic reads as a number ----------
     _case(
         "lax-int-forms",
-        HEAD + 'sandbox.cpus = "0-1"\nsandbox.max_resident_processes = "0_1_2.00"\n',
+        HEAD + 'sandbox.cpus = "0-1"\nmax_inflight_delegations = "0_1_2.00"\n',
     ),
     _case(
         "lax-int-plus",
-        HEAD + 'sandbox.cpus = "+02"\nsandbox.max_resident_processes = " 1_2 "\n',
+        HEAD + 'sandbox.cpus = "+02"\nmax_inflight_delegations = " 1_2 "\n',
     ),
     _case(
         "lax-int-refused",
-        HEAD + 'sandbox.cpus = "2."\nsandbox.max_resident_processes = "1__2"\n',
+        HEAD + 'sandbox.cpus = "2."\nmax_inflight_delegations = "1__2"\n',
     ),
     _case(
         "lax-int-sign-twice",
-        HEAD + 'sandbox.cpus = "-0-1"\nsandbox.max_resident_processes = "+-1"\n',
+        HEAD + 'sandbox.cpus = "-0-1"\nmax_inflight_delegations = "+-1"\n',
     ),
     _case(
         "lax-int-float-edge",
-        HEAD + "sandbox.cpus = 9.3e+18\nsandbox.max_resident_processes = 2.5\n",
+        HEAD + "sandbox.cpus = 9.3e+18\nmax_inflight_delegations = 2.5\n",
     ),
     _case(
         "lax-int-not-finite",
-        HEAD + "sandbox.cpus = inf\nsandbox.max_resident_processes = nan\n",
+        HEAD + "sandbox.cpus = inf\nmax_inflight_delegations = nan\n",
     ),
     _case("lax-float-forms", _head(budget_usd_per_day='"1_0.5e+0"')),
     _case("lax-float-space-underscore", _head(budget_usd_per_day='" 1_0"')),
@@ -859,10 +856,10 @@ verbs.ha_call.allow = [
 verbs.enqueue.targets = "x"
 verbs.release.components = [1]
 delegates = [1]
+max_inflight_delegations = "1"
 sandbox_tools = [true]
 sandbox.cpus = 1.5
 sandbox.memory = 4
-sandbox.max_resident_processes = "1"
 sandbox.image = 1
 skills = [[]]
 approval = [1.5]

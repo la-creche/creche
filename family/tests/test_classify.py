@@ -341,7 +341,7 @@ def test_a_quiet_change_is_live_and_moves_no_reach() -> None:
     assert not diff.needs_switch
 
 
-# --- sandbox: cpus, memory, max_resident_processes (needs a switch) -------
+# --- sandbox: cpus, memory (needs a switch) ------------------------------
 
 
 @pytest.mark.parametrize(
@@ -402,17 +402,6 @@ def test_sandbox_image_change_interrupts_rather_than_drains() -> None:
 def test_an_unchanged_image_is_no_change() -> None:
     old, new = built("chat", {}, {})
     assert not [one for one in classify(old, new).changes if one.field == "sandbox.image"]
-
-
-def test_sandbox_max_resident_processes_replaces() -> None:
-    old, new = built(
-        "chat",
-        {"sandbox": {"cpus": 4, "memory": "8g", "max_resident_processes": 12}},
-        {"sandbox": {"cpus": 4, "memory": "8g", "max_resident_processes": 20}},
-    )
-    change = change_for(classify(old, new), "sandbox.max_resident_processes")
-    assert change.landing is Landing.REPLACE
-    assert change.step is Step.CREATE_SANDBOX
 
 
 # --- the Diff object itself ---------------------------------------------------

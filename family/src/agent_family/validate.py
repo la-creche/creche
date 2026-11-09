@@ -48,8 +48,6 @@ from .grammar import (
     QUIET_FLOOR_MAX_HOURS,
     QUIET_FLOOR_MIN_HOURS,
     REPOS_MAX,
-    RESIDENT_PROCS_MAX,
-    RESIDENT_PROCS_MIN,
     SANDBOX_FLAVORS,
     SERVER_FILE,
     SERVER_NAME,
@@ -85,13 +83,6 @@ RELEASABLE: Final = frozenset(
         "handover",
     }
 )
-
-#: Probe 0a measured 155 to 170 MB per idle held-open pi process and 62 MB for
-#: the playpen (contract 01 §3.9). The warning uses the LOW end, so it fires
-#: only when the budget cannot carry the count even optimistically. Used only
-#: for the §3.9 warning, never for a refusal.
-PI_PROCESS_MB: Final = 155
-PLAYPEN_MB: Final = 62
 
 #: The approval grammar's wildcard: `<server>__*` (contract 01 §3.11).
 CALL_SEPARATOR: Final = "__"
@@ -542,27 +533,6 @@ def _check_sandbox(family: FamilyFile, issues: Issues) -> None:
         issues.error("sandbox.memory", f"'{box.memory}' must match [1-9][0-9]*[mg]")
     elif not MEMORY_MIN_MB <= megabytes <= MEMORY_MAX_MB:
         issues.error("sandbox.memory", f"'{box.memory}' is outside 256m to 16g")
-
-    resident = box.max_resident_processes
-    if not RESIDENT_PROCS_MIN <= resident <= RESIDENT_PROCS_MAX:
-        issues.error(
-            "sandbox.max_resident_processes",
-            f"{resident} is outside {RESIDENT_PROCS_MIN} to {RESIDENT_PROCS_MAX}",
-        )
-        return
-
-    if megabytes is None:
-        return
-
-    # §3.9: raising it above what `memory` can carry is a warning, not an
-    # error. The playpen reaps under pressure either way.
-    carried = max(0, (megabytes - PLAYPEN_MB) // PI_PROCESS_MB)
-    if resident > carried:
-        issues.warn(
-            "sandbox.max_resident_processes",
-            f"{resident} held-open processes need about {resident * PI_PROCESS_MB + PLAYPEN_MB}"
-            f" MB; '{box.memory}' carries about {carried}",
-        )
 
 
 def _check_skills(family: FamilyFile, index: Index, issues: Issues) -> None:

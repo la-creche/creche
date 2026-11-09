@@ -19,7 +19,6 @@ from .grammar import (
     DEFAULT_MAX_INFLIGHT_DELEGATIONS,
     DEFAULT_MEMORY,
     DEFAULT_QUIET_FLOOR_HOURS,
-    DEFAULT_RESIDENT_PROCS,
     DEFAULT_SANDBOX_IMAGE,
     DEFAULT_SANDBOX_TOOLS,
     SystemPrompt,
@@ -49,7 +48,6 @@ class ModelBlock(Strict):
 class SandboxBlock(Strict):
     cpus: int = DEFAULT_CPUS
     memory: str = DEFAULT_MEMORY
-    max_resident_processes: int = DEFAULT_RESIDENT_PROCS
     # A FLAVOR the platform builds, never an image reference (contract 01
     # §3.9). `validate.py` holds it to the closed set.
     image: str = DEFAULT_SANDBOX_IMAGE

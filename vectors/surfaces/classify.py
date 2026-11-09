@@ -60,7 +60,7 @@ egress = ["example.invalid", "example.invalid:443"]
 shell = true
 sandbox_tools = ["read", "write"]
 system_prompt = "append"
-sandbox = { cpus = 2, memory = "2g", max_resident_processes = 12, image = "base" }
+sandbox = { cpus = 2, memory = "2g", image = "base" }
 skills = ["handoff"]
 approval = ["embed"]
 """
@@ -221,8 +221,6 @@ PAIRS: Final[tuple[tuple[str, str, str], ...]] = (
     ("memory-down", BASE, BASE + 'sandbox = { memory = "512m" }\n'),
     ("memory-same-size", BASE, BASE + 'sandbox = { memory = "2048m" }\n'),
     ("memory-invalid", BASE, BASE + 'sandbox = { memory = "2x" }\n'),
-    ("resident-up", BASE, BASE + "sandbox = { max_resident_processes = 13 }\n"),
-    ("resident-down", BASE, BASE + "sandbox = { max_resident_processes = 4 }\n"),
     # --- more than one field ---
     ("add-only-replace", BASE, BASE + 'sandbox = { cpus = 4, memory = "4g" }\n'),
     (
@@ -241,7 +239,7 @@ egress = ["example.invalid"]
 shell = false
 sandbox_tools = ["read"]
 system_prompt = "replace"
-sandbox = { cpus = 1, memory = "1g", max_resident_processes = 4, image = "python" }
+sandbox = { cpus = 1, memory = "1g", image = "python" }
 skills = []
 approval = ["embed", "job_status"]
 triggers = [{ enqueue = true }]

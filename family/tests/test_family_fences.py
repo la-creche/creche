@@ -478,8 +478,6 @@ SANDBOX_CASES = (
     # A count of more digits than the interpreter converts is past the range.
     ({"cpus": 2, "memory": "9" * 5000 + "g"}, "is outside 256m to 16g"),
     ({"cpus": 2, "memory": "9" * 5000 + "m"}, "is outside 256m to 16g"),
-    ({"cpus": 2, "memory": "2g", "max_resident_processes": 0}, "is outside 1 to 32"),
-    ({"cpus": 2, "memory": "2g", "max_resident_processes": 33}, "is outside 1 to 32"),
 )
 
 
@@ -487,12 +485,6 @@ SANDBOX_CASES = (
 def test_sandbox_fences(sandbox: dict[str, object], expect: str) -> None:
     report = check("chat", sandbox=sandbox)
     assert expect in messages(report)
-
-
-def test_too_many_resident_processes_for_memory_is_a_warning_not_an_error() -> None:
-    report = check("chat", sandbox={"cpus": 2, "memory": "256m", "max_resident_processes": 30})
-    assert not errors(report)
-    assert "held-open processes need about" in messages(report)
 
 
 def test_the_default_image_flavor_is_base() -> None:
