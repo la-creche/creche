@@ -60,7 +60,8 @@ class DispatchRequest:
     target_family: str
     delegation_id: str
     message: str
-    chain: tuple[str, ...] = ()
+    #: 1 to 8 families, caller first. `read_dispatch` refuses a body with none.
+    chain: tuple[str, ...]
     claimed_session_id: str | None = None
     idempotency_key: str | None = None
 
@@ -149,12 +150,19 @@ def read_dispatch(raw: dict[str, Any]) -> DispatchRequest:
     if owner is not None and not is_session(owner):
         raise _bad("claimed_session_id is not a session id", family=target)
 
+    chain = _chain(raw.get("chain"), TriggerKind.DISPATCH, target, "")
+
+    # Decision CH21-4a: the wire `dispatch` trigger holds 1 to 8 families, so
+    # a body with no chain is refused here, before a ledger entry exists.
+    if not chain:
+        raise _bad("a dispatch carries no chain", family=target)
+
     return DispatchRequest(
         caller_family=caller,
         target_family=target,
         delegation_id=delegation_id,
         message=message,
-        chain=_chain(raw.get("chain"), TriggerKind.DISPATCH, target, ""),
+        chain=chain,
         claimed_session_id=owner,
         idempotency_key=_dispatch_key(raw, target),
     )

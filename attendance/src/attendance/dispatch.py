@@ -332,6 +332,13 @@ def _entry_from_file(raw: dict[str, Any], caller_family: str) -> DispatchEntry |
     if kind is None:
         return None
 
+    chain = _chain(raw.get("chain"))
+
+    # Decision CH21-4a: a dispatch entry with no chain fits no wire origin, so
+    # the reader drops it like any other unreadable file.
+    if kind is TriggerKind.DISPATCH and not chain:
+        return None
+
     outcome_id = _text(raw.get("outcome_id"))
 
     return DispatchEntry(
@@ -340,7 +347,7 @@ def _entry_from_file(raw: dict[str, Any], caller_family: str) -> DispatchEntry |
         family=family,
         enqueued_at=enqueued_at,
         delegation_id=delegation_id,
-        chain=_chain(raw.get("chain")),
+        chain=chain,
         caller_session=_text(raw.get("caller_session")),
         idempotency_key=_text(raw.get("idempotency_key")),
         outcome_id=outcome_id if outcome_id is not None and is_ulid(outcome_id) else None,

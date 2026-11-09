@@ -201,6 +201,26 @@ def test_a_chain_entry_that_is_no_family_is_refused() -> None:
         )
 
 
+@pytest.mark.parametrize("chain", [None, []], ids=["missing", "empty"])
+def test_a_dispatch_with_no_chain_is_refused(chain: list[str] | None) -> None:
+    """Decision CH21-4a, contract 02 §13.2 rule 6: the `dispatch` trigger
+    needs its chain, so the body is refused before any entry is written."""
+    body: dict[str, Any] = {
+        "caller_family": CALLER,
+        "target_family": TARGET,
+        "delegation_id": DELEGATION,
+        "message": MESSAGE,
+    }
+
+    if chain is not None:
+        body["chain"] = chain
+
+    with pytest.raises(ApiError) as raised:
+        read_dispatch(body)
+
+    assert raised.value.code is ErrorCode.BAD_REQUEST
+
+
 def test_an_over_long_idempotency_key_is_refused() -> None:
     """Contract 04 §4.1's own 128 character cap."""
     with pytest.raises(ApiError):
@@ -270,6 +290,16 @@ def test_a_limit_stops_the_listing(tmp_path: Path) -> None:
     ledger.write(_entry(JOB_SESSION))
 
     assert [one.session for one in ledger.list(CALLER, limit=1)] == [JOB_SESSION]
+
+
+def test_the_ledger_drops_a_dispatch_entry_with_no_chain(tmp_path: Path) -> None:
+    """Decision CH21-4a: such an entry fits no wire origin, so the reader
+    treats the file as unreadable."""
+    ledger = DispatchLedger(tmp_path)
+    ledger.write(_entry(chain=()))
+
+    assert ledger.read(CALLER, JOB_SESSION) is None
+    assert ledger.list(CALLER) == []
 
 
 def test_since_drops_an_older_entry(tmp_path: Path) -> None:
@@ -404,23 +434,6 @@ async def test_the_trigger_rides_in_the_origin(tmp_path: Path) -> None:
         assert isinstance(trigger, DispatchTrigger)
         assert trigger.dispatch.name.root == CHAT_FAMILY
         assert [one.root for one in trigger.dispatch.chain.root] == list(CHAIN)
-    finally:
-        await harness.stop()
-
-
-async def test_a_dispatch_with_no_chain_is_refused_and_leaves_no_entry(tmp_path: Path) -> None:
-    """Contract 02 §13.2 rule 6: the `dispatch` trigger needs its chain, so a
-    dispatch with none is refused before anything is written (§13.4.1 rule
-    5)."""
-    harness = await build(tmp_path)
-
-    try:
-        with pytest.raises(ApiError) as raised:
-            await harness.enqueue(chain=())
-
-        assert raised.value.code is ErrorCode.BAD_REQUEST
-        assert harness.jobs() == []
-        assert harness.vmm.creates == []
     finally:
         await harness.stop()
 

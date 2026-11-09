@@ -592,9 +592,9 @@ def _check_door(principal: Principal, door: Principal) -> None:
 def _auto_origin(entry: dispatch.DispatchEntry) -> SessionOrigin:
     """The origin of the row of one autonomous job (decision CH21-4a).
 
-    A dispatch needs its chain: 1 to 8 families, caller first (contract 02
-    §13.2 rule 6). A dispatch with none is refused before anything is
-    written, so a refusal leaves no ledger entry (§13.4.1 rule 5).
+    A dispatch carries its chain: 1 to 8 families, caller first (contract 02
+    §13.2 rule 6). `read_dispatch` and the ledger reader refuse one with none,
+    so no entry reaches this function without it (§13.4.1 rule 5).
     """
     job = AutoJobId(entry.session)
 
@@ -604,8 +604,6 @@ def _auto_origin(entry: dispatch.DispatchEntry) -> SessionOrigin:
         # `read_trigger` refuses a webhook firing with no name.
         name = WebhookName(str(entry.trigger_name))
         trigger = Trigger(WebhookTrigger(webhook=Webhook(name=name)))
-    elif not entry.chain:
-        raise ApiError(ErrorCode.BAD_REQUEST, "a dispatch carries no chain", family=entry.family)
     else:
         chain = DispatchChain([FamilyName(name) for name in entry.chain])
         caller = FamilyName(entry.caller_family)
