@@ -15,18 +15,14 @@ change costs one assertion in each scenario here.
 from __future__ import annotations
 
 import json
-import os
 import signal
 import time
 
 import pytest
 from proc_caregiver import (
-    CREATING,
     EXIT_OK,
-    EXIT_PROBLEM,
     EXIT_USAGE,
     IN_SYNC,
-    PLANE_ENDPOINTS,
     WATCH_OFF,
     WRITE_FLAG,
     CaregiverStack,
@@ -40,23 +36,25 @@ from proc_caregiver import (
 )
 from proc_harness import Finished
 from proc_standins import (
-    ALLOW,
     LITELLM,
     MASTER_KEY,
-    SBX,
+    VMM,
     litellm_calls,
     litellm_keys,
-    sbx_rows,
-    sbx_sandboxes,
     tune,
     untune,
+    vmm_calls,
 )
-from proc_tree import FAMILY, SANDBOX, replace_secret, write_family_prose
+from proc_tree import FAMILY, write_family_prose
 
-NEXT_SANDBOX = "chat-s2"
 NEW_INSTRUCTIONS = "Answer only in metric units.\n"
 LAN_VARIABLE = "AGENT_LAN_ADDRESS"
 KEY_VARIABLE = "LITELLM_MASTER_KEY"
+VMM_VARIABLE = "CAREGIVER_VMM_SOCKET"
+LITELLM_FLAG = "--litellm-base-url"
+
+#: The exit status of a fault of the env files (`caregiver/src/caregiver/cli.py`).
+EXIT_CONFIG = 78
 
 #: A look so rare that only a signal can cause one inside a test.
 RARE_LOOK = ("--poll-interval-s", "300")
@@ -84,41 +82,56 @@ def test_serve_prints_a_plan_and_starts_nothing_with_no_write_flag(
 
 
 def test_serve_refuses_to_start_with_no_lan_address(caregiver_prepared: CaregiverStack) -> None:
-    """Fail closed. No default address exists, and the refusal names the variable."""
-    env = {name: value for name, value in caregiver_env().items() if name != LAN_VARIABLE}
+    """Fail closed. No default address exists, and the refusal names the variable.
 
-    done = caregiver_prepared.run_caregiver(*_serve(caregiver_prepared), env=env)
+    The unit gives no `--litellm-base-url`, so LiteLLM is on the LAN address
+    of the site file. Here the flag is gone too.
+    """
+    env = {
+        name: value
+        for name, value in caregiver_env(caregiver_prepared.tree).items()
+        if name != LAN_VARIABLE
+    }
+    words = _serve(caregiver_prepared)
+    at = words.index(LITELLM_FLAG)
+    del words[at : at + 2]
+
+    done = caregiver_prepared.run_caregiver(*words, env=env)
 
     assert done.exit_code == EXIT_USAGE
     assert LAN_VARIABLE in done.stderr
     _nothing_was_touched(caregiver_prepared, done)
 
 
+def test_serve_refuses_to_start_with_no_vmm_socket(caregiver_prepared: CaregiverStack) -> None:
+    """Fail closed (decision CH20). The unit sets the variable from `%t`, and
+    a `serve` with no socket cannot drop a deleted family. The refusal names
+    the variable, with the exit status of a fault of the env files."""
+    env = {
+        name: value
+        for name, value in caregiver_env(caregiver_prepared.tree).items()
+        if name != VMM_VARIABLE
+    }
+
+    done = caregiver_prepared.run_caregiver(*_serve(caregiver_prepared), env=env)
+
+    assert done.exit_code == EXIT_CONFIG
+    assert VMM_VARIABLE in done.stderr
+    _nothing_was_touched(caregiver_prepared, done)
+
+
 def test_serve_refuses_to_start_with_no_master_key(caregiver_prepared: CaregiverStack) -> None:
     """Fail closed. A `caregiver` with no master key can mint no key."""
-    env = {name: value for name, value in caregiver_env().items() if name != KEY_VARIABLE}
+    env = {
+        name: value
+        for name, value in caregiver_env(caregiver_prepared.tree).items()
+        if name != KEY_VARIABLE
+    }
 
     done = caregiver_prepared.run_caregiver(*_serve(caregiver_prepared), env=env)
 
     assert done.exit_code != EXIT_OK
     assert KEY_VARIABLE in done.stderr
-    _nothing_was_touched(caregiver_prepared, done)
-
-
-@pytest.mark.parametrize("content", [None, "", " \n"], ids=["missing", "empty", "blank"])
-def test_serve_refuses_a_bad_token_file(
-    caregiver_prepared: CaregiverStack, content: str | None
-) -> None:
-    """Contract 02 §3 rule 7, from the side of the caller. No token, no start.
-
-    A `caregiver` that sent an empty bearer would ask `attendance` to accept
-    one.
-    """
-    replace_secret(caregiver_prepared.tree.token_file("caregiver"), content)
-
-    done = caregiver_prepared.run_caregiver(*_serve(caregiver_prepared))
-
-    assert done.exit_code == EXIT_PROBLEM
     _nothing_was_touched(caregiver_prepared, done)
 
 
@@ -136,7 +149,6 @@ def test_a_stop_signal_ends_the_service_with_success(
 
     assert caregiver_alone.caregiver.wait(EXIT_DEADLINE_S) == EXIT_OK
     assert caregiver_alone.state() == IN_SYNC
-    assert list(sbx_sandboxes(caregiver_alone.tree)) == [SANDBOX]
     assert list(litellm_keys(caregiver_alone.tree)) == [f"family-{FAMILY}"]
 
 
@@ -159,49 +171,10 @@ def test_sighup_makes_the_service_look_now(caregiver_prepared: CaregiverStack) -
 
     wait_until(
         lambda: text_of(instructions) == NEW_INSTRUCTIONS,
-        "the new instructions in the config mount",
+        "the new instructions in the config directory",
         LOOK_DEADLINE_S,
     )
     assert child.exit_code() is None, "a reload ended the service"
-
-
-def test_a_kill_inside_a_create_retires_the_sandbox(caregiver_prepared: CaregiverStack) -> None:
-    """Contract 05 §4.2 rule 5. A `planned` sandbox at a start is never adopted.
-
-    SIGKILL ends `caregiver` inside `sbx create`. The create still ends, so a
-    sandbox exists whose reach nobody proved. The next start destroys it and
-    makes a new one, and the id of the first is never used again (§4.1).
-    """
-    stack = caregiver_prepared
-    tune(stack.tree, SBX, f"hold-create-{SANDBOX}")
-    killed = stack.spawn_caregiver()
-    wait_until(lambda: stack.sbx_commands() != [], "the create to start")
-
-    killed.send(signal.SIGKILL)
-    untune(stack.tree, SBX, f"hold-create-{SANDBOX}")
-    wait_until(lambda: SANDBOX in sbx_sandboxes(stack.tree), f"the create of {SANDBOX} to end")
-    # The test reaps the killed service last, after `sbx create` left the
-    # process table. Its group is then empty at the one look of the harness,
-    # and the teardown sends that group no signal (rule 10 of `AGENTS.md`).
-    wait_until(
-        lambda: all(_left_the_table(call.pid) for call in stack.sbx_calls()),
-        "the create to leave the process table",
-    )
-    assert killed.wait(EXIT_DEADLINE_S) == -signal.SIGKILL
-
-    stack.spawn_caregiver()
-    wait_until(
-        lambda: stack.state() == IN_SYNC and stack.sandboxes() == [(NEXT_SANDBOX, CREATING)],
-        f"{NEXT_SANDBOX} in the place of {SANDBOX}",
-    )
-
-    assert list(sbx_sandboxes(stack.tree)) == [NEXT_SANDBOX]
-    assert ("rm", "-f", SANDBOX) in stack.sbx_commands()
-    assert _plane_rows(stack, SANDBOX) == []
-    assert [command[command.index("--name") + 1] for command in _creates(stack)] == [
-        SANDBOX,
-        NEXT_SANDBOX,
-    ]
 
 
 # ------------------------------------------------------ the verbs that end
@@ -253,14 +226,13 @@ def test_reconcile_once_runs_one_pass_and_ends(caregiver_prepared: CaregiverStac
     assert document is not None
     assert document["state"] == IN_SYNC
     assert document["pep"]["watch"] == "off"
-    assert stack.sandboxes() == [(SANDBOX, CREATING)]
 
 
 def test_delete_stops_when_the_key_stays(caregiver_alone: CaregiverStack) -> None:
     """Invariant 13: credentials die before processes. The key is first.
 
-    LiteLLM refuses the delete. So the verb fails, and the app table, the
-    credential file and the sandbox all stay.
+    LiteLLM refuses the delete. So the verb fails, the app table and the
+    credential file stay, and the vmm drops nothing.
     """
     stack = caregiver_alone
     _stop(stack)
@@ -273,34 +245,36 @@ def test_delete_stops_when_the_key_stays(caregiver_alone: CaregiverStack) -> Non
     assert stack.tree.policy_fragment().is_file()
     assert list(stack.apps()) == [FAMILY]
     assert stack.tree.creds_file().is_file()
-    assert list(sbx_sandboxes(stack.tree)) == [SANDBOX]
+    assert stack.dropped() == []
 
 
-def test_delete_ends_each_credential_before_the_sandbox(caregiver_alone: CaregiverStack) -> None:
-    """Invariant 13 and contract 05 §4.4. The sandbox is last.
+def test_delete_ends_each_credential_before_the_vmm_drop(caregiver_alone: CaregiverStack) -> None:
+    """Invariant 13, contract 05 §4.4 and decision CH21-10. The drop is last.
 
-    `sbx rm` fails. At that moment the key, the app table and the
-    credential file are gone already. A second run ends the work.
+    The vmm fails the drop. At that moment the key, the app table, the
+    credential file and the config directory are gone already, and the
+    state of the family stays for the next try. A second run ends the work.
     """
     stack = caregiver_alone
     _stop(stack)
-    tune(stack.tree, SBX, "fail-rm", "the sbx daemon does not answer")
+    tune(stack.tree, VMM, "fail-drop")
 
     failed = _delete(stack)
 
     assert failed.exit_code != EXIT_OK
-    assert list(sbx_sandboxes(stack.tree)) == [SANDBOX]
+    assert stack.dropped() == [FAMILY]
     assert litellm_keys(stack.tree) == {}
     assert not stack.tree.policy_fragment().exists()
     assert stack.apps() == {}
     assert not stack.tree.creds_file().exists()
+    assert not stack.tree.mounts().config.exists()
+    assert stack.tree.family_dir().exists()
 
-    untune(stack.tree, SBX, "fail-rm")
+    untune(stack.tree, VMM, "fail-drop")
     done = _delete(stack)
 
     assert done.exit_code == EXIT_OK, done.stderr
-    assert sbx_sandboxes(stack.tree) == {}
-    assert _plane_rows(stack, SANDBOX) == []
+    assert stack.dropped() == [FAMILY, FAMILY]
     assert not stack.tree.family_dir().exists()
 
 
@@ -333,37 +307,13 @@ def _stop(stack: CaregiverStack) -> None:
 
 
 def _nothing_was_touched(stack: CaregiverStack, done: Finished) -> None:
-    """A start that did not happen leaves no family, no key and no sandbox.
+    """A start that did not happen leaves no family and no key, and calls
+    no vmm.
 
     No output holds the master key (invariant 13).
     """
     assert stack.tree.status() is None
     assert not stack.tree.policy_fragment().exists()
-    assert stack.sbx_calls() == []
+    assert vmm_calls(stack.tree) == []
     assert litellm_calls(stack.tree) == []
     assert MASTER_KEY not in done.stdout + done.stderr
-
-
-def _creates(stack: CaregiverStack) -> list[tuple[str, ...]]:
-    return [command for command in stack.sbx_commands() if command[0] == "create"]
-
-
-def _plane_rows(stack: CaregiverStack, sandbox: str) -> list[str]:
-    """The plane endpoints that one sandbox may reach now, by its allow rows."""
-    return [host for host in sbx_rows(stack.tree, sandbox, ALLOW) if host in PLANE_ENDPOINTS]
-
-
-def _left_the_table(pid: int) -> bool:
-    """True when the system holds no entry for the pid.
-
-    A process that ended keeps its entry until its parent reaps it, and the
-    signal still finds it. Its process group is not empty before that.
-    """
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        return False
-
-    return False

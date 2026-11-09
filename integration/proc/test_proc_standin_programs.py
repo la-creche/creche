@@ -1,7 +1,8 @@
 """The stand-in programs of this directory, each run by itself.
 
-Three of them belong to the `caregiver` topology. The fourth one is the TEI
-stand-in of the index builder.
+Three of them belong to the `caregiver` topology: `systemctl`, LiteLLM and
+the vmm. The fourth one is the TEI stand-in of the index builder. The `sbx`
+wrapper of the first topology has one test here too.
 
 A stand-in is not under test. A stand-in that is too kind makes a wrong
 service look right, so each rule that a scenario relies on has one test here.
@@ -23,12 +24,11 @@ from pathlib import Path
 import httpx
 import pytest
 import standin_tei
+from creche_wire.routes import DROP, HOST_API_HEADER, HOST_API_PROTOCOL, MISMATCH_STATUS
 from proc_caregiver import wait_until
 from proc_harness import LOOPBACK, Finished, ProcError, Supervisor
 from proc_stack import base_env
 from proc_standins import (
-    ALLOW,
-    DENY,
     LITELLM,
     MASTER_KEY,
     SBX,
@@ -40,29 +40,25 @@ from proc_standins import (
     TEI_HOLD_EMBED,
     TEI_MODEL,
     TEI_NO_MODEL_ID,
+    VMM,
     SandboxTmp,
-    calls_of,
     enabled_units,
     install_sbx,
-    install_sbx_verbs,
     install_systemctl,
     litellm_calls,
     litellm_keys,
-    sbx_rows,
-    sbx_sandboxes,
-    set_sbx_view,
     start_litellm,
     start_tei,
+    start_vmm,
     tei_calls,
     tune,
     untune,
     vm_tmp,
+    vmm_calls,
 )
-from proc_tree import IMAGE, Tree, build_bare_tree
+from proc_tree import Tree, build_bare_tree
 
 BOX = "chat-s1"
-KIT_HOST = "openrouter.ai"
-A_HOST = "192.0.2.10:4000"
 ALIAS = "family-chat"
 UNIT = "creche-door-trigger-chat-t1.timer"
 
@@ -74,7 +70,6 @@ INFO = "/key/info"
 EXIT_USAGE = 64
 EXIT_NOT_FOUND = 4
 HOLD_CHECK_S = 0.3
-EXIT_DEADLINE_S = 10.0
 
 HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
@@ -105,15 +100,24 @@ NO_LENGTH_REQUEST = (
 RESET_AT_CLOSE = struct.pack("ii", 1, 0)
 
 TEI_TIMEOUT_S = 30.0
+VMM_TIMEOUT_S = 10.0
 ANSWER_BYTES = 65_536
 
 
 @pytest.fixture
 def programs(tree: Tree, supervisor: Supervisor) -> Tree:
-    """A root with the `sbx` and the `systemctl` stand-ins, and no service."""
+    """A root with the `systemctl` stand-in, and no service."""
     build_bare_tree(tree)
-    install_sbx_verbs(tree)
     install_systemctl(tree)
+
+    return tree
+
+
+@pytest.fixture
+def vmm(tree: Tree, supervisor: Supervisor) -> Tree:
+    """A root with the vmm stand-in, listening. The `supervisor` fixture ends it."""
+    build_bare_tree(tree)
+    start_vmm(tree, supervisor, base_env(tree))
 
     return tree
 
@@ -154,174 +158,6 @@ def tei(tree: Tree, supervisor: Supervisor) -> Tei:
 # ------------------------------------------------------------------------ sbx
 
 
-def test_sbx_create_keeps_what_it_was_given(programs: Tree, supervisor: Supervisor) -> None:
-    done = _create(programs, supervisor, "/a/primary", "/a/secret:ro")
-
-    assert done.exit_code == 0, done.stderr
-    assert sbx_sandboxes(programs)[BOX] == {
-        "name": BOX,
-        "image": IMAGE,
-        "cpus": 2,
-        "memory": "2g",
-        "mounts": [
-            {"path": "/a/primary", "readonly": False},
-            {"path": "/a/secret", "readonly": True},
-        ],
-    }
-    assert calls_of(programs, SBX)[0].argv[:2] == ("create", "shell")
-
-
-def test_sbx_refuses_a_second_create_of_one_id(programs: Tree, supervisor: Supervisor) -> None:
-    """Contract 05 §4.1: an id is never used again. A service that does so fails here."""
-    assert _create(programs, supervisor).exit_code == 0
-
-    assert _create(programs, supervisor).exit_code != 0
-
-
-def test_sbx_denies_a_host_with_no_row(programs: Tree, supervisor: Supervisor) -> None:
-    _create(programs, supervisor)
-
-    done = _sbx(programs, supervisor, "policy", "check", "network", "--sandbox", BOX, A_HOST)
-
-    assert done.stdout.strip() == "Denied"
-    assert done.exit_code != 0
-
-
-def test_sbx_allows_the_kit_host_until_a_row_denies_it(
-    programs: Tree, supervisor: Supervisor
-) -> None:
-    """The `shell` kit allows one host on every create. Only a deny row closes it."""
-    _create(programs, supervisor)
-    open_kit = _sbx(programs, supervisor, "policy", "check", "network", "--sandbox", BOX, KIT_HOST)
-
-    _sbx(programs, supervisor, "policy", "deny", "network", "--sandbox", BOX, KIT_HOST)
-    closed = _sbx(programs, supervisor, "policy", "check", "network", "--sandbox", BOX, KIT_HOST)
-
-    assert open_kit.stdout.strip() == "Allowed"
-    assert closed.stdout.strip() == "Denied"
-
-
-def test_sbx_create_takes_a_deny_flag(programs: Tree, supervisor: Supervisor) -> None:
-    _create(programs, supervisor, deny=KIT_HOST)
-
-    done = _sbx(programs, supervisor, "policy", "check", "network", "--sandbox", BOX, KIT_HOST)
-
-    assert done.stdout.strip() == "Denied"
-    assert sbx_rows(programs, BOX, DENY) == [KIT_HOST]
-
-
-def test_sbx_rm_leaves_the_policy_rows(programs: Tree, supervisor: Supervisor) -> None:
-    """`sbx rm` removes no row. A destroy that removes none leaves each row here."""
-    _create(programs, supervisor)
-    _sbx(programs, supervisor, "policy", "allow", "network", "--sandbox", BOX, A_HOST)
-
-    removed = _sbx(programs, supervisor, "rm", "-f", BOX)
-
-    assert removed.exit_code == 0, removed.stderr
-    assert sbx_sandboxes(programs) == {}
-    assert A_HOST in sbx_rows(programs, BOX, ALLOW)
-
-    row = _sbx(
-        programs,
-        supervisor,
-        "policy",
-        "rm",
-        "network",
-        "--force",
-        "--sandbox",
-        BOX,
-        "--resource",
-        A_HOST,
-    )
-
-    assert row.exit_code == 0, row.stderr
-    assert A_HOST not in sbx_rows(programs, BOX, ALLOW)
-
-
-def test_sbx_rm_of_a_missing_sandbox_says_not_found(programs: Tree, supervisor: Supervisor) -> None:
-    done = _sbx(programs, supervisor, "rm", "-f", BOX)
-
-    assert done.exit_code != 0
-    assert "not found" in done.stderr
-
-
-def test_sbx_ls_lists_each_sandbox_after_one_header(programs: Tree, supervisor: Supervisor) -> None:
-    _create(programs, supervisor)
-
-    lines = _sbx(programs, supervisor, "ls").stdout.splitlines()
-
-    assert [line.split()[0] for line in lines[1:]] == [BOX]
-
-
-def test_sbx_exec_refuses_a_sandbox_that_no_create_made(
-    programs: Tree, supervisor: Supervisor
-) -> None:
-    env_file = _env_file(programs)
-
-    done = _sbx(programs, supervisor, "exec", "--env-file", str(env_file), BOX, "--", "/bin/echo")
-
-    assert done.exit_code != 0
-    assert "not found" in done.stderr
-    assert done.stdout == ""
-
-
-def test_sbx_exec_gives_the_command_the_env_file_alone(
-    programs: Tree, supervisor: Supervisor
-) -> None:
-    """Contract 03 §7.1: `sbx exec` forwards no variable of its caller."""
-    _create(programs, supervisor)
-    show = 'echo "$AGENT_CONTROL_DIR|$CALLER_ONLY"'
-
-    done = _sbx(
-        programs,
-        supervisor,
-        *("exec", "--env-file", str(_env_file(programs)), BOX, "--", "/bin/sh", "-c", show),
-        env={"CALLER_ONLY": "leaked"},
-    )
-
-    assert done.exit_code == 0, done.stderr
-    assert done.stdout.strip() == "/a/control|"
-
-
-def test_sbx_exec_gives_no_mount_when_a_test_says_so(
-    programs: Tree, supervisor: Supervisor
-) -> None:
-    _create(programs, supervisor)
-    tune(programs, SBX, f"no-mounts/{BOX}")
-    show = 'echo "$AGENT_CONTROL_DIR|$AGENT_SANDBOX"'
-
-    done = _sbx(
-        programs,
-        supervisor,
-        *("exec", "--env-file", str(_env_file(programs)), BOX, "--", "/bin/sh", "-c", show),
-    )
-
-    assert done.stdout.strip() == f"|{BOX}"
-
-
-def test_sbx_exec_gives_the_env_file_as_the_vm_sees_the_host(
-    programs: Tree, supervisor: Supervisor
-) -> None:
-    """Rule 5: a value that starts with a key of the view starts with its value instead."""
-    _create(programs, supervisor)
-    set_sbx_view(programs, {"/a/": "/the-root/a/", "http://192.0.2.10:8300": "http://127.0.0.1:9"})
-    env_file = _env_file(programs)
-    env_file.write_text(
-        env_file.read_text(encoding="utf-8") + "AGENT_PEP_URL=http://192.0.2.10:8300\n",
-        encoding="utf-8",
-    )
-    show = 'echo "$AGENT_CONTROL_DIR|$AGENT_SANDBOX|$AGENT_PEP_URL"'
-
-    done = _sbx(
-        programs,
-        supervisor,
-        *("exec", "--env-file", str(env_file), BOX, "--", "/bin/sh", "-c", show),
-    )
-
-    assert done.exit_code == 0, done.stderr
-    assert done.stdout.strip() == f"/the-root/a/control|{BOX}|http://127.0.0.1:9"
-
-
 def test_sbx_exec_gives_each_sandbox_a_tmpdir_of_its_own(
     tree: Tree, supervisor: Supervisor
 ) -> None:
@@ -343,108 +179,39 @@ def test_sbx_exec_gives_each_sandbox_a_tmpdir_of_its_own(
     assert seen == [str(vm_tmp(tree, box)) for box in boxes]
 
 
-def test_sbx_fails_a_verb_when_a_test_says_so(programs: Tree, supervisor: Supervisor) -> None:
-    tune(programs, SBX, "fail-create", "no space left on device")
-
-    done = _create(programs, supervisor)
-
-    assert done.exit_code != 0
-    assert "no space left on device" in done.stderr
-    assert sbx_sandboxes(programs) == {}
+# ------------------------------------------------------------------------ vmm
 
 
-def test_sbx_holds_a_create_while_a_test_says_so(programs: Tree, supervisor: Supervisor) -> None:
-    tune(programs, SBX, f"hold-create-{BOX}")
-    child = supervisor.spawn(
-        SBX, _words(programs, SBX, *_create_words()), base_env(programs), programs.root
-    )
+def test_vmm_drops_a_family_and_records_the_call(vmm: Tree) -> None:
+    """A drop of a family is `Dropped`, rows or not (`FamilyDrop` of `creche_wire`)."""
+    answer = _vmm_post(vmm, DROP.path, {"family": {"family": "chat"}})
 
-    with pytest.raises(ProcError, match="did not exit"):
-        child.wait(HOLD_CHECK_S)
-
-    assert sbx_sandboxes(programs) == {}
-    untune(programs, SBX, f"hold-create-{BOX}")
-
-    assert child.wait(EXIT_DEADLINE_S) == 0
-    assert list(sbx_sandboxes(programs)) == [BOX]
+    assert (answer.status_code, answer.json()) == (HTTP_OK, {})
+    assert vmm_calls(vmm) == [{"route": "drop", "body": {"family": {"family": "chat"}}}]
 
 
-def test_sbx_refuses_a_verb_it_does_not_know(programs: Tree, supervisor: Supervisor) -> None:
-    """Fail closed. A service that runs another verb gets no silent success."""
-    assert _sbx(programs, supervisor, "stop", BOX).exit_code == EXIT_USAGE
+def test_vmm_answers_the_mismatch_reply_to_another_protocol(vmm: Tree) -> None:
+    """Decision CH33 rule 1: the header comes before the route, and no line is written."""
+    answer = _vmm_post(vmm, DROP.path, {"family": {"family": "chat"}}, protocol="1")
+
+    assert answer.status_code == MISMATCH_STATUS
+    assert answer.json() == {"code": "protocol_mismatch", "protocol": HOST_API_PROTOCOL}
+    assert vmm_calls(vmm) == []
 
 
-def test_sbx_create_refuses_another_kit(programs: Tree, supervisor: Supervisor) -> None:
-    """Fail closed. Only the `shell` kit has the allow row that this stand-in copies."""
-    words = ["create", "another-kit", *_create_words()[2:]]
+def test_vmm_refuses_a_body_of_another_shape(vmm: Tree) -> None:
+    answer = _vmm_post(vmm, DROP.path, {"family": "chat"})
 
-    assert _sbx(programs, supervisor, *words).exit_code == EXIT_USAGE
-    assert sbx_sandboxes(programs) == {}
-
-
-def test_sbx_create_refuses_a_flag_it_does_not_know(programs: Tree, supervisor: Supervisor) -> None:
-    """Fail closed. A service that passes a new flag gets no sandbox here."""
-    done = _sbx(programs, supervisor, *_create_words(), "--publish", "8080:80")
-
-    assert done.exit_code == EXIT_USAGE
-    assert sbx_sandboxes(programs) == {}
+    assert answer.json() == {"code": "not_valid"}
+    assert vmm_calls(vmm) == []
 
 
-def test_sbx_policy_rm_leaves_the_allow_row_of_the_kit(
-    programs: Tree, supervisor: Supervisor
-) -> None:
-    """No command removes the allow row of the kit. A removed deny row opens the host again."""
-    _create(programs, supervisor, deny=KIT_HOST)
+def test_vmm_fails_a_drop_when_a_test_says_so(vmm: Tree) -> None:
+    tune(vmm, VMM, "fail-drop")
 
-    removed = _policy(programs, supervisor, "rm", "--force", "--resource", KIT_HOST)
-    again = _policy(programs, supervisor, "rm", "--force", "--resource", KIT_HOST)
-    check = _policy(programs, supervisor, "check", KIT_HOST)
+    answer = _vmm_post(vmm, DROP.path, {"family": {"family": "chat"}})
 
-    assert removed.exit_code == 0, removed.stderr
-    assert again.exit_code != 0
-    assert check.stdout.strip() == "Allowed"
-    assert sbx_rows(programs, BOX, ALLOW) == [KIT_HOST]
-    assert sbx_rows(programs, BOX, DENY) == []
-
-
-def test_sbx_policy_rm_refuses_a_row_that_does_not_exist(
-    programs: Tree, supervisor: Supervisor
-) -> None:
-    _create(programs, supervisor)
-
-    assert _policy(programs, supervisor, "rm", "--force", "--resource", A_HOST).exit_code != 0
-    assert sbx_rows(programs, BOX, ALLOW) == [KIT_HOST]
-
-
-def test_sbx_policy_rm_without_force_is_refused(programs: Tree, supervisor: Supervisor) -> None:
-    """From v0.48, `sbx` asks before a removal. With no terminal it refuses it."""
-    _create(programs, supervisor, deny=KIT_HOST)
-
-    done = _policy(programs, supervisor, "rm", "--resource", KIT_HOST)
-
-    assert done.exit_code != 0
-    assert "--force" in done.stderr
-    assert sbx_rows(programs, BOX, DENY) == [KIT_HOST]
-
-
-def test_sbx_policy_refuses_a_sandbox_that_no_create_made(
-    programs: Tree, supervisor: Supervisor
-) -> None:
-    done = _policy(programs, supervisor, "allow", A_HOST)
-
-    assert done.exit_code != 0
-    assert "not found" in done.stderr
-    assert sbx_rows(programs, BOX, ALLOW) == []
-
-
-def test_sbx_refuses_a_policy_action_it_does_not_know(
-    programs: Tree, supervisor: Supervisor
-) -> None:
-    """Fail closed. A service that runs another policy action gets no silent success."""
-    _create(programs, supervisor)
-
-    assert _policy(programs, supervisor, "reset", A_HOST).exit_code == EXIT_USAGE
-    assert sbx_rows(programs, BOX, ALLOW) == [KIT_HOST]
+    assert (answer.status_code, answer.json()) == (HTTP_FAILED, {"code": "internal"})
 
 
 # ------------------------------------------------------------------ systemctl
@@ -836,28 +603,8 @@ def _sbx(
     return supervisor.run(SBX, _words(tree, SBX, *args), whole, tree.root)
 
 
-def _policy(tree: Tree, supervisor: Supervisor, action: str, *words: str) -> Finished:
-    """One `sbx policy` command for the sandbox of this file."""
-    return _sbx(tree, supervisor, "policy", action, "network", "--sandbox", BOX, *words)
-
-
 def _systemctl(tree: Tree, supervisor: Supervisor, *args: str) -> Finished:
     return supervisor.run(SYSTEMCTL, _words(tree, SYSTEMCTL, *args), base_env(tree), tree.root)
-
-
-def _create_words(*mounts: str, deny: str | None = None) -> list[str]:
-    """`sbx create`, as contract 05 §4.3 step 1 and step 4 give it."""
-    words = ["create", "shell", *(mounts or ("/a/primary",))]
-    words += ["-t", IMAGE, "--name", BOX, "--cpus", "2", "-m", "2g"]
-
-    if deny is not None:
-        words += ["--deny-network", deny]
-
-    return [*words, "-q"]
-
-
-def _create(tree: Tree, supervisor: Supervisor, *mounts: str, deny: str | None = None) -> Finished:
-    return _sbx(tree, supervisor, *_create_words(*mounts, deny=deny))
 
 
 def _env_file(tree: Tree) -> Path:
@@ -865,6 +612,17 @@ def _env_file(tree: Tree) -> Path:
     path.write_text(f"AGENT_CONTROL_DIR=/a/control\nAGENT_SANDBOX={BOX}\n", encoding="utf-8")
 
     return path
+
+
+def _vmm_post(
+    tree: Tree, path: str, body: object, protocol: str = str(HOST_API_PROTOCOL)
+) -> httpx.Response:
+    """One request to the vmm stand-in, as a client of `vmm.sock` sends it."""
+    transport = httpx.HTTPTransport(uds=str(tree.vmm_socket))
+    headers = {HOST_API_HEADER: protocol, "Content-Type": "application/json"}
+
+    with httpx.Client(transport=transport, timeout=VMM_TIMEOUT_S) as client:
+        return client.post(f"http://vmm{path}", json=body, headers=headers)
 
 
 def _unit_file(tree: Tree) -> None:
