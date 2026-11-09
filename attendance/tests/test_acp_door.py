@@ -378,6 +378,56 @@ async def test_a_prompt_counts_in_busy_until_its_answer(door: Door) -> None:
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("door", [PromptMode.HOLD], indirect=True)
+async def test_a_slow_start_of_one_session_holds_no_frame_of_another(door: Door) -> None:
+    """A VM start has no outer bound (decision CH50 rule 1). The start of B
+    holds the frames of B alone, so the cancel of A reaches its facade."""
+    async with door.door_acp() as connection:
+        first = await new_session(connection)
+        second = await new_session(connection)
+        await connection.send(prompt(1, first))
+
+        async with asyncio.timeout(5):
+            while first not in door.vmm.facades or not door.vmm.facades[first].held:
+                await asyncio.sleep(0.01)
+
+        gate = door.vmm.open_gates[second] = asyncio.Event()
+
+        try:
+            await connection.send(prompt(2, second))
+            cancel = {"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": first}}
+            await connection.send(json.dumps(cancel))
+
+            async with asyncio.timeout(5):
+                while "session/cancel" not in door.vmm.facades[first].methods:
+                    await asyncio.sleep(0.01)
+
+            held_open = second not in door.vmm.channels
+        finally:
+            gate.set()
+
+    assert held_open
+
+
+@pytest.mark.slow
+async def test_a_close_in_a_handshake_closes_the_new_stream(door: Door) -> None:
+    """A stream in its handshake is in no table yet. A close of the
+    connection still closes it, so the vmm claim of the session ends."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        door.vmm.mute.add(session)
+        await connection.send(prompt(1, session))
+
+        async with asyncio.timeout(5):
+            while session not in door.vmm.channels:
+                await asyncio.sleep(0.01)
+
+    async with asyncio.timeout(5):
+        while not door.vmm.channels[session].closed:
+            await asyncio.sleep(0.01)
+
+
+@pytest.mark.slow
 async def test_a_client_answer_reaches_the_facade_that_asked(door: Door) -> None:
     async with door.door_acp() as connection:
         session = await new_session(connection)
