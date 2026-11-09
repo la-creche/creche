@@ -28,9 +28,6 @@ from .states import SessionKind
 
 STALE_AFTER_S = 90.0
 
-#: A caller root holds no NUL: the OS cuts a path there.
-_NUL = "\x00"
-
 
 class FamilyState(StrEnum):
     """Contract 05 §3's family states."""
@@ -61,10 +58,6 @@ class FamilyStatus:
     fault_codes: frozenset[str] = frozenset()
     max_running_turns: int | None = None
     job_timeout_s: int | None = None
-    #: Contract 02 §12.1: the root of the per-chat directories of a thin
-    #: family, from its `job.caller_root`. None: each job runs in the
-    #: sessions mount of the family.
-    caller_root: Path | None = None
     #: Contract 02 §13.4.1 rule 3. `caregiver` publishes `triggers.enqueue`
     #: when the family file carries contract 01 §3.13's dispatch form. A
     #: document without it reads `False`, and no family may be dispatched to:
@@ -225,7 +218,6 @@ def _status_from_file(raw: dict[str, Any], family: str) -> FamilyStatus:
         fault_codes=_fault_codes(raw.get("faults")),
         max_running_turns=_optional_int(limits.get("max_running_turns")),
         job_timeout_s=_optional_int(limits.get("job_timeout_s")),
-        caller_root=_caller_root(limits.get("caller_root")),
         # `is True`, not truthiness: a document that writes a string here says
         # nothing, and a guess would open a family nobody declared open.
         accepts_dispatch=triggers.get("enqueue") is True,
@@ -282,20 +274,6 @@ def _text(value: object) -> str | None:
 
 def _time(value: object) -> datetime | None:
     return parse_rfc3339(value) if isinstance(value, str) else None
-
-
-def _caller_root(value: object) -> Path | None:
-    """An absolute path with no `.`, `..` or empty segment, or None. A job
-    runs in a directory under it, so a path that could leave its own
-    segments is not one."""
-    if not isinstance(value, str) or not value.startswith("/") or _NUL in value:
-        return None
-
-    parts = value.split("/")[1:]
-    if not parts or any(part in ("", ".", "..") for part in parts):
-        return None
-
-    return Path(value)
 
 
 def _optional_int(value: object) -> int | None:

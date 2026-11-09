@@ -15,7 +15,6 @@ from typing import Any
 import pytest
 from agent_family import grammar, serverrules
 from agent_family.grammar import PLATFORM_SERVER, PROBE_FAMILY
-from agent_family.model import FamilyFile
 from agent_family.parse import Markup, parse_family
 from agent_family.registry import load_registry
 from agent_family.report import Issues, Report
@@ -23,12 +22,12 @@ from agent_family.validate import Index, check_family
 from family_helpers import (
     FENCES,
     FIXTURES,
-    FakeHost,
     check,
     check_no_host,
     edited,
     edited_server,
     errors,
+    family_text,
     full_index,
     host,
     load,
@@ -62,7 +61,6 @@ SAMPLES = {
     "FAMILY_NAME": "chat",
     "TOOL_NAME": "search",
     "MODEL_ALIAS": "agent-router",
-    "MOUNT_PATH": "/srv/agents/vault",
     "ENV_VAR_NAME": "API_KEY",
     "HA_IDENTIFIER": "light",
     "HA_ENTITY_ID": "light.kitchen",
@@ -146,70 +144,22 @@ def test_model_router_downgrades_without_a_host() -> None:
     assert downgraded and downgraded[0].downgraded
 
 
-# --- 3.3 files -----------------------------------------------------------
+# --- 3.3 files: dropped in minor 18 ---------------------------------------
 
-DUP_MOUNT = [
-    {"path": "/srv/agents/vault", "mode": "ro"},
-    {"path": "/srv/agents/vault", "mode": "rw"},
-]
 
-FILES_CASES = (
-    (DUP_MOUNT, "is mounted twice"),
-    ([{"path": "/srv/agents/vault", "mode": "rx"}], "is not a mode"),
-    ([{"path": "/srv/agents/vault/*", "mode": "ro"}], "is a glob"),
-    ([{"path": "srv/agents/vault", "mode": "ro"}], "must be an absolute path"),
-    ([{"path": "/srv/agents/../etc", "mode": "ro"}], "no '.', '..' or empty segment"),
-    ([{"path": "/srv/agents//vault", "mode": "ro"}], "no '.', '..' or empty segment"),
-    ([{"path": "/srv/agents/vault/$HOME", "mode": "ro"}], "a character outside"),
-    ([{"path": "/srv/agents/sessions/chat", "mode": "rw"}], "is the session store"),
-    ([{"path": "/etc", "mode": "ro"}], "is under no allowed root"),
-    # No root holds a working copy: the platform family reads the corpus.
-    ([{"path": "/srv/agents/work/platform", "mode": "ro"}], "is under no allowed root"),
+@pytest.mark.parametrize(
+    "line",
+    [
+        'files = [{ path = "/srv/agents/vault", mode = "ro" }]\n',
+        "files = []\n",
+    ],
 )
-
-
-@pytest.mark.parametrize(("files", "expect"), FILES_CASES)
-def test_files_fences(files: list[dict[str, str]], expect: str) -> None:
-    report = check("chat", files=files)
-    assert expect in messages(report)
-
-
-def test_files_downgrades_without_a_host() -> None:
-    report = check_no_host("chat")
-    downgraded = [issue for issue in report.issues if issue.loc == "files"]
-    assert downgraded and downgraded[0].downgraded
-    assert "no mount's symlinks were resolved" in downgraded[0].msg
-
-
-def test_a_symlink_escaping_its_root_is_an_error() -> None:
-    """§5.4, §3.3 rule 5: the resolved path is checked too, and a resolve out
-    of every allowed root is an error there, not a silent escape."""
-    family = FamilyFile.model_validate(
-        {
-            "name": "chat",
-            "kind": "attended",
-            "description": "x",
-            "model": {"router": "agent-router", "budget_usd_per_day": 15},
-            "files": [{"path": "/srv/agents/vault/escape", "mode": "ro"}],
-        }
-    )
-    sneaky = FakeHost(("agent-router",), links={"/srv/agents/vault/escape": "/etc/passwd"})
-    issues = Issues()
-    check_family(family, "chat", full_index(), issues, sneaky, FENCES)
-    assert any("under no allowed root" in issue.msg for issue in issues.frozen())
-
-
-def test_nested_mounts_are_allowed() -> None:
-    """§3.3 rule 3: a narrower rw mount inside a wider ro one is the intended
-    shape, not a duplicate."""
-    report = check(
-        "chat",
-        files=[
-            {"path": "/srv/agents/vault", "mode": "ro"},
-            {"path": "/srv/agents/vault/profile/memories", "mode": "rw"},
-        ],
-    )
-    assert not errors(report)
+def test_files_is_an_unknown_field(line: str) -> None:
+    """Contract 01 minor 18 drops `files` (decision CH10-10). A VM mounts no
+    host folder, so the field is unknown, and an unknown field is an error."""
+    family, issues = parse_family(_HEAD + line, Markup.TOML)
+    assert family is None
+    assert any("unknown field 'files'" in issue.msg for issue in issues)
 
 
 # --- 3.4 tools -----------------------------------------------------------
@@ -301,29 +251,6 @@ def test_an_old_component_name_is_refused(old_name: str) -> None:
     refuses them now like any stranger."""
     old = check("code", verbs={"release": {"components": [old_name]}})
     assert "not a releasable component" in messages(old)
-
-
-def test_the_platform_family_mounts_every_root_it_needs() -> None:
-    """`code` edits every repository, the platform included. It reads them
-    from the read-only corpus, works in the projects root, and reads the
-    vault, like any attended family."""
-    report = check(
-        "code",
-        files=[
-            {"path": "/srv/agents/code", "mode": "ro"},
-            {"path": "/srv/agents/work/projects", "mode": "rw"},
-            {"path": "/srv/agents/vault", "mode": "ro"},
-        ],
-    )
-    assert not errors(report), messages(report)
-
-
-def test_no_family_mounts_a_working_copy_of_the_platform() -> None:
-    """The platform family keeps no copy of its own: a copy that only the
-    family can update drifts from `main`. So the root that held one is gone,
-    for `code` as for every other family."""
-    report = check("code", files=[{"path": "/srv/agents/work/platform", "mode": "rw"}])
-    assert "is under no allowed root" in messages(report)
 
 
 def test_the_platform_server_is_for_the_platform_family_only() -> None:
@@ -665,26 +592,13 @@ def test_job_on_a_non_thin_family_is_an_error() -> None:
     assert "'job' is thin only" in messages(report)
 
 
-WORK_ROOT = "/srv/agents/work/projects"
-
-
-def test_a_caller_root_on_an_rw_mount_is_valid() -> None:
-    files = [{"path": WORK_ROOT, "mode": "rw"}]
-    report = check("vault-oracle", files=files, job={"caller_root": WORK_ROOT})
-    assert not errors(report), messages(report)
-
-
-@pytest.mark.parametrize(
-    "files",
-    [
-        [{"path": WORK_ROOT, "mode": "ro"}],
-        [{"path": f"{WORK_ROOT}/one", "mode": "rw"}],
-        [],
-    ],
-)
-def test_a_caller_root_that_is_no_rw_mount_is_an_error(files: list[dict[str, str]]) -> None:
-    report = check("vault-oracle", files=files, job={"caller_root": WORK_ROOT})
-    assert "is not the path of an 'rw' entry of files" in messages(report)
+def test_a_caller_root_is_an_unknown_field() -> None:
+    """Contract 01 §3.12: `timeout` is the one field of `job`. A job runs in a
+    VM of its own, so no field names a caller root (decisions CH1, CH21-2)."""
+    text = family_text("vault-oracle") + 'job.caller_root = "/srv/agents/work/projects"\n'
+    family, issues = parse_family(text, Markup.TOML)
+    assert family is None
+    assert any("unknown field 'caller_root'" in issue.msg for issue in issues)
 
 
 def test_job_timeout_past_the_delegate_limit_is_a_warning() -> None:

@@ -182,10 +182,10 @@ conversation and the one-writer rule (Flue's queue).
 
 ## Mount rules
 
-The per-chat directory of a thin family is `<caller_root>/<owner session>`.
-`caller_root` is the `job.caller_root` of the family file. `caregiver`
-copies it into the `limits` block of the status document. A family with
-none runs each job in its sessions mount. No family name is in this code.
+Each session's `cwd` is the sessions mount of its family. Contract 01
+minor 18 drops `job.caller_root` (decision CH10-10). A job runs in a VM of
+its own, dropped at job end (decisions CH1, CH21-2), so no chat gets a
+directory. No family name is in this code.
 
 1. Never name a fixed in-VM path. The `cwd` of a row is a display value,
    never a guest path (decision CH21-4). `ATTENDANCE_SANDBOX_SESSIONS_MOUNT`
@@ -224,7 +224,7 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `acp_jobs.py` | one job: the row, the stream, one prompt, the deadline and its cancel, the drop |
 | `acp_door.py` | `WS /acp/{family}` on the Unix socket: the answers from the host list, one stream per session, the envelope check, the count of its prompts |
 | `acp_view.py` | the view: a page of the host list, or one stream and `session/load`, the transcript and its caps |
-| `jobs.py`, `dispatch.py`, `workspace.py` | thin jobs, the dispatch and trigger ledgers, the per-chat work directory |
+| `jobs.py`, `dispatch.py` | thin jobs, the dispatch and trigger ledgers |
 | `family_status.py`, `faults.py` | the status document, the fault file |
 | `auth.py`, `config.py`, `paths.py` | the token files and the grants, the environment, every path |
 | `ids.py`, `clock.py`, `atomic.py`, `errors.py`, `models.py`, `states.py` | the id grammars, the time, the file writes, the error body, the trigger record, the family kind |
@@ -256,11 +256,6 @@ is marked `slow`.
   reads `ended` with a null outcome.
 - An outcome record of a job over ACP has a null `spend_usd`: ACP reports
   no usage (`outcomes.py`).
-- `X-Session-Id` is caller-set, so a model can aim a job of a family with a
-  caller root at another chat's directory of the same family. The grammar
-  stops any escape from the caller root (`service.py`).
-- No chat session lives here since row 21, so nothing deletes the directory
-  of a chat under a caller root (`workspace.py`).
 - No contract names `/trigger`. The phase 3 plan, row 14, names the route.
   Its body and its answer are this package's (`requests.py`).
 - `ErrorCode` still holds the codes of the session API, such as

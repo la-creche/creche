@@ -185,21 +185,20 @@ def accepts_dispatch(family: FamilyFile) -> bool:
 
 @dataclass(frozen=True)
 class LimitsBlock:
-    """Contract 05 section 2.1. `max_running_turns`, `job_timeout_s` and
-    `caller_root` come from `family.toml`; `max_queued_turns` mirrors
-    `attendance`'s own constant instead (`ATTENDANCE_MAX_QUEUED_TURNS`)."""
+    """Contract 05 section 2.1. `max_running_turns` and `job_timeout_s`
+    come from `family.toml`; `max_queued_turns` mirrors `attendance`'s own
+    constant instead (`ATTENDANCE_MAX_QUEUED_TURNS`). Contract 01 minor 18
+    drops `job.caller_root`, so no caller root rides here (decision CH10-10)."""
 
     max_running_turns: int | None = None
     max_queued_turns: int | None = ATTENDANCE_MAX_QUEUED_TURNS
     job_timeout_s: int | None = None
-    caller_root: str | None = None
 
     def as_json(self) -> dict[str, Any]:
         return {
             "max_running_turns": self.max_running_turns,
             "max_queued_turns": self.max_queued_turns,
             "job_timeout_s": self.job_timeout_s,
-            "caller_root": self.caller_root,
         }
 
 

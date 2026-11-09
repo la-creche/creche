@@ -22,7 +22,7 @@ NOW = datetime(2026, 9, 19, 12, 0, 0, tzinfo=UTC)
 
 #: The comments are load-bearing. The real family files explain each grant
 #: where it sits, and a form save has to bring them back.
-CHAT_COMMENT = "# The vault is read-only here, and it syncs to the operator's phone."
+CHAT_COMMENT = "# The lights only. Each other call of Home Assistant is refused."
 
 #: The `chat` family, in the layout of a converted registry file.
 CHAT_FAMILY_TOML = f"""\
@@ -31,9 +31,9 @@ kind = "attended"
 description = "the house assistant"
 model.router = "agent-router"
 model.budget_usd_per_day = 15
-files = [
+verbs.ha_call.allow = [
     {CHAT_COMMENT}
-    {{ path = "/srv/agents/vault", mode = "ro" }},
+    {{ domain = "light", service = "turn_on" }},
 ]
 egress = []
 shell = false

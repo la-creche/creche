@@ -375,7 +375,7 @@ def _control(annotation: object) -> Control | None:
     if _is_flat_model(inner):
         return None
 
-    # A grant map, a fence block, a list of mounts. Real shapes that a
+    # A grant map, a fence block, a list of triggers. Real shapes that a
     # text box would flatten and a checkbox would lie about.
     return Control.BLOCK
 

@@ -194,10 +194,6 @@ kind = "attended"
 description = "A family that sets every field an attended family may set."
 model.router = "agent-router"
 model.budget_usd_per_day = 12.5
-files = [
-    { path = "/srv/agents/vault", mode = "ro" },
-    { path = "/srv/agents/code/example", mode = "rw" },
-]
 tools.kagi = ["kagi_search_fetch", "kagi_extract"]
 tools.ha-read = "all"
 verbs.embed = {}
@@ -229,8 +225,8 @@ approval = ["ha_call", "invoke_agent", "kagi__kagi_extract", "ha-read__*"]
 model.budgt = 2
 sandbox.cpu = 2
 sandbox.memroy = "2g"
-files = [
-    { path = "/srv/agents/vault", mode = "ro", moed = "rw" },
+verbs.ha_call.allow = [
+    { domain = "light", service = "turn_on", entity = "light.example_lamp" },
 ]
 """,
     ),
@@ -245,11 +241,8 @@ files = [
         "wrong-type-depth",
         AUTONOMOUS_HEAD
         + """\
-files = [
-    { path = "/srv/agents/vault", mode = "ro" },
-    { path = "/srv/agents/code", mode = ["ro"] },
-]
 verbs.ha_call.allow = [
+    { domain = "light", service = "turn_on" },
     { domain = 5, service = "notify" },
 ]
 triggers = [
@@ -265,7 +258,6 @@ name = 12
 kind = ["thin"]
 description.text = "nope"
 model = "fast"
-files = "/srv/agents/vault"
 delegates = "vault-oracle"
 shell = "maybe"
 """,
@@ -283,12 +275,10 @@ name = "%NAME%"
 kind = "thin"
 description = "One written input."
 model.router = "fast"
-files = [
-    { path = "/srv/agents/vault" },
-]
 verbs.ha_call = {}
 verbs.enqueue = {}
 verbs.release = {}
+quiet.daily = { hour = 7 }
 """,
     ),
     _case("missing-and-unknown", 'nmae = "%NAME%"\nkind = "thin"\n'),
@@ -425,7 +415,8 @@ triggers = [
     _case("rule-budget-negative", _head(budget_usd_per_day="-1")),
     _case("rule-budget-tiny", _head(budget_usd_per_day="1e-09")),
     _case("rule-router-path", _head(router='"a/b.c-d_e"')),
-    # --- files (contract 01 §3.3, §5.4, §5.5) ---
+    # --- files: contract 01 minor 18 drops the field (decision CH10-10), so
+    # the field is unknown and the text is refused ---
     _case(
         "rule-files",
         HEAD
@@ -444,50 +435,6 @@ files = [
     { path = "/srv/agents/work/platform-x", mode = "ro" },
 ]
 """,
-    ),
-    _case(
-        "rule-files-shapes",
-        HEAD
-        + """\
-files = [
-    { path = "/srv/agents/vault/a?", mode = "ro" },
-    { path = "/srv/agents/vault/[ab]", mode = "ro" },
-    { path = "/srv/agents/vault/.", mode = "ro" },
-    { path = "/srv/agents/vault/", mode = "ro" },
-    { path = "/srv/agents/vault/a b", mode = "ro" },
-    { path = "/srv/agents/vault-other", mode = "ro" },
-    { path = "/srv/agents/sessions", mode = "ro" },
-    { path = "/srv/agents/code/creche", mode = "ro" },
-    { path = "/", mode = "ro" },
-    { path = "", mode = "ro" },
-    { path = "/srv/agents/vault/x", mode = "RO" },
-]
-""",
-    ),
-    _case(
-        "fence-other-mount",
-        ATTENDED_HEAD
-        + "files = [\n"
-        + '    { path = "/srv/agents/work/platform", mode = "rw" },\n'
-        + '    { path = "/srv/agents/vault", mode = "ro" },\n]\n',
-        directory=PLATFORM_FAMILY,
-    ),
-    _case(
-        "fence-mirror-ro",
-        ATTENDED_HEAD
-        + "files = [\n"
-        + '    { path = "/srv/agents/work/platform", mode = "rw" },\n'
-        + '    { path = "/srv/agents/code/creche", mode = "ro" },\n'
-        + '    { path = "/srv/agents/code/agent-mcp", mode = "ro" },\n]\n',
-        directory=PLATFORM_FAMILY,
-    ),
-    _case(
-        "fence-mirror-rw",
-        ATTENDED_HEAD
-        + "files = [\n"
-        + '    { path = "/srv/agents/code/agent-registry", mode = "rw" },\n'
-        + '    { path = "/srv/agents/code/creche/src", mode = "ro" },\n]\n',
-        directory=PLATFORM_FAMILY,
     ),
     _case(
         "fence-release-inside",
@@ -675,6 +622,9 @@ approval = [
     _case("rule-job-timeout-max", HEAD + 'job.timeout = "1h"\n'),
     _case("rule-job-timeout-zero", HEAD + 'job.timeout = "0s"\n'),
     _case("rule-job-default", HEAD + "job = {}\n"),
+    # Contract 01 §3.12: `timeout` is the one field of `job`. Minor 18 drops
+    # `job.caller_root` (decisions CH1, CH21-2).
+    _case("rule-job-caller-root", HEAD + 'job.caller_root = "/srv/agents/work/projects"\n'),
     _case("rule-running-turns", CRON_HEAD + "max_running_turns = 9\n"),
     _case("rule-running-turns-ok", CRON_HEAD + "max_running_turns = 8\n"),
     _case("rule-running-turns-zero", CRON_HEAD + "max_running_turns = 0\n"),
@@ -827,13 +777,13 @@ shell = true
 cpus = 4
 memory = "4g"
 
-[[files]]
-path = "/srv/agents/vault"
-mode = "ro"
+[[verbs.ha_call.allow]]
+domain = "light"
+service = "turn_on"
 
-[[files]]
-path = "/srv/agents/code/example"
-mode = "rw"
+[[verbs.ha_call.allow]]
+domain = "light"
+service = "turn_off"
 
 [tools]
 kagi = ["kagi_extract"]
@@ -865,7 +815,6 @@ kagi = ["kagi_extract"]
         "toml-wrong-type-each-field",
         HEAD
         + """\
-files = "x"
 tools = ["kagi"]
 verbs = 1
 delegates = "x"
@@ -887,7 +836,6 @@ quiet = 1
         "toml-wrong-type-each-block",
         HEAD
         + """\
-files = [1]
 verbs.embed = 1
 verbs.ha_call = "x"
 verbs.enqueue = []
@@ -904,9 +852,6 @@ quiet.daily = 1
         "toml-wrong-type-each-leaf",
         _head(router="1")
         + """\
-files = [
-    { path = 1, mode = true },
-]
 verbs.ha_call.allow = [
     { domain = 1, service = 1, entity_id = 1 },
     1,

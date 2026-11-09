@@ -17,7 +17,7 @@ from enum import StrEnum
 from typing import Final
 
 from .grammar import ALL_TOOLS, duration_s, memory_mb
-from .model import FamilyFile, FileMount, ToolGrant
+from .model import FamilyFile, ToolGrant
 
 
 class Landing(StrEnum):
@@ -324,18 +324,6 @@ def _kind_fields(old: FamilyFile, new: FamilyFile, changes: list[FieldChange]) -
             f"job.timeout changed: {old_timeout} to {new_timeout}, read per job",
         )
 
-    old_root = old.job.caller_root if old.job is not None else None
-    new_root = new.job.caller_root if new.job is not None else None
-    if old_root != new_root:
-        _add(
-            changes,
-            "job.caller_root",
-            Landing.LIVE,
-            Direction.CHANGE,
-            Step.NONE,
-            f"job.caller_root changed: {old_root} to {new_root}, read per job",
-        )
-
     if old.triggers != new.triggers:
         _add(
             changes,
@@ -370,17 +358,6 @@ def _kind_fields(old: FamilyFile, new: FamilyFile, changes: list[FieldChange]) -
 
 
 def _sandbox(old: FamilyFile, new: FamilyFile, changes: list[FieldChange]) -> None:
-    mounts = _mounts_direction(old.files, new.files)
-    if mounts is not None:
-        _add(
-            changes,
-            "files",
-            Landing.REPLACE,
-            mounts,
-            Step.CREATE_SANDBOX,
-            _mounts_detail(old.files, new.files),
-        )
-
     if old.sandbox.image != new.sandbox.image:
         # `change`, not `add` or `remove`: the flavors are not ordered.
         # `python` is not more reach than `base` and `base` is not a subset
@@ -521,46 +498,3 @@ def _triggers_direction(old: FamilyFile, new: FamilyFile) -> Direction:
 
 def _trigger_key(trigger: object) -> str:
     return repr(trigger)
-
-
-def _mount_key(mount: FileMount) -> str:
-    return mount.path
-
-
-def _mounts_direction(old: list[FileMount], new: list[FileMount]) -> Direction | None:
-    before = {_mount_key(mount): mount.mode for mount in old}
-    after = {_mount_key(mount): mount.mode for mount in new}
-    if before == after:
-        return None
-
-    added = set(after) - set(before)
-    removed = set(before) - set(after)
-    for path in set(before) & set(after):
-        if before[path] == after[path]:
-            continue
-
-        # rw to ro removes reach; ro to rw adds it (contract 05 §5.4).
-        target = removed if after[path] == "ro" else added
-        target.add(path)
-
-    if added and removed:
-        return Direction.BOTH
-
-    return Direction.ADD if added else Direction.REMOVE
-
-
-def _mounts_detail(old: list[FileMount], new: list[FileMount]) -> str:
-    before = {mount.path: mount.mode for mount in old}
-    after = {mount.path: mount.mode for mount in new}
-    parts: list[str] = []
-    for path in sorted(set(after) - set(before)):
-        parts.append(f"added {path} {after[path]}")
-
-    for path in sorted(set(before) - set(after)):
-        parts.append(f"removed {path} {before[path]}")
-
-    for path in sorted(set(before) & set(after)):
-        if before[path] != after[path]:
-            parts.append(f"{path} {before[path]} to {after[path]}")
-
-    return "mounts changed: " + ", ".join(parts)

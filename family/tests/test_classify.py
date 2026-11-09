@@ -290,14 +290,6 @@ def test_job_timeout_decrease_removes() -> None:
     assert change_for(classify(old, new), "job.timeout").direction is Direction.REMOVE
 
 
-def test_caller_root_change_is_live() -> None:
-    old, new = built("vault-oracle", {"job": {}}, {"job": {"caller_root": "/srv/agents/vault"}})
-    change = change_for(classify(old, new), "job.caller_root")
-    assert change.landing is Landing.LIVE
-    assert change.direction is Direction.CHANGE
-    assert change.step is Step.NONE
-
-
 def test_trigger_added() -> None:
     old, new = built(
         "scrum-lead",
@@ -349,56 +341,7 @@ def test_a_quiet_change_is_live_and_moves_no_reach() -> None:
     assert not diff.needs_switch
 
 
-# --- sandbox: files, cpus, memory, max_resident_processes (needs a switch) --
-
-
-def test_a_mount_added_replaces_the_sandbox() -> None:
-    old, new = built(
-        "chat",
-        {"files": [{"path": "/srv/agents/vault", "mode": "ro"}]},
-        {
-            "files": [
-                {"path": "/srv/agents/vault", "mode": "ro"},
-                {"path": "/srv/agents/code", "mode": "ro"},
-            ]
-        },
-    )
-    change = change_for(classify(old, new), "files")
-    assert change.landing is Landing.REPLACE
-    assert change.direction is Direction.ADD
-    assert change.step is Step.CREATE_SANDBOX
-
-
-def test_a_mount_removed_replaces_the_sandbox() -> None:
-    old, new = built(
-        "chat",
-        {
-            "files": [
-                {"path": "/srv/agents/vault", "mode": "ro"},
-                {"path": "/srv/agents/code", "mode": "ro"},
-            ]
-        },
-        {"files": [{"path": "/srv/agents/vault", "mode": "ro"}]},
-    )
-    assert change_for(classify(old, new), "files").direction is Direction.REMOVE
-
-
-def test_a_mount_widened_to_rw_adds_reach() -> None:
-    old, new = built(
-        "chat",
-        {"files": [{"path": "/srv/agents/vault", "mode": "ro"}]},
-        {"files": [{"path": "/srv/agents/vault", "mode": "rw"}]},
-    )
-    assert change_for(classify(old, new), "files").direction is Direction.ADD
-
-
-def test_a_mount_narrowed_to_ro_removes_reach() -> None:
-    old, new = built(
-        "chat",
-        {"files": [{"path": "/srv/agents/vault", "mode": "rw"}]},
-        {"files": [{"path": "/srv/agents/vault", "mode": "ro"}]},
-    )
-    assert change_for(classify(old, new), "files").direction is Direction.REMOVE
+# --- sandbox: cpus, memory, max_resident_processes (needs a switch) -------
 
 
 @pytest.mark.parametrize(
@@ -427,8 +370,8 @@ def test_sandbox_memory_replaces() -> None:
 
 
 def test_sandbox_image_replaces() -> None:
-    """The flavor picks the filesystem a turn runs on, and that only
-    arrives with a new microVM, so it sits beside `files` in §6."""
+    """The flavor picks the root disk a turn runs on, and that only
+    arrives with a new VM, so it sits beside `sandbox.cpus` in §6."""
     old, new = built(
         "chat",
         {"sandbox": {"cpus": 4, "memory": "8g", "image": "base"}},
@@ -496,13 +439,8 @@ def test_refused_lists_only_the_immutable_changes() -> None:
 def test_an_addition_only_switch_drains() -> None:
     old, new = built(
         "chat",
-        {"files": [{"path": "/srv/agents/vault", "mode": "ro"}]},
-        {
-            "files": [
-                {"path": "/srv/agents/vault", "mode": "ro"},
-                {"path": "/srv/agents/code", "mode": "ro"},
-            ]
-        },
+        {"sandbox": {"cpus": 4, "memory": "8g"}},
+        {"sandbox": {"cpus": 8, "memory": "16g"}},
     )
     diff = classify(old, new)
     assert diff.needs_switch is True
@@ -512,13 +450,8 @@ def test_an_addition_only_switch_drains() -> None:
 def test_a_removal_switch_interrupts() -> None:
     old, new = built(
         "chat",
-        {
-            "files": [
-                {"path": "/srv/agents/vault", "mode": "ro"},
-                {"path": "/srv/agents/code", "mode": "ro"},
-            ]
-        },
-        {"files": [{"path": "/srv/agents/vault", "mode": "ro"}]},
+        {"sandbox": {"cpus": 8, "memory": "16g"}},
+        {"sandbox": {"cpus": 4, "memory": "16g"}},
     )
     assert classify(old, new).switch_mode is SwitchMode.INTERRUPT
 
@@ -528,8 +461,8 @@ def test_a_revision_that_both_adds_and_removes_interrupts() -> None:
     removal'."""
     old, new = built(
         "chat",
-        {"files": [{"path": "/srv/agents/vault", "mode": "ro"}]},
-        {"files": [{"path": "/srv/agents/code", "mode": "ro"}]},
+        {"sandbox": {"cpus": 4, "memory": "16g"}},
+        {"sandbox": {"cpus": 8, "memory": "8g"}},
     )
     assert classify(old, new).switch_mode is SwitchMode.INTERRUPT
 

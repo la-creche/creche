@@ -1,8 +1,7 @@
 # The thin family of stage 5, from `docs/rework/spec.md` §4.4.
 #
 # Stage 5 needs it for one line of contract 02 §13 rule 5: a thin job is never
-# queued. It is stage 3's `vault-oracle` with the three read-only mounts
-# dropped, because no stage 5 scenario reads a file inside it.
+# queued. It is stage 3's `vault-oracle`.
 name = "vault-oracle"
 kind = "thin"
 description = "Retrieval. Searches the indexed corpora and answers with citations."

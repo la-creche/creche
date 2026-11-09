@@ -65,14 +65,14 @@ def value_of(form: Form, name: str) -> str:
 def test_a_block_shows_toml_text_with_its_key() -> None:
     form = toml_form()
 
-    assert value_of(form, "files") == (
-        'files = [\n    { path = "/srv/agents/vault", mode = "ro" },\n]\n'
+    assert value_of(form, "verbs") == (
+        'verbs.ha_call.allow = [\n    { domain = "light", service = "turn_on" },\n]\n'
     )
     assert value_of(form, "tools") == "tools = {}\n"
 
 
 def test_a_block_says_that_it_is_toml() -> None:
-    found = toml_form().field("files")
+    found = toml_form().field("verbs")
 
     assert found is not None
     assert found.note == "TOML, including the key line"
@@ -154,56 +154,56 @@ def test_a_block_with_a_key_two_times_is_a_problem_of_the_form() -> None:
 def test_a_block_that_the_reader_refuses_is_a_problem_of_the_form() -> None:
     form = toml_form()
     posted = posted_from(form)
-    posted["files"] = 'files = [ { path = "/srv/agents/vault"\n'
+    posted["verbs"] = 'verbs.ha_call.allow = [ { domain = "light"\n'
 
     _, problem = document_of(form, posted)
 
-    assert problem.startswith("the files block: ")
+    assert problem.startswith("the verbs block: ")
 
 
 def test_a_block_that_names_another_key_is_refused() -> None:
     form = toml_form()
     posted = posted_from(form)
-    posted["files"] = 'name = "stolen"\n'
+    posted["verbs"] = 'name = "stolen"\n'
 
     text, problem = document_of(form, posted)
 
     assert text == ""
-    assert problem == "the files block must hold the key 'files' and no other"
+    assert problem == "the verbs block must hold the key 'verbs' and no other"
 
 
 def test_a_block_with_a_second_key_is_refused() -> None:
     form = toml_form()
     posted = posted_from(form)
-    posted["files"] = "files = []\nshell = true\n"
+    posted["verbs"] = "verbs = {}\nshell = true\n"
 
     _, problem = document_of(form, posted)
 
-    assert problem == "the files block must hold the key 'files' and no other"
+    assert problem == "the verbs block must hold the key 'verbs' and no other"
 
 
 def test_an_empty_block_gives_no_key() -> None:
     form = toml_form()
     posted = posted_from(form)
-    posted["files"] = "# no mounts\n\n"
+    posted["verbs"] = "# no verbs\n\n"
 
     after, issues = parse_posted(form, posted)
 
     assert issues == []
     assert after is not None
-    assert after.files == []
+    assert after.verbs.granted() == ()
 
 
 def test_the_form_of_an_answer_gives_the_document_of_the_post() -> None:
     form = toml_form()
     posted = posted_from(form)
     posted["description"] = "  the house assistant, rewritten  "
-    posted["files"] = 'files = [{ path = "/srv/agents/vault", mode = "rw" }]'
+    posted["verbs"] = 'verbs.ha_call.allow = [{ domain = "light", service = "turn_off" }]'
 
     again = posted_from(with_posted(form, posted))
 
     assert document_of(form, again) == document_of(form, posted)
-    assert again["files"] == posted["files"]
+    assert again["verbs"] == posted["verbs"]
 
 
 def test_a_comment_of_a_block_does_not_reach_the_document() -> None:
@@ -211,13 +211,16 @@ def test_a_comment_of_a_block_does_not_reach_the_document() -> None:
     keeps the comments of the file."""
     form = toml_form()
     posted = posted_from(form)
-    posted["files"] = f'files = [\n    {CHAT_COMMENT}\n    {{ path = "/srv", mode = "ro" }},\n]\n'
+    entry = '{ domain = "fan", service = "x" }'
+    posted["verbs"] = f"verbs.ha_call.allow = [\n    {CHAT_COMMENT}\n    {entry},\n]\n"
 
     text, problem = document_of(form, posted)
 
     assert problem == ""
     assert CHAT_COMMENT not in text
-    assert family(text).files[0].path == "/srv"
+    allow = family(text).verbs.ha_call
+    assert allow is not None
+    assert allow.allow[0].domain == "fan"
 
 
 def test_a_date_in_a_block_is_refused_at_its_field() -> None:
@@ -225,13 +228,13 @@ def test_a_date_in_a_block_is_refused_at_its_field() -> None:
     same moment, so the model refuses it as it refuses it in a file."""
     form = toml_form()
     posted = posted_from(form)
-    posted["files"] = 'files = [{ path = 1979-05-27T07:32:00Z, mode = "ro" }]\n'
+    posted["verbs"] = 'verbs.ha_call.allow = [{ domain = 1979-05-27T07:32:00Z, service = "x" }]\n'
 
     after, issues = parse_posted(form, posted)
 
     assert after is None
     assert [(one.loc, one.msg) for one in issues] == [
-        ("files[0].path", "Input should be a valid string")
+        ("verbs.ha_call.allow[0].domain", "Input should be a valid string")
     ]
 
 
@@ -267,7 +270,7 @@ def test_a_value_with_no_toml_form_is_a_problem_of_the_form(
     real = familyform.loads
 
     def loads(data: bytes, kind: FileKind) -> dict[str, Any]:
-        return {"files": object()} if data.startswith(b"files") else real(data, kind)
+        return {"verbs": object()} if data.startswith(b"verbs") else real(data, kind)
 
     monkeypatch.setattr(familyform, "loads", loads)
     form = toml_form()

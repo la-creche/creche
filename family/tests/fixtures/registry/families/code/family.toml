@@ -5,14 +5,6 @@ description = "Coding agent for every repository, the platform included."
 model.router = "code-router"
 model.budget_usd_per_day = 100
 
-files = [
-    # No mount under /srv/agents/work/platform. That is the file half of
-    # spec.md §4.4 and invariant 10, enforced by the fence in §5.5.
-    { path = "/srv/agents/work/projects", mode = "rw" },
-    { path = "/srv/agents/vault", mode = "ro" },
-    { path = "/srv/agents/code", mode = "ro" },
-]
-
 tools.kagi = ["kagi_search_fetch", "kagi_extract"]
 # The credential behind this server cannot reach the three platform repos
 # (contract 01b §8.2): the credential half of `spec.md` §4.4.

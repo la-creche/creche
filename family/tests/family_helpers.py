@@ -22,18 +22,9 @@ from agent_family.validate import Index, check_family
 
 FIXTURES = Path(__file__).parent / "fixtures" / "registry"
 
-#: The fences of the test host (`agent_family.fences`): the roots and the
-#: platform family that the fixture registry uses.
-FENCES = Fences(
-    mount_roots=(
-        "/srv/agents/vault",
-        "/srv/agents/code",
-        "/srv/agents/state/index",
-        "/srv/agents/work/projects",
-        "/srv/agents/work/coding-sandbox",
-    ),
-    platform_families=frozenset({"code"}),
-)
+#: The fence of the test host (`agent_family.fences`): the platform family
+#: that the fixture registry uses.
+FENCES = Fences(platform_families=frozenset({"code"}))
 
 #: The six files contract 01 §8 writes out. The fixture holds more, and
 #: `fixtures/registry/families/finance-worker/family.toml` says why.
@@ -47,18 +38,13 @@ CONTRACT_FAMILIES = (
 
 
 class FakeHost:
-    """The host, as the two downgradable checks see it (contract 01 §5.1,
-    §5.4). `links` maps a declared path to what it really resolves to."""
+    """The host, as the downgradable check sees it (contract 01 §5.1)."""
 
-    def __init__(self, aliases: tuple[str, ...] = (), links: dict[str, str] | None = None) -> None:
+    def __init__(self, aliases: tuple[str, ...] = ()) -> None:
         self._aliases = frozenset(aliases)
-        self._links = links or {}
 
     def model_aliases(self) -> frozenset[str]:
         return self._aliases
-
-    def real_path(self, path: str) -> str:
-        return self._links.get(path, path)
 
 
 LIVE_ALIASES = ("agent-router", "code-router", "fast")
@@ -158,8 +144,8 @@ def check(fixture: str, **changes: Any) -> Report:
 
 
 def check_no_host(fixture: str, **changes: Any) -> Report:
-    """Same as `check`, with no host context, for the checks that downgrade
-    to a warning without one (contract 01 §5.1, §5.4)."""
+    """Same as `check`, with no host context, for the check that downgrades
+    to a warning without one (contract 01 §5.1)."""
     family = edited(fixture, **changes)
     issues = Issues()
     check_family(family, fixture, full_index(), issues, None, FENCES)

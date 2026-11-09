@@ -2,24 +2,13 @@
 # the `tools` map keeps the two GitHub servers and drops kagi and the
 # Vikunja servers. Every MCP server needs an `mcp/<name>/server.toml` (contract 01
 # §5.2), and the only server stage 4 asks a question about is GitHub.
-#
-# The `files` list is NOT scaled down. `code` is the one family that edits the
-# platform: it reads every repository from the read-only corpus and keeps no
-# working copy.
+
 name = "code"
 kind = "attended"
 description = "Coding agent for every repository, the platform included."
 
 model.router = "code-router"
 model.budget_usd_per_day = 100
-
-files = [
-    # No mount under /srv/agents/work/platform. The fence in contract 01 §5.5
-    # refuses one, and `test_i4_stage4.py` proves that refusal on this file.
-    { path = "/srv/agents/work/projects", mode = "rw" },
-    { path = "/srv/agents/vault", mode = "ro" },
-    { path = "/srv/agents/code", mode = "ro" },
-]
 
 # `github-code` reaches every repository that is not the platform, and
 # `github-platform` reaches the platform repos. `code` holds both.

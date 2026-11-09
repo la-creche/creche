@@ -104,19 +104,20 @@ def test_limits_block_defaults_max_queued_turns_to_100() -> None:
         "max_running_turns": None,
         "max_queued_turns": 100,
         "job_timeout_s": None,
-        "caller_root": None,
     }
 
 
-@pytest.mark.parametrize("job", [{"caller_root": "/srv/agents/work/projects"}, {}])
-def test_limits_carry_the_caller_root_of_a_thin_family(job: dict[str, str]) -> None:
-    """Contract 02 §12.1: attendance reads the per-chat root from here."""
-    body = FAMILY_BODY | {"kind": "thin", "job": job}
+def test_limits_of_a_thin_family_carry_no_caller_root() -> None:
+    """Contract 01 minor 18 drops `job.caller_root` (decision CH10-10), so
+    the block holds the three fields of contract 05 §2.1."""
+    body = FAMILY_BODY | {"kind": "thin", "job": {}}
     family, issues = parse_family(toml_text(body), Markup.TOML)
     assert family is not None, issues
-    limits = limits_for(family).as_json()
-    assert limits["caller_root"] == job.get("caller_root")
-    assert limits["job_timeout_s"] == 120
+    assert limits_for(family).as_json() == {
+        "max_running_turns": None,
+        "max_queued_turns": 100,
+        "job_timeout_s": 120,
+    }
 
 
 def test_status_document_assembles_the_full_shape() -> None:
@@ -151,7 +152,6 @@ def test_status_document_assembles_the_full_shape() -> None:
         "max_running_turns": None,
         "max_queued_turns": 100,
         "job_timeout_s": None,
-        "caller_root": None,
     }
 
 

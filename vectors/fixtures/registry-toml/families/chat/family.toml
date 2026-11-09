@@ -5,17 +5,6 @@ description = "General assistant. Knows the operator, searches, delegates, asks 
 model.router = "agent-router"
 model.budget_usd_per_day = 15
 
-files = [
-    # The whole vault to read, and one memories directory per vault area to
-    # write. Explicit paths, not a glob (§3.3.2).
-    { path = "/srv/agents/vault", mode = "ro" },
-    { path = "/srv/agents/vault/profile/memories", mode = "rw" },
-    { path = "/srv/agents/vault/house/memories", mode = "rw" },
-    # The per-chat coding-sandbox work root, so no copy step stands between this
-    # family and its coding-sandbox jobs (`spec.md` §7.2).
-    { path = "/srv/agents/work/coding-sandbox", mode = "rw" },
-]
-
 tools.kagi = ["kagi_search_fetch", "kagi_extract"]
 tools.ha-read = ["ha_get_state", "ha_search", "ha_get_overview", "ha_get_history"]
 tools.ha = "all"

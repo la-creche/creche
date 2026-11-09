@@ -22,7 +22,6 @@ JsonObject = dict[str, Any]
 MODE_GROUP_READ = 0o640
 MODE_PUBLIC_READ = 0o644
 DIR_MODE_GROUP = 0o750
-DIR_MODE_PRIVATE = 0o700
 
 # A status document, a lock file or a fault file is small. Anything larger is
 # either a bug or an attempt to make this service read a file into memory.

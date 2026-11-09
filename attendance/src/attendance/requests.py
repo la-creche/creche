@@ -93,10 +93,8 @@ class JobQuery:
 def read_delegate(raw: dict[str, Any]) -> DelegateRequest:
     """Contract 04 §7.3. The PEP is another process, so this is untrusted.
 
-    `claimed_session_id` is advisory for the audit, and for `coding-sandbox` it
-    also becomes a path component (contract 02 §12.1). A malformed one is
-    refused here rather than dropped, because dropping it would silently run
-    a job in the wrong directory.
+    `claimed_session_id` is advisory for the audit. A malformed one is
+    refused here, not dropped.
     """
     caller = _require_text(raw, "caller_family")
     target = _require_text(raw, "target_family")

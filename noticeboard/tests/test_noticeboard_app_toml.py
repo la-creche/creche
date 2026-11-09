@@ -210,22 +210,22 @@ def test_a_toml_block_with_a_key_two_times_is_refused_on_the_page(board: Board) 
     assert board.text() == CHAT_FAMILY_TOML
 
 
-#: The `files` block of a reader who writes a list of tables with table lines.
-FILES_WITH_TABLE_LINES = """\
-[[files]]
-path = "/srv/agents/vault"
-mode = "ro"
+#: The `verbs` block of a reader who writes a list of tables with table lines.
+VERBS_WITH_TABLE_LINES = """\
+[[verbs.ha_call.allow]]
+domain = "light"
+service = "turn_on"
 
-[[files]]
-path = "/srv/agents/vault/house/memories"
-mode = "rw"
+[[verbs.ha_call.allow]]
+domain = "light"
+service = "turn_off"
 """
 
 
 def test_a_toml_block_edit_saves_and_keeps_the_other_lines(board: Board) -> None:
     board.get(EDIT)
     body = posted_form(board)
-    body["files"] = FILES_WITH_TABLE_LINES
+    body["verbs"] = VERBS_WITH_TABLE_LINES
     body["verb"] = "save"
 
     answer = board.post(EDIT, body)
@@ -233,10 +233,8 @@ def test_a_toml_block_edit_saves_and_keeps_the_other_lines(board: Board) -> None
     family, _ = parse_family(board.text(), Markup.TOML)
     assert answer.status_code == 303, answer.text
     assert family is not None
-    assert [one.path for one in family.files] == [
-        "/srv/agents/vault",
-        "/srv/agents/vault/house/memories",
-    ]
+    assert family.verbs.ha_call is not None
+    assert [one.service for one in family.verbs.ha_call.allow] == ["turn_on", "turn_off"]
     assert family.shell is False
     assert family.egress == []
     assert [line for line in board.text().splitlines() if line.startswith("[")] == []
