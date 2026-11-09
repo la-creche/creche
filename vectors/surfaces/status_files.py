@@ -867,7 +867,6 @@ def _record(**changes: object) -> OutcomeRecord:
         turns=4,
         spend_usd=0.5,
         spend_reason=None,
-        sandbox=f"{FAMILY}-s2",
     )
 
     return replace(record, **changes)
@@ -887,6 +886,25 @@ def _outcome_doc(doc_id: str, **fields: object) -> OutcomeDocument:
 
 
 _OUTCOME_TEXT: Final = json.dumps({"id": OUTCOME_ID, "family": FAMILY, "turns": 3})
+
+#: A record that `attendance` wrote before contract 02 minor 17. It holds the
+#: two fields that left at minor 17, `approvals` and `sandbox`. Such records
+#: stay on the host, and the noticeboard reads each of them.
+_OLD_RECORD: Final[dict[str, object]] = {
+    "id": OUTCOME_ID,
+    "family": FAMILY,
+    "session": _SESSION,
+    "trigger": {"kind": "timer", "name": "morning-triage", "fired_at": "2999-01-01T06:00:00Z"},
+    "started_at": "2999-01-01T06:00:02Z",
+    "ended_at": "2999-01-01T06:07:45Z",
+    "status": "ok",
+    "error": None,
+    "turns": 4,
+    "approvals": {"requested": 1, "approved": 1, "denied": 0, "timed_out": 0},
+    "spend_usd": 0.5,
+    "spend_reason": None,
+    "sandbox": f"{FAMILY}-s2",
+}
 
 OUTCOME_DOCUMENTS: Final[tuple[OutcomeDocument, ...]] = (
     # --- records that attendance writes -------------------------------------
@@ -915,7 +933,7 @@ OUTCOME_DOCUMENTS: Final[tuple[OutcomeDocument, ...]] = (
         "written-spend-unknown",
         _record(spend_usd=None, spend_reason=_SPEND_UNKNOWN),
     ),
-    OutcomeDocument("written-spend-zero", _record(spend_usd=0.0, turns=0, sandbox="")),
+    OutcomeDocument("written-spend-zero", _record(spend_usd=0.0, turns=0)),
     OutcomeDocument("written-error-long", _record(status=Outcome.FAILED, error=_LONG_ERROR)),
     OutcomeDocument("written-text-escapes", _record(status=Outcome.FAILED, error=_ODD_TEXT)),
     # --- each field ----------------------------------------------------------
@@ -927,7 +945,8 @@ OUTCOME_DOCUMENTS: Final[tuple[OutcomeDocument, ...]] = (
     _outcome_doc("status-unknown", status="exploded"),
     _outcome_doc("error-null", error=None),
     _outcome_doc("error-number", error=5),
-    _outcome_doc("sandbox-not-a-name", sandbox="Chat"),
+    # --- records of an earlier minor ----------------------------------------
+    _outcome_doc("old-record-approvals-and-sandbox", **_OLD_RECORD),
     _outcome_doc("trigger-kind-only", trigger={"kind": "timer"}),
     _outcome_doc("trigger-name-only", trigger={"name": "morning-triage"}),
     _outcome_doc("trigger-empty", trigger={}),
