@@ -234,6 +234,8 @@ def _delegate_row() -> dict[str, object]:
         "origin": {"delegate": job},
         "title": None,
         "updated_at": 1_794_153_600_000,
+        # Decision CH79 rule 4: each list row carries the state of its VM.
+        "vm": "none",
     }
 
 
