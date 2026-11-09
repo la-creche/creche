@@ -8,8 +8,8 @@ or the state of a stand-in.
 A scenario that `integration/tests_manager` also has keeps its name. Such a
 name can say `apply`: here `caregiver serve` does that work.
 
-Each scenario runs `caregiver` alone, where no `attendance` answers and each
-sandbox stays `creating`.
+Each scenario runs `caregiver` alone, beside its stand-ins. It starts no
+VM: the vmm starts one VM per session (decisions CH1, CH9).
 """
 
 from __future__ import annotations
@@ -23,14 +23,9 @@ from pathlib import Path
 from typing import Any
 
 from proc_caregiver import (
-    CANARIES,
-    CREATING,
     DEGRADED,
     EXIT_OK,
     IN_SYNC,
-    PLANE_ENDPOINTS,
-    PLANE_URLS,
-    RECONCILING,
     WRITE_FLAG,
     CaregiverStack,
     chaperone_flags,
@@ -39,33 +34,22 @@ from proc_caregiver import (
     wait_until,
 )
 from proc_standins import (
-    ALLOW,
-    DENY,
     LITELLM,
     MASTER_KEY,
-    SBX,
     SYSTEMCTL,
     calls_of,
     enabled_units,
     litellm_calls,
     litellm_keys,
-    sbx_rows,
-    sbx_sandboxes,
     tune,
-    untune,
 )
 from proc_tree import (
     BUDGET_USD,
     FAMILY,
-    IMAGE,
     MODEL_ALIAS,
-    PLAYPEN_ENV_MODE,
-    SANDBOX,
     SECRET_MODE,
     STATUS_MODE,
-    Tree,
     family_body,
-    first_sandbox,
     publish_family,
     remove_family,
     write_family_file,
@@ -76,14 +60,17 @@ from proc_tree import (
 OTHER = "ops"
 WAKER = "waker"
 GHOST = "ghost"
-NEXT_SANDBOX = "chat-s2"
 SKILL = "kitchen"
 SKILL_TEXT = "# kitchen\n\nA fixture skill.\n"
 NEW_INSTRUCTIONS = "Answer only in metric units.\n"
 
-#: Two hosts for an egress list. `.example` names resolve nowhere.
-FIRST_HOST = "first.example:443"
-SECOND_HOST = "second.example:443"
+#: Two hosts for an egress list. `.example` names resolve nowhere. The
+#: second is a bare host in upper case.
+FIRST_HOST = "first.example:8443"
+SECOND_HOST = "Second.example"
+
+#: Contract 01 §6.1.1 rule 1: the mode of each reach file.
+REACH_FILE_MODE = 0o640
 
 #: Contract 01 §3.13: five fields. Each working day at nine.
 CRON = "0 9 * * 1-5"
@@ -108,21 +95,6 @@ STATUS_FIELDS = {
     "limits",
     "triggers",
     "pep",
-}
-
-#: Contract 05 §4.1: each field of one sandbox in the status document.
-SANDBOX_FIELDS = {
-    "id",
-    "state",
-    "power",
-    "image",
-    "spec_hash",
-    "cpus",
-    "memory",
-    "created_at",
-    "ready_at",
-    "channel",
-    "supervisor_env",
 }
 
 RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
@@ -164,23 +136,9 @@ def test_the_status_document_holds_each_field(caregiver_alone: CaregiverStack) -
     assert document["validation"]["report_path"] == str(tree.validation_file())
     assert tree.validation_file().is_file()
 
-    [box] = document["sandboxes"]
-    assert set(box) == SANDBOX_FIELDS
-    assert (box["id"], box["image"], box["cpus"], box["memory"]) == (SANDBOX, IMAGE, 2, "2g")
-    assert box["supervisor_env"] == str(tree.playpen_env())
-
-
-def test_apply_reports_creating_and_never_ready(caregiver_alone: CaregiverStack) -> None:
-    """Contract 05 §4.2 rule 4. `ready` means that the handshake passed.
-
-    No `attendance` runs here, so nothing ran a handshake. `sbx create`
-    alone never makes a sandbox `ready`.
-    """
-    [box] = _status(caregiver_alone)["sandboxes"]
-
-    assert box["state"] == CREATING
-    assert box["ready_at"] is None
-    assert caregiver_alone.dialled() == []
+    # The vmm keeps the VMs (decision CH1), so caregiver lists none. The
+    # list leaves the document at manager-status minor 20 (plan PR CR10).
+    assert document["sandboxes"] == []
 
 
 def test_the_spend_of_litellm_is_in_the_document(caregiver_prepared: CaregiverStack) -> None:
@@ -248,9 +206,9 @@ def test_no_secret_is_in_an_output_or_in_a_shared_file(caregiver_alone: Caregive
         "the status document": stack.tree.status_file().read_text(encoding="utf-8"),
         "the policy file": stack.tree.policy_file.read_text(encoding="utf-8"),
         "the policy fragment": stack.tree.policy_fragment().read_text(encoding="utf-8"),
-        "the env file": stack.tree.playpen_env().read_text(encoding="utf-8"),
         "the validation report": stack.tree.validation_file().read_text(encoding="utf-8"),
-        "an sbx command line": " ".join(word for call in stack.sbx_calls() for word in call.argv),
+        "the egress file": stack.tree.egress_file().read_text(encoding="utf-8"),
+        "the repos file": stack.tree.repos_file().read_text(encoding="utf-8"),
     }
 
     for place, text in places.items():
@@ -258,11 +216,11 @@ def test_no_secret_is_in_an_output_or_in_a_shared_file(caregiver_alone: Caregive
             assert secret not in text, f"a secret is in {place}"
 
 
-# ------------------------------------------------------------- the three mounts
+# ------------------------------------------------- the credentials and the config
 
 
-def test_apply_writes_the_three_mounts(caregiver_prepared: CaregiverStack) -> None:
-    """Contract 03 §7.1 and §12, and contract 01 §6.1, before a sandbox reads them."""
+def test_apply_writes_the_credentials_and_the_config(caregiver_prepared: CaregiverStack) -> None:
+    """Contract 03 §12 and contract 01 §6.1, before the vmm reads them (decision CH5b)."""
     stack = caregiver_prepared
     tree = stack.tree
     write_skill(tree, SKILL, SKILL_TEXT)
@@ -283,123 +241,43 @@ def test_apply_writes_the_three_mounts(caregiver_prepared: CaregiverStack) -> No
     assert runtime["model_alias"] == MODEL_ALIAS
     assert (mounts.config / "instructions.md").is_file()
     assert (mounts.config / "skills" / SKILL / "SKILL.md").read_text(encoding="utf-8") == SKILL_TEXT
-    # Contract 05 §4.3 step 5: the control directory of a new sandbox is empty.
-    assert list(mounts.control.iterdir()) == []
 
 
-def test_the_env_file_names_the_directories_apply_mounted(caregiver_alone: CaregiverStack) -> None:
-    """Contract 03 §7.1 and contract 05 §4.3 step 4.
+# ----------------------------------------------------------- the reach files
 
-    A mount has one path: its path on the host is its path in the sandbox. So
-    the env file and `sbx create` name the same three directories. The mount
-    order is the order of the contract, and only the first and the control
-    directory are read-write.
 
-    The env file has seven lines. The first names the session store, the
-    first mount. The last two give the URL of each plane, on the LAN address
-    of the site.
+def test_an_egress_edit_lands_in_the_egress_file(caregiver_prepared: CaregiverStack) -> None:
+    """Contract 01 §6.1.1, decisions CH6-2 and CH69 rules 3 and 5.
+
+    Each host is in lower case with its port, and the planes never enter the
+    file. The vmm reads it on each check and each CONNECT, so an edit needs
+    no new VM. A family with no `repos` gets an empty clone list.
     """
-    tree = caregiver_alone.tree
-    mounts = tree.mounts()
-    made = sbx_sandboxes(tree)[SANDBOX]["mounts"]
-
-    assert len(tree.playpen_env().read_text(encoding="utf-8").splitlines()) == 7
-    assert _env_of(tree.playpen_env()) == {
-        "AGENT_SESSIONS_DIR": made[0]["path"],
-        "AGENT_CRED_DIR": str(mounts.creds),
-        "AGENT_FAMILY_CONFIG_DIR": str(mounts.config),
-        "AGENT_CONTROL_DIR": str(mounts.control),
-        "AGENT_SANDBOX": SANDBOX,
-        **PLANE_URLS,
-    }
-    assert _mode(tree.playpen_env()) == PLAYPEN_ENV_MODE
-    assert made[1:] == [
-        {"path": str(mounts.creds), "readonly": True},
-        {"path": str(mounts.config), "readonly": True},
-        {"path": str(mounts.control), "readonly": False},
-    ]
-    # The session store of the family is first, and it is read-write.
-    assert made[0]["readonly"] is False
-    assert Path(made[0]["path"]).name == FAMILY
-
-
-# ----------------------------------------------------------- reach and egress
-
-
-def test_a_new_sandbox_gets_the_two_planes_and_no_other_reach(
-    caregiver_alone: CaregiverStack,
-) -> None:
-    """Contract 05 §4.3 steps 1 to 3. Deny by default, and each canary is proved.
-
-    The `shell` kit allows one host with no flag. `caregiver` denies it at
-    the create, and it probes each canary before it publishes the sandbox.
-    """
-    stack = caregiver_alone
-    [create] = [command for command in stack.sbx_commands() if command[0] == "create"]
-    probed = [command[-1] for command in stack.sbx_commands() if command[:2] == ("policy", "check")]
-
-    assert create[create.index("--deny-network") + 1] == "openrouter.ai"
-    assert create[create.index("-t") + 1] == IMAGE
-    assert _reach(stack.tree, SANDBOX) == sorted(PLANE_ENDPOINTS)
-    assert set(probed) == {*PLANE_ENDPOINTS, *CANARIES}
-
-
-def test_an_egress_edit_lands_on_the_running_sandbox(caregiver_prepared: CaregiverStack) -> None:
-    """Contract 05 §3.5 row 2 and invariant 9: no new sandbox, and the removal is first."""
     stack = caregiver_prepared
-    write_family_file(stack.tree, family_body(egress=[FIRST_HOST]))
+    tree = stack.tree
+    write_family_file(tree, family_body(egress=[FIRST_HOST]))
     stack.spawn_caregiver()
     stack.await_published()
-    assert _reach(stack.tree, SANDBOX) == sorted([*PLANE_ENDPOINTS, FIRST_HOST])
+    first = _json(tree.egress_file())
 
-    write_family_file(stack.tree, family_body(egress=[SECOND_HOST]))
-    wait_until(
-        lambda: _reach(stack.tree, SANDBOX) == sorted([*PLANE_ENDPOINTS, SECOND_HOST]),
-        f"{SECOND_HOST} in the place of {FIRST_HOST}",
-    )
-    commands = stack.sbx_commands()
-    removed = commands.index(
-        ("policy", "rm", "network", "--force", "--sandbox", SANDBOX, "--resource", FIRST_HOST)
-    )
-    added = commands.index(("policy", "allow", "network", "--sandbox", SANDBOX, SECOND_HOST))
+    write_family_file(tree, family_body(egress=[SECOND_HOST]))
+    second = {"hosts": [{"host": "second.example", "port": 443}]}
+    wait_until(lambda: _json(tree.egress_file()) == second, f"{SECOND_HOST} in the egress file")
 
-    assert removed < added, "the edit gave new reach before it took the old reach away"
-    assert list(sbx_sandboxes(stack.tree)) == [SANDBOX]
+    assert first == {"hosts": [{"host": "first.example", "port": 8443}]}
+    assert _json(tree.repos_file()) == {"repos": []}
+    assert _mode(tree.egress_file()) == _mode(tree.repos_file()) == REACH_FILE_MODE
     wait_until(lambda: stack.state() == IN_SYNC, f"{FAMILY} to be {IN_SYNC}")
 
 
 # ---------------------------------------------------------------- two families
 
 
-def test_the_second_family_serves_while_the_first_is_held(
-    caregiver_prepared: CaregiverStack,
-) -> None:
-    """Contract 05 §2 rule 7. No family waits for another.
-
-    The create of one family does not end. The other family converges, and
-    the document of the first says which step it is in (§3.4).
-    """
-    stack = caregiver_prepared
-    publish_family(stack.tree, family_body(OTHER))
-    tune(stack.tree, SBX, f"hold-create-{SANDBOX}")
-
-    stack.spawn_caregiver()
-    stack.await_published(OTHER)
-    held = _status(stack)
-
-    assert held["state"] == RECONCILING
-    assert held["reconcile"]["step"] == "create_sandbox"
-    assert list(sbx_sandboxes(stack.tree)) == [first_sandbox(OTHER)]
-
-    untune(stack.tree, SBX, f"hold-create-{SANDBOX}")
-    stack.await_published()
-
-
 def test_a_removed_family_file_ends_the_family(caregiver_prepared: CaregiverStack) -> None:
     """Contract 05 §4.4 and invariant 13. A family with no file is a family that is gone.
 
-    Its key, its app table, its sandbox, its policy rows and its state go.
-    The other family keeps each of its own.
+    Its key, its app table and its state go, and the vmm drops each of its
+    sessions (decision CH21-10). The other family keeps each of its own.
     """
     stack = caregiver_prepared
     tree = stack.tree
@@ -414,8 +292,7 @@ def test_a_removed_family_file_ends_the_family(caregiver_prepared: CaregiverStac
     assert list(litellm_keys(tree)) == [f"family-{FAMILY}"]
     assert not tree.policy_fragment(OTHER).exists()
     assert list(stack.apps()) == [FAMILY]
-    assert list(sbx_sandboxes(tree)) == [SANDBOX]
-    assert _reach(tree, first_sandbox(OTHER)) == []
+    assert stack.dropped() == [OTHER]
     wait_until(lambda: stack.state() == IN_SYNC, f"{FAMILY} to be {IN_SYNC}")
     assert tree.policy_fragment().is_file()
 
@@ -424,7 +301,8 @@ def test_a_directory_with_no_family_file_is_ignored(caregiver_alone: CaregiverSt
     """Contract 01 §5.6 rule 3. Such a directory is a warning, and it is no family.
 
     `caregiver` reads the new registry: the document of the real family gets
-    the new revision. The directory gets no document, no key and no sandbox.
+    the new revision. The directory gets no document and no key, and no
+    family is dropped.
     """
     stack = caregiver_alone
     assert stack.caregiver is not None
@@ -440,7 +318,7 @@ def test_a_directory_with_no_family_file_is_ignored(caregiver_alone: CaregiverSt
 
     assert stack.tree.status(GHOST) is None
     assert list(litellm_keys(stack.tree)) == [f"family-{FAMILY}"]
-    assert list(sbx_sandboxes(stack.tree)) == [SANDBOX]
+    assert stack.dropped() == []
     assert stack.caregiver.exit_code() is None
 
 
@@ -448,7 +326,7 @@ def test_an_empty_registry_deletes_no_family(caregiver_alone: CaregiverStack) ->
     """A registry with no family can be a mount that went away. Nothing is deleted.
 
     The family file comes back with new instructions. `caregiver` lands the
-    edit on the sandbox and the key that it had: it deleted neither.
+    edit on the key that it had, and the vmm dropped nothing.
     """
     stack = caregiver_alone
     tree = stack.tree
@@ -458,7 +336,7 @@ def test_an_empty_registry_deletes_no_family(caregiver_alone: CaregiverStack) ->
     # CONTRACT-QUESTION: contract 05 §4.4 gives the order of a family
     # deletion, and no contract says what a registry with no family means.
     # Reading taken: the rule of `caregiver/AGENTS.md`, that it deletes no
-    # family. A wrong delete ends each key and each sandbox of the host. A
+    # family. A wrong delete ends each key and each session of the host. A
     # service that deletes costs each assertion of this scenario.
     remove_family(tree, FAMILY)
     time.sleep(QUIET_S)
@@ -468,14 +346,15 @@ def test_an_empty_registry_deletes_no_family(caregiver_alone: CaregiverStack) ->
     mints = [call for call in litellm_calls(tree) if call["path"] == "/key/generate"]
     assert len(mints) == 1
     assert [call for call in litellm_calls(tree) if call["path"] == "/key/delete"] == []
-    assert list(sbx_sandboxes(tree)) == [SANDBOX]
-    assert stack.sandboxes() == [(SANDBOX, CREATING)]
+    assert stack.dropped() == []
 
 
 # --------------------------------------------------------------------- faults
 
 
-def test_a_refused_mint_is_a_fault_and_makes_no_sandbox(caregiver_prepared: CaregiverStack) -> None:
+def test_a_refused_mint_is_a_fault_and_writes_no_credential(
+    caregiver_prepared: CaregiverStack,
+) -> None:
     """Contract 05 §3.3, `key_mint_failed`. Nothing depends on a key that does not exist."""
     stack = caregiver_prepared
     tune(stack.tree, LITELLM, "fail-generate")
@@ -485,42 +364,9 @@ def test_a_refused_mint_is_a_fault_and_makes_no_sandbox(caregiver_prepared: Care
     fault = _one_fault(_status(stack), "key_mint_failed")
 
     assert fault["blocks_turns"] is True
-    assert stack.sbx_calls() == []
     assert not stack.tree.creds_file().exists()
     assert not stack.tree.policy_fragment().exists()
     assert stack.apps() == {}
-
-
-def test_a_failed_create_burns_its_id(caregiver_prepared: CaregiverStack) -> None:
-    """Contract 05 §4.3, last paragraph, and §10 row 7. The next attempt has the next id.
-
-    `sbx create` fails, so the family has a fault that stops turns and no
-    sandbox. An edit of the registry makes `caregiver` try again at once, and
-    the new sandbox has the next id.
-    """
-    stack = caregiver_prepared
-    tune(stack.tree, SBX, "fail-create", "the image store does not answer")
-    stack.spawn_caregiver()
-    wait_until(lambda: stack.state() == DEGRADED, f"{FAMILY} to be {DEGRADED}")
-    fault = _one_fault(_status(stack), "sandbox_start_failed")
-
-    assert fault["blocks_turns"] is True
-    assert stack.sandboxes() == []
-
-    untune(stack.tree, SBX, "fail-create")
-    write_family_prose(stack.tree, text=NEW_INSTRUCTIONS)
-    # CONTRACT-QUESTION: contract 05 §4.3, last paragraph, and §10 row 7 leave
-    # to the reconciler whether a failed create burns its id. Reading taken:
-    # it does, as `caregiver/AGENTS.md` says. Then no id names two attempts,
-    # and §4.1 holds with no exception. A service that tries the same id
-    # again costs the id in the wait and in the assertion below.
-    wait_until(
-        lambda: stack.state() == IN_SYNC and stack.sandboxes() == [(NEXT_SANDBOX, CREATING)],
-        f"{NEXT_SANDBOX} after the failed {SANDBOX}",
-    )
-
-    assert list(sbx_sandboxes(stack.tree)) == [NEXT_SANDBOX]
-    assert _status(stack)["faults"] == []
 
 
 # --------------------------------------------------------------------- timers
@@ -650,13 +496,6 @@ def _one_fault(status: dict[str, Any], code: str) -> dict[str, Any]:
     return fault
 
 
-def _reach(tree: Tree, sandbox: str) -> list[str]:
-    """Each host that one sandbox can reach now: an allow row and no deny row."""
-    denied = sbx_rows(tree, sandbox, DENY)
-
-    return [host for host in sbx_rows(tree, sandbox, ALLOW) if host not in denied]
-
-
 def _systemctl(stack: CaregiverStack) -> list[tuple[str, ...]]:
     """The arguments of each `systemctl` command that changed something, in call order."""
     calls = [call.argv for call in calls_of(stack.tree, SYSTEMCTL)]
@@ -664,11 +503,12 @@ def _systemctl(stack: CaregiverStack) -> list[tuple[str, ...]]:
     return [argv for argv in calls if "is-enabled" not in argv]
 
 
-def _env_of(path: Path) -> dict[str, str]:
-    """An env file as a mapping: one `NAME=value` for each line."""
-    lines = path.read_text(encoding="utf-8").splitlines()
+def _json(path: Path) -> object:
+    """The JSON of one file that `caregiver` puts in place by rename, or
+    None while the file is not there."""
+    text = text_of(path)
 
-    return dict(line.split("=", 1) for line in lines)
+    return None if text is None else json.loads(text)
 
 
 def _mode(path: Path) -> int:

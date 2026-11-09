@@ -38,6 +38,15 @@ beat deadline in a VM (decision CH80), so the door sends no beat.
 A stream that ends closes the connection with `Close.RELAY_GONE`, and the
 client opens the session again with `session/load` (decision CH19 (6)).
 
+The frames of one session keep their order, and no session waits for
+another. The door reads each frame and puts it in the lane of its session:
+the `sessionId` of a request or a notification, or the session whose facade
+asked, for a client answer. Each other frame goes to the one lane of the
+connection. Each lane works its frames one at a time. So a VM start of one
+session, which has no outer bound (decision CH50 rule 1), holds only the
+frames of that session. A `session/cancel` of another session and a client
+answer to another facade go through.
+
 The door counts the `session/prompt` requests in flight on each
 connection, for `GET /busy`. A client request of that method opens one,
 and the stream's answer with the same id closes it. A connection that ends
@@ -143,6 +152,16 @@ RPC_NOT_FOUND = -32002
 #: `internalError`, with this code of contract 02 §14 table 2 as `data.code`.
 #: Another reading changes this one word.
 HANDSHAKE_FAILED = "protocol_violation"
+
+#: How many frames one lane holds before the door reads no more frames.
+#: A lane works its frames as fast as its stream takes them, so only a lane
+#: that waits for a VM start fills. Past the cap, the read of the next frame
+#: waits, as each frame waited before the door had lanes.
+LANE_DEPTH: Final = 64
+
+#: The lane of each frame that names no session: `initialize`,
+#: `session/new`, `session/list`, and a client answer to no facade.
+_DOOR_LANE: Final = ""
 
 #: ACP's string cursor of `session/list`: the decimal text of the vmm's
 #: `ListCursor`, 1 to 2^53 - 1 (contract 02 §5.4).
@@ -301,6 +320,9 @@ class _Door:
         #: The session of each request a facade sent to the client, by id,
         #: so that the client's answer reaches the same stream.
         self._asked: dict[_RpcIdKey, str] = {}
+        #: The frames of each lane, and the task that works them.
+        self._lanes: dict[str, asyncio.Queue[str]] = {}
+        self._workers: list[asyncio.Task[None]] = []
         self.ended: asyncio.Future[Close] = asyncio.get_running_loop().create_future()
 
     async def from_client(self) -> Close:
@@ -317,11 +339,57 @@ class _Door:
             line = strip_line_end(text)
             refused = check_frame(line)
 
-            if refused is None:
-                refused = await self._route(line)
-
             if refused is not None:
                 return refused
+
+            await self._lane(self._lane_of(line)).put(line)
+
+    def _lane_of(self, line: str) -> str:
+        """The session whose frames keep their order with this one."""
+        record = as_object(loads_strict(line)) or {}
+
+        if "method" not in record:
+            key = _rpc_id_key(record.get("id"))
+            return self._asked.get(key, _DOOR_LANE) if key is not None else _DOOR_LANE
+
+        params = as_object(record.get("params"))
+        session = params.get("sessionId") if params is not None else None
+        return session if isinstance(session, str) and session else _DOOR_LANE
+
+    def _lane(self, key: str) -> asyncio.Queue[str]:
+        """The frames of one lane. The first frame starts its worker."""
+        lane = self._lanes.get(key)
+
+        if lane is None:
+            lane = asyncio.Queue[str](LANE_DEPTH)
+            self._lanes[key] = lane
+            worker = asyncio.create_task(self._work(lane), name="acp door lane")
+            worker.add_done_callback(report_failure)
+            self._workers.append(worker)
+
+        return lane
+
+    async def _work(self, lane: asyncio.Queue[str]) -> None:
+        """Route each frame of one lane in turn. A frame that closes the
+        connection ends the lane and the connection."""
+        while True:
+            line = await lane.get()
+
+            try:
+                refused = await self._route(line)
+            except Exception:
+                # A fault of the door ends the connection, as it did when
+                # the read of the frames routed each one itself.
+                if not self.ended.done():
+                    self.ended.set_result(Close.RELAY_GONE)
+
+                raise
+
+            if refused is not None:
+                if not self.ended.done():
+                    self.ended.set_result(refused)
+
+                return
 
     async def _route(self, line: str) -> Close | None:
         record = as_object(loads_strict(line)) or {}
@@ -461,6 +529,12 @@ class _Door:
         except (AcpHandshakeError, ChannelClosed) as error:
             await stream.close()
             raise _Refusal(RPC_INTERNAL_ERROR, str(error), HANDSHAKE_FAILED) from error
+        except BaseException:
+            # A close of the connection cancels the lane here. The stream is
+            # in no table yet, so `close` cannot reach it, and an open
+            # stream keeps the claim of the session on the vmm.
+            await stream.close()
+            raise
 
         self._streams[session] = stream
         reader = asyncio.create_task(self._from_stream(session, stream), name="acp door out")
@@ -551,10 +625,12 @@ class _Door:
             await self._websocket.send_text(text)
 
     async def close(self) -> None:
-        for reader in self._readers.values():
-            reader.cancel()
+        tasks: list[asyncio.Task[object]] = [*self._workers, *self._readers.values()]
 
-        await asyncio.gather(*self._readers.values(), return_exceptions=True)
+        for task in tasks:
+            task.cancel()
+
+        await asyncio.gather(*tasks, return_exceptions=True)
 
         for stream in self._streams.values():
             await stream.close()

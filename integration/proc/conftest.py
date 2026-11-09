@@ -32,7 +32,7 @@ from proc_board import BoardStack
 from proc_caregiver import CaregiverStack
 from proc_chaperone_pin import BuildError, NoToolchain, build_pinned
 from proc_chaperone_rs import ChaperoneRsStack
-from proc_exit import FACADE_PROGRAMS, ExitStack, facade_bin
+from proc_exit import ExitStack
 from proc_harness import TEST_LIMIT_S, Supervisor, end_leaked_groups, time_limit
 from proc_library import LibraryStack, node_has_sqlite
 from proc_report import describe, end_processes
@@ -208,10 +208,11 @@ def attended(attended_prepared: Stack) -> Stack:
 
 @pytest.fixture
 def caregiver_prepared(tree: Tree, supervisor: Supervisor) -> CaregiverStack:
-    """The third topology on disk, with the LiteLLM stand-in and no service."""
+    """The third topology on disk, with the LiteLLM and vmm stand-ins and no service."""
     stack = CaregiverStack(tree, supervisor)
     stack.prepare()
     stack.start_litellm()
+    stack.start_vmm()
 
     return stack
 
@@ -338,22 +339,9 @@ def chaperone_rs_files(
     return ChaperoneRsStack(tree, supervisor)
 
 
-@pytest.fixture(scope="session")
-def facade() -> None:
-    """The built facade. A test that needs it and has none skips, or fails with no skip."""
-    for program in FACADE_PROGRAMS:
-        if not facade_bin(program).is_file():
-            _skip(
-                f"{facade_bin(program)} is missing: run "
-                "`pnpm install --frozen-lockfile && pnpm run build` in facade/ first"
-            )
-
-
 @pytest.fixture
-def exit_stack(
-    tree: Tree, supervisor: Supervisor, chaperone_rs_binary: None, facade: None
-) -> ExitStack:
-    """The exit topology, serving, with `chat` switched on. `supervisor` ends it."""
+def exit_stack(tree: Tree, supervisor: Supervisor, chaperone_rs_binary: None) -> ExitStack:
+    """The exit topology, serving. The `supervisor` fixture ends it."""
     stack = ExitStack(tree, supervisor)
     stack.prepare()
     stack.start()
