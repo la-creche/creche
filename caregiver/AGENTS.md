@@ -194,6 +194,19 @@ host where something has gone wrong.
   `step` is a `status.ReconcileStep`, one of the six names of contract 05
   §3.4 minor 20.
 - `config_rev` and `applied_rev` are the same value: the registry revision.
+- `runtime.json` holds `model_live_at` next to `model_alias`, its one home
+  (decision CH23-1). A first write leaves the key out (decision CH45 rule
+  1). A write with a new alias sets it `MODEL_CACHE_S` (10 s) ahead, in the
+  same swap. A write with the same alias carries the old value. The sync
+  check of a pass reads it from there, and `applied.json` holds `rev` and
+  `applied_at` alone.
+- `config/shape.json` is `FamilyShape` of `creche-wire`: `cpus`, `flavor`
+  and `memory_mib` from `sandbox.cpus`, `sandbox.image` and
+  `sandbox.memory`, with `1g` as 1024 MiB (decisions CH36 G6, CH43 rule
+  3). It changes in the same swap as the rest of `config/` (decision CH45
+  rule 2). The vmm reads it, and the guest does not.
+  `test_config_mount.py` reads it back as each accepted `FamilyShape`
+  vector of `rust/crates/wire/vectors/wire.json`.
 - `runtime.json` holds `sandbox_tools` as the list of the family file, in
   file order. The names are Flue's six: `read`, `write`, `edit`, `bash`,
   `grep`, `glob`. A family file with no `sandbox_tools` gets `[]`.
@@ -420,6 +433,13 @@ Nothing here touches a real vmm or LiteLLM.
   `VmmError`, the log line of the delete names it, and no status document
   carries it. To publish it, contract 05 must name a document for a fault
   of a family that is being deleted.
+- `CONTRACT-QUESTION` in `config_mount.py`, `RuntimeConfig.model_live_at`.
+  Contract 01 §6.1 rule 5 gives `model_live_at` as integer milliseconds.
+  No row fixes the form. The root `AGENTS.md` (Time) gives RFC 3339 for a
+  time in a file, and `live_at` of `rust/crates/vmm-confine/src/family.rs`
+  reads only the form of `clock.py`. The reading here: that form, to the
+  second. Milliseconds need this writer, that reader and its fixture to
+  change in one PR.
 - `CONTRACT-QUESTION` in `vmm.py`, `VMM_SOCKET_ENV`. Decision CH20 fixes
   the path `/run/user/<uid>/vmm/vmm.sock` and names no env key. The env
   catalog cannot spell a uid, so `default.env` holds no key for it. The

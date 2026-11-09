@@ -48,7 +48,7 @@ from agent_family.registry import FAMILY_FILE
 from . import paths, reach_files, steps
 from .applied import AppliedState, read_applied, write_applied
 from .chaperone_watch import PepReport, unwatched
-from .clock import now_rfc3339, seconds_from_now
+from .clock import now_rfc3339
 from .credentials import Credentials
 from .faults import FaultEntry
 from .litellm_keys import SPEND_WINDOW, LiteLLMError, LiteLLMKeys, Spend
@@ -71,12 +71,6 @@ from .timers import TimerOutcome, UnitWriter, apply_timers
 from .webhook_tokens import WebhookToken, ensure_webhooks
 
 log = logging.getLogger("caregiver.reconcile")
-
-#: Contract 05 §7 rule 6: a `/key/update` can be served stale by another
-#: LiteLLM worker for this long, so a model change is not live — and the
-#: family is not `in_sync` — until it has passed. Probe 0b measured 7 s
-#: across four workers on this host.
-MODEL_CACHE_S: Final = 10
 
 #: Contract 05 §3.2: `first_error` is a convenience for the noticeboard.
 FIRST_ERROR_CHARS: Final = 200
@@ -310,17 +304,12 @@ def _converge(
     # a systemd unit, the other needs a bearer.
     webhooks = ensure_webhooks(family, state_root)
 
-    settled = _model_live_at(applied, diff, ran)
+    # Decision CH23-1: `runtime.json` is the one home of `model_live_at`.
+    settled = steps.model_live_at(family.name, state_root)
     family_file = _family_text(registry, report)
     done = family_file is not None
     if family_file is not None:
-        write_applied(
-            state_root,
-            family.name,
-            rev=registry.revision,
-            family_text=family_file,
-            model_live_at=settled,
-        )
+        write_applied(state_root, family.name, rev=registry.revision, family_text=family_file)
 
     # Read spend BEFORE the faults are frozen: a failed read raises
     # `spend_unknown`, and a fault the document does not carry is a fault
@@ -690,26 +679,6 @@ def _text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return ""
-
-
-def _model_live_at(
-    applied: AppliedState | None, diff: Diff | None, ran: list[ReconcileStep]
-) -> str | None:
-    """When a `/key/update` may be treated as live everywhere (§7 rule 6).
-
-    An unchanged pass keeps the deadline the last model change set, so the
-    10 seconds are counted once and not restarted by every poll."""
-    if ReconcileStep.UPDATE_KEY in ran and _model_moved(diff):
-        return seconds_from_now(MODEL_CACHE_S)
-
-    return applied.model_live_at if applied is not None else None
-
-
-def _model_moved(diff: Diff | None) -> bool:
-    if diff is None:
-        return False
-
-    return any(one.field == "model.router" for one in diff.changes)
 
 
 def _note(diff: Diff | None, done: bool) -> str:

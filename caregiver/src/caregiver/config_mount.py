@@ -1,5 +1,5 @@
 """The family config directory (contract 01 section 6.1):
-`instructions.md`, `skills/<name>/SKILL.md`, `runtime.json`.
+`instructions.md`, `skills/<name>/SKILL.md`, `runtime.json`, `shape.json`.
 
 `caregiver` is its only writer (decision CH5b). The directory is built fully
 in a staging copy, then swapped in with one atomic operation, so a reader
@@ -8,7 +8,12 @@ it as the operator through one directory handle and handles the rename
 window (decision CH5b). One counter versions the
 whole directory; this module writes the files and leaves stamping
 `config_rev` into the status document to its caller, which is the one
-place that knows the registry revision this write came from."""
+place that knows the registry revision this write came from.
+
+The vmm reads two parts that the guest does not: `model_live_at` in
+`runtime.json` and the family VM shape `shape.json` (decisions CH23-1,
+CH36 G6, CH43 rule 3). Both change in the same swap as the rest, so the
+vmm never reads a new alias with an old live time (decision CH45 rule 2)."""
 
 from __future__ import annotations
 
@@ -19,12 +24,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from .atomic import atomic_replace_dir
+from creche_wire import FamilyShape
+
+from .atomic import atomic_replace_dir, read_json
 
 INSTRUCTIONS_FILE: Final = "instructions.md"
 SKILLS_DIR: Final = "skills"
 SKILL_FILE: Final = "SKILL.md"
 RUNTIME_FILE: Final = "runtime.json"
+#: `FAMILY_SHAPE_FILE` of `creche-wire` in Rust spells the same name
+#: (decision CH43 rule 3).
+SHAPE_FILE: Final = "shape.json"
 #: Contract 01 §3.8: `instructions.md` is appended to pi's own prompt.
 DEFAULT_SYSTEM_PROMPT: Final = "append"
 
@@ -40,13 +50,27 @@ class RuntimeConfig:
     model_alias: str
     # `append` or `replace`: how `instructions.md` meets pi's own prompt.
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    #: When a `/key/update` of `model_alias` is live on every LiteLLM
+    #: worker (contract 05 §7 rule 6, decision CH23-1). `None` until a
+    #: model change sets it.
+    #
+    # CONTRACT-QUESTION: contract 01 §6.1 rule 5 gives integer milliseconds
+    # since 1970. No row fixes the form. The root `AGENTS.md` (Time) gives
+    # RFC 3339 for a time in a file, and the one reader, `live_at` of
+    # `rust/crates/vmm-confine/src/family.rs`, takes only the form of
+    # `clock.py`. The reading here: that form, to the second. Milliseconds
+    # cost a change of this writer, of that reader and of its fixture in
+    # one PR. A change of this writer alone makes the vmm refuse each
+    # `runtime.json` that holds the key.
+    model_live_at: str | None = None
 
     def as_json(self) -> dict[str, Any]:
         """The file's content. `system_prompt` is written only when it is not
         the default: `config_mount_matches` compares bytes, so a key every
         family carried would rewrite every family's directory at the first
         pass after a release. The playpen reads a missing key as the
-        default."""
+        default. `model_live_at` is written only when it is set, for the
+        same reason (decision CH45 rule 1)."""
         body: dict[str, Any] = {
             "shell": self.shell,
             "sandbox_tools": list(self.sandbox_tools),
@@ -55,11 +79,43 @@ class RuntimeConfig:
         if self.system_prompt != DEFAULT_SYSTEM_PROMPT:
             body["system_prompt"] = self.system_prompt
 
+        if self.model_live_at is not None:
+            body["model_live_at"] = self.model_live_at
+
         return body
 
 
+@dataclass(frozen=True)
+class LiveModel:
+    """The model of a `runtime.json` on disk: its alias and the live time
+    of that alias (decision CH23-1)."""
+
+    alias: str
+    live_at: str | None
+
+
+def read_model(target: Path) -> LiveModel | None:
+    """The model of the `runtime.json` in `target`. `None` when the file is
+    absent or does not read as a file that `write_config_mount` wrote."""
+    body = read_json(target / RUNTIME_FILE)
+    if body is None:
+        return None
+
+    alias = body.get("model_alias")
+    live_at = body.get("model_live_at")
+    if not isinstance(alias, str) or not isinstance(live_at, str | None):
+        return None
+
+    return LiveModel(alias, live_at)
+
+
 def write_config_mount(
-    target: Path, *, instructions: str, skills: Mapping[str, str], runtime: RuntimeConfig
+    target: Path,
+    *,
+    instructions: str,
+    skills: Mapping[str, str],
+    runtime: RuntimeConfig,
+    shape: FamilyShape,
 ) -> None:
     """Build the whole directory in `<target>.tmp`, then swap it in.
 
@@ -83,12 +139,18 @@ def write_config_mount(
 
     runtime_body = json.dumps(runtime.as_json(), indent=2) + "\n"
     (staging / RUNTIME_FILE).write_text(runtime_body, encoding="utf-8")
+    (staging / SHAPE_FILE).write_text(_shape_text(shape), encoding="utf-8")
 
     atomic_replace_dir(staging, target)
 
 
 def config_mount_matches(
-    target: Path, *, instructions: str, skills: Mapping[str, str], runtime: RuntimeConfig
+    target: Path,
+    *,
+    instructions: str,
+    skills: Mapping[str, str],
+    runtime: RuntimeConfig,
+    shape: FamilyShape,
 ) -> bool:
     """Whether the directory already holds exactly this revision.
 
@@ -102,11 +164,20 @@ def config_mount_matches(
     if _read(target / RUNTIME_FILE) != json.dumps(runtime.as_json(), indent=2) + "\n":
         return False
 
+    if _read(target / SHAPE_FILE) != _shape_text(shape):
+        return False
+
     skills_dir = target / SKILLS_DIR
     if _skill_names(skills_dir) != set(skills):
         return False
 
     return all(_read(skills_dir / name / SKILL_FILE) == text for name, text in skills.items())
+
+
+def _shape_text(shape: FamilyShape) -> str:
+    """The text of `shape.json`: JSON with an indent of 2 and one end of
+    line, as `runtime.json`."""
+    return json.dumps(shape.model_dump(mode="json"), indent=2) + "\n"
 
 
 def _read(path: Path) -> str | None:

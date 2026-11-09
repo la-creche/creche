@@ -16,10 +16,18 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
-from agent_family import FamilyFile, Index, Kind, duration_s
+from agent_family import FamilyFile, Index, Kind, duration_s, memory_mb
+from creche_wire import FamilyShape
 
 from . import paths
-from .config_mount import RuntimeConfig, config_mount_matches, write_config_mount
+from .clock import seconds_from_now
+from .config_mount import (
+    LiveModel,
+    RuntimeConfig,
+    config_mount_matches,
+    read_model,
+    write_config_mount,
+)
 from .credentials import Credentials, mint_token, read_creds, token_sha256, write_creds
 from .faults import FAULT_SOURCES, FaultEntry, read_fault_file
 from .litellm_keys import LiteLLMError, LiteLLMKeys
@@ -33,6 +41,12 @@ from .status import CredentialsBlock, LimitsBlock, RotationState, now_rfc3339
 #: published for a caller to reuse.
 DEFAULT_JOB_TIMEOUT_S: Final = 120
 DEFAULT_MAX_RUNNING_TURNS: Final = 1
+
+#: Contract 05 §7 rule 6: a `/key/update` can be served stale by another
+#: LiteLLM worker for this long, so a model change is not live — and the
+#: family is not `in_sync` — until it has passed. Probe 0b measured 7 s
+#: across four workers on this host.
+MODEL_CACHE_S: Final = 10
 
 log = logging.getLogger("caregiver.steps")
 
@@ -215,24 +229,69 @@ def _accepted_digests(creds: Credentials) -> tuple[str, ...]:
 def write_config(
     family: FamilyFile, state_root: Path, instructions: str, skills: dict[str, str]
 ) -> bool:
-    """Contract 05 §3.4's `write_config`: `instructions.md`, `skills/` and
-    `runtime.json`, one revision for the directory (contract 01 §6.1).
+    """Contract 05 §3.4's `write_config`: `instructions.md`, `skills/`,
+    `runtime.json` and `shape.json`, one revision for the directory
+    (contract 01 §6.1, decisions CH23-1, CH36 G6, CH45 rule 2).
+
+    A new alias gets a new `model_live_at`, and an alias that stays keeps
+    the old one (decision CH23-1). The caller updates the key before this
+    step, so the 10 seconds start after the `/key/update`.
 
     Answers whether anything changed. An unchanged mount is left alone, so
     a family whose file did not move keeps its directory — and its
     inode — across a reconcile that ran for another family's sake."""
     target = paths.config_dir(state_root, family.name)
+    alias = family.model.router
     runtime = RuntimeConfig(
         shell=family.shell,
         sandbox_tools=tuple(family.sandbox_tools),
-        model_alias=family.model.router,
+        model_alias=alias,
         system_prompt=family.system_prompt,
+        model_live_at=_live_at(read_model(target), alias),
     )
-    if config_mount_matches(target, instructions=instructions, skills=skills, runtime=runtime):
+    shape = _shape_of(family)
+    if config_mount_matches(
+        target, instructions=instructions, skills=skills, runtime=runtime, shape=shape
+    ):
         return False
 
-    write_config_mount(target, instructions=instructions, skills=skills, runtime=runtime)
+    write_config_mount(
+        target, instructions=instructions, skills=skills, runtime=runtime, shape=shape
+    )
     return True
+
+
+def model_live_at(family_name: str, state_root: Path) -> str | None:
+    """`model_live_at` of the `runtime.json` of the family, its one home
+    (decision CH23-1). The sync check of a pass reads it here. `None` when
+    no model change set it."""
+    model = read_model(paths.config_dir(state_root, family_name))
+    return model.live_at if model is not None else None
+
+
+def _live_at(written: LiveModel | None, alias: str) -> str | None:
+    """The `model_live_at` of a new `runtime.json` with `alias`. A first
+    write sets none: the key of a new family is minted with its model, so
+    no LiteLLM worker holds an old one. A `runtime.json` that does not read
+    holds no alias, so its rewrite also sets none."""
+    if written is None:
+        return None
+
+    if written.alias == alias:
+        return written.live_at
+
+    return seconds_from_now(MODEL_CACHE_S)
+
+
+def _shape_of(family: FamilyFile) -> FamilyShape:
+    """The family VM shape of a valid family file (decision CH36 G6):
+    `sandbox.cpus`, `sandbox.image` as the flavor, and `sandbox.memory` in
+    MiB, with `1g` as 1024. The validator holds each in the range of the
+    wire type, so the model check here refuses nothing that reaches it."""
+    box = family.sandbox
+    return FamilyShape.model_validate(
+        {"cpus": box.cpus, "flavor": box.image, "memory_mib": memory_mb(box.memory)}
+    )
 
 
 def limits_for(family: FamilyFile) -> LimitsBlock:
