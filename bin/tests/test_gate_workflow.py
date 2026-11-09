@@ -44,9 +44,10 @@ step gets `ASSET_DIR` and `COSIGN`. The tests run the text of the sign
 step and of the cosign step against a stand-in `curl`.
 
 The `proc` job runs the process-level suite (`integration/proc`), which is
-in no shard: `testpaths` does not hold it. The job builds the facade first,
-and a test that skips is a failure there. A run in which every test skips
-because the build is missing would be green and would judge nothing.
+in no shard: `testpaths` does not hold it. The job sets up node and no
+pnpm, and it builds nothing: no test of the suite starts the facade. A test
+that skips is a failure there. A run in which every test skips would be
+green and would judge nothing.
 
 The `suites` job runs the old suite of `integration/`, in a pytest run of
 its own. It has the checkout and the venv of the `proc` job, and no node.
@@ -706,11 +707,6 @@ PROC_RUN = "uv run pytest integration/proc -m slow -n 4"
 PROC_ENV = {"CRECHE_PROC_NO_SKIP": "1"}
 PROC_SWITCHES = REPO / "integration" / "proc" / "proc_services.py"
 
-#: The build of the `proc` job: the facade, which the exit test starts, and
-#: where it runs. No vitest and no typecheck: the `facade` job runs those.
-FACADE_BUILD = "pnpm install --frozen-lockfile && pnpm run build"
-FACADE_BUILD_DIR = "facade"
-
 #: The job that runs the old suite of `integration/`.
 SUITES_JOB = "suites"
 
@@ -789,6 +785,12 @@ BROKEN_REPORT = "broken"
 
 #: The steps that give a job node and pnpm, by the start of `uses`.
 NODE_ACTIONS = ("pnpm/action-setup@", "actions/setup-node@")
+
+#: The one node step of the `proc` job. Its store reader
+#: (integration/proc/reader_store.mjs) imports `node:sqlite` and no
+#: package, so the job needs node and no pnpm, no cache of pnpm and no
+#: build.
+SETUP_NODE = NODE_ACTIONS[1]
 
 #: The local action that gives a job uv and the venv.
 UV_SYNC = "./.github/actions/uv-sync"
@@ -1792,36 +1794,37 @@ def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_proc_job_builds_the_facade_then_runs_the_process_suite(
+def test_the_proc_job_sets_up_node_then_runs_the_process_suite(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
-    """The suite starts the built facade, so the build comes first, and the
-    venv comes before the suite. The suite is one command, with no path of
-    one test and no `-k`."""
+    """The checkout comes first, then node, then the venv, then the suite.
+    The suite is the one run step of the job: no build runs before it. The
+    suite is one command, with no path of one test and no `-k`."""
     proc = jobs["proc"]
-    runs = [step for step in proc["steps"] if "run" in step]
-    facade, suite = runs
+    (suite,) = [step for step in proc["steps"] if "run" in step]
     order = [step.get("uses") or step["run"] for step in proc["steps"]]
+    (node,) = [one for one in order if one.startswith(SETUP_NODE)]
 
     assert proc["needs"] == "scope"
     assert proc["if"] == ONLY_CODE
-    assert facade == {"run": FACADE_BUILD, "working-directory": FACADE_BUILD_DIR}
     assert suite["run"] == PROC_RUN
-    assert order.index(FACADE_BUILD) < order.index(UV_SYNC) < order.index(PROC_RUN)
+    assert order[0].startswith(CHECKOUT_ACTION)
+    assert order.index(node) < order.index(UV_SYNC) < order.index(PROC_RUN)
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_proc_job_has_node_and_pnpm_as_the_facade_job_has_them(
+def test_the_proc_job_has_node_alone_at_the_facade_jobs_version(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
-    """One node version and one pnpm for the facade, whichever job builds
-    it. The suite must judge the build that the `facade` job tests."""
-    steps = _node_steps(jobs["proc"])
+    """The job has setup-node and no pnpm. Its setup-node has no cache of
+    pnpm, which needs pnpm. The node version is the one of the `facade`
+    job, so the reader runs on the node of the facade suite."""
+    (step,) = _node_steps(jobs["proc"])
+    facade = [one for one in _node_steps(jobs[FACADE_JOB]) if one["uses"].startswith(SETUP_NODE)]
+    (facade_node,) = facade
 
-    assert [step["uses"].split("@")[0] for step in steps] == [
-        name.rstrip("@") for name in NODE_ACTIONS
-    ]
-    assert steps == _node_steps(jobs[FACADE_JOB])
+    assert step["uses"] == facade_node["uses"]
+    assert step["with"] == {"node-version": facade_node["with"]["node-version"]}
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -1991,10 +1994,6 @@ def _is_cache(step: dict[str, Any]) -> bool:
     return str(step.get("uses", "")).startswith(CACHE_ACTION)
 
 
-def _is_facade_build(step: dict[str, Any]) -> bool:
-    return step.get("working-directory") == FACADE_BUILD_DIR
-
-
 def _report_of(name: str) -> str:
     """The path of the JUnit report of one suite, as the workflow spells it."""
     return f"{REPORT_DIR}/{name}.xml"
@@ -2023,8 +2022,8 @@ def test_the_suites_job_has_the_checkout_and_the_venv_of_the_proc_job(
 ) -> None:
     """Each step before the first suite is a step of the `proc` job, in the
     same order: the checkout, then the venv. No suite of this job starts
-    node, so the job has no node, no pnpm and no build. The `proc` job has
-    those steps and the cache of the chaperone."""
+    node, so the job has no node. The `proc` job has those steps, its node
+    step and the cache of the chaperone."""
     suites = jobs[SUITES_JOB]
     setup = _setup_of(suites, next(iter(SUITE_RUNS.values())))
 
@@ -2034,11 +2033,7 @@ def test_the_suites_job_has_the_checkout_and_the_venv_of_the_proc_job(
     assert suites["runs-on"] == jobs["proc"]["runs-on"]
     proc_setup = _setup_of(jobs["proc"], PROC_RUN)
     node = _node_steps(jobs["proc"])
-    shared = [
-        step
-        for step in proc_setup
-        if not _is_cache(step) and not _is_facade_build(step) and step not in node
-    ]
+    shared = [step for step in proc_setup if not _is_cache(step) and step not in node]
 
     assert setup == shared
     assert _node_steps(suites) == []

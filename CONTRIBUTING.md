@@ -79,7 +79,8 @@ group. It has nine kinds of job:
 4. `facade`: `pnpm test` and `pnpm run typecheck` in `facade/`. Its
    `pnpm test` builds `dist/` first.
 5. `proc`: the process-level suite, `uv run pytest integration/proc -m slow -n 4`.
-   The job builds the facade first. A test that skips is a failure there.
+   The job sets up node 24 and does not build the facade. A test that skips
+   is a failure there.
 6. `suites`: the suite `integration/tests_manager`. It runs the suite with
    a pytest command of its own. A test that skips is a failure there.
    `integration/AGENTS.md` has its rules.
