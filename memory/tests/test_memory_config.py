@@ -8,16 +8,29 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Iterator
+from concurrent.futures import Future
 from pathlib import Path
 
 import pytest
-from creche_memory.cli import EX_CONFIG, EX_OK, main
+from creche_memory.cli import EX_CONFIG, EX_OK, EX_TEMPFAIL, ended, main
 from creche_memory.config import ConfigError, check, from_env
+from creche_memory.graph import GraphCheck, GraphState
+from creche_memory.search import STOP_TIMEOUT_S, StoreLoop
+from creche_memory.sync import Syncer
+from memory_graph_helpers import (
+    GRAPH_NAME,
+    kill_graph,
+    ladybug_check,
+    leave_recoverable,
+    make_graph,
+)
 
 KEY = "sk-test-not-a-real-key"
-START_TIMEOUT_S = 20.0
+#: The start imports Cognee and opens the graph database before the socket.
+START_TIMEOUT_S = 60.0
 
 
 @pytest.fixture
@@ -107,15 +120,23 @@ def test_the_check_flag_exits_0_or_78(host: Path, monkeypatch: pytest.MonkeyPatc
     assert main(["--other"]) == EX_CONFIG
 
 
-def test_the_service_serves_a_read_and_stops_on_sigterm(host: Path) -> None:
-    sock = host / "run" / "memory.sock"
-    service = subprocess.Popen(
+def _start(root: Path) -> subprocess.Popen[str]:
+    return subprocess.Popen(
         [sys.executable, "-m", "creche_memory.cli"],
-        env={**os.environ, **_env(host), "HOME": str(host)},
+        env={**os.environ, **_env(root), "HOME": str(root)},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
+
+
+def _graph_file(root: Path) -> Path:
+    return root / "store" / "system" / "databases" / GRAPH_NAME
+
+
+def test_the_service_serves_a_read_and_stops_on_sigterm(host: Path) -> None:
+    sock = host / "run" / "memory.sock"
+    service = _start(host)
     try:
         deadline = time.monotonic() + START_TIMEOUT_S
         while not sock.exists():
@@ -135,3 +156,98 @@ def test_the_service_serves_a_read_and_stops_on_sigterm(host: Path) -> None:
     assert reply["text"] == "Oak St.\n"
     assert service.returncode == EX_OK, err[-2000:]
     assert KEY not in err
+
+
+def test_a_dead_graph_stops_the_start_with_exit_78_and_one_line(host: Path) -> None:
+    # Cognee reports the path with each symlink resolved.
+    graph_file = make_graph(_graph_file(host)).resolve()
+    kill_graph(graph_file)
+
+    service = _start(host)
+    _, err = service.communicate(timeout=START_TIMEOUT_S)
+
+    assert service.returncode == EX_CONFIG, err[-2000:]
+    assert not (host / "run" / "memory.sock").exists()
+    lines = [one for one in err.splitlines() if one.startswith("creche-memory: ")]
+    assert len(lines) == 1, err[-2000:]
+    assert lines[0].startswith(f"creche-memory: The graph database {graph_file} does not open: ")
+    assert "Checksum verification failed" in lines[0]
+    assert f"To recover, set aside {graph_file.parent}. Then start the unit." in lines[0]
+    # The service moves and removes no file of the store.
+    assert (graph_file.parent / f"{GRAPH_NAME}.wal.checkpoint").exists()
+    assert KEY not in err
+
+
+def test_a_checkpoint_that_stopped_early_does_not_stop_the_start(host: Path) -> None:
+    leave_recoverable(make_graph(_graph_file(host)))
+    sock = host / "run" / "memory.sock"
+
+    service = _start(host)
+    try:
+        deadline = time.monotonic() + START_TIMEOUT_S
+        while not sock.exists():
+            assert service.poll() is None, service.communicate()[1][-2000:]
+            assert time.monotonic() < deadline, "the socket did not appear"
+            time.sleep(0.1)
+    finally:
+        service.send_signal(signal.SIGTERM)
+        _, err = service.communicate(timeout=START_TIMEOUT_S)
+
+    assert service.returncode == EX_OK, err[-2000:]
+    assert not (graph_file := _graph_file(host)).with_name(graph_file.name + ".shadow").exists()
+
+
+async def _failing_sync(folders: list[str]) -> None:
+    raise ConnectionError("http://secret.test/ refused")
+
+
+def _end_of_sync_loop(root: Path, check: GraphCheck) -> int:
+    """Run a real sync loop whose sync fails, as `_serve` runs it, then
+    read its exit status as `_serve` does after the stop."""
+    (root / "profile" / "memories").mkdir(parents=True)
+    (root / "profile" / "memories" / "a.md").write_text("a", encoding="utf-8")
+    syncer = Syncer(root, _failing_sync, check, poll_s=60.0, quiet_s=0.0)
+    loop = StoreLoop()
+    loop.start()
+    stop = threading.Event()
+    try:
+        syncing = loop.spawn(syncer.run(stop))
+        assert stop.wait(START_TIMEOUT_S)
+        syncer.wake()
+        return ended(syncing, STOP_TIMEOUT_S)
+    finally:
+        loop.stop()
+
+
+def test_an_error_of_the_check_after_a_failed_sync_exits_75_with_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def wedged() -> GraphState:
+        raise TimeoutError("Subprocess call_async exceeded 30s deadline")
+
+    assert _end_of_sync_loop(tmp_path / "vault", wedged) == EX_TEMPFAIL
+
+    err = capsys.readouterr().err
+    lines = [one for one in err.splitlines() if one.startswith("creche-memory: ")]
+    assert lines == [
+        "creche-memory: the sync loop failed: TimeoutError. "
+        "systemd restarts the unit. The next start checks the graph database again."
+    ]
+    assert "secret.test" not in err
+
+
+def test_a_dead_graph_after_a_failed_sync_exits_78_with_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    graph_file = make_graph(tmp_path / "databases" / GRAPH_NAME)
+    kill_graph(graph_file)
+
+    assert _end_of_sync_loop(tmp_path / "vault", ladybug_check(graph_file)) == EX_CONFIG
+
+    lines = [one for one in capsys.readouterr().err.splitlines() if "creche-memory: " in one]
+    assert len(lines) == 1
+    assert lines[0].startswith(f"creche-memory: The graph database {graph_file} does not open: ")
+
+
+def test_a_sync_loop_still_in_a_sync_after_a_stop_exits_0() -> None:
+    assert ended(Future(), 0.01) == EX_OK

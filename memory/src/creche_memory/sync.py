@@ -13,7 +13,10 @@ a skipped folder, such as `house/<note>.md`, is not read. Nor is a note at
 the vault root.
 
 The PDFs of the same folders go in as a second source beside the notes
-(`pdf.py`)."""
+(`pdf.py`).
+
+After a failed sync, the loop checks the graph database (`graph.py`). A
+graph that does not open ends the loop: the next check cannot repair it."""
 
 import asyncio
 import hashlib
@@ -26,6 +29,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 
+from .graph import Dead, GraphCheck
 from .pdf import PDF_SUFFIX, PdfTexts, pdf_source
 
 POLL_S = 30.0
@@ -192,6 +196,7 @@ class Syncer:
         self,
         root: Path,
         ingest: Ingest,
+        check: GraphCheck,
         *,
         poll_s: float = POLL_S,
         quiet_s: float = QUIET_S,
@@ -199,6 +204,7 @@ class Syncer:
     ) -> None:
         self._root = root
         self._ingest = ingest
+        self._check = check
         self._poll_s = poll_s
         self._clock = clock
         self._debounce = Debounce(quiet_s)
@@ -216,7 +222,7 @@ class Syncer:
         """End the wait of `run` at once, so a stop is seen. Any thread."""
         self._wake.set()
 
-    async def step(self) -> Outcome:
+    async def step(self) -> Outcome | Dead:
         folders = ingest_folders(self._root)
         if not folders:
             return Outcome.NOTHING_TO_READ
@@ -236,10 +242,12 @@ class Syncer:
         try:
             await self._ingest(folders)
         except Exception as error:
-            # A failed sync must not stop the loop. The next check tries
-            # again. Only the type is printed: a message can hold a URL.
+            # Only the type is printed: a message can hold a URL.
             _say(f"sync failed after {self._clock() - started:.0f} s: {type(error).__name__}")
-            return Outcome.FAILED
+            # A dead graph stops the loop. Any other failed sync does not:
+            # the next check tries again.
+            state = await self._check()
+            return state if isinstance(state, Dead) else Outcome.FAILED
 
         self._debounce.done(stamp)
         first = not self.ready.is_set()
@@ -249,10 +257,23 @@ class Syncer:
 
         return Outcome.SYNCED
 
-    async def run(self, stop: threading.Event) -> None:
-        while not stop.is_set():
-            # Clear before the check: a request during the check then ends
-            # the next wait at once.
-            self._wake.clear()
-            await self.step()
-            await asyncio.to_thread(self._wake.wait, self._poll_s)
+    async def run(self, stop: threading.Event) -> Dead | None:
+        """Check and sync until `stop` is set, or until a failed sync finds a
+        dead graph. Return the dead graph, or `None` after a stop.
+
+        `run` sets `stop` when it ends, for any reason, so the service stops
+        with its sync loop. An error that ends it goes to the caller."""
+        try:
+            while not stop.is_set():
+                # Clear before the check: a request during the check then
+                # ends the next wait at once.
+                self._wake.clear()
+                outcome = await self.step()
+                if isinstance(outcome, Dead):
+                    return outcome
+
+                await asyncio.to_thread(self._wake.wait, self._poll_s)
+        finally:
+            stop.set()
+
+        return None

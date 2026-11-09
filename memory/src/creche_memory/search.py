@@ -103,7 +103,7 @@ class StoreLoop:
     def start(self) -> None:
         self._thread.start()
 
-    def spawn(self, work: Coroutine[Any, Any, None]) -> Future[None]:
+    def spawn[T](self, work: Coroutine[Any, Any, T]) -> Future[T]:
         return asyncio.run_coroutine_threadsafe(work, self._loop)
 
     def search(self, searcher: Searcher, request: SearchRequest) -> SearchReply | RefusedReply:
