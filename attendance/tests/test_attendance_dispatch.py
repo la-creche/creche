@@ -1,8 +1,8 @@
 """The dispatch door: one family enqueues a job in another (contract 02 §13.4).
 
-The job runs over ACP on the target's facade (phase 2 plan, row 19). Every
-test runs against `FakeFacade` and a temporary state root, so no test needs
-the host, `sbx` or the PEP.
+Each job is one session with the `auto` origin, on its own vmm stream
+(contract 02 §6, decision CH21-4a). Every test runs against `FakeVmm` and a
+temporary state root, so no test needs the host, the vmm or the PEP.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from attendance.acp_link import METHOD_NEW_SESSION, METHOD_PROMPT
+from attendance.acp_link import METHOD_PROMPT
 from attendance.auth import Principal
 from attendance.clock import now
 from attendance.config import Config
@@ -30,15 +30,15 @@ from attendance.outcomes import SPEND_NO_USAGE_REASON
 from attendance.paths import dispatch_file
 from attendance.requests import DispatchRequest, JobQuery, read_dispatch, read_jobs
 from attendance.service import SessionService
-from attendance_harness import make_config, wait_until, write_status
-from creche_vectors import meta_key, value_fields
-from fake_facade import FacadeFleet, FakeFacade, PromptMode
+from attendance_harness import make_config, make_service, wait_until, write_status
+from creche_wire import AutoOrigin, CreateSession, DispatchTrigger
+from fake_facade import PromptMode
+from fake_vmm import FakeVmm
 
 DISPATCH_DOOR = Principal.CHAPERONE_DISPATCH
 TRIGGER_DOOR = Principal.DOOR_TRIGGER
 CALLER = "scrum-lead"
 TARGET = "issue-worker"
-TARGET_SANDBOX = "issue-worker-s1"
 CHAT_FAMILY = "chat"
 DELEGATION = "01K5J9QWB2M4N6Q8S0V2W4Y6A8"
 SECOND_DELEGATION = "01K5J9QWB9R1V3T5Y7H9J2K4P6"
@@ -54,10 +54,10 @@ SMALL_QUEUE = 2
 class DispatchHarness:
     """One service serving a dispatchable target and an attended family."""
 
-    def __init__(self, config: Config, service: SessionService, facades: FacadeFleet) -> None:
+    def __init__(self, config: Config, service: SessionService, vmm: FakeVmm) -> None:
         self.config = config
         self.service = service
-        self.facades = facades
+        self.vmm = vmm
 
     async def enqueue(self, **changed: Any) -> dict[str, Any]:
         return await self.service.run_dispatch(DISPATCH_DOOR, _request(**changed))
@@ -74,17 +74,25 @@ class DispatchHarness:
         assert found is not None
         return found
 
-    def facade(self) -> FakeFacade:
-        return self.facades.facades[TARGET_SANDBOX]
-
     def received(self, method: str) -> list[dict[str, Any]]:
-        return [one["params"] for one in self.facade().received if one["method"] == method]
+        return [
+            one["params"]
+            for facade in self.vmm.facades.values()
+            for one in facade.received
+            if one["method"] == method
+        ]
+
+    def held_now(self) -> list[str]:
+        return [session for facade in self.vmm.facades.values() for session in facade.held]
 
     async def held(self, count: int) -> list[str]:
-        """Wait until the facade holds `count` prompts, then name their sessions."""
-        await wait_until(lambda: TARGET_SANDBOX in self.facades.facades)
-        await wait_until(lambda: len(self.facade().held) == count)
-        return list(self.facade().held)
+        """Wait until the facades hold `count` prompts, then name their sessions."""
+        await wait_until(lambda: len(self.held_now()) == count)
+        return self.held_now()
+
+    def create(self) -> CreateSession:
+        (made,) = self.vmm.creates
+        return made
 
     async def ended(self, session: str) -> dict[str, Any]:
         """Wait for the job's outcome, then read it through the door."""
@@ -96,7 +104,7 @@ class DispatchHarness:
 
     async def stop(self) -> None:
         await self.service.close()
-        await self.facades.stop()
+        await self.vmm.stop()
 
 
 async def build(
@@ -108,20 +116,13 @@ async def build(
         config.state_root,
         family=TARGET,
         kind="autonomous",
-        sandboxes=((TARGET_SANDBOX, "ready"),),
         accepts_dispatch=True,
         **limits,  # pyright: ignore[reportArgumentType]
     )
-    facades = FacadeFleet(prompt_mode=mode)
-    service = SessionService(
-        config,
-        acp_factory=facades.factory,
-        cold_start_wait_s=1.0,
-        cancel_wait_s=0.2,
-        max_queued_turns=SMALL_QUEUE,
-    )
+    vmm = FakeVmm(prompt_mode=mode)
+    service = make_service(config, vmm, cancel_wait_s=0.2, max_queued_turns=SMALL_QUEUE)
     service.start()
-    return DispatchHarness(config, service, facades)
+    return DispatchHarness(config, service, vmm)
 
 
 def _request(**changed: Any) -> DispatchRequest:
@@ -339,7 +340,7 @@ def test_a_live_job_reads_its_own_status() -> None:
 
 
 def test_an_entry_keeps_the_acp_session(tmp_path: Path) -> None:
-    """The facade mints the conversation id. The ledger maps the job to it."""
+    """The ledger maps the job to the session id of its row."""
     ledger = DispatchLedger(tmp_path)
     ledger.write(_entry())
     ledger.note_acp_session(CALLER, JOB_SESSION, "sess-7")
@@ -365,9 +366,12 @@ async def test_a_dispatch_runs_one_job_and_writes_the_ledger_row(tmp_path: Path)
         assert session.startswith("auto-")
         assert answer == {"session_id": session, "status": "running", "created": True}
         assert harness.entry(session).family == TARGET
-        assert harness.received(METHOD_NEW_SESSION)[0]["_meta"] == {meta_key("job"): session}
+        origin = harness.create().origin.root
+        assert isinstance(origin, AutoOrigin)
+        assert origin.auto.job.root == session
         prompt = harness.received(METHOD_PROMPT)[0]
         assert prompt["prompt"] == [{"type": "text", "text": MESSAGE}]
+        assert "_meta" not in prompt
         assert harness.jobs()[0]["status"] == "running"
     finally:
         await harness.stop()
@@ -385,19 +389,67 @@ async def test_the_ledger_maps_the_auto_id_to_the_acp_session(tmp_path: Path) ->
         await harness.stop()
 
 
-async def test_the_trigger_rides_on_the_prompt_meta(tmp_path: Path) -> None:
-    """§13.2 rule 5. `name` is the calling family, from the token."""
+async def test_the_trigger_rides_in_the_origin(tmp_path: Path) -> None:
+    """§13.2 rule 5, decision CH21-4a. `name` is the calling family, from the
+    token, and the chain is the one of the request."""
     harness = await build(tmp_path, PromptMode.HOLD)
 
     try:
         await harness.enqueue(caller_family=CHAT_FAMILY)
         await harness.held(1)
-        trigger = harness.received(METHOD_PROMPT)[0]["_meta"][meta_key("trigger")]
+        origin = harness.create().origin.root
+        assert isinstance(origin, AutoOrigin)
+        trigger = origin.auto.trigger.root
 
-        assert trigger["kind"] == "dispatch"
-        assert trigger["name"] == CHAT_FAMILY
-        assert trigger["chain"] == list(CHAIN)
-        assert set(trigger) == value_fields("trigger")
+        assert isinstance(trigger, DispatchTrigger)
+        assert trigger.dispatch.name.root == CHAT_FAMILY
+        assert [one.root for one in trigger.dispatch.chain.root] == list(CHAIN)
+    finally:
+        await harness.stop()
+
+
+async def test_a_dispatch_with_no_chain_is_refused_and_leaves_no_entry(tmp_path: Path) -> None:
+    """Contract 02 §13.2 rule 6: the `dispatch` trigger needs its chain, so a
+    dispatch with none is refused before anything is written (§13.4.1 rule
+    5)."""
+    harness = await build(tmp_path)
+
+    try:
+        with pytest.raises(ApiError) as raised:
+            await harness.enqueue(chain=())
+
+        assert raised.value.code is ErrorCode.BAD_REQUEST
+        assert harness.jobs() == []
+        assert harness.vmm.creates == []
+    finally:
+        await harness.stop()
+
+
+async def test_the_job_session_drops_at_its_end(tmp_path: Path) -> None:
+    """Decision CH21-2: the row goes, and the ledger and the outcome stay."""
+    harness = await build(tmp_path)
+
+    try:
+        answer = await harness.enqueue()
+        session = str(answer["session_id"])
+        await harness.ended(session)
+
+        assert harness.vmm.drops == [(TARGET, harness.create().id.root)]
+        assert harness.vmm.rows == {}
+    finally:
+        await harness.stop()
+
+
+async def test_a_vmm_refusal_writes_a_failed_outcome(tmp_path: Path) -> None:
+    harness = await build(tmp_path)
+    harness.vmm.refuse["acp"] = "host_full"
+
+    try:
+        answer = await harness.enqueue()
+        outcome = await harness.ended(str(answer["session_id"]))
+
+        assert outcome["status"] == "failed"
+        assert str(outcome["error"]).startswith("host_full")
     finally:
         await harness.stop()
 
@@ -418,7 +470,7 @@ async def test_an_outcome_is_written_when_the_prompt_settles(tmp_path: Path) -> 
         assert outcome["approvals"] is None
         assert outcome["spend_usd"] is None
         assert outcome["spend_reason"] == SPEND_NO_USAGE_REASON
-        assert outcome["sandbox"] == TARGET_SANDBOX
+        assert outcome["sandbox"] == ""
         assert outcome["trigger"]["kind"] == "dispatch"
         assert outcome["trigger"]["name"] == CALLER
         assert outcome["trigger"]["chain"] == list(CHAIN)
@@ -446,7 +498,7 @@ async def test_a_cancelled_prompt_reads_as_cancelled(tmp_path: Path) -> None:
     try:
         answer = await harness.enqueue()
         [acp_session] = await harness.held(1)
-        await harness.facades.settle(TARGET_SANDBOX, acp_session, "cancelled")
+        await harness.vmm.settle(acp_session, "cancelled")
         outcome = await harness.ended(str(answer["session_id"]))
 
         assert outcome["status"] == "cancelled"
@@ -479,8 +531,7 @@ async def test_a_queued_job_starts_when_a_slot_frees(tmp_path: Path) -> None:
         await harness.enqueue()
         second = await harness.enqueue(delegation_id=SECOND_DELEGATION)
         [acp_first] = await harness.held(1)
-        await harness.facades.settle(TARGET_SANDBOX, acp_first)
-        await wait_until(lambda: acp_first not in harness.facade().held)
+        await harness.vmm.settle(acp_first)
         [acp_second] = await harness.held(1)
 
         assert acp_second != acp_first
@@ -523,7 +574,7 @@ async def test_a_repeat_with_the_same_key_answers_created_false(tmp_path: Path) 
             "created": False,
         }
         assert len(harness.jobs()) == 1
-        assert len(harness.received(METHOD_NEW_SESSION)) == 1
+        assert len(harness.vmm.creates) == 1
     finally:
         await harness.stop()
 
@@ -537,27 +588,6 @@ async def test_jobs_lists_newest_first_with_the_cap(tmp_path: Path) -> None:
         listed = [job["session"] for job in harness.jobs(limit=2)]
 
         assert listed == list(reversed(made))[:2]
-    finally:
-        await harness.stop()
-
-
-async def test_a_family_with_no_sandbox_is_refused_and_leaves_no_entry(tmp_path: Path) -> None:
-    """§13.4.1 rule 5. A refusal creates nothing."""
-    harness = await build(tmp_path)
-    write_status(
-        harness.config.state_root,
-        family=TARGET,
-        kind="autonomous",
-        sandboxes=(),
-        accepts_dispatch=True,
-    )
-
-    try:
-        with pytest.raises(ApiError) as raised:
-            await harness.enqueue()
-
-        assert raised.value.code is ErrorCode.SANDBOX_UNAVAILABLE
-        assert harness.jobs() == []
     finally:
         await harness.stop()
 
@@ -596,7 +626,6 @@ async def test_a_target_of_no_known_kind_is_refused(tmp_path: Path) -> None:
         harness.config.state_root,
         family=TARGET,
         kind="robot",
-        sandboxes=((TARGET_SANDBOX, "ready"),),
         accepts_dispatch=False,
     )
 
@@ -607,7 +636,7 @@ async def test_a_target_of_no_known_kind_is_refused(tmp_path: Path) -> None:
         assert raised.value.code is ErrorCode.FORBIDDEN
         assert raised.value.detail == {"kind": None}
         assert harness.jobs() == []
-        assert harness.facades.dials == []
+        assert harness.vmm.creates == []
     finally:
         await harness.stop()
 
@@ -619,7 +648,6 @@ async def test_a_family_without_the_trigger_is_refused(tmp_path: Path) -> None:
         harness.config.state_root,
         family=TARGET,
         kind="autonomous",
-        sandboxes=((TARGET_SANDBOX, "ready"),),
         accepts_dispatch=False,
     )
 
@@ -640,7 +668,6 @@ async def test_a_key_reused_on_another_family_is_refused(tmp_path: Path) -> None
         harness.config.state_root,
         family="finance-worker",
         kind="autonomous",
-        sandboxes=(("finance-worker-s1", "ready"),),
         accepts_dispatch=True,
     )
 

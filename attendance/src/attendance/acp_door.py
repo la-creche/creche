@@ -1,28 +1,41 @@
-"""The byte pipe between one ACP door connection and one `acp-relay`.
+"""The ACP door: one WebSocket connection, every session of one family.
+
+One door connection serves every session of its family (contract 02
+§5.1 rule 4). attendance answers three methods itself, from the host
+session list, with no boot (decision CH21-7). It routes each other request
+and notification by its `sessionId`, over one vmm ACP stream per session
+(decisions CH20, CH33 rule 7):
+
+    initialize    -> INITIALIZE_RESPONSE
+    session/new   -> mint an id -> vmm create, origin door -> {"sessionId"}
+    session/list  -> vmm list -> {"sessions", "nextCursor"}
+    each other    -> the vmm ACP stream of its sessionId -> the facade of that VM
+
+An id that is not a session id, such as an sbx-era id, gets ACP
+`resourceNotFound` (-32002) before attendance calls the vmm (decision
+CH10-9). An id with no row of the family gets it from the vmm `not_found`,
+with no boot (decision CH21-9). Each other refusal of the vmm is
+`internalError` (-32603), with the vmm code as `data.code` (decision CH83
+rule 1).
 
 One WebSocket text frame is one JSON-RPC line. A client frame may end in
 one line ending, one LF or one CR LF. The door strips it first. Each frame
-and each relay line then gets the envelope check and nothing else: UTF-8
-under the size cap, one line, strict JSON, an object with
-`"jsonrpc": "2.0"`. Each other line break closes the connection. Nothing
-is translated. A frame reaches the relay as its exact bytes, without its
-line ending, plus one LF. A relay line reaches the WebSocket as its exact
-text.
+and each stream line then gets the envelope check: UTF-8 under the size
+cap, one line, strict JSON, an object with `"jsonrpc": "2.0"`. Each other
+line break closes the connection. A routed frame reaches its stream as its
+exact bytes, plus one LF. A stream line reaches the WebSocket as its exact
+text. Nothing is translated.
 
-Either end that closes or fails closes the other one.
+Before the first frame of a session, the door runs the handshake on its new
+stream: `initialize`, with the answer kept by the door. The facade sends no
+beat deadline in a VM (decision CH80), so the door sends no beat.
 
-The door beats each relay connection. It sends `_creche/beat` on the relay
-on the supervisor link's cadence, with string ids of its own:
-`creche-beat-<n>`. The facade arms the deadline of a relay connection on
-its first beat. The door takes the facade's answer to each of its beats, so
-that answer never reaches the client. Each other line passes as it is, a
-client line with an id of the same shape included. A relay that leaves two
-beats unanswered closes with `Close.NO_BEAT`. An error answer counts as no
-answer.
+A stream that ends closes the connection with `Close.RELAY_GONE`, and the
+client opens the session again with `session/load` (decision CH19 (6)).
 
 The door counts the `session/prompt` requests in flight on each
 connection, for `GET /busy`. A client request of that method opens one,
-and the relay's answer with the same id closes it. A connection that ends
+and the stream's answer with the same id closes it. A connection that ends
 closes each of its own. The count reads the lines and changes none.
 
 The facade is JavaScript. It reads each JSON number as a double and writes
@@ -38,25 +51,44 @@ import asyncio
 import contextlib
 import json
 import math
+import re
 from collections.abc import Generator
 from enum import IntEnum
-from typing import Literal
+from typing import Any, Final, Literal
 
+from creche_wire import (
+    CreateSession,
+    Door,
+    DoorOrigin,
+    FamilyName,
+    ListCursor,
+    ListSessions,
+    SessionCwd,
+    SessionId,
+    SessionOrigin,
+    SessionRow,
+    UnixMillis,
+)
 from starlette.websockets import WebSocket
 
 from .acp_link import (
-    BEAT_INTERVAL_S,
     JSONRPC,
     MAX_ACP_LINE_BYTES,
-    METHOD_BEAT,
+    METHOD_INITIALIZE,
     METHOD_PROMPT,
-    MISSED_BEATS_ALLOWED,
+    PROTOCOL_VERSION,
+    AcpHandshakeError,
     Malformed,
+    handshake,
     loads_strict,
 )
-from .atomic import as_object
+from .atomic import as_array, as_object
 from .channel import Channel, ChannelClosed
+from .clock import from_ms, now_ms, rfc3339_ms
 from .errors import ApiError
+from .ids import is_session_cwd, is_session_id, new_session_id
+from .tasks import report_failure
+from .vmm import NOT_FOUND, Vmm, VmmRefused
 
 #: The cap for both directions.
 MAX_FRAME_BYTES = MAX_ACP_LINE_BYTES
@@ -70,14 +102,43 @@ _LINE_BREAKS = ("\n", "\r")
 #: The one line ending that a client frame may carry. CR LF is tried first.
 _LINE_ENDINGS = ("\r\n", "\n")
 
-#: The ids of the door's beats are strings with this prefix. The facade's
-#: answers to the client's own requests carry the client's ids, so a client
-#: that uses this prefix can lose an answer. The prefix is reserved.
-BEAT_ID_PREFIX = "creche-beat-"
-
 #: The reason of a `Close.RELAY_GONE`. The door-acp service sends its own
-#: 1001 too, so the reason says that the relay is what ended.
+#: 1001 too, so the reason says that the stream to the facade is what ended.
 RELAY_ENDED = "the relay ended"
+
+METHOD_NEW = "session/new"
+METHOD_LIST = "session/list"
+
+#: The methods that attendance answers itself (decision CH21-7).
+_ANSWERED: Final = frozenset({METHOD_INITIALIZE, METHOD_NEW, METHOD_LIST})
+
+#: The one answer to `initialize` (decision CH21-7, contract 02 §5.2). The
+#: facade answers the same one to the handshake of each stream.
+INITIALIZE_RESPONSE: Final[dict[str, Any]] = {
+    "protocolVersion": PROTOCOL_VERSION,
+    "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"list": {}}},
+    "authMethods": [],
+}
+
+#: JSON-RPC's and ACP's error codes.
+RPC_METHOD_NOT_FOUND = -32601
+RPC_INVALID_PARAMS = -32602
+RPC_INTERNAL_ERROR = -32603
+RPC_NOT_FOUND = -32002
+
+#: The `data.code` of a stream whose handshake failed.
+#:
+#: CONTRACT-QUESTION: decision CH83 rule 1 names the JSON-RPC error of a
+#: vmm refusal, and no row names the error of a facade that answers the
+#: handshake with nothing usable after 101. The reading here: the same
+#: `internalError`, with this code of contract 02 §14 table 2 as `data.code`.
+#: Another reading changes this one word.
+HANDSHAKE_FAILED = "protocol_violation"
+
+#: ACP's string cursor of `session/list`: the decimal text of the vmm's
+#: `ListCursor`, 1 to 2^53 - 1 (contract 02 §5.4).
+_CURSOR_RE = re.compile(r"^[1-9][0-9]{0,15}\Z")
+_CURSOR_MAX = 2**53 - 1
 
 
 class Close(IntEnum):
@@ -87,48 +148,6 @@ class Close(IntEnum):
     RELAY_GONE = 1001
     BAD_FRAME = 1007
     TOO_LARGE = 1009
-    # 4000 plus HTTP 408: the facade did not answer the door's beats.
-    NO_BEAT = 4408
-
-
-class _Beats:
-    """The door's beats on one relay connection, and the ones not answered."""
-
-    def __init__(self) -> None:
-        self._next = 0
-        self._pending: set[str] = set()
-
-    @property
-    def missed(self) -> int:
-        return len(self._pending)
-
-    def line(self) -> str:
-        """The next beat request, as one relay line."""
-        beat_id = f"{BEAT_ID_PREFIX}{self._next}"
-        self._next += 1
-        self._pending.add(beat_id)
-        params: dict[str, object] = {}
-        message = {"jsonrpc": JSONRPC, "id": beat_id, "method": METHOD_BEAT, "params": params}
-        return json.dumps(message, separators=(",", ":")) + "\n"
-
-    def take(self, text: str) -> bool:
-        """True for an answer to a beat in flight. The door keeps that line.
-
-        `text` passed `check_frame`, so it is one strict JSON object.
-        """
-        if BEAT_ID_PREFIX not in text:
-            return False
-
-        record = as_object(loads_strict(text)) or {}
-        beat_id = record.get("id")
-
-        if "method" in record or not isinstance(beat_id, str) or beat_id not in self._pending:
-            return False
-
-        if "result" in record:
-            self._pending.clear()
-
-        return True
 
 
 class _OpenPrompts:
@@ -137,13 +156,8 @@ class _OpenPrompts:
     def __init__(self) -> None:
         self.ids: set[_RpcIdKey] = set()
 
-    def sent(self, text: str) -> Close | None:
-        """A client line. `text` passed `check_frame`. None when it may pass."""
-        if METHOD_PROMPT not in text:
-            return None
-
-        record = as_object(loads_strict(text)) or {}
-
+    def sent(self, record: dict[str, Any]) -> Close | None:
+        """A client request. None when it may pass."""
         if record.get("method") != METHOD_PROMPT or "id" not in record:
             return None
 
@@ -155,8 +169,16 @@ class _OpenPrompts:
         self.ids.add(key)
         return None
 
+    def refused(self, record: dict[str, Any]) -> None:
+        """A client request that attendance refused. It reached no stream."""
+        if record.get("method") == METHOD_PROMPT and "id" in record:
+            key = _rpc_id_key(record["id"])
+
+            if key is not None:
+                self.ids.discard(key)
+
     def answered(self, text: str) -> None:
-        """A relay line. A prompt answer holds `stopReason` or `error`."""
+        """A stream line. A prompt answer holds `stopReason` or `error`."""
         if not self.ids or ("stopReason" not in text and '"error"' not in text):
             return
 
@@ -218,7 +240,7 @@ def strip_line_end(text: str) -> str:
 
     Some clients end each frame in a line break. Agmente does. Each other
     line break stays, so `check_frame` refuses it. The door adds its own LF
-    for the relay, so an ending that stayed would also make an empty line.
+    for the stream, so an ending that stayed would also make an empty line.
     """
     for ending in _LINE_ENDINGS:
         if text.endswith(ending):
@@ -246,45 +268,318 @@ def check_frame(text: str) -> Close | None:
     return None
 
 
-async def pipe(
-    websocket: WebSocket,
-    relay: Channel,
-    beat_interval_s: float = BEAT_INTERVAL_S,
-    prompts: DoorPrompts | None = None,
-) -> None:
-    """Forward both ways and beat the relay until one end stops. Then close both."""
-    beats = _Beats()
-    book = prompts if prompts is not None else DoorPrompts()
+class _Refusal(Exception):
+    """A JSON-RPC error that answers one client request."""
 
-    # The relay closes on each way out, a cancel of this call included.
-    with book.connection() as open_prompts:
-        tasks = {
-            asyncio.create_task(_to_relay(websocket, relay, open_prompts), name="acp door in"),
-            asyncio.create_task(
-                _to_door(websocket, relay, beats, open_prompts), name="acp door out"
-            ),
-            asyncio.create_task(_beat(relay, beats, beat_interval_s), name="acp door beat"),
-        }
+    def __init__(self, code: int, message: str, vmm_code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.vmm_code = vmm_code
+
+
+class _Door:
+    """One door connection: its streams, its writes and its answers."""
+
+    def __init__(self, websocket: WebSocket, family: str, vmm: Vmm, prompts: _OpenPrompts) -> None:
+        self._websocket = websocket
+        self._family = family
+        self._vmm = vmm
+        self._prompts = prompts
+        self._write = asyncio.Lock()
+        self._streams: dict[str, Channel] = {}
+        self._readers: dict[str, asyncio.Task[Close]] = {}
+        #: The session of each request a facade sent to the client, by id,
+        #: so that the client's answer reaches the same stream.
+        self._asked: dict[_RpcIdKey, str] = {}
+        self.ended: asyncio.Future[Close] = asyncio.get_running_loop().create_future()
+
+    async def from_client(self) -> Close:
+        while True:
+            message = await self._websocket.receive()
+            text: object = message.get("text")
+
+            if message["type"] == "websocket.disconnect":
+                return Close.CLIENT_GONE
+
+            if not isinstance(text, str):
+                return Close.BAD_FRAME
+
+            line = strip_line_end(text)
+            refused = check_frame(line)
+
+            if refused is None:
+                refused = await self._route(line)
+
+            if refused is not None:
+                return refused
+
+    async def _route(self, line: str) -> Close | None:
+        record = as_object(loads_strict(line)) or {}
+        method = record.get("method")
+
+        if not isinstance(method, str):
+            return await self._to_asker(record, line)
+
+        refused = self._prompts.sent(record)
+
+        if refused is not None:
+            return refused
 
         try:
+            answer = await self._answer(method, record, line)
+        except _Refusal as refusal:
+            self._prompts.refused(record)
+            await self._refuse(record, refusal)
+            return None
+        except ChannelClosed:
+            return Close.RELAY_GONE
+
+        if answer is not None and "id" in record:
+            await self._send({"jsonrpc": JSONRPC, "id": record["id"], "result": answer})
+
+        return None
+
+    async def _answer(self, method: str, record: dict[str, Any], line: str) -> object:
+        """The result attendance answers, or None for a routed line. A
+        notification of a method that attendance answers does nothing."""
+        params = as_object(record.get("params"))
+
+        if method in _ANSWERED and "id" not in record:
+            return None
+
+        if method == METHOD_INITIALIZE:
+            return INITIALIZE_RESPONSE
+
+        if method == METHOD_NEW:
+            return await self._new_session(params)
+
+        if method == METHOD_LIST:
+            return await self._list_sessions(params)
+
+        session = params.get("sessionId") if params is not None else None
+
+        if not isinstance(session, str):
+            raise _Refusal(RPC_METHOD_NOT_FOUND, f"{method} names no session")
+
+        stream = await self._stream(session)
+        await stream.send(line + "\n")
+        return None
+
+    async def _new_session(self, params: dict[str, Any] | None) -> dict[str, Any]:
+        """Contract 02 §5.3: check the `cwd`, mint an id, create the row.
+
+        The family decides the tools and the work directory of the agent, so
+        a client MCP server or an additional directory is refused, as the
+        facade refuses them."""
+        if params is None:
+            raise _Refusal(RPC_INVALID_PARAMS, "session/new has no params")
+
+        cwd = params.get("cwd")
+
+        if not isinstance(cwd, str) or not is_session_cwd(cwd):
+            raise _Refusal(RPC_INVALID_PARAMS, "cwd is not an absolute path of a session")
+
+        servers = as_array(params.get("mcpServers"))
+
+        if servers is None or servers:
+            raise _Refusal(RPC_INVALID_PARAMS, "the facade takes no client MCP server")
+
+        if as_array(params.get("additionalDirectories")):
+            raise _Refusal(RPC_INVALID_PARAMS, "the facade takes no additional directory")
+
+        session = new_session_id()
+        row = CreateSession(
+            created_at=UnixMillis(now_ms()),
+            cwd=SessionCwd(cwd),
+            family=FamilyName(self._family),
+            id=SessionId(session),
+            origin=SessionOrigin(DoorOrigin(door=Door())),
+        )
+
+        try:
+            await self._vmm.create(row)
+        except VmmRefused as error:
+            raise _vmm_refusal(error) from error
+
+        return {"sessionId": session}
+
+    async def _list_sessions(self, params: dict[str, Any] | None) -> dict[str, Any]:
+        """Contract 02 §5.4: one page of the host list, newest created first."""
+        fields = params if params is not None else {}
+        cwd = fields.get("cwd")
+        cursor = fields.get("cursor")
+
+        if cwd is not None and not (isinstance(cwd, str) and is_session_cwd(cwd)):
+            raise _Refusal(RPC_INVALID_PARAMS, "cwd is not an absolute path of a session")
+
+        query = ListSessions(
+            cursor=_list_cursor(cursor),
+            cwd=SessionCwd(cwd) if isinstance(cwd, str) else None,
+            family=FamilyName(self._family),
+        )
+
+        try:
+            page = await self._vmm.list_page(query)
+        except VmmRefused as error:
+            raise _vmm_refusal(error) from error
+
+        answer: dict[str, Any] = {"sessions": [_session_info(row) for row in page.rows]}
+
+        if page.next is not None:
+            answer["nextCursor"] = str(page.next.root)
+
+        return answer
+
+    async def _stream(self, session: str) -> Channel:
+        """The stream of `session`, opened and shaken hands with once."""
+        stream = self._streams.get(session)
+
+        if stream is not None:
+            return stream
+
+        if not is_session_id(session):
+            raise _Refusal(RPC_NOT_FOUND, f"no session {session}")
+
+        try:
+            stream = await self._vmm.open_acp(self._family, session, MAX_FRAME_BYTES)
+        except VmmRefused as error:
+            raise _vmm_refusal(error) from error
+
+        try:
+            await handshake(stream)
+        except (AcpHandshakeError, ChannelClosed) as error:
+            await stream.close()
+            raise _Refusal(RPC_INTERNAL_ERROR, str(error), HANDSHAKE_FAILED) from error
+
+        self._streams[session] = stream
+        reader = asyncio.create_task(self._from_stream(session, stream), name="acp door out")
+        reader.add_done_callback(report_failure)
+        reader.add_done_callback(self._stream_ended)
+        self._readers[session] = reader
+        return stream
+
+    async def _from_stream(self, session: str, stream: Channel) -> Close:
+        while True:
             try:
-                done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                for task in tasks:
-                    task.cancel()
+                raw = await stream.receive()
+            except ChannelClosed:
+                return Close.RELAY_GONE
 
-                await asyncio.gather(*tasks, return_exceptions=True)
+            if raw is None:
+                return Close.RELAY_GONE
 
-            # The client hears of the end first. The reap of a relay can
-            # wait out a pipe that a descendant of `sbx exec` still holds.
-            await _close_client(websocket, done.pop())
+            if raw.text is None:
+                return Close.TOO_LARGE if raw.size > MAX_FRAME_BYTES else Close.BAD_FRAME
+
+            refused = check_frame(raw.text)
+
+            if refused is not None:
+                return refused
+
+            self._note_ask(session, raw.text)
+            self._prompts.answered(raw.text)
+            await self._send_text(raw.text)
+
+    def _stream_ended(self, task: asyncio.Task[Close]) -> None:
+        if self.ended.done():
+            return
+
+        if task.cancelled():
+            return
+
+        error = task.exception()
+        self.ended.set_result(Close.RELAY_GONE if error is not None else task.result())
+
+    def _note_ask(self, session: str, text: str) -> None:
+        """A request of the facade to the client: its answer goes back here."""
+        if '"method"' not in text:
+            return
+
+        record = as_object(loads_strict(text)) or {}
+
+        if "method" in record and "id" in record:
+            key = _rpc_id_key(record["id"])
+
+            if key is not None:
+                self._asked[key] = session
+
+    async def _to_asker(self, record: dict[str, Any], line: str) -> Close | None:
+        """A client answer goes to the stream whose facade asked. An answer
+        to no request of a facade is dropped."""
+        key = _rpc_id_key(record.get("id"))
+        session = self._asked.pop(key, None) if key is not None else None
+        stream = self._streams.get(session) if session is not None else None
+
+        if stream is None:
+            return None
+
+        try:
+            await stream.send(line + "\n")
+        except ChannelClosed:
+            return Close.RELAY_GONE
+
+        return None
+
+    async def _refuse(self, record: dict[str, Any], refusal: _Refusal) -> None:
+        """A notification gets no answer, so a refused one is dropped."""
+        if "id" not in record:
+            return
+
+        error: dict[str, Any] = {"code": refusal.code, "message": refusal.message}
+
+        if refusal.vmm_code is not None:
+            error["data"] = {"code": refusal.vmm_code}
+
+        await self._send({"jsonrpc": JSONRPC, "id": record["id"], "error": error})
+
+    async def _send(self, message: dict[str, Any]) -> None:
+        await self._send_text(json.dumps(message, separators=(",", ":"), ensure_ascii=False))
+
+    async def _send_text(self, text: str) -> None:
+        async with self._write:
+            await self._websocket.send_text(text)
+
+    async def close(self) -> None:
+        for reader in self._readers.values():
+            reader.cancel()
+
+        await asyncio.gather(*self._readers.values(), return_exceptions=True)
+
+        for stream in self._streams.values():
+            await stream.close()
+
+
+async def serve(websocket: WebSocket, family: str, vmm: Vmm, prompts: DoorPrompts) -> None:
+    """Serve one door connection until the client or a stream ends. Then
+    close each stream."""
+    with prompts.connection() as open_prompts:
+        door = _Door(websocket, family, vmm, open_prompts)
+        client = asyncio.create_task(door.from_client(), name="acp door in")
+        client.add_done_callback(report_failure)
+
+        try:
+            done, _ = await asyncio.wait({client, door.ended}, return_when=asyncio.FIRST_COMPLETED)
+            client.cancel()
+            await asyncio.gather(client, return_exceptions=True)
+            why = _why(done)
         finally:
-            await relay.close()
+            client.cancel()
+            await door.close()
+
+        await _close_client(websocket, why)
 
 
-async def _close_client(websocket: WebSocket, finished: asyncio.Task[Close]) -> None:
-    why = finished.result() if finished.exception() is None else Close.RELAY_GONE
+def _why(done: set[asyncio.Future[Close]]) -> Close:
+    finished = done.pop()
 
+    if finished.cancelled() or finished.exception() is not None:
+        return Close.RELAY_GONE
+
+    return finished.result()
+
+
+async def _close_client(websocket: WebSocket, why: Close) -> None:
     if why is Close.CLIENT_GONE:
         return
 
@@ -295,70 +590,31 @@ async def _close_client(websocket: WebSocket, finished: asyncio.Task[Close]) -> 
         await websocket.close(code=why, reason=reason)
 
 
-async def _to_relay(websocket: WebSocket, relay: Channel, prompts: _OpenPrompts) -> Close:
-    while True:
-        message = await websocket.receive()
-        text: object = message.get("text")
+def _list_cursor(value: object) -> ListCursor | None:
+    """The vmm cursor of an ACP cursor, which a page of this door gave."""
+    if value is None:
+        return None
 
-        if message["type"] == "websocket.disconnect":
-            return Close.CLIENT_GONE
+    if not isinstance(value, str) or not _CURSOR_RE.match(value) or int(value) > _CURSOR_MAX:
+        raise _Refusal(RPC_INVALID_PARAMS, "the cursor is not one that session/list gave")
 
-        if not isinstance(text, str):
-            return Close.BAD_FRAME
-
-        line = strip_line_end(text)
-        refused = check_frame(line)
-
-        if refused is not None:
-            return refused
-
-        refused = prompts.sent(line)
-
-        if refused is not None:
-            return refused
-
-        try:
-            await relay.send(line + "\n")
-        except ChannelClosed:
-            return Close.RELAY_GONE
+    return ListCursor(int(value))
 
 
-async def _beat(relay: Channel, beats: _Beats, interval_s: float) -> Close:
-    """A beat on each tick. The tick after the last allowed miss closes."""
-    while True:
-        await asyncio.sleep(interval_s)
-
-        if beats.missed >= MISSED_BEATS_ALLOWED:
-            return Close.NO_BEAT
-
-        try:
-            await relay.send(beats.line())
-        except ChannelClosed:
-            return Close.RELAY_GONE
+def _session_info(row: SessionRow) -> dict[str, Any]:
+    """Contract 02 §5.4 rule 4: one ACP session of one host row."""
+    return {
+        "sessionId": row.id.root,
+        "cwd": row.cwd.root,
+        "title": row.title.root if row.title is not None else None,
+        "updatedAt": rfc3339_ms(from_ms(row.updated_at.root)),
+    }
 
 
-async def _to_door(
-    websocket: WebSocket, relay: Channel, beats: _Beats, prompts: _OpenPrompts
-) -> Close:
-    while True:
-        try:
-            raw = await relay.receive()
-        except ChannelClosed:
-            return Close.RELAY_GONE
+def _vmm_refusal(error: VmmRefused) -> _Refusal:
+    """Decision CH21-9: `not_found` is `resourceNotFound`. Decision CH83
+    rule 1: each other refusal is `internalError` with the vmm code."""
+    if error.code == NOT_FOUND:
+        return _Refusal(RPC_NOT_FOUND, "no such session")
 
-        if raw is None:
-            return Close.RELAY_GONE
-
-        if raw.text is None:
-            return Close.TOO_LARGE if raw.size > MAX_FRAME_BYTES else Close.BAD_FRAME
-
-        refused = check_frame(raw.text)
-
-        if refused is not None:
-            return refused
-
-        if beats.take(raw.text):
-            continue
-
-        prompts.answered(raw.text)
-        await websocket.send_text(raw.text)
+    return _Refusal(RPC_INTERNAL_ERROR, f"the vmm refused: {error.code}", error.code)

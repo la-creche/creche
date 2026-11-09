@@ -33,6 +33,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from creche_wire import SessionOrigin
+
 from .atomic import MODE_GROUP_READ, as_array, read_json, write_json
 from .clock import now, parse_rfc3339, rfc3339
 from .ids import is_family, is_session, is_ulid
@@ -91,7 +93,8 @@ class DispatchEntry:
     caller_session: str | None = None
     idempotency_key: str | None = None
     outcome_id: str | None = None
-    #: The conversation id the facade minted for this job, once it has one.
+    #: The session id of the job's row on the host list, once the vmm has
+    #: the row (decision CH25 rule 2).
     acp_session: str | None = None
     #: What fired the job: another family's `enqueue`, or a timer or a
     #: webhook of `door-trigger`.
@@ -133,10 +136,12 @@ class DispatchEntry:
 
 @dataclass(slots=True, frozen=True)
 class DispatchJob:
-    """One job that waits for a slot, or runs. The message is data."""
+    """One job that waits for a slot, or runs. The message is data. The
+    origin is the one of the job's row on the host list (decision CH21-4a)."""
 
     entry: DispatchEntry
     message: str
+    origin: SessionOrigin
 
 
 def status_of(live: JobStatus | None, outcome_id: str | None) -> JobStatus:

@@ -9,14 +9,13 @@ reads, and the family key and PEP token never reach this process at all
 from __future__ import annotations
 
 import ipaddress
-import math
 import os
 import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from .supervisor_lock import LOCK_POLL_S, LOCK_STALE_S
+from .vmm import VMM_SOCKET_ENV
 
 # Contract 02 §3 rule 1: a Unix socket is the default and is enough, because
 # all four doors run on the same host. `attendance` is a systemd USER unit, so
@@ -37,13 +36,6 @@ DEFAULT_LAN_PORT = 8350
 
 DEFAULT_SESSIONS_ROOT = "/srv/agents/sessions"
 DEFAULT_STATE_ROOT = "/srv/agents/state/creche"
-DEFAULT_LOG_DIR = "/var/log/attendance"
-
-#: The playpen's `sbx exec` shape, for the relay into the facade's socket.
-DEFAULT_RELAY_COMMAND = "sbx exec --env-file {env_file} {sandbox} -- acp-relay"
-
-#: The same shape, for the one supervisor exec of each sandbox's facade.
-DEFAULT_FACADE_COMMAND = "sbx exec --env-file {env_file} {sandbox} -- creche-facade"
 
 ENV_PREFIX = "ATTENDANCE_"
 
@@ -87,24 +79,12 @@ class Config:
     bind: Bind
     lan_address: str
     lan_port: int
-    log_dir: Path
-    # Contract 03 §11.4 rule 4's two numbers. They are here so a test can watch
-    # the lock in fractions of a second, and so an operator can widen the
-    # window on a host where the sandbox writes its beat more slowly.
-    lock_stale_s: float = LOCK_STALE_S
-    lock_poll_s: float = LOCK_POLL_S
-    # Phase 2 plan, row 17. One `sbx exec acp-relay` per door connection.
-    acp_relay_command: str = DEFAULT_RELAY_COMMAND
-    # Phase 2 plan, row 18. The supervisor exec of each sandbox's facade.
-    facade_command: str = DEFAULT_FACADE_COMMAND
+    #: Decision CH20: `vmm.sock`, the one socket of the vmm host API.
+    vmm_socket: Path
 
     @property
     def binds_lan(self) -> bool:
         return self.bind is Bind.SOCKET_AND_LAN
-
-    def playpen_log(self, family: str) -> Path:
-        """Where the stderr of each `sbx exec` of one family lands (contract 03 §1 rule 4)."""
-        return self.log_dir / f"playpen-{family}.log"
 
 
 def from_env(environ: dict[str, str] | None = None) -> Config:
@@ -118,31 +98,17 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
         bind=_bind(source),
         lan_address=_lan_address(source),
         lan_port=_port(source),
-        log_dir=_path(source, "LOG_DIR", DEFAULT_LOG_DIR),
-        lock_stale_s=_seconds(source, "LOCK_STALE_S", LOCK_STALE_S),
-        lock_poll_s=_seconds(source, "LOCK_POLL_S", LOCK_POLL_S),
-        acp_relay_command=_text(source, "ACP_RELAY_COMMAND", DEFAULT_RELAY_COMMAND),
-        facade_command=_text(source, "FACADE_COMMAND", DEFAULT_FACADE_COMMAND),
+        vmm_socket=_vmm_socket(source),
     )
 
 
-def _seconds(source: dict[str, str], name: str, fallback: float) -> float:
-    raw = source.get(ENV_PREFIX + name, "").strip()
+def _vmm_socket(source: dict[str, str]) -> Path:
+    """`ATTENDANCE_VMM_SOCKET`, which the unit sets. No default: the path
+    holds the uid of the operator (decision CH20)."""
+    if not source.get(VMM_SOCKET_ENV, "").strip():
+        raise ConfigError(f"{VMM_SOCKET_ENV} is not set (creche-attendance.service sets it)")
 
-    if not raw:
-        return fallback
-
-    try:
-        value = float(raw)
-    except ValueError as error:
-        raise ConfigError(f"{ENV_PREFIX}{name} is {raw!r}, which is not a number") from error
-
-    # NaN is not below zero, so the range check alone lets it pass. With NaN
-    # or an infinity, the lock of a playpen never goes stale.
-    if not math.isfinite(value) or value <= 0:
-        raise ConfigError(f"{ENV_PREFIX}{name} is {value}, which is not a positive number")
-
-    return value
+    return _path(source, "VMM_SOCKET", "")
 
 
 def _text(source: dict[str, str], name: str, fallback: str) -> str:

@@ -207,27 +207,6 @@ ULID_CASES: Final = (
     ("leading-newline", "\n" + _ULID),
 )
 
-SANDBOX_CASES: Final = (
-    ("zero", "chat-s0"),
-    ("nine-digits", "chat-s123456789"),
-    ("ten-digits", "chat-s1234567890"),
-    ("leading-zero", "chat-s01"),
-    ("no-number", "chat-s"),
-    ("no-s", "chat-1"),
-    ("family-only", "chat"),
-    ("short-family", "ab-s1"),
-    ("one-char-family", "a-s1"),
-    ("upper-s", "chat-S1"),
-    ("family-ends-like-a-sandbox", "chat-s1-s2"),
-    ("max-family", _A31 + "-s1"),
-    ("over-family", _A32 + "-s1"),
-    ("negative", "chat-s-1"),
-    ("upper-family", "Chat-s1"),
-    ("underscore", "chat_s1"),
-    ("plus", "chat-s+1"),
-    ("crlf", "chat-s1\r\n"),
-)
-
 TOOL_CASES: Final = (
     ("one-lower", "a"),
     ("one-upper", "A"),
@@ -587,25 +566,6 @@ GRAMMARS: Final = (
                         "handover_executor",
                         "handover.executor.request.ULID_RE",
                         executor_request.ULID_RE,
-                    ),
-                ),
-            ),
-        ),
-    ),
-    Grammar(
-        "sandbox_name",
-        "chat-s12",
-        "1",
-        SANDBOX_CASES,
-        (
-            Concept(
-                "sandbox_name",
-                "contract 05 §4.1",
-                (
-                    Copy(
-                        "attendance",
-                        "attendance.ids.is_sandbox",
-                        _predicate(attendance_ids.is_sandbox),
                     ),
                 ),
             ),

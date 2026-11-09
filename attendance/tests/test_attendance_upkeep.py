@@ -14,9 +14,9 @@ import logging
 from pathlib import Path
 
 import pytest
-from attendance.service import SessionService
 from attendance.tasks import report_failure
-from attendance_harness import make_config, wait_until, write_status
+from attendance_harness import make_config, make_service, wait_until, write_status
+from fake_vmm import FakeVmm
 
 #: The upkeep interval of these tests. The real one is a second.
 TICK_S = 0.01
@@ -33,7 +33,7 @@ async def test_upkeep_tries_the_queues_after_a_failed_try(
     monkeypatch.setattr("attendance.service.PUMP_INTERVAL_S", TICK_S)
     config = make_config(tmp_path)
     write_status(config.state_root)
-    service = SessionService(config, cold_start_wait_s=1.0)
+    service = make_service(config, FakeVmm())
     service.start()
     calls = 0
 

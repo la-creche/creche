@@ -19,6 +19,7 @@ from attendance.config import LAN_ADDRESS_ENV, Bind, ConfigError, from_env
 from attendance.errors import ApiError, ErrorCode
 from attendance.paths import token_file
 from attendance.states import SessionKind
+from attendance.vmm import VMM_SOCKET_ENV
 
 GOOD_TOKEN = "t" * MIN_TOKEN_BYTES
 
@@ -41,9 +42,13 @@ def write_tokens(state_root: Path, skip: Principal | None = None) -> dict[Princi
     return made
 
 
+#: What the unit sets: `vmm.sock` under its run root (decision CH20).
+_UNIT: dict[str, str] = {VMM_SOCKET_ENV: "/run/vmm/vmm.sock"}
+
+
 def _site(**extra: str) -> dict[str, str]:
-    """What the unit's site file hands the service, plus `extra`."""
-    return {LAN_ADDRESS_ENV: os.environ[LAN_ADDRESS_ENV], **extra}
+    """What the unit and its site file hand the service, plus `extra`."""
+    return {LAN_ADDRESS_ENV: os.environ[LAN_ADDRESS_ENV], **_UNIT, **extra}
 
 
 def test_defaults_bind_socket_only() -> None:
@@ -63,7 +68,7 @@ def test_bind_lan_reads_the_lan_address() -> None:
 
 
 def test_an_explicit_lan_address_still_wins() -> None:
-    config = from_env({"ATTENDANCE_LAN_ADDRESS": "192.0.2.99"})
+    config = from_env({"ATTENDANCE_LAN_ADDRESS": "192.0.2.99", **_UNIT})
 
     assert config.lan_address == "192.0.2.99"
 
@@ -118,13 +123,13 @@ def test_the_address_of_each_interface_is_refused(address: str) -> None:
         from_env(_site(ATTENDANCE_LAN_ADDRESS=address))
 
     with pytest.raises(ConfigError, match=rf"\A{LAN_ADDRESS_ENV} is the address of each"):
-        from_env({LAN_ADDRESS_ENV: address})
+        from_env({LAN_ADDRESS_ENV: address, **_UNIT})
 
 
 @pytest.mark.parametrize("address", ONE_INTERFACE)
 def test_an_address_of_one_interface_is_read(address: str) -> None:
     assert from_env(_site(ATTENDANCE_LAN_ADDRESS=address)).lan_address == address
-    assert from_env({LAN_ADDRESS_ENV: address}).lan_address == address
+    assert from_env({LAN_ADDRESS_ENV: address, **_UNIT}).lan_address == address
 
 
 def test_a_nonsense_bind_flag_refuses() -> None:
@@ -137,22 +142,23 @@ def test_a_port_outside_the_range_refuses() -> None:
         from_env(_site(ATTENDANCE_LAN_PORT="70000"))
 
 
-@pytest.mark.parametrize("name", ["ATTENDANCE_LOCK_STALE_S", "ATTENDANCE_LOCK_POLL_S"])
-@pytest.mark.parametrize("count", ["nan", "NaN", "inf", "+Infinity", "1e999"])
-def test_a_count_of_seconds_that_is_not_finite_refuses(name: str, count: str) -> None:
-    """With such a count the lock of a playpen never goes stale."""
-    with pytest.raises(ConfigError, match=rf"\A{name} "):
-        from_env(_site(**{name: count}))
+@pytest.mark.parametrize("value", [None, "", "  "], ids=["absent", "empty", "space"])
+def test_a_missing_vmm_socket_names_the_variable(value: str | None) -> None:
+    """Decision CH20: the unit sets the socket, and no default holds a uid."""
+    environ = {LAN_ADDRESS_ENV: os.environ[LAN_ADDRESS_ENV]}
+
+    if value is not None:
+        environ[VMM_SOCKET_ENV] = value
+
+    with pytest.raises(ConfigError, match=rf"\A{VMM_SOCKET_ENV} "):
+        from_env(environ)
 
 
-def test_a_finite_count_of_seconds_is_read() -> None:
-    config = from_env(_site(ATTENDANCE_LOCK_STALE_S="1e3", ATTENDANCE_LOCK_POLL_S=".5"))
-
-    assert config.lock_stale_s == 1000.0
-    assert config.lock_poll_s == 0.5
+def test_the_vmm_socket_is_read() -> None:
+    assert from_env(_site()).vmm_socket == Path("/run/vmm/vmm.sock")
 
 
-@pytest.mark.parametrize("name", ["SESSIONS_ROOT", "STATE_ROOT", "SOCKET", "LOG_DIR"])
+@pytest.mark.parametrize("name", ["SESSIONS_ROOT", "STATE_ROOT", "SOCKET", "VMM_SOCKET"])
 def test_a_path_with_a_nul_byte_refuses(name: str) -> None:
     """No path holds that byte. The config refuses it before a first use."""
     with pytest.raises(ConfigError, match=rf"\AATTENDANCE_{name} "):
@@ -181,7 +187,6 @@ def test_the_service_starts_with_the_live_token_files_only(tmp_path: Path) -> No
         "door-trigger",
         "noticeboard",
         "door-acp",
-        "caregiver",
     )
 
     for name in live:
@@ -213,7 +218,7 @@ def test_a_short_token_file_stops_the_service(tmp_path: Path) -> None:
 
 def test_a_readable_token_file_stops_the_service(tmp_path: Path) -> None:
     write_tokens(tmp_path)
-    path = token_file(tmp_path, Principal.CAREGIVER.value)
+    path = token_file(tmp_path, Principal.DOOR_TRIGGER.value)
     os.chmod(path, 0o644)
 
     with pytest.raises(TokenError):
@@ -306,16 +311,9 @@ def test_the_view_token_never_writes() -> None:
     assert caught.value.code is ErrorCode.FORBIDDEN
 
 
-def test_a_door_token_never_reaches_internal() -> None:
-    with pytest.raises(ApiError):
-        check_access(Principal.DOOR_TRIGGER, Access.INTERNAL)
-
-    check_access(Principal.CAREGIVER, Access.INTERNAL)
-
-
-def test_the_caregiver_token_never_reads_sessions() -> None:
-    with pytest.raises(ApiError):
-        check_access(Principal.CAREGIVER, Access.READ)
+def test_no_token_is_the_caregivers() -> None:
+    """Contract 05 minor 18 dropped the switch, the one route of that token."""
+    assert "caregiver" not in {principal.value for principal in Principal}
 
 
 def test_a_writer_may_also_read() -> None:

@@ -40,7 +40,6 @@ from creche_env.envfile import (
     root_keys_in,
 )
 
-from attendance import config as attendance
 from handover import site
 
 REPO: Final = Path(__file__).resolve().parents[2]
@@ -145,8 +144,6 @@ def test_the_cutover_keys_have_the_defaults_of_their_programs() -> None:
         {"operator": EXAMPLE_HOME}.get,
     )
 
-    assert settings.values["ATTENDANCE_FACADE_COMMAND"] == attendance.DEFAULT_FACADE_COMMAND
-    assert settings.values["ATTENDANCE_ACP_RELAY_COMMAND"] == attendance.DEFAULT_RELAY_COMMAND
     assert settings.values["CHAPERONE_LISTEN"] == "192.0.2.10:8300"
     assert settings.values["DOOR_ACP_BIND"] == f"192.0.2.10:{door_acp.DEFAULT_PORT}"
     assert settings.values["DOOR_ACP_SOCKET_FILE"] == door_acp.DEFAULT_ATTENDANCE_SOCKET

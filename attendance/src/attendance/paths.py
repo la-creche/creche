@@ -10,10 +10,8 @@ import os
 from pathlib import Path
 
 STATUS_FILE = "status.json"
-PLAYPEN_LOCK = "supervisor.lock"
 
 _FAMILIES = "families"
-_CONTROL = "control"
 _CREDS = "creds"
 _CONFIG = "config"
 _FAULTS = "faults"
@@ -56,23 +54,6 @@ def family_state_dir(state_root: Path, family: str) -> Path:
 def status_file(state_root: Path, family: str) -> Path:
     """The document `caregiver` publishes (contract 05 §2)."""
     return family_state_dir(state_root, family) / STATUS_FILE
-
-
-def control_dir(state_root: Path, family: str, sandbox: str) -> Path:
-    """The playpen's control mount (contract 03 §7.1). PER SANDBOX:
-    contract 05 §5 keeps two sandboxes of one family live at once, in two
-    microVMs, and each playpen beats its own lock in its own
-    directory."""
-    return family_state_dir(state_root, family) / _CONTROL / sandbox
-
-
-def playpen_lock_file(state_root: Path, family: str, sandbox: str) -> Path:
-    """Proof that an old playpen may still live (contract 03 §11.4).
-
-    One lock per sandbox. A family-wide lock made the incoming sandbox
-    watch the OUTGOING playpen's beat, so the handshake a switch asks
-    for could never pass while the family was still being served."""
-    return control_dir(state_root, family, sandbox) / PLAYPEN_LOCK
 
 
 def creds_dir(state_root: Path, family: str) -> Path:

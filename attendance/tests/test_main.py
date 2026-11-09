@@ -24,7 +24,7 @@ def env_for(tmp_path: Path, **extra: str) -> dict[str, str]:
         "ATTENDANCE_SESSIONS_ROOT": str(tmp_path / "sessions"),
         "ATTENDANCE_STATE_ROOT": str(tmp_path / "state"),
         "ATTENDANCE_SOCKET": str(tmp_path / "attendance.sock"),
-        "ATTENDANCE_LOG_DIR": str(tmp_path / "log"),
+        "ATTENDANCE_VMM_SOCKET": str(tmp_path / "vmm" / "vmm.sock"),
         LAN_ADDRESS_ENV: os.environ[LAN_ADDRESS_ENV],
     }
     values.update(extra)
@@ -55,6 +55,7 @@ def test_check_passes_with_every_token(
     printed = capsys.readouterr().out
     assert "tcp           off" in printed
     assert "attendance.sock" in printed
+    assert "vmm.sock" in printed
     assert "door-trigger" not in printed
 
 
@@ -87,6 +88,18 @@ def test_check_fails_closed_on_a_bad_environment(
     use_env(monkeypatch, env_for(tmp_path, ATTENDANCE_LAN_PORT="nope"))
 
     assert main(["--check"]) == EXIT_BAD_CONFIG
+
+
+def test_check_fails_closed_with_no_vmm_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Decision CH20: the unit sets the socket. A service without it does not start."""
+    write_tokens(tmp_path / "state")
+    use_env(monkeypatch, env_for(tmp_path))
+    monkeypatch.delenv("ATTENDANCE_VMM_SOCKET")
+
+    assert main(["--check"]) == EXIT_BAD_CONFIG
+    assert "ATTENDANCE_VMM_SOCKET" in capsys.readouterr().err
 
 
 async def test_serve_binds_the_socket_at_0660_under_a_setgid_dir(tmp_path: Path) -> None:

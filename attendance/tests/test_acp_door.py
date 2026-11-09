@@ -1,111 +1,112 @@
-"""`WS /acp/{family}`: the bearer, the byte pipe to `acp-relay`, the caps."""
+"""`WS /acp/{family}`: the bearer, the answers from the host list, the routes.
+
+Contract 02 §5. attendance answers `initialize`, `session/new` and
+`session/list` itself, with no boot, and routes each other method by its
+`sessionId` over one vmm ACP stream per session (decisions CH21-7, CH21-9,
+CH10-9, CH83 rule 1).
+"""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import dataclasses
 import json
-import os
 import shutil
-import signal
-import sys
 import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
-from attendance.__main__ import serve
-from attendance.acp_door import MAX_FRAME_BYTES, RELAY_ENDED, Close
+import uvicorn
+from attendance.acp_door import (
+    HANDSHAKE_FAILED,
+    INITIALIZE_RESPONSE,
+    MAX_FRAME_BYTES,
+    RELAY_ENDED,
+    RPC_INTERNAL_ERROR,
+    RPC_INVALID_PARAMS,
+    RPC_METHOD_NOT_FOUND,
+    RPC_NOT_FOUND,
+    Close,
+)
 from attendance.api import Listener, build_app
 from attendance.auth import Principal, TokenBook
-from attendance.config import DEFAULT_FACADE_COMMAND, DEFAULT_RELAY_COMMAND, Config
+from attendance.ids import is_session_id, new_session_id
 from attendance.service import SessionService
-from attendance_harness import FAMILY, make_config, write_status, write_tokens
+from attendance_harness import FAMILY, make_config, make_service, write_status, write_tokens
+from creche_wire import DoorOrigin
+from fake_facade import ANSWER_CHUNKS, PromptMode, chunk
+from fake_vmm import BUSY, FakeVmm
 from websockets.asyncio.client import ClientConnection, connect, unix_connect
 from websockets.exceptions import ConnectionClosed
 
-REPO = Path(__file__).resolve().parents[2]
-FAKE_SBX = REPO / "integration" / "tests" / "fake_sbx.py"
-FAKE_RELAY = Path(__file__).resolve().parent / "fake_relay.py"
-FAKE_FACADE = Path(__file__).resolve().parent / "fake_facade.py"
 DOOR_PATH = f"ws://attendance/acp/{FAMILY}"
 SHORT_TOKEN = "x" * 32
 HTTP_FORBIDDEN = 403
+CWD = "/home/operator/la-creche"
+SBX_ERA_ID = "sess-1"
 
 #: One JSON-RPC line with text that a generic line reader splits: U+2028.
-FRAME = json.dumps(
-    {"jsonrpc": "2.0", "id": 1, "method": "session/new", "params": {"t": f"a{chr(0x2028)}é"}},
+INIT = json.dumps(
+    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"t": f"a{chr(0x2028)}é"}},
     ensure_ascii=False,
 )
 
 
-@dataclasses.dataclass(slots=True)
+class _Server(uvicorn.Server):
+    """A listener that leaves the signal handlers of the test run alone."""
+
+    @contextlib.contextmanager
+    def capture_signals(self) -> Generator[None]:
+        yield
+
+
+@dataclass(slots=True)
 class Door:
-    config: Config
+    socket: Path
     tokens: dict[Principal, str]
-    record: Path
+    vmm: FakeVmm
+    service: SessionService
 
     def connect(self, bearer: str | None) -> connect:
         headers = {"Authorization": f"Bearer {bearer}"} if bearer is not None else {}
-        return unix_connect(str(self.config.socket_path), DOOR_PATH, additional_headers=headers)
+        return unix_connect(str(self.socket), DOOR_PATH, additional_headers=headers)
 
     def door_acp(self) -> connect:
         return self.connect(self.tokens[Principal.DOOR_ACP])
-
-
-def relay_command() -> str:
-    """`DEFAULT_RELAY_COMMAND`, with `fake_sbx.py` for `sbx` and the fake relay."""
-    command = DEFAULT_RELAY_COMMAND.replace("sbx", f"{sys.executable} -I {FAKE_SBX}", 1)
-    return command.replace("acp-relay", f"{sys.executable} -I {FAKE_RELAY}")
-
-
-def facade_command() -> str:
-    """`DEFAULT_FACADE_COMMAND`, with `fake_sbx.py` for `sbx` and the fake facade."""
-    command = DEFAULT_FACADE_COMMAND.replace("sbx", f"{sys.executable} -I {FAKE_SBX}", 1)
-    return command.replace("creche-facade", f"{sys.executable} -I {FAKE_FACADE}")
-
-
-async def start_door(
-    tmp_path: Path, socket_dir: Path, mode: str
-) -> tuple[Door, asyncio.Task[None]]:
-    record = tmp_path / "relay.txt"
-    env_file = tmp_path / "relay.env"
-    env_file.write_text(f"FAKE_RELAY_RECORD={record}\nFAKE_RELAY_MODE={mode}\n")
-    config = dataclasses.replace(
-        make_config(tmp_path),
-        socket_path=socket_dir / "attendance.sock",
-        acp_relay_command=relay_command(),
-        facade_command=facade_command(),
-    )
-    write_status(config.state_root, playpen_env=str(env_file))
-    made = write_tokens(config.state_root)
-    book = TokenBook(config.state_root)
-    book.load()
-    task = asyncio.create_task(serve(config, book))
-
-    async with asyncio.timeout(10):
-        while not config.socket_path.is_socket():
-            await asyncio.sleep(0.02)
-
-    return Door(config, made, record), task
 
 
 @pytest.fixture
 async def door(tmp_path: Path, request: pytest.FixtureRequest) -> AsyncIterator[Door]:
     # AF_UNIX cannot bind past about 104 bytes on macOS. tmp_path is close.
     socket_dir = Path(tempfile.mkdtemp(prefix="acp-door-"))
-    mode = getattr(request, "param", "echo")
-    built, task = await start_door(tmp_path, socket_dir, mode)
+    socket = socket_dir / "attendance.sock"
+    config = make_config(tmp_path)
+    write_status(config.state_root)
+    made = write_tokens(config.state_root)
+    book = TokenBook(config.state_root)
+    book.load()
+    vmm = FakeVmm(prompt_mode=getattr(request, "param", PromptMode.OK))
+    service = make_service(config, vmm)
+    app = build_app(service, book, Listener.SOCKET)
+    server = _Server(uvicorn.Config(app, uds=str(socket), log_level="warning"))
+    task = asyncio.create_task(server.serve())
 
-    yield built
+    async with asyncio.timeout(10):
+        while not socket.is_socket():
+            await asyncio.sleep(0.02)
 
-    task.cancel()
+    yield Door(socket, made, vmm, service)
+
+    server.should_exit = True
 
     with contextlib.suppress(asyncio.CancelledError):
         await task
 
+    await vmm.stop()
     shutil.rmtree(socket_dir, ignore_errors=True)
 
 
@@ -118,13 +119,32 @@ async def close_code(connection: ClientConnection) -> int | None:
     return received.code if received is not None else None
 
 
+async def ask(connection: ClientConnection, request_id: object, method: str, **params: Any) -> Any:
+    """One request and its answer."""
+    message = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+    await connection.send(json.dumps(message))
+    return json.loads(await asyncio.wait_for(connection.recv(), 5))
+
+
+async def new_session(connection: ClientConnection) -> str:
+    answer = await ask(connection, "new", "session/new", cwd=CWD, mcpServers=[])
+    return str(answer["result"]["sessionId"])
+
+
+def prompt(request_id: object, session: str) -> str:
+    params = {"sessionId": session, "prompt": [{"type": "text", "text": "hello"}]}
+    return json.dumps(
+        {"jsonrpc": "2.0", "id": request_id, "method": "session/prompt", "params": params}
+    )
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize(
     ("bearer", "code"),
     [(None, 4401), (SHORT_TOKEN, 4401), (Principal.DOOR_TRIGGER, 4403)],
     ids=["missing", "wrong", "other_door"],
 )
-async def test_a_bad_bearer_closes_before_any_exec(
+async def test_a_bad_bearer_closes_before_any_vmm_call(
     door: Door, bearer: str | Principal | None, code: int
 ) -> None:
     offered = door.tokens[bearer] if isinstance(bearer, Principal) else bearer
@@ -132,32 +152,259 @@ async def test_a_bad_bearer_closes_before_any_exec(
     async with door.connect(offered) as connection:
         assert await close_code(connection) == code
 
-    assert not door.record.exists()
+    assert door.vmm.creates == []
+    assert door.vmm.opened == []
 
 
 @pytest.mark.slow
-async def test_a_frame_round_trips_byte_for_byte(door: Door) -> None:
+async def test_initialize_is_answered_with_no_boot(door: Door) -> None:
+    """Decision CH21-7: one `INITIALIZE_RESPONSE`, from attendance itself."""
     async with door.door_acp() as connection:
-        await connection.send(FRAME)
-        echoed = await asyncio.wait_for(connection.recv(), 5)
+        await connection.send(INIT)
+        answer = json.loads(await asyncio.wait_for(connection.recv(), 5))
 
-    assert echoed == FRAME
-    assert door.record.read_text() == "started\n"
+    assert answer == {"jsonrpc": "2.0", "id": 1, "result": INITIALIZE_RESPONSE}
+    assert door.vmm.opened == []
+
+
+@pytest.mark.slow
+async def test_session_new_makes_a_door_row_and_boots_nothing(door: Door) -> None:
+    """Contract 02 §5.3: a minted id, a create with the door origin, no stream."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+
+    assert is_session_id(session)
+    (create,) = door.vmm.creates
+    assert create.id.root == session
+    assert create.family.root == FAMILY
+    assert create.cwd.root == CWD
+    assert isinstance(create.origin.root, DoorOrigin)
+    assert door.vmm.opened == []
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"cwd": "relative", "mcpServers": []},
+        {"cwd": "/a\x00b", "mcpServers": []},
+        {"cwd": "/" + "a" * 4096, "mcpServers": []},
+        {"cwd": CWD},
+        {"cwd": CWD, "mcpServers": [{"name": "x"}]},
+        {"cwd": CWD, "mcpServers": [], "additionalDirectories": ["/tmp"]},
+    ],
+    ids=["relative", "nul", "too_long", "no_servers", "a_server", "a_directory"],
+)
+async def test_a_bad_session_new_is_invalid_params(door: Door, params: dict[str, Any]) -> None:
+    async with door.door_acp() as connection:
+        answer = await ask(connection, 7, "session/new", **params)
+
+    assert answer["error"]["code"] == RPC_INVALID_PARAMS
+    assert door.vmm.creates == []
+
+
+@pytest.mark.slow
+async def test_session_list_pages_the_host_list(door: Door) -> None:
+    """Contract 02 §5.4: newest created first, the vmm cursor as a string."""
+    async with door.door_acp() as connection:
+        made = [await new_session(connection) for _ in range(3)]
+        first = (await ask(connection, 2, "session/list", cwd=CWD))["result"]
+        second = (await ask(connection, 3, "session/list", cursor=first["nextCursor"]))["result"]
+
+    assert [one["sessionId"] for one in first["sessions"]] == [made[2], made[1]]
+    assert [one["sessionId"] for one in second["sessions"]] == [made[0]]
+    assert "nextCursor" not in second
+    assert first["sessions"][0]["cwd"] == CWD
+    assert first["sessions"][0]["title"] is None
+    assert first["sessions"][0]["updatedAt"].endswith("Z")
+    assert door.vmm.lists[0].cwd is not None
+    assert door.vmm.opened == []
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("cursor", ["0", "x", "01", "9007199254740992", 5], ids=str)
+async def test_a_cursor_no_page_gave_is_invalid_params(door: Door, cursor: object) -> None:
+    async with door.door_acp() as connection:
+        answer = await ask(connection, 2, "session/list", cursor=cursor)
+
+    assert answer["error"]["code"] == RPC_INVALID_PARAMS
+    assert door.vmm.lists == []
+
+
+@pytest.mark.slow
+async def test_a_prompt_reaches_the_stream_of_its_session(door: Door) -> None:
+    """Decision CH21-7: the door shakes hands on the new stream, then passes
+    the client's line, and each line of the facade back."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        await connection.send(prompt(9, session))
+        lines = [json.loads(await asyncio.wait_for(connection.recv(), 5)) for _ in range(3)]
+
+    assert door.vmm.opened == [session]
+    assert door.vmm.facades[session].methods == ["initialize", "session/prompt"]
+    assert [json.dumps(one, separators=(",", ":")) for one in lines[:2]] == [
+        chunk(session, part) for part in ANSWER_CHUNKS
+    ]
+    assert lines[2] == {"jsonrpc": "2.0", "id": 9, "result": {"stopReason": "end_turn"}}
+
+
+@pytest.mark.slow
+async def test_an_sbx_era_id_is_not_found_with_no_vmm_call(door: Door) -> None:
+    """Decision CH10-9: an id that is no session id never reaches the vmm."""
+    async with door.door_acp() as connection:
+        answer = await ask(connection, 4, "session/load", sessionId=SBX_ERA_ID, cwd=CWD)
+
+    assert answer["error"]["code"] == RPC_NOT_FOUND
+    assert door.vmm.opened == []
+
+
+@pytest.mark.slow
+async def test_an_unknown_session_is_not_found_with_no_boot(door: Door) -> None:
+    """Decision CH21-9: the vmm answers `not_found` before 101."""
+    unknown = new_session_id()
+
+    async with door.door_acp() as connection:
+        answer = await ask(connection, 4, "session/load", sessionId=unknown, cwd=CWD)
+
+    assert answer["error"]["code"] == RPC_NOT_FOUND
+    assert door.vmm.opened == [unknown]
+    assert door.vmm.facades == {}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("code", [BUSY, "host_full", "sandbox_start_failed", "unreachable"])
+async def test_a_vmm_refusal_is_an_internal_error_with_its_code(door: Door, code: str) -> None:
+    """Decision CH83 rule 1."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        door.vmm.refuse["acp"] = code
+        await connection.send(prompt(5, session))
+        answer = json.loads(await asyncio.wait_for(connection.recv(), 5))
+
+    assert answer["error"]["code"] == RPC_INTERNAL_ERROR
+    assert answer["error"]["data"] == {"code": code}
+    assert door.service.busy(Principal.NOTICEBOARD)["prompts_in_flight"] == 0
+
+
+@pytest.mark.slow
+async def test_a_failed_create_is_an_internal_error(door: Door) -> None:
+    door.vmm.refuse["create"] = "unknown_family"
+
+    async with door.door_acp() as connection:
+        answer = await ask(connection, 3, "session/new", cwd=CWD, mcpServers=[])
+
+    assert answer["error"]["code"] == RPC_INTERNAL_ERROR
+    assert answer["error"]["data"] == {"code": "unknown_family"}
+
+
+@pytest.mark.slow
+async def test_a_bad_handshake_answers_with_no_stream_kept(door: Door) -> None:
+    door.vmm.protocol_version = 2
+
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        await connection.send(prompt(5, session))
+        answer = json.loads(await asyncio.wait_for(connection.recv(), 5))
+
+    assert answer["error"]["code"] == RPC_INTERNAL_ERROR
+    assert answer["error"]["data"] == {"code": HANDSHAKE_FAILED}
+    assert door.vmm.channels[session].closed
+
+
+@pytest.mark.slow
+async def test_a_method_with_no_session_is_method_not_found(door: Door) -> None:
+    async with door.door_acp() as connection:
+        answer = await ask(connection, 6, "authenticate", methodId="x")
+        await connection.send(json.dumps({"jsonrpc": "2.0", "method": "session/cancel"}))
+        after = await ask(connection, 7, "initialize")
+
+    assert answer["error"]["code"] == RPC_METHOD_NOT_FOUND
+    assert after["result"] == INITIALIZE_RESPONSE
+
+
+@pytest.mark.slow
+async def test_two_sessions_of_one_connection_get_two_streams(door: Door) -> None:
+    async with door.door_acp() as connection:
+        first = await new_session(connection)
+        second = await new_session(connection)
+
+        for request_id, session in ((1, first), (2, second)):
+            await connection.send(prompt(request_id, session))
+
+            for _ in range(3):
+                await asyncio.wait_for(connection.recv(), 5)
+
+    assert door.vmm.opened == [first, second]
+    assert set(door.vmm.channels) == {first, second}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("door", [PromptMode.LOSE], indirect=True)
+async def test_a_stream_that_ends_closes_the_connection(door: Door) -> None:
+    """Decision CH19 (6): the client opens the session again with `session/load`."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        await connection.send(prompt(1, session))
+        await asyncio.wait_for(connection.recv(), 5)
+
+        with pytest.raises(ConnectionClosed) as closed:
+            await asyncio.wait_for(connection.recv(), 5)
+
+    received = closed.value.rcvd
+    assert received is not None
+    assert received.code == Close.RELAY_GONE
+    assert received.reason == RELAY_ENDED
+    assert door.vmm.channels[session].closed
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("door", [PromptMode.HOLD], indirect=True)
+async def test_a_prompt_counts_in_busy_until_its_answer(door: Door) -> None:
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        await connection.send(prompt(1, session))
+
+        async with asyncio.timeout(5):
+            while session not in door.vmm.facades or not door.vmm.facades[session].held:
+                await asyncio.sleep(0.01)
+
+        assert door.service.busy(Principal.NOTICEBOARD)["prompts_in_flight"] == 1
+        await door.vmm.settle(session)
+
+        for _ in range(2):
+            await asyncio.wait_for(connection.recv(), 5)
+
+        assert door.service.busy(Principal.NOTICEBOARD)["prompts_in_flight"] == 0
+
+
+@pytest.mark.slow
+async def test_a_client_answer_reaches_the_facade_that_asked(door: Door) -> None:
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        await connection.send(prompt(1, session))
+
+        for _ in range(3):
+            await asyncio.wait_for(connection.recv(), 5)
+
+        asked = {"jsonrpc": "2.0", "id": 40, "method": "session/request_permission"}
+        await door.vmm.channels[session].feed(json.dumps(asked))
+        assert json.loads(await asyncio.wait_for(connection.recv(), 5)) == asked
+        await connection.send(json.dumps({"jsonrpc": "2.0", "id": 40, "result": {}}))
+
+        async with asyncio.timeout(5):
+            while door.vmm.facades[session].methods[-1:] != [""]:
+                await asyncio.sleep(0.01)
+
+    assert door.vmm.facades[session].received[-1] == {"jsonrpc": "2.0", "id": 40, "result": {}}
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("ending", ["\n", "\r\n"], ids=["lf", "crlf"])
 async def test_one_line_ending_of_a_client_frame_is_stripped(door: Door, ending: str) -> None:
-    """A client can end each frame in one line break. Agmente does.
-
-    The door adds its own LF for the relay, so a frame it did not strip
-    would also reach the relay as an empty line.
-    """
+    """A client can end each frame in one line break. Agmente does."""
     async with door.door_acp() as connection:
-        await connection.send(FRAME + ending)
-        assert await asyncio.wait_for(connection.recv(), 5) == FRAME
-        await connection.send(FRAME)
-        assert await asyncio.wait_for(connection.recv(), 5) == FRAME
+        await connection.send(INIT + ending)
+        assert json.loads(await asyncio.wait_for(connection.recv(), 5))["id"] == 1
 
 
 @pytest.mark.slow
@@ -170,11 +417,9 @@ async def test_one_line_ending_of_a_client_frame_is_stripped(door: Door, ending:
         ('{"jsonrpc":"2.0","id":NaN}', Close.BAD_FRAME),
         ('{"id":1}', Close.BAD_FRAME),
         ('{"jsonrpc":"2.0","id":1e999,"method":"session/prompt"}', Close.BAD_FRAME),
-        (FRAME + "\r", Close.BAD_FRAME),
-        (FRAME + "\n\n", Close.BAD_FRAME),
-        (FRAME + "\r\n\n", Close.BAD_FRAME),
+        (INIT + "\r", Close.BAD_FRAME),
+        (INIT + "\n\n", Close.BAD_FRAME),
         ("\n", Close.BAD_FRAME),
-        ("\r\n", Close.BAD_FRAME),
     ],
     ids=[
         "over_the_cap",
@@ -185,9 +430,7 @@ async def test_one_line_ending_of_a_client_frame_is_stripped(door: Door, ending:
         "prompt_id_past_double",
         "lone_cr",
         "two_lf",
-        "crlf_then_lf",
         "only_lf",
-        "only_crlf",
     ],
 )
 async def test_a_bad_frame_closes_the_connection(door: Door, frame: str, code: int) -> None:
@@ -197,44 +440,8 @@ async def test_a_bad_frame_closes_the_connection(door: Door, frame: str, code: i
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("door", ["one"], indirect=True)
-async def test_the_relay_exit_closes_the_websocket(door: Door) -> None:
-    async with door.door_acp() as connection:
-        await connection.send(FRAME)
-        assert await asyncio.wait_for(connection.recv(), 5) == FRAME
-        assert await close_code(connection) == Close.RELAY_GONE
-
-
-#: The time a client may wait for the close of a relay that exited. The
-#: beat is 30 s and a reap of a held pipe is 10 s, so neither fits in it.
-RELAY_EXIT_SEEN_S = 3.0
-
-
-@pytest.mark.slow
-@pytest.mark.parametrize("door", ["orphan"], indirect=True)
-async def test_a_relay_exit_closes_at_once_while_its_stdout_is_held(door: Door) -> None:
-    """`sbx exec` can exit while a process it started holds its stdout."""
-    async with door.door_acp() as connection:
-        await connection.send(FRAME)
-        assert await asyncio.wait_for(connection.recv(), 5) == FRAME
-
-        try:
-            with pytest.raises(ConnectionClosed) as closed:
-                await asyncio.wait_for(connection.recv(), RELAY_EXIT_SEEN_S)
-        finally:
-            for line in door.record.read_text().splitlines():
-                if line.startswith("orphan "):
-                    os.kill(int(line.split()[1]), signal.SIGKILL)
-
-    received = closed.value.rcvd
-    assert received is not None
-    assert received.code == Close.RELAY_GONE
-    assert received.reason == RELAY_ENDED
-
-
-@pytest.mark.slow
 async def test_the_acp_bearer_reaches_no_http_route(door: Door) -> None:
-    transport = httpx.AsyncHTTPTransport(uds=str(door.config.socket_path))
+    transport = httpx.AsyncHTTPTransport(uds=str(door.socket))
     headers = {"Authorization": f"Bearer {door.tokens[Principal.DOOR_ACP]}"}
 
     async with httpx.AsyncClient(transport=transport, base_url="http://attendance") as client:
@@ -247,7 +454,7 @@ async def test_the_acp_bearer_reaches_no_http_route(door: Door) -> None:
 
 def test_the_lan_listener_has_no_acp_route(tmp_path: Path) -> None:
     config = make_config(tmp_path)
-    service = SessionService(config)
+    service = make_service(config, FakeVmm())
     book = TokenBook(config.state_root)
     paths = {getattr(route, "path", "") for route in build_app(service, book, Listener.LAN).routes}
     socket_paths = {

@@ -5,8 +5,8 @@ need it. This is a Python service and it stays one (contract 03 §14.1
 rule 6).
 
 `--check` validates the environment and every token file, prints what the
-service would bind, and exits. It opens no socket and touches no sandbox, so
-a deploy can run it before it swaps a unit.
+service would bind, and exits. It opens no socket and calls no vmm, so a
+deploy can run it before it swaps a unit.
 """
 
 from __future__ import annotations
@@ -26,7 +26,9 @@ import uvicorn
 from .api import Listener, build_app
 from .auth import Principal, TokenBook, TokenError
 from .config import Config, ConfigError, from_env
+from .faults import FaultReporter
 from .service import SessionService
+from .vmm import HttpVmm
 
 EXIT_OK = 0
 EXIT_BAD_CONFIG = 2
@@ -67,7 +69,9 @@ def main(argv: list[str] | None = None) -> int:
 
 async def serve(config: Config, tokens: TokenBook) -> None:
     """Run the service until a signal asks it to stop."""
-    service = SessionService(config)
+    faults = FaultReporter(config.state_root)
+    vmm = HttpVmm.over_socket(config.vmm_socket, faults)
+    service = SessionService(config, vmm, faults)
     service.start()
     service.start_upkeep()
     socket_app = build_app(service, tokens, Listener.SOCKET)
@@ -83,6 +87,7 @@ async def serve(config: Config, tokens: TokenBook) -> None:
         await asyncio.gather(*(server.serve() for server in servers))
     finally:
         await service.close()
+        await vmm.aclose()
 
 
 def _uvicorn_configs(config: Config, socket_app: object, lan_app: object) -> list[uvicorn.Config]:
@@ -220,7 +225,7 @@ def _report(config: Config) -> None:
     else:
         print("attendance: tcp           off")
 
-    print(f"attendance: facade        {config.facade_command}")
+    print(f"attendance: vmm           {config.vmm_socket}")
     print(f"attendance: tokens        {len(Principal)} files present and long enough")
 
 

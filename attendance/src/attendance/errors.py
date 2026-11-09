@@ -42,6 +42,9 @@ class ErrorCode(StrEnum):
     # trigger, so nothing may dispatch to it. Deny by default (invariant 11).
     DISPATCH_NOT_DECLARED = "dispatch_not_declared"
     SESSION_BUSY = "session_busy"
+    #: Contract 02 §14: another holder holds the session's vmm stream
+    #: (decision CH83 rule 4).
+    BUSY = "busy"
     LEASE_TAKEN_OVER = "lease_taken_over"
     FAMILY_INVALID = "family_invalid"
     PAYLOAD_TOO_LARGE = "payload_too_large"
@@ -89,6 +92,7 @@ _STATUS: dict[ErrorCode, int] = {
     ErrorCode.FAMILY_UNKNOWN: HTTP_NOT_FOUND,
     ErrorCode.DISPATCH_NOT_DECLARED: HTTP_FORBIDDEN,
     ErrorCode.SESSION_BUSY: HTTP_CONFLICT,
+    ErrorCode.BUSY: HTTP_CONFLICT,
     ErrorCode.LEASE_TAKEN_OVER: HTTP_CONFLICT,
     ErrorCode.FAMILY_INVALID: HTTP_CONFLICT,
     ErrorCode.PAYLOAD_TOO_LARGE: HTTP_PAYLOAD_TOO_LARGE,
@@ -101,6 +105,7 @@ _STATUS: dict[ErrorCode, int] = {
 
 _RETRY_AFTER_S: dict[ErrorCode, int] = {
     ErrorCode.SESSION_BUSY: _RETRY_BUSY_S,
+    ErrorCode.BUSY: _RETRY_BUSY_S,
     ErrorCode.QUEUE_FULL: _RETRY_QUEUE_S,
     ErrorCode.FAMILY_DEGRADED: _RETRY_DEGRADED_S,
     ErrorCode.SANDBOX_UNAVAILABLE: _RETRY_SANDBOX_S,

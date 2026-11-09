@@ -1,8 +1,9 @@
 """The trigger door: `door-trigger` starts one job in an autonomous family.
 
 Each firing is one `auto-<ulid>` job in the family's `JobQueue`, beside
-the dispatched jobs. Every test runs against `FakeFacade` and a temporary
-state root, so no test needs the host, `sbx` or the PEP.
+the dispatched jobs, on a session with the `auto` origin (decision
+CH21-4a). Every test runs against `FakeVmm` and a temporary state root, so
+no test needs the host, the vmm or the PEP.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Any
 
 import httpx
 import pytest
-from attendance.acp_link import METHOD_NEW_SESSION, METHOD_PROMPT
+from attendance.acp_link import METHOD_PROMPT
 from attendance.api import build_app
 from attendance.auth import Principal, TokenBook
 from attendance.dispatch import DispatchLedger, LedgerDoor
@@ -22,13 +23,13 @@ from attendance.models import TriggerKind
 from attendance.paths import outcome_file
 from attendance.requests import JobQuery, TriggerRequest, read_trigger, read_trigger_jobs
 from attendance.service import SessionService
-from attendance_harness import make_config, wait_until, write_status, write_tokens
-from creche_vectors import meta_key
-from fake_facade import FacadeFleet, FakeFacade, PromptMode
+from attendance_harness import make_config, make_service, wait_until, write_status, write_tokens
+from creche_wire import AutoOrigin, TimerTrigger, WebhookTrigger
+from fake_facade import PromptMode
+from fake_vmm import FakeVmm
 
 TRIGGER_DOOR = Principal.DOOR_TRIGGER
 FAMILY = "ha-review"
-SANDBOX = "ha-review-s1"
 CHAT_FAMILY = "chat"
 WEBHOOK = "deploy-notify"
 MESSAGE = "This turn was started by an autonomous trigger."
@@ -41,9 +42,9 @@ HTTP_FORBIDDEN = 403
 class TriggerHarness:
     """One service that serves one autonomous family and one attended family."""
 
-    def __init__(self, service: SessionService, facades: FacadeFleet, state_root: Path) -> None:
+    def __init__(self, service: SessionService, vmm: FakeVmm, state_root: Path) -> None:
         self.service = service
-        self.facades = facades
+        self.vmm = vmm
         self.state_root = state_root
 
     async def fire(self, **changed: Any) -> dict[str, Any]:
@@ -55,16 +56,26 @@ class TriggerHarness:
         assert isinstance(listed, list)
         return listed  # pyright: ignore[reportUnknownVariableType]
 
-    def facade(self) -> FakeFacade:
-        return self.facades.facades[SANDBOX]
-
     def received(self, method: str) -> list[dict[str, Any]]:
-        return [one["params"] for one in self.facade().received if one["method"] == method]
+        return [
+            one["params"]
+            for facade in self.vmm.facades.values()
+            for one in facade.received
+            if one["method"] == method
+        ]
+
+    def held_now(self) -> list[str]:
+        return [session for facade in self.vmm.facades.values() for session in facade.held]
 
     async def held(self, count: int) -> list[str]:
-        await wait_until(lambda: SANDBOX in self.facades.facades)
-        await wait_until(lambda: len(self.facade().held) == count)
-        return list(self.facade().held)
+        await wait_until(lambda: len(self.held_now()) == count)
+        return self.held_now()
+
+    def origin(self) -> AutoOrigin:
+        (made,) = self.vmm.creates
+        origin = made.origin.root
+        assert isinstance(origin, AutoOrigin)
+        return origin
 
     async def ended(self, session: str) -> dict[str, Any]:
         await wait_until(lambda: self.jobs(session=session)[0]["outcome"] is not None)
@@ -74,7 +85,7 @@ class TriggerHarness:
 
     async def stop(self) -> None:
         await self.service.close()
-        await self.facades.stop()
+        await self.vmm.stop()
 
 
 async def build(
@@ -86,15 +97,12 @@ async def build(
         config.state_root,
         family=FAMILY,
         kind="autonomous",
-        sandboxes=((SANDBOX, "ready"),),
         **limits,  # pyright: ignore[reportArgumentType]
     )
-    facades = FacadeFleet(prompt_mode=mode)
-    service = SessionService(
-        config, acp_factory=facades.factory, cold_start_wait_s=1.0, cancel_wait_s=0.2
-    )
+    vmm = FakeVmm(prompt_mode=mode)
+    service = make_service(config, vmm, cancel_wait_s=0.2)
     service.start()
-    return TriggerHarness(service, facades, config.state_root)
+    return TriggerHarness(service, vmm, config.state_root)
 
 
 @pytest.fixture
@@ -120,21 +128,31 @@ def _request(**changed: Any) -> TriggerRequest:
 
 
 async def test_a_trigger_posts_one_job(harness: TriggerHarness) -> None:
-    """One firing is one `auto-<ulid>` job: one `session/new`, one prompt."""
+    """One firing is one `auto-<ulid>` job: one row, one prompt."""
     answer = await harness.fire()
     session = str(answer["session_id"])
     await harness.held(1)
 
     assert session.startswith("auto-")
     assert answer == {"session_id": session, "status": "running", "created": True}
-    assert harness.received(METHOD_NEW_SESSION) == [
-        {**harness.received(METHOD_NEW_SESSION)[0], "_meta": {meta_key("job"): session}}
-    ]
+    origin = harness.origin()
+    assert origin.auto.job.root == session
+    assert isinstance(origin.auto.trigger.root, TimerTrigger)
     [prompt] = harness.received(METHOD_PROMPT)
     assert prompt["prompt"] == [{"type": "text", "text": MESSAGE}]
-    trigger = prompt["_meta"][meta_key("trigger")]
-    assert trigger == {"kind": "timer", "name": None, "fired_at": trigger["fired_at"]}
+    assert "_meta" not in prompt
     assert [job["status"] for job in harness.jobs()] == ["running"]
+
+
+async def test_a_webhook_firing_names_its_webhook_in_the_origin(
+    harness: TriggerHarness,
+) -> None:
+    await harness.fire(kind=TriggerKind.WEBHOOK, name=WEBHOOK)
+    await harness.held(1)
+    trigger = harness.origin().auto.trigger.root
+
+    assert isinstance(trigger, WebhookTrigger)
+    assert trigger.webhook.name.root == WEBHOOK
 
 
 async def test_a_repeat_with_the_same_key_enqueues_nothing(harness: TriggerHarness) -> None:
@@ -143,7 +161,7 @@ async def test_a_repeat_with_the_same_key_enqueues_nothing(harness: TriggerHarne
     await harness.held(1)
 
     assert second == {**first, "created": False}
-    assert len(harness.received(METHOD_NEW_SESSION)) == 1
+    assert len(harness.vmm.creates) == 1
     assert len(harness.jobs()) == 1
 
 

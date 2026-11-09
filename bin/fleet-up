@@ -53,7 +53,6 @@ UNIT_SOURCE_DIR="$TREE/systemd"
 STATE_ROOT="$PREFIX/srv/agents/state/creche"
 TOKENS_DIR="$STATE_ROOT/tokens"
 SOCK_DIR="$STATE_ROOT/sock"
-LOG_DIR="$STATE_ROOT/log"
 SOCKET="$SOCK_DIR/attendance.sock"
 FLEET_DIR="$STATE_ROOT/fleet"
 RECORD_FILE="$FLEET_DIR/record.json"
@@ -97,7 +96,7 @@ SOCK_DIR_MODE=2750
 # One token file for each principal of `attendance.auth.Principal`.
 # attendance refuses to start when one of them is missing, empty or short.
 # `bin/tests/test_fleet_up.py` holds this list equal to the enum.
-PRINCIPALS="chaperone-delegate chaperone-dispatch door-trigger noticeboard door-acp caregiver"
+PRINCIPALS="chaperone-delegate chaperone-dispatch door-trigger noticeboard door-acp"
 SECRET_BYTES=48
 
 # Each user unit, in the order `up` installs and starts it. attendance comes
@@ -413,7 +412,6 @@ up_env_files() {
   env_set "$ATTENDANCE_ENV" ATTENDANCE_STATE_ROOT "$STATE_ROOT"
   env_set "$ATTENDANCE_ENV" ATTENDANCE_SESSIONS_ROOT "$SESSIONS_ROOT"
   env_set "$ATTENDANCE_ENV" ATTENDANCE_SOCKET "$SOCKET"
-  env_set "$ATTENDANCE_ENV" ATTENDANCE_LOG_DIR "$LOG_DIR"
 
   env_set "$NOTICEBOARD_ENV" NOTICEBOARD_STATE_ROOT "$STATE_ROOT"
   env_set "$NOTICEBOARD_ENV" NOTICEBOARD_REGISTRY_DIR "$REGISTRY"

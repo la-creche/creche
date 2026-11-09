@@ -2,7 +2,8 @@
 
 `attendance` never calls `caregiver`. Everything it needs about a family arrives
 through this one file: the family's kind, whether it may serve turns, and
-which sandbox is ready. It reads no credential epoch, because no reader
+its limits. The vmm owns each VM, so this reader reads no sandbox
+(decision CH1). It reads no credential epoch, because no reader
 compares one with anything (contract 03 section 12 rule 3, decision CH5b,
 fact 36).
 
@@ -12,7 +13,7 @@ is validated (invariants 12 and 14).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -21,7 +22,7 @@ from typing import Any
 from .atomic import as_array, as_object, read_json
 from .clock import age_seconds, parse_rfc3339
 from .errors import ApiError, ErrorCode
-from .ids import is_family, is_sandbox
+from .ids import is_family
 from .paths import families_dir, status_file
 from .states import SessionKind
 
@@ -38,49 +39,6 @@ class FamilyState(StrEnum):
     RECONCILING = "reconciling"
     INVALID = "invalid"
     DEGRADED = "degraded"
-
-
-class SandboxState(StrEnum):
-    """Contract 05 §4.2's lifecycle states."""
-
-    PLANNED = "planned"
-    CREATING = "creating"
-    READY = "ready"
-    DRAINING = "draining"
-    STOPPING = "stopping"
-    GONE = "gone"
-    FAILED = "failed"
-
-
-# A sandbox in either of these is a cold start in progress. Contract 02 §5.1
-# says a cold start is not `sandbox_unavailable`: the service waits for it.
-COLD_START_STATES: frozenset[SandboxState] = frozenset(
-    {SandboxState.PLANNED, SandboxState.CREATING}
-)
-
-# The two states this service will dial. `ready` means the handshake passed,
-# and `creating` is what running that handshake promotes (contract 05 §4.2).
-# Nothing else serves a turn, so nothing else may be switched onto either.
-STARTABLE_STATES: frozenset[SandboxState] = frozenset({SandboxState.READY, SandboxState.CREATING})
-
-
-@dataclass(slots=True)
-class SandboxInfo:
-    """One row of the status document's `sandboxes` list."""
-
-    id: str
-    state: SandboxState
-    # Contract 05 §4.1. The host path of this sandbox's `supervisor.env`,
-    # which this service hands to `sbx exec --env-file`. Empty means the
-    # document did not publish one, which is a fault and never a guess
-    # (contract 03 §7.1): no fixed in-VM mount path exists to fall back to.
-    playpen_env: str = ""
-
-    @property
-    def index(self) -> int:
-        """The monotonic N of `<family>-s<N>`. Newer sandboxes sort higher."""
-        _, _, suffix = self.id.rpartition("-s")
-        return int(suffix) if suffix.isdigit() else 0
 
 
 @dataclass(slots=True)
@@ -101,7 +59,6 @@ class FamilyStatus:
     #: "may this family serve at all"; this answers "what else is wrong",
     #: which a non-blocking fault like `pep_unreachable` needs.
     fault_codes: frozenset[str] = frozenset()
-    sandboxes: list[SandboxInfo] = field(default_factory=list[SandboxInfo])
     max_running_turns: int | None = None
     job_timeout_s: int | None = None
     #: Contract 02 §12.1: the root of the per-chat directories of a thin
@@ -132,66 +89,6 @@ class FamilyStatus:
             return True
 
         return age_seconds(self.written_at) > stale_after_s
-
-    def ready_sandbox(self) -> SandboxInfo | None:
-        """The sandbox that serves new turns: the newest one that is ready.
-
-        During a switch the incoming sandbox is `ready` while the outgoing one
-        drains, so the highest N is the one to dial (contract 05 §4.1, §5.3).
-        """
-        ready = [box for box in self.sandboxes if box.state is SandboxState.READY]
-
-        if not ready:
-            return None
-
-        return max(ready, key=lambda box: box.index)
-
-    def has_cold_start(self) -> bool:
-        """True while a sandbox is being created (contract 02 §5.1)."""
-        return any(box.state in COLD_START_STATES for box in self.sandboxes)
-
-    def sandbox_by_id(self, sandbox: str) -> SandboxInfo | None:
-        """One row by its id, or None when the document has no such row."""
-        return next((box for box in self.sandboxes if box.id == sandbox), None)
-
-    def startable_by_id(self, sandbox: str) -> SandboxInfo | None:
-        """One row this service would dial, or None (contract 05 §4.2).
-
-        A switch names its incoming sandbox and a pin remembers it, and both
-        are only good while the document still offers that sandbox.
-        """
-        found = self.sandbox_by_id(sandbox)
-
-        if found is None or found.state not in STARTABLE_STATES:
-            return None
-
-        return found
-
-    def startable_sandbox(self) -> SandboxInfo | None:
-        """The sandbox to dial: a ready one, else the newest `creating` one.
-
-        Contract 05 §4.2 defines `ready` as "the channel handshake passed",
-        and §4.3 puts "open the channel, run the handshake" (steps 6 and 7)
-        after `sbx create` (step 1). This service is the only process that
-        holds a channel, so it is the only one that can run that handshake.
-        Waiting for someone else to write `ready` would wait forever.
-
-        `planned` is excluded: §4.2 says nothing exists yet, so there is
-        nothing to dial and the cold-start wait still covers it. A ready
-        sandbox always wins, so a switch never moves a session onto a
-        half-built replacement.
-        """
-        ready = self.ready_sandbox()
-
-        if ready is not None:
-            return ready
-
-        creating = [box for box in self.sandboxes if box.state is SandboxState.CREATING]
-
-        if not creating:
-            return None
-
-        return max(creating, key=lambda box: box.index)
 
 
 class StatusReader:
@@ -326,7 +223,6 @@ def _status_from_file(raw: dict[str, Any], family: str) -> FamilyStatus:
         never_valid=validation.get("never_valid") is True,
         blocking_fault=_blocking_fault(raw.get("faults")),
         fault_codes=_fault_codes(raw.get("faults")),
-        sandboxes=_sandboxes(raw.get("sandboxes")),
         max_running_turns=_optional_int(limits.get("max_running_turns")),
         job_timeout_s=_optional_int(limits.get("job_timeout_s")),
         caller_root=_caller_root(limits.get("caller_root")),
@@ -378,42 +274,6 @@ def _fault_codes(value: object) -> frozenset[str]:
             found.add(code)
 
     return frozenset(found)
-
-
-def _sandboxes(value: object) -> list[SandboxInfo]:
-    entries = as_array(value)
-
-    if entries is None:
-        return []
-
-    found: list[SandboxInfo] = []
-
-    for entry in entries:
-        box = as_object(entry)
-
-        if box is None:
-            continue
-
-        box_id = _text(box.get("id"))
-        state_text = _text(box.get("state"))
-
-        if box_id is None or state_text is None or not is_sandbox(box_id):
-            continue
-
-        try:
-            state = SandboxState(state_text)
-        except ValueError:
-            continue
-
-        found.append(
-            SandboxInfo(
-                id=box_id,
-                state=state,
-                playpen_env=_text(box.get("supervisor_env")) or "",
-            )
-        )
-
-    return found
 
 
 def _text(value: object) -> str | None:

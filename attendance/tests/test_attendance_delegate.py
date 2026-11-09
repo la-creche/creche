@@ -1,9 +1,9 @@
-"""The delegate door: one thin job over ACP, its answer in the response.
+"""The delegate door: one thin job on its own session, its answer in the response.
 
-Contract 02 §12 and §12.1, contract 04 §7.3. The PEP is the one client. The
-job is one `session/new` and one `session/prompt` on the thin family's
-facade (phase 2 plan, row 18). The conversation stays in the facade's store
-(phase 2 plan, Q5).
+Contract 02 §6 and §12, contract 04 §7.3. The PEP is the one client. The
+job makes one row with the `delegate` origin, opens the session's vmm
+stream, sends one `session/prompt`, and drops the session at its end
+(decisions CH1, CH21-2, CH21-4).
 """
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from attendance.acp_link import METHOD_CANCEL, METHOD_NEW_SESSION, METHOD_PROMPT
+from attendance.acp_link import METHOD_CANCEL, METHOD_INITIALIZE, METHOD_PROMPT
 from attendance.auth import Principal
 from attendance.errors import ApiError, ErrorCode
-from attendance.ids import is_ulid, new_ulid
+from attendance.ids import is_session_id, is_ulid, new_ulid
 from attendance.jobs import (
     DEFAULT_JOB_TIMEOUT_S,
     MESSAGE_MAX_BYTES,
@@ -29,28 +29,26 @@ from attendance_harness import (
     CHAT_SESSION,
     FAMILY,
     make_config,
+    make_service,
     wait_until,
     write_status,
 )
-from creche_vectors import meta_key, value_fields
-from fake_facade import ANSWER, ERROR_MESSAGE, FacadeFleet, FakeFacade, PromptMode
-
-from attendance.service import SessionService  # isort: skip
+from creche_wire import CreateSession, DelegateOrigin
+from fake_facade import ANSWER, ERROR_MESSAGE, FakeFacade, PromptMode
+from fake_vmm import FakeVmm
 
 DELEGATE = Principal.CHAPERONE_DELEGATE
 DISPATCH = Principal.CHAPERONE_DISPATCH
 
 ORACLE = "vault-oracle"
-ORACLE_SANDBOX = "vault-oracle-s1"
 CODING_SANDBOX_FAMILY = "coding-sandbox"
-CODING_SANDBOX = "coding-sandbox-s1"
 
 MESSAGE = "Which note holds the boiler service date?"
 CANCEL_WAIT_S = 0.2
 
 
 class DelegateHarness:
-    """One service with two thin families, each served by a `FakeFacade`."""
+    """One service with two thin families, over one `FakeVmm`."""
 
     def __init__(
         self,
@@ -63,26 +61,17 @@ class DelegateHarness:
         self.caller_root = tmp_path / "work" / CODING_SANDBOX_FAMILY
         write_status(self.config.state_root)
 
-        for family, sandbox, root in (
-            (ORACLE, ORACLE_SANDBOX, None),
-            (CODING_SANDBOX_FAMILY, CODING_SANDBOX, self.caller_root),
-        ):
+        for family, root in ((ORACLE, None), (CODING_SANDBOX_FAMILY, self.caller_root)):
             write_status(
                 self.config.state_root,
                 family=family,
                 kind="thin",
-                sandboxes=((sandbox, "ready"),),
                 job_timeout_s=job_timeout_s,
                 caller_root=root,
             )
 
-        self.facades = FacadeFleet(prompt_mode=mode)
-        self.service = SessionService(
-            self.config,
-            acp_factory=self.facades.factory,
-            cold_start_wait_s=1.0,
-            cancel_wait_s=CANCEL_WAIT_S,
-        )
+        self.vmm = FakeVmm(prompt_mode=mode)
+        self.service = make_service(self.config, self.vmm, cancel_wait_s=CANCEL_WAIT_S)
         self.service.start()
 
     def call(
@@ -102,24 +91,17 @@ class DelegateHarness:
     async def delegate(self, request: DelegateRequest) -> dict[str, object]:
         return await asyncio.wait_for(self.service.run_delegate(DELEGATE, request), 5.0)
 
-    def facade(self, sandbox: str = ORACLE_SANDBOX) -> FakeFacade:
-        return self.facades.facades[sandbox]
+    def create(self) -> CreateSession:
+        (made,) = self.vmm.creates
+        return made
 
-    def prompt_meta(self, sandbox: str = ORACLE_SANDBOX) -> object:
-        prompt = next(
-            one for one in self.facade(sandbox).received if one["method"] == METHOD_PROMPT
-        )
-        return prompt["params"].get("_meta")
-
-    def new_session_params(self, sandbox: str = ORACLE_SANDBOX) -> dict[str, object]:
-        call = next(
-            one for one in self.facade(sandbox).received if one["method"] == METHOD_NEW_SESSION
-        )
-        return call["params"]
+    def facade(self) -> FakeFacade:
+        (facade,) = self.vmm.facades.values()
+        return facade
 
     async def stop(self) -> None:
         await self.service.close()
-        await self.facades.stop()
+        await self.vmm.stop()
 
 
 async def test_a_delegate_call_answers_ok_with_the_streamed_text(tmp_path: Path) -> None:
@@ -136,19 +118,38 @@ async def test_a_delegate_call_answers_ok_with_the_streamed_text(tmp_path: Path)
     }
     assert str(body["session_id"]).startswith("job-")
     assert is_ulid(str(body["session_id"])[len("job-") :])
-    assert harness.facade().methods == ["initialize", METHOD_NEW_SESSION, METHOD_PROMPT]
+    assert harness.facade().methods == [METHOD_INITIALIZE, METHOD_PROMPT]
     await harness.stop()
 
 
-async def test_the_job_id_rides_on_session_new(tmp_path: Path) -> None:
-    """Q5: the conversation stays in the facade's store under the `job-` id."""
+async def test_the_job_makes_one_row_with_the_delegate_origin(tmp_path: Path) -> None:
+    """Decisions CH21-4, CH25 rule 2: attendance mints the session id, and the
+    origin holds the job id and the delegation, never `_meta`."""
     harness = DelegateHarness(tmp_path)
-    body = await harness.delegate(harness.call())
-    params = harness.new_session_params()
+    delegation_id = new_ulid()
+    body = await harness.delegate(harness.call(delegation_id=delegation_id))
+    create = harness.create()
+    origin = create.origin.root
 
-    assert params["_meta"] == {meta_key("job"): body["session_id"]}
-    assert params["cwd"] == sandbox_sessions_mount(harness.config.sessions_root, ORACLE)
-    assert params["mcpServers"] == []
+    assert isinstance(origin, DelegateOrigin)
+    assert origin.delegate.job.root == body["session_id"]
+    assert origin.delegate.delegation.root == delegation_id
+    assert is_session_id(create.id.root)
+    assert create.family.root == ORACLE
+    assert create.cwd.root == sandbox_sessions_mount(harness.config.sessions_root, ORACLE)
+    assert "_meta" not in harness.facade().received[-1]["params"]
+    assert harness.vmm.opened == [create.id.root]
+    await harness.stop()
+
+
+async def test_the_session_drops_at_the_end_of_the_job(tmp_path: Path) -> None:
+    """Decision CH21-2: the job leaves no row and no stream."""
+    harness = DelegateHarness(tmp_path)
+    await harness.delegate(harness.call())
+
+    assert harness.vmm.drops == [(ORACLE, harness.create().id.root)]
+    assert harness.vmm.rows == {}
+    assert harness.vmm.channels[harness.create().id.root].closed
     await harness.stop()
 
 
@@ -164,17 +165,7 @@ async def test_a_cwd_that_the_wire_refuses_is_never_sent(
         await harness.delegate(harness.call())
 
     assert refused.value.code is ErrorCode.INTERNAL
-    assert harness.facades.dials == []
-    await harness.stop()
-
-
-async def test_the_conversation_is_kept(tmp_path: Path) -> None:
-    """Q5: nothing deletes the conversation in the facade's store."""
-    harness = DelegateHarness(tmp_path)
-    await harness.delegate(harness.call())
-
-    assert harness.facade().sessions == ["sess-1"]
-    assert "session/close" not in harness.facade().methods
+    assert harness.vmm.creates == []
     await harness.stop()
 
 
@@ -187,6 +178,7 @@ async def test_a_job_past_its_deadline_is_cancelled_and_answers_timeout(tmp_path
     assert body["content"] is None
     assert str(body["error"]).startswith("turn_timeout")
     assert harness.facade().methods[-1] == METHOD_CANCEL
+    assert harness.vmm.rows == {}
     await harness.stop()
 
 
@@ -210,35 +202,33 @@ async def test_a_json_rpc_error_answers_failed(tmp_path: Path) -> None:
     await harness.stop()
 
 
-async def test_a_link_lost_mid_prompt_answers_failed(tmp_path: Path) -> None:
+async def test_a_stream_lost_mid_prompt_answers_failed(tmp_path: Path) -> None:
     harness = DelegateHarness(tmp_path, mode=PromptMode.LOSE)
     body = await harness.delegate(harness.call())
 
     assert body["status"] == JobStatus.FAILED.value
     assert body["content"] is None
     assert str(body["error"]).startswith("channel_lost")
+    assert harness.vmm.rows == {}
     await harness.stop()
 
 
-async def test_the_next_job_dials_a_lost_link_again(tmp_path: Path) -> None:
-    harness = DelegateHarness(tmp_path, mode=PromptMode.LOSE)
-    await harness.delegate(harness.call())
-    harness.facades.prompt_mode = PromptMode.OK
-    await wait_until(lambda: harness.service.acp_link(ORACLE_SANDBOX) is None)
-
+async def test_a_bad_handshake_answers_failed(tmp_path: Path) -> None:
+    harness = DelegateHarness(tmp_path)
+    harness.vmm.protocol_version = 2
     body = await harness.delegate(harness.call())
 
-    assert body["status"] == JobStatus.OK.value
-    assert harness.facades.dials == [ORACLE_SANDBOX, ORACLE_SANDBOX]
+    assert body["status"] == JobStatus.FAILED.value
+    assert str(body["error"]).startswith("channel_lost")
+    assert harness.facade().methods == [METHOD_INITIALIZE]
     await harness.stop()
 
 
 async def test_a_stop_reason_other_than_end_turn_answers_failed(tmp_path: Path) -> None:
     harness = DelegateHarness(tmp_path, mode=PromptMode.HOLD)
     task = asyncio.create_task(harness.delegate(harness.call()))
-    await wait_until(lambda: ORACLE_SANDBOX in harness.facades.facades)
-    await wait_until(lambda: "sess-1" in harness.facade().held)
-    await harness.facades.settle(ORACLE_SANDBOX, "sess-1", "max_tokens")
+    await wait_until(lambda: any(facade.held for facade in harness.vmm.facades.values()))
+    await harness.vmm.settle(harness.vmm.only_session(), "max_tokens")
     body = await task
 
     assert body["status"] == JobStatus.FAILED.value
@@ -246,14 +236,28 @@ async def test_a_stop_reason_other_than_end_turn_answers_failed(tmp_path: Path) 
     await harness.stop()
 
 
-async def test_a_family_with_no_sandbox_is_unavailable(tmp_path: Path) -> None:
+@pytest.mark.parametrize("route", ["create", "acp"])
+@pytest.mark.parametrize("code", ["host_full", "unreachable", "sandbox_start_failed"])
+async def test_a_vmm_refusal_answers_failed_with_its_code(
+    tmp_path: Path, route: str, code: str
+) -> None:
+    """The vmm never queues (decision CH21-3). A refusal ends the job."""
     harness = DelegateHarness(tmp_path)
-    write_status(harness.config.state_root, family=ORACLE, kind="thin", sandboxes=())
+    harness.vmm.refuse[route] = code
+    body = await harness.delegate(harness.call())
 
-    with pytest.raises(ApiError) as refused:
-        await harness.delegate(harness.call())
+    assert body["status"] == JobStatus.FAILED.value
+    assert str(body["error"]).startswith(code)
+    assert harness.vmm.rows == {}
+    await harness.stop()
 
-    assert refused.value.code is ErrorCode.SANDBOX_UNAVAILABLE
+
+async def test_a_failed_drop_still_answers(tmp_path: Path) -> None:
+    harness = DelegateHarness(tmp_path)
+    harness.vmm.refuse["drop"] = "unreachable"
+    body = await harness.delegate(harness.call())
+
+    assert body["status"] == JobStatus.OK.value
     await harness.stop()
 
 
@@ -265,7 +269,7 @@ async def test_a_non_thin_family_is_refused(tmp_path: Path) -> None:
         await harness.delegate(harness.call(target=FAMILY))
 
     assert refused.value.code is ErrorCode.FORBIDDEN
-    assert harness.facades.dials == []
+    assert harness.vmm.creates == []
     await harness.stop()
 
 
@@ -273,19 +277,14 @@ async def test_a_family_of_no_known_kind_takes_no_delegate_call(tmp_path: Path) 
     """Contract 02 §3.1. A status document that states no known kind proves no
     thin family. The refusal comes before the work directory exists."""
     harness = DelegateHarness(tmp_path)
-    write_status(
-        harness.config.state_root,
-        family=CODING_SANDBOX_FAMILY,
-        kind="robot",
-        sandboxes=((CODING_SANDBOX, "ready"),),
-    )
+    write_status(harness.config.state_root, family=CODING_SANDBOX_FAMILY, kind="robot")
 
     with pytest.raises(ApiError) as refused:
         await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY))
 
     assert refused.value.code is ErrorCode.FORBIDDEN
     assert refused.value.detail == {"kind": None}
-    assert harness.facades.dials == []
+    assert harness.vmm.creates == []
     assert not owner_dir(harness.caller_root, CHAT_SESSION).exists()
     await harness.stop()
 
@@ -310,7 +309,7 @@ async def test_a_hostile_calling_session_id_is_refused(tmp_path: Path, owner: st
         await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY, owner=owner))
 
     assert refused.value.code is ErrorCode.BAD_REQUEST
-    assert harness.facades.dials == []
+    assert harness.vmm.creates == []
     assert not harness.caller_root.exists()
     await harness.stop()
 
@@ -322,7 +321,7 @@ async def test_coding_sandbox_works_in_the_calling_chats_directory(tmp_path: Pat
     made = owner_dir(harness.caller_root, CHAT_SESSION)
 
     assert made.is_dir()
-    assert harness.new_session_params(CODING_SANDBOX)["cwd"] == str(made)
+    assert harness.create().cwd.root == str(made)
     await harness.stop()
 
 
@@ -333,28 +332,7 @@ async def test_coding_sandbox_with_no_calling_chat_works_in_the_family_mount(
     await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY, owner=None))
     mount = sandbox_sessions_mount(harness.config.sessions_root, CODING_SANDBOX_FAMILY)
 
-    assert harness.new_session_params(CODING_SANDBOX)["cwd"] == mount
-    await harness.stop()
-
-
-async def test_any_thin_family_with_a_caller_root_works_in_the_chats_directory(
-    tmp_path: Path,
-) -> None:
-    """The caller root comes from the status document, not from a family name."""
-    harness = DelegateHarness(tmp_path)
-    root = tmp_path / "work" / ORACLE
-    write_status(
-        harness.config.state_root,
-        family=ORACLE,
-        kind="thin",
-        sandboxes=((ORACLE_SANDBOX, "ready"),),
-        caller_root=root,
-    )
-    await harness.delegate(harness.call(target=ORACLE))
-    made = owner_dir(root, CHAT_SESSION)
-
-    assert made.is_dir()
-    assert harness.new_session_params(ORACLE_SANDBOX)["cwd"] == str(made)
+    assert harness.create().cwd.root == mount
     await harness.stop()
 
 
@@ -372,49 +350,23 @@ async def test_the_chat_directory_outlives_the_job(tmp_path: Path) -> None:
     await harness.stop()
 
 
-async def test_the_delegation_rides_on_the_prompt(tmp_path: Path) -> None:
-    """Contract 04 §6.3's chain. The prompt's `_meta` carries the id."""
-    harness = DelegateHarness(tmp_path)
-    delegation_id = new_ulid()
-    await harness.delegate(harness.call(delegation_id=delegation_id))
-
-    sent = {"id": delegation_id, "caller_session": CHAT_SESSION}
-
-    assert harness.prompt_meta() == {meta_key("delegation"): sent}
-    assert set(sent) == value_fields("delegation")
-    await harness.stop()
-
-
-async def test_a_call_with_no_caller_session_still_sends_the_delegation_id(
-    tmp_path: Path,
-) -> None:
-    """Contract 04 §7.3 makes `claimed_session_id` advisory. The id still goes."""
-    harness = DelegateHarness(tmp_path)
-    delegation_id = new_ulid()
-    await harness.delegate(harness.call(owner=None, delegation_id=delegation_id))
-
-    assert harness.prompt_meta() == {
-        meta_key("delegation"): {"id": delegation_id, "caller_session": None}
-    }
-    await harness.stop()
-
-
-async def test_two_jobs_share_the_thin_familys_link(tmp_path: Path) -> None:
-    """`docs/rework/spec.md` §7.1 and §7.4. No limit and no queue for a thin family."""
+async def test_two_jobs_get_two_sessions(tmp_path: Path) -> None:
+    """Contract 02 §12 rule 2: thin jobs of one family share no VM."""
     harness = DelegateHarness(tmp_path, mode=PromptMode.HOLD)
     first = asyncio.create_task(harness.delegate(harness.call()))
     second = asyncio.create_task(harness.delegate(harness.call()))
-    await wait_until(lambda: ORACLE_SANDBOX in harness.facades.facades)
-    await wait_until(lambda: len(harness.facade().held) == 2)
+    await wait_until(lambda: sum(len(one.held) for one in harness.vmm.facades.values()) == 2)
+    assert harness.service.busy(Principal.NOTICEBOARD)["prompts_in_flight"] == 2
 
-    for session in list(harness.facade().held):
-        await harness.facades.settle(ORACLE_SANDBOX, session)
+    for session in list(harness.vmm.facades):
+        await harness.vmm.settle(session)
 
     bodies = await asyncio.gather(first, second)
 
     assert [body["status"] for body in bodies] == [JobStatus.OK.value] * 2
     assert bodies[0]["session_id"] != bodies[1]["session_id"]
-    assert harness.facades.dials == [ORACLE_SANDBOX]
+    assert len(set(harness.vmm.opened)) == 2
+    assert harness.service.busy(Principal.NOTICEBOARD)["prompts_in_flight"] == 0
     await harness.stop()
 
 

@@ -10,7 +10,6 @@ import httpx
 import pytest
 from attendance.api import Listener, build_app
 from attendance.auth import TokenBook
-from attendance.service import SessionService
 from attendance.verify import (
     EXIT_FAILED,
     EXIT_OK,
@@ -19,7 +18,8 @@ from attendance.verify import (
     PROBE_PATH,
     main,
 )
-from attendance_harness import make_config, write_tokens
+from attendance_harness import make_config, make_service, write_tokens
+from fake_vmm import FakeVmm
 from fastapi.testclient import TestClient
 
 SOCKET_NAME = "attendance.sock"
@@ -161,7 +161,7 @@ def test_the_probe_reaches_a_route_that_refuses_no_bearer(tmp_path: Path) -> Non
     write_tokens(tmp_path / "state")
     tokens = TokenBook(tmp_path / "state")
     tokens.load()
-    app = build_app(SessionService(make_config(tmp_path)), tokens, Listener.SOCKET)
+    app = build_app(make_service(make_config(tmp_path), FakeVmm()), tokens, Listener.SOCKET)
 
     with TestClient(app) as client:
         answer = client.request(PROBE_METHOD, PROBE_PATH)

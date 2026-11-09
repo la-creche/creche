@@ -19,8 +19,7 @@ Every test is marked `slow` in `conftest.py`. The suite needs no `node`.
 `tests/` held a second suite, which ran the doors, `attendance` and the
 playpen in one process over the session API. That API left `attendance` in
 the phase 2 plan, row 21, and the suite left with it. `tests/fake_sbx.py`
-stays: the process-level suite and the tests of `attendance` start it in
-place of `sbx`.
+stays: the process-level suite starts it in place of `sbx`.
 
 ## CI
 

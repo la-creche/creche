@@ -14,7 +14,7 @@ _FAMILY = "chat"
 
 def test_fault_file_shape_and_mode(tmp_path: Path) -> None:
     reporter = FaultReporter(tmp_path)
-    reporter.raise_fault(_FAMILY, FaultCode.ORPHAN_PROCESSES, "foreign_pi_processes=2", "chat-s3")
+    reporter.raise_fault(_FAMILY, FaultCode.VMM_PROTOCOL_MISMATCH, "protocol 3 against 2")
 
     path = fault_file(tmp_path, _FAMILY)
     payload = json.loads(path.read_text())
@@ -24,24 +24,25 @@ def test_fault_file_shape_and_mode(tmp_path: Path) -> None:
     assert len(payload["faults"]) == 1
 
     entry = payload["faults"][0]
-    assert entry["code"] == "orphan_processes"
+    assert entry["code"] == "vmm_protocol_mismatch"
     assert entry["blocks_turns"] is False
     assert entry["source"] == FAULT_SOURCE
-    assert entry["sandbox"] == "chat-s3"
+    assert "sandbox" not in entry
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o640
 
 
 def test_blocks_turns_follows_the_contract_table() -> None:
-    assert blocks_turns(FaultCode.PROTOCOL_MISMATCH) is True
-    assert blocks_turns(FaultCode.PROTOCOL_VIOLATION) is True
-    assert blocks_turns(FaultCode.ORPHAN_PROCESSES) is False
+    """Contract 05 §3.3, decision CH82 rule 3: no fault of this writer
+    blocks turns."""
+    assert {code.value for code in FaultCode} == {"vmm_protocol_mismatch", "audit_unreadable"}
+    assert not any(blocks_turns(code) for code in FaultCode)
 
 
 def test_an_empty_list_clears_the_faults(tmp_path: Path) -> None:
     reporter = FaultReporter(tmp_path)
-    reporter.raise_fault(_FAMILY, FaultCode.PROTOCOL_VIOLATION, "refusal budget")
-    reporter.clear(_FAMILY, FaultCode.PROTOCOL_VIOLATION)
+    reporter.raise_fault(_FAMILY, FaultCode.AUDIT_UNREADABLE, "the audit is not readable")
+    reporter.clear(_FAMILY, FaultCode.AUDIT_UNREADABLE)
 
     payload = json.loads(fault_file(tmp_path, _FAMILY).read_text())
 
@@ -50,10 +51,10 @@ def test_an_empty_list_clears_the_faults(tmp_path: Path) -> None:
 
 def test_since_keeps_the_first_sighting(tmp_path: Path) -> None:
     reporter = FaultReporter(tmp_path)
-    reporter.raise_fault(_FAMILY, FaultCode.PROTOCOL_VIOLATION, "first")
+    reporter.raise_fault(_FAMILY, FaultCode.AUDIT_UNREADABLE, "first")
     first = reporter.open_faults(_FAMILY)[0].since
 
-    reporter.raise_fault(_FAMILY, FaultCode.PROTOCOL_VIOLATION, "second")
+    reporter.raise_fault(_FAMILY, FaultCode.AUDIT_UNREADABLE, "second")
     again = reporter.open_faults(_FAMILY)[0]
 
     assert again.since == first
@@ -62,8 +63,8 @@ def test_since_keeps_the_first_sighting(tmp_path: Path) -> None:
 
 def test_clear_all_empties_the_file(tmp_path: Path) -> None:
     reporter = FaultReporter(tmp_path)
-    reporter.raise_fault(_FAMILY, FaultCode.PROTOCOL_MISMATCH, "major 2 against 1")
-    reporter.raise_fault(_FAMILY, FaultCode.ORPHAN_PROCESSES)
+    reporter.raise_fault(_FAMILY, FaultCode.VMM_PROTOCOL_MISMATCH, "major 2 against 1")
+    reporter.raise_fault(_FAMILY, FaultCode.AUDIT_UNREADABLE)
     reporter.clear_all(_FAMILY)
 
     payload = json.loads(fault_file(tmp_path, _FAMILY).read_text())

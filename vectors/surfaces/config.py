@@ -621,11 +621,17 @@ def _named(error: Exception) -> dict[str, str]:
     return {"variable": str(error).split(" ", 1)[0]}
 
 
-def _attendance(env_id: str, **variables: str) -> Environment:
-    """An environment of `attendance` with the LAN address of the site file."""
-    prefixed = {f"ATTENDANCE_{name}": value for name, value in variables.items()}
+#: The `vmm.sock` that `creche-attendance.service` names (decision CH20).
+ATTENDANCE_VMM_SOCKET: Final = "/tmp/root/vmm/vmm.sock"
 
-    return Environment(env_id, {"AGENT_LAN_ADDRESS": LAN, **prefixed})
+
+def _attendance(env_id: str, **variables: str) -> Environment:
+    """An environment of `attendance` with the LAN address of the site file
+    and the `vmm.sock` of the unit."""
+    prefixed = {f"ATTENDANCE_{name}": value for name, value in variables.items()}
+    unit = {"ATTENDANCE_VMM_SOCKET": ATTENDANCE_VMM_SOCKET}
+
+    return Environment(env_id, {"AGENT_LAN_ADDRESS": LAN, **unit, **prefixed})
 
 
 ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
@@ -701,21 +707,11 @@ ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
     _attendance("port-4300-digits", LAN_PORT="0" * (INT_DIGITS_MAX - 2) + "80"),
     _attendance("port-4301-digits", LAN_PORT="0" * (INT_DIGITS_MAX - 1) + "80"),
     _attendance("port-unit-separator", LAN_PORT="\x1f8350"),
-    # --- the two counts of seconds ---
-    _attendance("seconds-whole", LOCK_STALE_S="30", LOCK_POLL_S="2"),
-    _attendance("seconds-exponent", LOCK_STALE_S="1e3"),
-    _attendance("seconds-underscore", LOCK_STALE_S="1_0.5"),
-    _attendance("seconds-sign", LOCK_STALE_S="+20"),
-    _attendance("seconds-no-whole-part", LOCK_POLL_S=".5"),
-    _attendance("seconds-zero", LOCK_STALE_S="0"),
-    _attendance("seconds-negative", LOCK_POLL_S="-1"),
-    _attendance("seconds-negative-zero", LOCK_POLL_S="-0.0"),
-    _attendance("seconds-underflow", LOCK_POLL_S="1e-400"),
-    _attendance("seconds-word", LOCK_STALE_S="soon"),
-    _attendance("seconds-unit", LOCK_STALE_S="20s"),
-    _attendance("seconds-nan", LOCK_STALE_S="nan"),
-    _attendance("seconds-infinity", LOCK_STALE_S="inf"),
-    _attendance("seconds-overflow", LOCK_STALE_S="1e999"),
+    # --- the vmm socket, which the unit sets ---
+    _attendance("vmm-socket-empty", VMM_SOCKET="  "),
+    _attendance("vmm-socket-space-around", VMM_SOCKET=" /tmp/root/vmm/vmm.sock\n"),
+    _attendance("vmm-socket-nul-byte", VMM_SOCKET="/tmp/root/vmm\x00/vmm.sock"),
+    Environment("vmm-socket-absent", {"AGENT_LAN_ADDRESS": LAN}),
     # --- the channel command and Open WebUI ---
     _attendance("command-quoted-words", CHANNEL_COMMAND="sh -c 'exec node \"$0\"' {sandbox}"),
     _attendance("command-space-around", CHANNEL_COMMAND="  node playpen.js  "),
