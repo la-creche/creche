@@ -16,11 +16,21 @@ The facade opens its one session from the handshake id of guest init, so
 the job sends no `session/new` (decision CH21-8). The session drops at the
 end of the job (decision CH21-2).
 
-One deadline holds the whole job, from its start (contract 02 §12 rules 3
-and 4). The vmm never queues: it answers `host_full` at once (decision
-CH21-3). A job that waits for room asks for the stream again until the
-deadline, then ends in `HostFull`. Any other job ends in `HostFull` at
-once, and its door queues it.
+The start of each job, its stream and its handshake, ends within the
+deadline of the job, counted from the job's start. A start that does not
+end in time is `TIMEOUT`. The vmm never queues: it answers `host_full` at
+once (decision CH21-3). A job that waits for room, a delegate job, asks
+for the stream again until the deadline, then ends in `HostFull`. Its
+prompt gets what is left of the same deadline, so one clock holds the
+whole job (contract 02 §12 rules 3 and 4, contract 04 §7.5). Any other
+job ends in `HostFull` at once, and its door queues it (contract 02 §6
+rule 4). Its prompt gets its whole deadline, counted from the prompt.
+
+CONTRACT-QUESTION: no row bounds the start of a dispatch or a trigger job,
+and decision CH50 rule 1 gives the start of a VM no outer bound. The
+reading here: the start ends within the deadline of the job, so a hung
+start frees its queue slot, and the prompt keeps the deadline that it had
+before the vmm.
 
 Nothing here raises past the caller. A refusal, a lost link and a deadline
 each end in a `JobEnd` or a `HostFull`.
@@ -99,8 +109,10 @@ class JobPlan:
     """Everything one job needs. The message is data: the caller wrote it.
 
     A job with `waits_for_room` asks again after a `host_full` until its
-    deadline (contract 02 §12 rule 4). A job without it ends at the first
-    `host_full`, and its door queues it (contract 02 §6 rule 4).
+    deadline, and `deadline_s` holds the whole job (contract 02 §12 rules 3
+    and 4). A job without it ends at the first `host_full`, and its door
+    queues it (contract 02 §6 rule 4). Its `deadline_s` holds its start and,
+    once more, its prompt.
     """
 
     family: str
@@ -117,7 +129,7 @@ async def run_job(
 ) -> JobEnd | HostFull:
     """Run one job to its end. `on_session` hears the session id once the
     vmm holds its row."""
-    deadline = asyncio.get_running_loop().time() + plan.deadline_s
+    start_by = asyncio.get_running_loop().time() + plan.deadline_s
     session = new_session_id()
     row = CreateSession(
         created_at=UnixMillis(now_ms()),
@@ -136,25 +148,45 @@ async def run_job(
         on_session(session)
 
     try:
-        return await _on_session(vmm, plan, session, deadline)
+        return await _on_session(vmm, plan, session, start_by)
     finally:
         await drop_job_session(vmm, plan.family, session)
 
 
-async def _on_session(vmm: Vmm, plan: JobPlan, session: str, deadline: float) -> JobEnd | HostFull:
-    """The stream of the session, its handshake and the one prompt."""
+async def _on_session(vmm: Vmm, plan: JobPlan, session: str, start_by: float) -> JobEnd | HostFull:
+    """The stream of the session and its handshake, both by `start_by`,
+    then the one prompt."""
+    opening = asyncio.timeout_at(start_by)
+
     try:
-        stream = await _open_stream(vmm, plan, session, deadline)
+        async with opening:
+            stream = await _open_stream(vmm, plan, session, start_by)
     except VmmRefused as error:
         if error.code == HOST_FULL:
             return HostFull(error=str(error))
 
         return JobEnd(EndKind.FAILED, error=f"{error.code}: {error}", acp_session=session)
+    except TimeoutError:
+        if not opening.expired():
+            raise
+
+        return _not_started(plan, session)
 
     link = AcpLink(plan.family, session, stream)
+    starting = asyncio.timeout_at(start_by)
 
     try:
-        await link.start()
+        try:
+            async with starting:
+                await link.start()
+        except TimeoutError:
+            if not starting.expired():
+                raise
+
+            return _not_started(plan, session)
+
+        loop = asyncio.get_running_loop()
+        deadline = start_by if plan.waits_for_room else loop.time() + plan.deadline_s
         return await _prompt(link, plan, deadline)
     except (AcpHandshakeError, ChannelClosed) as error:
         reason = TurnReason.CHANNEL_LOST.value
@@ -163,17 +195,24 @@ async def _on_session(vmm: Vmm, plan: JobPlan, session: str, deadline: float) ->
         await link.close()
 
 
-async def _open_stream(vmm: Vmm, plan: JobPlan, session: str, deadline: float) -> Channel:
+def _not_started(plan: JobPlan, session: str) -> JobEnd:
+    """A start that did not end by the deadline of the job."""
+    reason = TurnReason.TURN_TIMEOUT.value
+    error = f"{reason}: the session did not start within {plan.deadline_s:g} s"
+    return JobEnd(EndKind.TIMEOUT, error=error, acp_session=session)
+
+
+async def _open_stream(vmm: Vmm, plan: JobPlan, session: str, start_by: float) -> Channel:
     """The vmm stream of the session. After a `host_full`, a job that waits
     for room asks again each `HOST_FULL_PAUSE_S` while the next try starts
-    before its deadline (decision CH21-3). The row stays between tries."""
+    before `start_by` (decision CH21-3). The row stays between tries."""
     loop = asyncio.get_running_loop()
 
     while True:
         try:
             return await vmm.open_acp(plan.family, session, MAX_ACP_LINE_BYTES)
         except VmmRefused as error:
-            again = plan.waits_for_room and loop.time() + HOST_FULL_PAUSE_S < deadline
+            again = plan.waits_for_room and loop.time() + HOST_FULL_PAUSE_S < start_by
 
             if error.code != HOST_FULL or not again:
                 raise

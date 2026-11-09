@@ -266,7 +266,7 @@ jobs:
   # The job runs the suite with the pytest command that
   # integration/AGENTS.md tells a person to run. integration/tests held a
   # second suite until the session API left attendance (phase 2 plan, row
-  # 21). Only its stand-in for `sbx`, fake_sbx.py, stays there.
+  # 21). Its stand-in for `sbx` left at the Cloud Hypervisor cut.
   #
   # A test of the suite can skip itself, and a run in which every test
   # skips is green and judged nothing. The suite reads no switch that makes
