@@ -77,9 +77,9 @@ describe("the built facade", () => {
   });
 
   it("serves no session on sbx after the cut", async () => {
-    // attendance answers session/new from the host list (decisions CH21-7,
-    // CH52 rule 2, CH79 rule 3), so only initialize, the beat and the
-    // shutdown answer on sbx.
+    // attendance answers session/new from the host list (decision CH21-7),
+    // and on sbx the facade serves no session (the CONTRACT-QUESTION of
+    // `serveFamily`). So only initialize, the beat and the shutdown answer.
     running = startFacade();
     running.send(vectors.initialize.request);
     await running.nextMessage();

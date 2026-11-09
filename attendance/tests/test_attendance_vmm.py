@@ -7,6 +7,7 @@ connection and answers what the test scripted for its path.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import shutil
 import tempfile
@@ -16,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from attendance.faults import FaultCode, FaultReporter
+from attendance.paths import fault_file
 from attendance.vmm import (
     MISMATCH_TRIES,
     UNREACHABLE,
@@ -89,6 +91,11 @@ class Stub:
     #: `saw_end` and waits for `release` before it ends too.
     release: asyncio.Event | None = None
     saw_end: asyncio.Event = field(default_factory=asyncio.Event)
+    #: True: after `saw_end` the stream writes one line each 10 ms, in the
+    #: place of the wait for `release`, and sets `saw_close` once a write
+    #: fails because the client released its socket.
+    probe_close: bool = False
+    saw_close: asyncio.Event = field(default_factory=asyncio.Event)
 
     def answer(self, path: str, status: int, body: object) -> None:
         text = body if isinstance(body, bytes) else json.dumps(body).encode()
@@ -117,7 +124,11 @@ class Stub:
             if self.release is not None:
                 await reader.read()
                 self.saw_end.set()
-                await self.release.wait()
+
+                if self.probe_close:
+                    await _probe_writes(self, writer)
+                else:
+                    await self.release.wait()
 
             writer.close()
             return
@@ -128,6 +139,16 @@ class Stub:
         writer.write(b"Connection: close\r\n\r\n" + text)
         await writer.drain()
         writer.close()
+
+
+async def _probe_writes(stub: Stub, writer: asyncio.StreamWriter) -> None:
+    try:
+        while True:
+            writer.write(b"{}\n")
+            await writer.drain()
+            await asyncio.sleep(0.01)
+    except (ConnectionError, OSError):
+        stub.saw_close.set()
 
 
 @dataclass(slots=True)
@@ -220,6 +241,35 @@ async def test_a_reply_with_no_mismatch_clears_the_fault(rig: Rig) -> None:
     assert rig.faults.open_faults(FAMILY) == []
 
 
+async def test_a_fault_file_that_cannot_be_written_changes_no_call(
+    rig: Rig, tmp_path: Path
+) -> None:
+    """A failed write leaves each call its own result, a 101 its stream,
+    and the open fault in memory, so a later reply writes the file again."""
+    faults_dir = tmp_path / "faults"
+    faults_dir.write_text("a file where the directory goes", encoding="utf-8")
+
+    for _ in range(MISMATCH_TRIES):
+        rig.stub.answer("/list", MISMATCH_STATUS, {"code": "protocol_mismatch", "protocol": 3})
+
+    with pytest.raises(VmmRefused) as refused:
+        await rig.vmm.list_page(ListSessions(cursor=None, cwd=None, family=FamilyName(FAMILY)))
+
+    rig.stub.answer("/acp", 101, b"")
+    stream = await rig.vmm.open_acp(FAMILY, SESSION, 1024)
+    await stream.close()
+    kept = rig.faults.open_faults(FAMILY)
+    faults_dir.unlink()
+    rig.stub.answer("/drop", 200, {})
+    await rig.vmm.drop(FAMILY, SESSION)
+
+    assert refused.value.code == VMM_PROTOCOL_MISMATCH
+    assert [fault.code for fault in kept] == [FaultCode.VMM_PROTOCOL_MISMATCH]
+    assert rig.faults.open_faults(FAMILY) == []
+    written = json.loads(fault_file(tmp_path, FAMILY).read_text(encoding="utf-8"))
+    assert written["faults"] == []
+
+
 async def test_an_absent_socket_is_unreachable(tmp_path: Path) -> None:
     """Decision CH20: ENOENT is transient."""
     client = HttpVmm.over_socket(tmp_path / "none.sock", FaultReporter(tmp_path))
@@ -275,6 +325,28 @@ async def test_a_close_ends_the_write_half_and_waits_for_the_vmm(rig: Rig) -> No
     assert not closing.done()
     rig.stub.release.set()
     await asyncio.wait_for(closing, 5)
+
+
+async def test_a_cancelled_close_still_releases_the_socket(rig: Rig) -> None:
+    """A cancel in the wait of a close still releases the socket, so the
+    vmm drops the claim of the session (decision CH83 rule 4). A second
+    close then has nothing left to do."""
+    rig.stub.answer("/acp", 101, b"")
+    rig.stub.release = asyncio.Event()
+    rig.stub.probe_close = True
+    stream = await rig.vmm.open_acp(FAMILY, SESSION, 1024)
+    await stream.send('{"jsonrpc":"2.0","id":0}\n')
+    await stream.receive()
+    closing = asyncio.create_task(stream.close())
+
+    await asyncio.wait_for(rig.stub.saw_end.wait(), 5)
+    closing.cancel()
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await closing
+
+    await asyncio.wait_for(rig.stub.saw_close.wait(), 5)
+    await asyncio.wait_for(stream.close(), 5)
 
 
 async def test_a_close_waits_for_the_vmm_at_most_its_bound(
