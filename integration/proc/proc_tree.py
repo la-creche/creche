@@ -366,10 +366,6 @@ class Tree:
             control=self.family_dir(family) / "control" / (sandbox or first_sandbox(family)),
         )
 
-    def playpen_lock(self, family: str = FAMILY, sandbox: str | None = None) -> Path:
-        """The lease of contract 03 §11.1, in the control directory."""
-        return self.mounts(family, sandbox).control / "supervisor.lock"
-
     def policy_fragment(self, family: str = FAMILY) -> Path:
         """The app table of one family. `caregiver` joins each one into `policy.toml`."""
         return self.state_root / "grants" / f"{family}.toml"
