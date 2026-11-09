@@ -12,7 +12,8 @@ a graph database that does not open, at the start or after a failed sync
 
 Exit 75 (EX_TEMPFAIL) for an error that ends the start check or the sync
 loop and is not a verdict on the database, such as a worker that did not
-start. systemd restarts the unit, and the check at the next start decides."""
+start, a lock that another opener holds, or a full disk. systemd restarts
+the unit, and the check at the next start decides."""
 
 import signal
 import sys
@@ -21,7 +22,7 @@ from concurrent.futures import Future, wait
 from types import FrameType
 
 from .config import Config, ConfigError, check, from_env
-from .graph import Dead, cognee_graph_state
+from .graph import Dead, NotAVerdict, cognee_graph_state
 from .search import STOP_TIMEOUT_S, Searcher, StoreLoop
 from .server import MemoryServer, Service
 from .store import configure
@@ -48,9 +49,13 @@ def _dead(state: Dead) -> int:
 
 
 def _broke(what: str, error: BaseException) -> int:
-    # Only the type: a message can hold a URL.
+    # Only the type: a message can hold the URL of a service. The text of a
+    # `NotAVerdict` is ladybug's, and it names a file, so the line carries it.
+    cause = type(error).__name__
+    if isinstance(error, NotAVerdict):
+        cause = f"{cause}: {str(error).rstrip('.')}"
     print(
-        f"creche-memory: {what} failed: {type(error).__name__}. "
+        f"creche-memory: {what} failed: {cause}. "
         "systemd restarts the unit. The next start checks the graph database again.",
         file=sys.stderr,
         flush=True,

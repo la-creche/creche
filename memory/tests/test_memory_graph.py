@@ -1,6 +1,7 @@
 """The graph check tells a dead graph database from one that opens."""
 
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -9,12 +10,16 @@ from creche_memory.graph import (
     MAX_ERROR_CHARS,
     SIDE_SUFFIXES,
     Dead,
+    NotAVerdict,
     Usable,
     graph_state,
     side_files,
 )
 from memory_graph_helpers import (
+    FILL_ROWS,
     GRAPH_NAME,
+    count_rows,
+    fill_through_cognee,
     held_open,
     kill_graph,
     ladybug_check,
@@ -119,7 +124,7 @@ def test_an_error_of_the_worker_process_is_not_a_verdict(graph_file: Path, messa
 
 
 def test_a_lock_that_another_opener_holds_is_not_a_verdict(graph_file: Path) -> None:
-    with held_open(graph_file), pytest.raises(RuntimeError, match="Could not set lock on file"):
+    with held_open(graph_file), pytest.raises(NotAVerdict, match="Could not set lock on file"):
         asyncio.run(ladybug_check(graph_file)())
 
     assert asyncio.run(ladybug_check(graph_file)()) == Usable()
@@ -135,3 +140,80 @@ def test_a_long_error_is_cut_to_one_line(graph_file: Path) -> None:
     assert "\n" not in state.error
     assert state.error.startswith("IO exception: Cannot open file x")
     assert len(state.error) == MAX_ERROR_CHARS
+
+
+def test_an_index_error_of_the_open_is_dead(graph_file: Path) -> None:
+    # pybind gives ladybug's `std::out_of_range` as an `IndexError`. A
+    # recovered checkpoint with one write after it opens with this error
+    # on every later try.
+    async def broken() -> None:
+        raise IndexError("unordered_map::at: key not found")
+
+    state = asyncio.run(graph_state(graph_file, broken))
+
+    assert isinstance(state, Dead)
+    assert state.error == "unordered_map::at: key not found"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "No space left on device",
+        "Disk quota exceeded",
+        "Permission denied",
+        "Operation not permitted",
+        "Read-only file system",
+        "Too many open files",
+        "Input/output error",
+    ],
+)
+def test_an_error_of_the_host_is_not_a_verdict(graph_file: Path, text: str) -> None:
+    message = f"IO exception: Cannot open file {graph_file}: {text}"
+
+    async def full() -> None:
+        raise RuntimeError(message)
+
+    with pytest.raises(NotAVerdict) as raised:
+        asyncio.run(graph_state(graph_file, full))
+
+    assert str(raised.value) == message
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root opens a file of any mode")
+def test_a_graph_that_the_service_may_not_write_is_not_a_verdict(graph_file: Path) -> None:
+    graph_file.chmod(0o444)
+    try:
+        with pytest.raises(NotAVerdict, match="Permission denied"):
+            asyncio.run(ladybug_check(graph_file)())
+    finally:
+        graph_file.chmod(0o644)
+
+    assert asyncio.run(ladybug_check(graph_file)()) == Usable()
+
+
+def test_the_report_names_the_files_from_before_the_open(graph_file: Path) -> None:
+    wal = graph_file.with_name(GRAPH_NAME + ".wal")
+    wal.write_bytes(b"x")
+
+    async def removes_the_wal() -> None:
+        # Cognee's open removes the `.wal` file when the error names the WAL.
+        wal.unlink()
+        raise RuntimeError(CHECKSUM_ERROR)
+
+    state = asyncio.run(graph_state(graph_file, removes_the_wal))
+
+    assert isinstance(state, Dead)
+    assert state.side_files == (f"{GRAPH_NAME}.wal",)
+
+
+def test_the_check_after_a_failed_checkpoint_keeps_every_row(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    lines = fill_through_cognee(store)
+
+    # The open engine answers. The check does not close it: a close after
+    # the failed checkpoint makes a file that does not open.
+    assert lines == ["Usable()", "full: True", "Usable()"]
+    # The child exits with no close. A new process opens the file with
+    # every row.
+    graph_file = store / "system" / "databases" / GRAPH_NAME
+    assert count_rows(graph_file, "F") == FILL_ROWS

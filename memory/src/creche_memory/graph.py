@@ -3,18 +3,27 @@
 Cognee keeps its knowledge graph in one ladybug database file. A worker
 process that dies in a checkpoint can leave that file in a state that no
 open recovers from. Then every sync and every search fails with the same
-`RuntimeError`, and only the operator can repair it (`memory/AGENTS.md`,
-the dead graph).
+error, and only the operator can repair it (`memory/AGENTS.md`, the dead
+graph).
 
 The test is the open itself, not the names of the files beside the
 database. A checkpoint that stops part way leaves files that the next open
 replays and removes, so a leftover file alone is a normal state. Each file
-that is there goes into the report, for the operator.
+that is there before the open goes into the report, for the operator.
+
+The check never closes the engine, and its own query writes nothing. It
+asks Cognee's cached engine `RETURN 1`. A checkpoint in the check can lose
+rows or leave a file that does not open. A close after a failed checkpoint
+can leave a file that does not open. The first check of a process builds
+Cognee's engine, and that build runs three `CREATE ... IF NOT EXISTS`
+statements. Their commit can write a `.wal` and can checkpoint a replayed
+WAL (`memory/AGENTS.md`, known gaps).
 
 An error of the open is a verdict only when ladybug raises it for the
-file. An error of Cognee's worker process, or a lock that another opener
-still holds, says nothing about the file. A restart can clear it, so the
-check passes it to the caller."""
+file. An error of Cognee's worker process, a lock that another opener
+still holds, or an error of the host such as a full disk says nothing
+about the file. A restart can clear it, so the check passes it to the
+caller."""
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -36,6 +45,26 @@ SIDE_SUFFIXES = (
 #: lower case. Cognee's worker matches the same text, retries the open, and
 #: does not treat it as a broken file (`cognee_db_workers/kuzu_worker.py`).
 LOCK_HELD_TEXT = "could not set lock on file"
+
+#: The texts of host errors that ladybug puts in its `IO exception`, in
+#: lower case. Each one is a state of the host, not of the file: a restart
+#: after the operator frees space, fixes a mode or a flag, raises a quota,
+#: or after a device fault ends, can open the file again.
+HOST_ERROR_TEXTS = (
+    "no space left on device",
+    "disk quota exceeded",
+    "permission denied",
+    "operation not permitted",
+    "read-only file system",
+    "too many open files",
+    "input/output error",
+)
+
+#: The types that ladybug usually raises for a file that does not open.
+#: pybind gives a C++ `std::out_of_range` from the open as an `IndexError`.
+#: Some dead files raise a `MemoryError` instead (`memory/AGENTS.md`, known
+#: gaps). Host memory pressure raises it too, so it is not a verdict.
+VERDICT_ERRORS = (RuntimeError, IndexError)
 
 #: The longest text of the library's error that the report keeps.
 MAX_ERROR_CHARS = 400
@@ -71,6 +100,14 @@ class Dead:
         )
 
 
+class NotAVerdict(Exception):
+    """An error of the open that says nothing about the file: a lock that
+    another opener holds, or an error of the host. Its text is ladybug's,
+    on one line. It names a file of the store, and the lock text links to
+    ladybug's docs. It holds no address of a service, so the journal line
+    can print it."""
+
+
 type GraphState = Usable | Dead
 
 #: A call that opens the graph database and asks it one query.
@@ -91,23 +128,36 @@ def _one_line(text: str) -> str:
     return " ".join(text.split())[:MAX_ERROR_CHARS]
 
 
+def _passes(error: Exception) -> bool:
+    text = str(error).lower()
+
+    return LOCK_HELD_TEXT in text or any(host in text for host in HOST_ERROR_TEXTS)
+
+
 async def graph_state(graph_file: Path, query: GraphQuery) -> GraphState:
-    """Run `query`. Ladybug raises a `RuntimeError` for a database that does
-    not open, so a `RuntimeError` from the query means a dead graph, with
-    two exceptions. These two go to the caller, as does any other error:
+    """Run `query`. Ladybug usually raises a `RuntimeError` or an
+    `IndexError` for a database that does not open, so either one from the
+    query means a dead graph, with three exceptions. These three go to the
+    caller, as does any other error:
 
     1. A `SubprocessTransportError`: Cognee's worker process did not start,
        died, or missed a deadline.
-    2. A lock that another opener holds (`LOCK_HELD_TEXT`)."""
+    2. A lock that another opener holds (`LOCK_HELD_TEXT`), as `NotAVerdict`.
+    3. An error of the host, such as a full disk (`HOST_ERROR_TEXTS`), as
+       `NotAVerdict`.
+
+    The report names the files that are beside the database before the
+    query, because Cognee's open can remove one of them."""
+    beside = side_files(graph_file)
     try:
         await query()
     except SubprocessTransportError:
         raise
-    except RuntimeError as error:
-        if LOCK_HELD_TEXT in str(error).lower():
-            raise
+    except VERDICT_ERRORS as error:
+        if _passes(error):
+            raise NotAVerdict(_one_line(str(error))) from error
 
-        return Dead(graph_file, side_files(graph_file), _one_line(str(error)))
+        return Dead(graph_file, beside, _one_line(str(error)))
 
     return Usable()
 
@@ -115,7 +165,8 @@ async def graph_state(graph_file: Path, query: GraphQuery) -> GraphState:
 async def cognee_graph_state() -> GraphState:
     """The state of the graph database of Cognee, through Cognee's own engine.
     Call it only after `configure`. The engine opens the database once and
-    keeps it open, so a sync and a search use the same open."""
+    keeps it open, so a sync, a search and each later check use the same
+    open. The check does not close the engine."""
     from cognee.infrastructure.databases.graph import get_graph_config, get_graph_engine
 
     graph_file = Path(get_graph_config().graph_file_path)
