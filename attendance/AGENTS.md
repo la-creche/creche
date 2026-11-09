@@ -132,6 +132,10 @@ conversation and the one-writer rule (Flue's queue).
    break closes the connection. It keys a prompt id as the JavaScript
    facade reads it: a number by its double, a string apart from a number.
    It closes on a prompt whose number id is past the double range.
+10. The ACP door holds no session behind another. The read of the frames
+    awaits no vmm call and no stream open. It puts each frame in the lane
+    of its session, and each lane keeps its frames in order. A stream that
+    opens is closed on each way out of its handshake, a cancel included.
 
 ## Security rules
 
