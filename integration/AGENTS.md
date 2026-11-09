@@ -88,8 +88,8 @@ Run each suite in its own pytest command.
     `add_sandbox` never empties a directory that exists.
 11. From stage 2 on, a scenario drives a family file, never a hand-written
     status document.
-12. Never clear `supervisor.lock` by hand. The host proves the old playpen is
-    gone by watching the beat counter.
+12. Retired with the lock handling of `attendance` (decision CH19 rule 6).
+    The number stays, so that other documents keep their references.
 13. Retired with the in-process stack (phase 2 plan, row 21). The
     number stays, so that other documents keep their references.
 14. Never put a playpen mount path in this process's environment. The three
