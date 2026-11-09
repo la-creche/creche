@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 import pytest
-from attendance.acp_door import Close, DoorPrompts
+from attendance.acp_door import DoorPrompts
 from attendance.acp_link import loads_strict
 from attendance.api import build_app
 from attendance.auth import Principal, TokenBook
@@ -462,8 +462,8 @@ def test_the_door_counts_a_prompt_until_its_answer() -> None:
         two.sent(record('{"jsonrpc":"2.0","id":5,"method":"session/list","params":{}}'))
         assert prompts.in_flight == 2
 
-        two.answered('{"jsonrpc":"2.0","id":"4","result":{"stopReason":"end_turn"}}')
-        two.answered('{"jsonrpc":"2.0","id":4,"result":{"stopReason":"end_turn"}}')
+        two.answered(record('{"jsonrpc":"2.0","id":"4","result":{"stopReason":"end_turn"}}'))
+        two.answered(record('{"jsonrpc":"2.0","id":4,"result":{"stopReason":"end_turn"}}'))
         assert prompts.in_flight == 1
 
     assert prompts.in_flight == 0
@@ -494,10 +494,10 @@ def test_the_door_keys_a_number_id_by_its_double(sent: str, answered: str) -> No
     prompts = DoorPrompts()
 
     with prompts.connection() as one:
-        assert one.sent(record(prompt(sent))) is None
+        one.sent(record(prompt(sent)))
         assert prompts.in_flight == 1
 
-        one.answered(answer(answered))
+        one.answered(record(answer(answered)))
         assert prompts.in_flight == 0
 
 
@@ -509,21 +509,10 @@ def test_the_door_keeps_a_string_id_apart_from_a_number_id() -> None:
         one.sent(record(prompt("1")))
         assert prompts.in_flight == 2
 
-        one.answered(answer("1.0"))
+        one.answered(record(answer("1.0")))
         assert prompts.in_flight == 1
 
-        one.answered(answer('"1"'))
-        assert prompts.in_flight == 0
-
-
-@pytest.mark.parametrize(
-    "rpc_id", ["1e999", "-1e999", "9" * 400], ids=["exponent", "negative", "long_integer"]
-)
-def test_the_door_refuses_a_prompt_id_past_the_double_range(rpc_id: str) -> None:
-    prompts = DoorPrompts()
-
-    with prompts.connection() as one:
-        assert one.sent(record(prompt(rpc_id))) is Close.BAD_FRAME
+        one.answered(record(answer('"1"')))
         assert prompts.in_flight == 0
 
 

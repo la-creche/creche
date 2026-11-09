@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import socket
 from pathlib import Path
 from typing import Final, Protocol
 
@@ -105,6 +106,15 @@ NOT_FOUND: Final = "not_found"
 #: How much of the ACP stream one read takes.
 READ_CHUNK_BYTES: Final = 65_536
 
+#: How long a close of an ACP stream waits for the vmm to end the stream.
+#: The vmm ends it when the facade closes its side, one guest round trip.
+#:
+#: CONTRACT-QUESTION: decision CH83 rule 4 gives a session one holder, and
+#: no row says how a holder ends its stream so that its next Upgrade meets
+#: no claim of its own. The reading here: end the write half, read to the
+#: end, and wait at most this long. Past it the close releases the socket.
+CLOSE_WAIT_S: Final = 5.0
+
 #: The `acp` route answers 101 after the start of the VM, and the start has
 #: no outer bound (decision CH50 rule 1). So its reply has no read timeout.
 _ACP_TIMEOUT: Final = httpx.Timeout(DROP_CLIENT_TIMEOUT_S, read=None)
@@ -168,10 +178,24 @@ class AcpStream:
         return self._pending.pop(0)
 
     async def close(self) -> None:
+        """End the write half, wait for the vmm to end the stream, then
+        release it. The vmm holds the claim of the session until both
+        directions end (decision CH83 rule 4). So after this close the next
+        Upgrade of the same holder meets no claim of its own. The bytes of
+        the wait are dropped. `CLOSE_WAIT_S` bounds it."""
         if self._closed:
             return
 
         self._closed = True
+        raw = self._stream.get_extra_info("socket")
+
+        if isinstance(raw, socket.socket):
+            with contextlib.suppress(httpcore.NetworkError, OSError, TimeoutError):
+                async with asyncio.timeout(CLOSE_WAIT_S):
+                    raw.shutdown(socket.SHUT_WR)
+
+                    while not self._eof and await self._stream.read(READ_CHUNK_BYTES):
+                        pass
 
         with contextlib.suppress(httpcore.NetworkError, OSError):
             await self._stream.aclose()

@@ -171,8 +171,9 @@ def chunk(session: str, text: str) -> str:
 
 
 async def serve(channel: FakeChannel, facade: FakeFacade) -> None:
-    """Answer every host line on `channel` until the host closes it."""
-    while not channel.closed:
+    """Answer every host line on `channel` until the host closes it. A line
+    the host sent before its close is read."""
+    while not channel.closed or channel.host_lines_waiting():
         try:
             received = await channel.next_host_line(timeout=3600)
         except TimeoutError:

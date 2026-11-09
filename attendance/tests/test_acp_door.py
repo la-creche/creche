@@ -13,7 +13,7 @@ import contextlib
 import json
 import shutil
 import tempfile
-from collections.abc import AsyncIterator, Generator
+from collections.abc import AsyncIterator, Callable, Generator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -426,8 +426,108 @@ async def test_a_prompt_counts_in_busy_until_its_answer(door: Door) -> None:
         assert door.service.busy(Principal.NOTICEBOARD)["prompts_in_flight"] == 0
 
 
+async def wait_for(check: Callable[[], bool]) -> None:
+    async with asyncio.timeout(5):
+        while not check():
+            await asyncio.sleep(0.01)
+
+
+async def held_prompt(door: Door, connection: ClientConnection, request_id: int) -> str:
+    """A new session with one prompt that its facade holds."""
+    session = await new_session(connection)
+    await connection.send(prompt(request_id, session))
+    await wait_for(lambda: session in door.vmm.facades and bool(door.vmm.facades[session].held))
+    return session
+
+
 @pytest.mark.slow
-async def test_a_client_answer_reaches_the_facade_that_asked(door: Door) -> None:
+@pytest.mark.parametrize("door", [PromptMode.HOLD], indirect=True)
+async def test_a_facade_request_holds_the_stream_until_the_client_answers(door: Door) -> None:
+    """Contract 02 §5.5 rule 5: a request of the facade is in flight on the
+    stream too. Its answer reaches the facade that asked."""
+    async with door.door_acp() as connection:
+        session = await held_prompt(door, connection, 1)
+        channel = door.vmm.channels[session]
+        asked = {"jsonrpc": "2.0", "id": 40, "method": "session/request_permission"}
+        await channel.feed(json.dumps(asked))
+        assert json.loads(await asyncio.wait_for(connection.recv(), 5)) == asked
+        await door.vmm.settle(session)
+
+        for _ in range(2):
+            await asyncio.wait_for(connection.recv(), 5)
+
+        assert not channel.closing
+        answer: dict[str, Any] = {"jsonrpc": "2.0", "id": 40, "result": {}}
+        await connection.send(json.dumps(answer))
+        await wait_for(lambda: door.vmm.facades[session].received[-1:] == [answer])
+        await wait_for(lambda: channel.closed)
+
+
+@pytest.mark.slow
+async def test_an_answered_prompt_closes_its_stream_and_keeps_the_connection(door: Door) -> None:
+    """Contract 02 §5.5 rule 5, decision CH21-8: with no request in flight
+    the stream closes, so the vmm can snapshot the VM. The next request
+    opens a new stream with a new handshake."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+
+        for request_id in (1, 2):
+            await connection.send(prompt(request_id, session))
+
+            for _ in range(3):
+                await asyncio.wait_for(connection.recv(), 5)
+
+            await wait_for(lambda: door.vmm.channels[session].closed)
+            assert door.vmm.facades[session].methods == ["initialize", "session/prompt"]
+
+        assert (await ask(connection, 3, "initialize"))["result"] == INITIALIZE_RESPONSE
+
+    assert door.vmm.opened == [session, session]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("door", [PromptMode.HOLD], indirect=True)
+async def test_a_stream_closes_only_after_its_last_answer(door: Door) -> None:
+    """A `session/load` counts like a `session/prompt`, and two requests in
+    flight keep the stream until both have their answers."""
+    async with door.door_acp() as connection:
+        session = await held_prompt(door, connection, 1)
+        door.vmm.replays[session] = []
+        loaded = await ask(connection, 2, "session/load", sessionId=session, cwd=CWD)
+        channel = door.vmm.channels[session]
+
+        assert loaded["result"] == {}
+        assert not channel.closing
+        await door.vmm.settle(session)
+        await wait_for(lambda: channel.closed)
+
+    assert door.vmm.opened == [session]
+
+
+@pytest.mark.slow
+async def test_a_notification_alone_closes_its_stream_after_it(door: Door) -> None:
+    """A notification opens no call. It reaches the facade, and the stream
+    closes with no request in flight."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        cancel = {"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": session}}
+        await connection.send(json.dumps(cancel))
+        await wait_for(lambda: session in door.vmm.channels and door.vmm.channels[session].closed)
+        await wait_for(lambda: len(door.vmm.facades[session].methods) == 2)
+
+        assert (await ask(connection, 3, "initialize"))["result"] == INITIALIZE_RESPONSE
+
+    assert door.vmm.facades[session].methods == ["initialize", "session/cancel"]
+    assert door.vmm.opened == [session]
+
+
+@pytest.mark.slow
+async def test_a_new_stream_waits_for_the_close_of_the_last_one(door: Door) -> None:
+    """Decision CH83 rule 4: one holder per session. The vmm answers `busy`
+    to an Upgrade while the last stream still closes."""
+    gate = asyncio.Event()
+    door.vmm.close_gate = gate
+
     async with door.door_acp() as connection:
         session = await new_session(connection)
         await connection.send(prompt(1, session))
@@ -435,16 +535,15 @@ async def test_a_client_answer_reaches_the_facade_that_asked(door: Door) -> None
         for _ in range(3):
             await asyncio.wait_for(connection.recv(), 5)
 
-        asked = {"jsonrpc": "2.0", "id": 40, "method": "session/request_permission"}
-        await door.vmm.channels[session].feed(json.dumps(asked))
-        assert json.loads(await asyncio.wait_for(connection.recv(), 5)) == asked
-        await connection.send(json.dumps({"jsonrpc": "2.0", "id": 40, "result": {}}))
+        await wait_for(lambda: door.vmm.channels[session].closing)
+        await connection.send(prompt(2, session))
+        await asyncio.sleep(0.05)
+        assert door.vmm.opened == [session]
+        gate.set()
+        lines = [json.loads(await asyncio.wait_for(connection.recv(), 5)) for _ in range(3)]
 
-        async with asyncio.timeout(5):
-            while door.vmm.facades[session].methods[-1:] != [""]:
-                await asyncio.sleep(0.01)
-
-    assert door.vmm.facades[session].received[-1] == {"jsonrpc": "2.0", "id": 40, "result": {}}
+    assert lines[2] == {"jsonrpc": "2.0", "id": 2, "result": {"stopReason": "end_turn"}}
+    assert door.vmm.opened == [session, session]
 
 
 @pytest.mark.slow
@@ -466,6 +565,8 @@ async def test_one_line_ending_of_a_client_frame_is_stripped(door: Door, ending:
         ('{"jsonrpc":"2.0","id":NaN}', Close.BAD_FRAME),
         ('{"id":1}', Close.BAD_FRAME),
         ('{"jsonrpc":"2.0","id":1e999,"method":"session/prompt"}', Close.BAD_FRAME),
+        ('{"jsonrpc":"2.0","id":-1e999,"method":"session/load"}', Close.BAD_FRAME),
+        ('{"jsonrpc":"2.0","id":' + "9" * 400 + ',"method":"session/load"}', Close.BAD_FRAME),
         (INIT + "\r", Close.BAD_FRAME),
         (INIT + "\n\n", Close.BAD_FRAME),
         ("\n", Close.BAD_FRAME),
@@ -477,6 +578,8 @@ async def test_one_line_ending_of_a_client_frame_is_stripped(door: Door, ending:
         "nan",
         "no_envelope",
         "prompt_id_past_double",
+        "load_id_past_double",
+        "load_id_long_integer",
         "lone_cr",
         "two_lf",
         "only_lf",
