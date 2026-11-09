@@ -1102,21 +1102,16 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         stopped
     }
 
-    /// Writes the code of `fault` with `message` to the fault file of
-    /// `family` and returns `fault` (decision CH21-1). `host_full` is no
-    /// fault of decision CH6-3, so it writes none.
-    async fn fault(&self, family: &FamilyName, fault: StartFault, message: String) -> StartFault {
-        let code = match fault {
-            StartFault::HostFull => return fault,
-            StartFault::SandboxStartFailed => FaultCode::SandboxStartFailed,
-            StartFault::EgressAssertFailed => FaultCode::EgressAssertFailed,
-        };
+    /// Writes `code` with `message` to the fault file of `family` and
+    /// returns its start fault (decision CH21-1).
+    async fn fault(&self, family: &FamilyName, code: StartCode, message: String) -> StartFault {
         eprintln!("vmm: a VM of {family} did not start: {message}");
+        let fault = code.code();
         self.book(family, move |book, family, now| {
-            book.raise(family, code, message, now)
+            book.raise(family, fault, message, now)
         })
         .await;
-        fault
+        code.fault()
     }
 
     /// Runs `change` on the fault book for `family` (`write_book`).
@@ -1140,11 +1135,11 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         link: LinkId,
         control: Option<&ControlLink>,
         family: &FamilyName,
-        fault: StartFault,
+        code: StartCode,
         message: String,
     ) -> StartFault {
         self.control().closed(&pending.id, link);
-        let fault = self.fault(family, fault, message).await;
+        let fault = self.fault(family, code, message).await;
         if let Some(process) = pending.process.as_mut() {
             match stop(control, process, &pending.run).await {
                 Ok(_) => pending.process = None,
@@ -1161,7 +1156,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         match AcpLink::dial(vsock).await {
             Ok(link) => Ok(link),
             Err(error) => Err(self
-                .fault(family, StartFault::SandboxStartFailed, dial_text(error))
+                .fault(family, StartCode::Sandbox, dial_text(error))
                 .await),
         }
     }
@@ -1178,11 +1173,8 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         &self,
         run: &VmRunDir,
         expected: Expected,
-    ) -> Result<(), (StartFault, String)> {
-        let (sandbox, egress) = (
-            StartFault::SandboxStartFailed,
-            StartFault::EgressAssertFailed,
-        );
+    ) -> Result<(), (StartCode, String)> {
+        let (sandbox, egress) = (StartCode::Sandbox, StartCode::Egress);
         let deadline = Instant::now() + READY_WAIT;
         let info = loop {
             let (api, vm) = (Arc::clone(&self.api), run.clone());
@@ -1207,6 +1199,35 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         blocking(move || api.resume(&vm))
             .await
             .map_err(|error| (sandbox, format!("resuming the VM: {error}")))
+    }
+}
+
+/// A start fault that writes a fault file: one of the two of decision
+/// CH6-3. `host_full` writes none, so it has no `StartCode`.
+#[derive(Debug, Clone, Copy)]
+enum StartCode {
+    /// The VM did not boot or restore, or guest init sent no
+    /// `ControlReady`.
+    Sandbox,
+    /// The VM failed the deny-by-default check.
+    Egress,
+}
+
+impl StartCode {
+    /// The code of the fault file.
+    const fn code(self) -> FaultCode {
+        match self {
+            Self::Sandbox => FaultCode::SandboxStartFailed,
+            Self::Egress => FaultCode::EgressAssertFailed,
+        }
+    }
+
+    /// The fault of the reply before 101.
+    const fn fault(self) -> StartFault {
+        match self {
+            Self::Sandbox => StartFault::SandboxStartFailed,
+            Self::Egress => StartFault::EgressAssertFailed,
+        }
     }
 }
 
@@ -1827,7 +1848,7 @@ fn launch<L: Launcher>(
 impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
     async fn start(&self, row: &SessionRow) -> Result<AcpLink, StartFault> {
         let (id, family) = (&row.id, &row.family);
-        let sandbox = StartFault::SandboxStartFailed;
+        let sandbox = StartCode::Sandbox;
         match self.find(id) {
             Ok(Found::Runs(vsock)) => return self.dial(family, &vsock).await,
             Ok(Found::Free) => {}
@@ -1977,7 +1998,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // 3, CH72 rule 3).
         let denied = follow.check(&reach).await;
         if let Err(message) = denied {
-            let egress = StartFault::EgressAssertFailed;
+            let egress = StartCode::Egress;
             let control = Some(&control);
             return Err(self
                 .abort(pending, link, control, family, egress, message)

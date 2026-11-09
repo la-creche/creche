@@ -1216,6 +1216,25 @@ fn a_serial_log_past_the_cap_stops_its_vm_on_the_idle_tick() {
     assert!(test.fault_codes().is_empty());
 }
 
+/// The idle tick runs the cap before the idle sleep. So a VM that is
+/// idle past `IDLE_TIMEOUT` and whose serial log passed `SERIAL_CAP`
+/// stops with no snapshot, and its family gets `serial_log_full`
+/// (decisions CH62 rule 26, CH79 rule 7).
+#[test]
+fn the_cap_runs_before_the_idle_sleep() {
+    let test = Test::new("cap-idle", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let serial = test.state.session(&test.rows[0].id).serial_log();
+    let log = fs::OpenOptions::new().write(true).open(serial);
+    log.unwrap().set_len(SERIAL_CAP + 1).unwrap();
+    let before = Instant::now();
+    test.runtime
+        .block_on(test.hook.idle_tick(before + PAST_IDLE));
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+    assert!(test.stopped(0));
+    assert_eq!(test.fault_codes(), ["serial_log_full"]);
+}
+
 /// A turn that runs or an open door link keeps the VM awake (decision
 /// CH19 (6)).
 #[test]

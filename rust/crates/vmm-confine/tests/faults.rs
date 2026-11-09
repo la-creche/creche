@@ -108,7 +108,7 @@ fn a_write_is_atomic_with_the_contract_modes() {
         root.read("chat")["faults"][0]["code"],
         "egress_assert_failed"
     );
-    assert_eq!(root.read("chat")["faults"][0]["blocks_turns"], true);
+    assert_eq!(root.read("chat")["faults"][0]["blocks_turns"], false);
     rustix::process::umask(umask);
 }
 
@@ -155,27 +155,26 @@ fn an_open_code_keeps_its_since_and_a_new_code_adds_an_entry() {
     assert_eq!(faults.as_array().unwrap().len(), 2);
 }
 
-/// `serial_log_full` does not stop turns, and each start fault does
-/// (contract 05 §3.3, decision CH79 rule 7). The file takes the value
-/// of the code.
+/// No vmm code stops turns (contract 05 §3.3, decisions CH79 rule 7,
+/// CH82 rules 1, 2 and 6). The file names each code with `blocks_turns`
+/// false.
 #[test]
-fn a_full_serial_log_does_not_block_turns() {
+fn no_vmm_fault_blocks_turns() {
     let root = Root::new("serial");
     let mut book = root.book(SINCE);
     let codes = [
-        (FaultCode::SandboxStartFailed, "sandbox_start_failed", true),
-        (FaultCode::EgressAssertFailed, "egress_assert_failed", true),
-        (FaultCode::SerialLogFull, "serial_log_full", false),
+        (FaultCode::SandboxStartFailed, "sandbox_start_failed"),
+        (FaultCode::EgressAssertFailed, "egress_assert_failed"),
+        (FaultCode::SerialLogFull, "serial_log_full"),
     ];
-    for (code, ..) in codes {
+    for (code, _) in codes {
         book.raise(&chat(), code, MESSAGE.to_owned(), at(SINCE))
             .unwrap();
     }
     let faults = &root.read("chat")["faults"];
-    for (index, (code, name, blocks)) in codes.into_iter().enumerate() {
-        assert_eq!(code.blocks_turns(), blocks, "{name}");
+    for (index, (_, name)) in codes.into_iter().enumerate() {
         assert_eq!(faults[index]["code"], name);
-        assert_eq!(faults[index]["blocks_turns"], blocks, "{name}");
+        assert_eq!(faults[index]["blocks_turns"], false, "{name}");
     }
 }
 

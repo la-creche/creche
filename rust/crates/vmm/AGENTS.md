@@ -1349,8 +1349,8 @@ the passes on paused time.
    `sessions/<id>/serial.log` of each VM with a control link, in
    `spawn_blocking`. Past `sleep::SERIAL_CAP` (64 MiB) it writes
    `serial_log_full` to the fault file of the family and stops that VM
-   with the graceful stop, in a task of its own. That code does not stop
-   turns (`FaultCode::blocks_turns`). The VM takes no snapshot, and the
+   with the graceful stop, in a task of its own. No vmm code stops
+   turns (decision CH82 rules 2 and 6). The VM takes no snapshot, and the
    next start of the session writes a new log (decision CH59 rule 2).
    So a runaway guest writes at most 64 MiB plus `IDLE_CHECK` of output
    per start.
@@ -1699,10 +1699,9 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
     stops a VM whose log passed `SERIAL_CAP` (64 MiB) and writes
     `serial_log_full` (`ColdBoot::cap_serial`). CH writes the file
     itself (`--serial file=`), so the cap reads the size and changes no
-    Landlock or AppArmor rule (gap Q71-7 option A).
-    CONTRACT-QUESTION (decision CH79 rule 7): the code name and its
-    `blocks_turns` false come from the PD1 draft of contract 05 0.18.0,
-    which is not merged. `creche-vmm-confine/AGENTS.md` lists it too.
+    Landlock or AppArmor rule (gap Q71-7 option A). Decision CH82 rules
+    1, 2 and 6 name the code `serial_log_full` and give every vmm code
+    `blocks_turns` false.
 
 ## Caller duties
 
