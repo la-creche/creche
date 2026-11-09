@@ -66,7 +66,7 @@ each variable. Flue keeps its store in `$AGENT_SESSIONS_DIR/flue.db`, and
 it starts only after the facade holds the lock. On sbx the facade serves
 no session after the cut: it answers `initialize`, `_creche/beat` and
 `_creche/shutdown`, and the SDK answers each session method with method
-not found (decisions CH52 rule 2, CH79 rule 3). playpen stays at its
+not found. Known gaps holds the `CONTRACT-QUESTION`. playpen stays at its
 pre-cut tag for the 7 days of a rollback (decision CH79 rule 3).
 
 Under CH the facade reads no `AGENT_*` variable (decisions CH5e, CH80).
@@ -276,5 +276,11 @@ facade.
   (`read_agent` in `attendance/src/attendance/acp_link.py`), and attendance
   answers `session/list` itself (decision CH21-7). No row says which side
   drops the claim. `src/acp.ts` holds it.
+- CONTRACT-QUESTION: no row says what the sbx path serves after the cut.
+  Decision CH21-4 drops `creche_sessions` in CH mode only, and decision
+  CH81 rule 7 keeps the sbx path until phase 11 item 7. The file list of
+  plan PR CR9 removes `session-index.ts`, the one session table of sbx.
+  The reading: on sbx the facade starts and serves no session.
+  `serveFamily` in `src/family.ts` holds it.
 - The workspace is one directory for every session. The playpen gave
   `coding-sandbox` one directory per chat (Phase 2 plan, risk 6).
