@@ -204,6 +204,16 @@ def test_an_unknown_nested_key_names_the_closest_field() -> None:
     ]
 
 
+def test_max_resident_processes_is_an_unknown_field() -> None:
+    # Minor 19 drops it (CH8-6). The vmm admits each VM by host limits.
+    assert _locs_and_messages(THIN_TOML + "sandbox.max_resident_processes = 12\n") == [
+        (
+            "sandbox.max_resident_processes",
+            "unknown field 'max_resident_processes'; known fields here are cpus, memory, image",
+        )
+    ]
+
+
 @pytest.mark.parametrize(
     ("text", "message"),
     [

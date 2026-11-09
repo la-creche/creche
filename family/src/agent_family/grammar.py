@@ -88,15 +88,13 @@ CPUS_MIN: Final = 1
 CPUS_MAX: Final = 8
 MEMORY_MIN_MB: Final = 256
 MEMORY_MAX_MB: Final = 16 * 1024
-RESIDENT_PROCS_MIN: Final = 1
-RESIDENT_PROCS_MAX: Final = 32
 JOB_TIMEOUT_MIN_S: Final = 1
 JOB_TIMEOUT_MAX_S: Final = 3600
 MAX_RUNNING_TURNS_MIN: Final = 1
 MAX_RUNNING_TURNS_MAX: Final = 8
 #: Contract 01 §3.6.1. The ceiling is `max_running_turns`'s, for the reason
-#: §3.6.1 gives: one caller must not alone exhaust a target family's default
-#: budget of 12 held-open pi processes (§3.9).
+#: §3.6.1 gives: one caller must not alone exhaust a target family's
+#: budget of running turns.
 MAX_INFLIGHT_DELEGATIONS_MIN: Final = 1
 MAX_INFLIGHT_DELEGATIONS_MAX: Final = 8
 PORT_MIN: Final = 1
@@ -169,7 +167,6 @@ DEFAULT_MEMORY: Final = "2g"
 #: node, pi and ripgrep, with no language runtime beyond them. A family
 #: that needs pandas asks for `python` (contract 01 §3.9).
 DEFAULT_SANDBOX_IMAGE: Final = str(SandboxFlavor.BASE)
-DEFAULT_RESIDENT_PROCS: Final = 12
 DEFAULT_JOB_TIMEOUT: Final = "120s"
 DEFAULT_MAX_RUNNING_TURNS: Final = 1
 #: Contract 01 §3.6.1 and contract 04 §1.2. `caregiver` copies it into the

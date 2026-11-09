@@ -20,8 +20,9 @@ install:
 provides:
   # Contract 01: the family.yaml and mcp/<name>/server.yaml schemas.
   # Minor 17 adds the flavor `coding` (CH79 rule 1). Minor 18 drops
-  # `files`, `job.caller_root` and `AGENT_MOUNT_ROOTS` (CH10-10).
-  - { contract: family-file, major: 0, minor: 18 }
+  # `files`, `job.caller_root` and `AGENT_MOUNT_ROOTS` (CH10-10). Minor 19
+  # drops `sandbox.max_resident_processes` (CH8-6).
+  - { contract: family-file, major: 0, minor: 19 }
   # Contract 05: per-family status. caregiver makes no switch call and
   # creates no sandbox (decisions CH1, CH21-1).
   - { contract: manager-status, major: 0, minor: 17 }

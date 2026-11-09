@@ -28,8 +28,9 @@
 #
 # `requires`: the vmm reads config/, egress.json and repos.json of each
 # family, which caregiver writes from family-file 0.16 on (CH76 rule 3).
-# The floor is the current minor of the provider, 0.18, the minor that
-# drops `files` (CH10-10). The vmm reads no field that minor 18 drops.
+# The floor is the current minor of the provider, 0.19, the minor that
+# drops `sandbox.max_resident_processes` (CH8-6). The vmm reads no field
+# that minors 18 and 19 drop.
 #
 # `restore.keep = 1`: the host keeps one previous tree, and a value above 1
 # keeps no more (fact 51).
@@ -55,7 +56,7 @@ build = [
 ]
 install.to = "/opt/components/vmm"
 install.prev = "/opt/components/vmm.prev"
-requires = [{ contract = "family-file", major = 0, min_minor = 18 }]
+requires = [{ contract = "family-file", major = 0, min_minor = 19 }]
 verify.command = ["/opt/components/vmm/bin/vmm", "verify", "--json", "--env-file", "/srv/agents/state/creche/vmm.env"]
 verify.user = "operator"
 verify.timeout_s = 60
