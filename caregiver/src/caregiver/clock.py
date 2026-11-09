@@ -7,6 +7,7 @@ sideways to a peer for one."""
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
@@ -21,6 +22,18 @@ def rfc3339(moment: datetime) -> str:
     """One format, spelled once. Fixed width and UTC, so two stamps compare
     as plain strings and no reader has to parse one to order them."""
     return moment.strftime(RFC3339_FORMAT)
+
+
+def now_ms() -> int:
+    """Now, as integer milliseconds since 1970-01-01T00:00:00Z, UTC: the
+    one form of a time that the vmm reads from a file of caregiver
+    (decision CH22-1, contract 01 §6.1 rule 5)."""
+    return time.time_ns() // 1_000_000
+
+
+def ms_from_now(seconds: int) -> int:
+    """A deadline this many seconds ahead, as `now_ms` gives it."""
+    return now_ms() + seconds * 1000
 
 
 def seconds_from_now(seconds: int) -> str:

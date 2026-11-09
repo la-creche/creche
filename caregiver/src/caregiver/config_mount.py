@@ -52,17 +52,10 @@ class RuntimeConfig:
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     #: When a `/key/update` of `model_alias` is live on every LiteLLM
     #: worker (contract 05 §7 rule 6, decision CH23-1). `None` until a
-    #: model change sets it.
-    #
-    # CONTRACT-QUESTION: contract 01 §6.1 rule 5 gives integer milliseconds
-    # since 1970. No row fixes the form. The root `AGENTS.md` (Time) gives
-    # RFC 3339 for a time in a file, and the one reader, `live_at` of
-    # `rust/crates/vmm-confine/src/family.rs`, takes only the form of
-    # `clock.py`. The reading here: that form, to the second. Milliseconds
-    # cost a change of this writer, of that reader and of its fixture in
-    # one PR. A change of this writer alone makes the vmm refuse each
-    # `runtime.json` that holds the key.
-    model_live_at: str | None = None
+    #: model change sets it. Integer milliseconds since 1970-01-01T00:00:00Z,
+    #: UTC (contract 01 §6.1 rule 5, decisions CH22-1, CH31), the form
+    #: that `live_at` of `rust/crates/vmm-confine/src/family.rs` reads.
+    model_live_at: int | None = None
 
     def as_json(self) -> dict[str, Any]:
         """The file's content. `system_prompt` is written only when it is not
@@ -91,7 +84,7 @@ class LiveModel:
     of that alias (decision CH23-1)."""
 
     alias: str
-    live_at: str | None
+    live_at: int | None
 
 
 def read_model(target: Path) -> LiveModel | None:
@@ -103,7 +96,11 @@ def read_model(target: Path) -> LiveModel | None:
 
     alias = body.get("model_alias")
     live_at = body.get("model_live_at")
-    if not isinstance(alias, str) or not isinstance(live_at, str | None):
+    # A bool is an int in Python, and no time is `true`.
+    if not isinstance(alias, str) or isinstance(live_at, bool):
+        return None
+
+    if not isinstance(live_at, int | None):
         return None
 
     return LiveModel(alias, live_at)
