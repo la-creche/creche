@@ -75,10 +75,6 @@ PUMP_INTERVAL_S = 1.0
 #: unbound for one call at most, whatever the count of families.
 JOB_ROWS_BOUND_S: Final = DROP_CLIENT_TIMEOUT_S
 
-#: The `sandbox` of an outcome record. A job runs in a VM of its own
-#: session, which no sandbox id names (decision CH83 rule 3).
-NO_SANDBOX = ""
-
 
 class SessionService:
     """The jobs, the ACP door and the view of each family."""
@@ -583,7 +579,7 @@ class SessionService:
 
             if isinstance(end, JobEnd):
                 record = outcomes.from_job(
-                    entry.family, entry.session, entry.trigger(), started, end, NO_SANDBOX
+                    entry.family, entry.session, entry.trigger(), started, end
                 )
                 outcomes.write(self._config.state_root, record)
                 self._ledger_of(entry).note_outcome(entry.caller_family, entry.session, record.id)

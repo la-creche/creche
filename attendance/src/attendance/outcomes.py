@@ -62,7 +62,6 @@ class OutcomeRecord:
     spend_usd: float | None
     #: Why `spend_usd` is null. Always None when it is a number.
     spend_reason: str | None
-    sandbox: str
 
     def to_file(self) -> dict[str, Any]:
         return {
@@ -75,12 +74,8 @@ class OutcomeRecord:
             "status": self.status.value,
             "error": self.error,
             "turns": self.turns,
-            # Phase 2 plan, row 19. Approvals are chaperone gates now, and
-            # no gate holds a turn, so this service counts none.
-            "approvals": None,
             "spend_usd": self.spend_usd,
             "spend_reason": self.spend_reason,
-            "sandbox": self.sandbox,
         }
 
 
@@ -90,7 +85,6 @@ def from_job(
     trigger: Trigger,
     started_at: datetime,
     end: JobEnd,
-    sandbox: str,
 ) -> OutcomeRecord:
     """One record for one job over ACP: one prompt, so one turn."""
     return OutcomeRecord(
@@ -105,7 +99,6 @@ def from_job(
         turns=1,
         spend_usd=None,
         spend_reason=SPEND_NO_USAGE_REASON,
-        sandbox=sandbox,
     )
 
 

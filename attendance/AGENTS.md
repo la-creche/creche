@@ -315,9 +315,6 @@ is marked `slow`.
 - The phase 2 plan names no family kind for the ACP door. `door-acp`
   reaches attended families only (`auth.py`).
 - ACP's prompt answer carries no usage. A delegate answer's `usage` is null.
-- Approvals are chaperone gates, and a gate holds no turn (phase 2 plan,
-  correction 9). An outcome record's `approvals` is null, and no turn
-  reaches `waiting-approval`.
 - A restart forgets each queued or running dispatched job. Its entry then
   reads `ended` with a null outcome.
 - An outcome record of a job over ACP has a null `spend_usd`: ACP reports
@@ -356,8 +353,6 @@ is marked `slow`.
 - A vmm stream that ends with a request in flight closes the door
   connection, as a relay that ended did. The client opens the session again
   with `session/load` (decision CH19 (6)).
-- The outcome record's `sandbox` is the empty text: a job runs in a VM of
-  its own session, which no sandbox id names (decision CH83 rule 3).
 - A job whose vmm drop fails leaves its row. The log names it. The next
   start of attendance drops it (contract 02 §6 rule 5).
 - `caregiver` reads only the codes of minor 17 from the fault file of this

@@ -135,9 +135,7 @@ def outcome_doc(outcome_id: str, family: str = "scrum-lead", **extra: Any) -> di
         "status": "ok",
         "error": None,
         "turns": 3,
-        "approvals": {"requested": 1, "approved": 1, "denied": 0, "timed_out": 0},
         "spend_usd": 0.21,
-        "sandbox": f"{family}-s2",
     }
     row.update(extra)
     return row

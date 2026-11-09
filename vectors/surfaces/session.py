@@ -355,7 +355,6 @@ _OUTCOME_ARGS: Final[dict[str, Any]] = {
     "turns": 3,
     "spend_usd": 0.21,
     "spend_reason": None,
-    "sandbox": "scrum-lead-s2",
 }
 
 OUTCOMES: Final[tuple[Outcome, ...]] = (
@@ -401,7 +400,6 @@ OUTCOMES: Final[tuple[Outcome, ...]] = (
     Outcome("spend-zero", {**_OUTCOME_ARGS, "spend_usd": 0.0}),
     Outcome("spend-small", {**_OUTCOME_ARGS, "spend_usd": 0.000015}),
     Outcome("spend-long-float", {**_OUTCOME_ARGS, "spend_usd": cases.LONG_FLOAT}),
-    Outcome("no-sandbox", {**_OUTCOME_ARGS, "sandbox": ""}),
     Outcome(
         "times-before-the-year-1000",
         {
@@ -439,7 +437,6 @@ def _outcome_record(args: dict[str, Any]) -> outcomes.OutcomeRecord:
         turns=args["turns"],
         spend_usd=args["spend_usd"],
         spend_reason=args["spend_reason"],
-        sandbox=args["sandbox"],
     )
 
 

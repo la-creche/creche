@@ -506,10 +506,10 @@ async def test_an_outcome_is_written_when_the_prompt_settles(tmp_path: Path) -> 
         assert outcome["status"] == "ok"
         assert outcome["error"] is None
         assert outcome["turns"] == 1
-        assert outcome["approvals"] is None
+        assert "approvals" not in outcome
         assert outcome["spend_usd"] is None
         assert outcome["spend_reason"] == SPEND_NO_USAGE_REASON
-        assert outcome["sandbox"] == ""
+        assert "sandbox" not in outcome
         assert outcome["trigger"]["kind"] == "dispatch"
         assert outcome["trigger"]["name"] == CALLER
         assert outcome["trigger"]["chain"] == list(CHAIN)

@@ -207,7 +207,6 @@ class OutcomeRow:
     error: str
     turns: int
     spend_usd: float | None
-    sandbox: str
     problem: str
 
 
@@ -329,7 +328,6 @@ def _outcome(path: Path, family: str) -> OutcomeRow:
             error="",
             turns=0,
             spend_usd=None,
-            sandbox="",
             problem=problem or jsonfiles.missing(path.name),
         )
 
@@ -346,7 +344,6 @@ def _outcome(path: Path, family: str) -> OutcomeRow:
         error=jsonfiles.text(body, "error"),
         turns=jsonfiles.integer(body, "turns"),
         spend_usd=jsonfiles.number(body, "spend_usd"),
-        sandbox=jsonfiles.whole(body, "sandbox"),
         problem="",
     )
 
