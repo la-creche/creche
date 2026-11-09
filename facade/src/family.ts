@@ -6,7 +6,7 @@
 // one stderr line. Once the supervisor holds the lock, `serveFamily`
 // starts Flue on the start's `flue.db`. Under CH it opens the one session
 // of `CRECHE_SESSION_ID` (decision CH21-8). On sbx it serves no session
-// after the cut (decisions CH52 rule 2, CH79 rule 3). Before each prompt
+// (the CONTRACT-QUESTION of `serveFamily`). Before each prompt
 // the facade pulls the family state into the agent: on sbx from the
 // mounts, under CH from the vmm (decision CH5a). A pulled `model_alias`
 // that differs switches the model at that prompt (decisions CH5c,
@@ -175,6 +175,13 @@ export async function serveFamily({ mode, composed, backend }: Family, link: Loc
     const tapped = tapStores(composed.db);
     const runtime = await start({ agents: [composed.agent], db: tapped.adapter, providers: composed.providers });
     const refresh = refreshOf(backend, composed);
+    // CONTRACT-QUESTION: no row says what the sbx path serves after the
+    // cut. Decision CH21-4 drops `creche_sessions` in CH mode only, and
+    // decision CH81 rule 7 keeps the sbx path until phase 11 item 7. The
+    // file list of plan PR CR9 removes `session-index.ts`, the one session
+    // table of sbx. The reading here: on sbx the facade serves no session.
+    // To serve sessions on sbx again, the session table comes back with a
+    // row that says so.
     const sessions =
       mode.kind === "ch"
         ? sessionService({ agent: composed.agent, agentName: AGENT_NAME, sessionId: mode.sessionId, link, store: tapped.store, refresh })
