@@ -41,7 +41,6 @@ class Service(StrEnum):
 
     ATTENDANCE = "attendance"
     DOOR_TRIGGER = "door-trigger"
-    DOOR_ACP = "door-acp"
     CAREGIVER = "caregiver"
     CHAPERONE_RS = "chaperone-rs"
     NOTICEBOARD = "noticeboard"
@@ -104,12 +103,6 @@ SERVICES: Final[dict[Service, StartEntry]] = {
         selector=(),
         override="CRECHE_PROC_DOOR_TRIGGER",
         units=("creche-door-trigger.service", "creche-door-trigger@.service"),
-    ),
-    Service.DOOR_ACP: StartEntry(
-        program="agent-door-acp",
-        selector=(),
-        override="CRECHE_PROC_DOOR_ACP",
-        units=("creche-door-acp.service",),
     ),
     Service.CAREGIVER: StartEntry(
         program="caregiver",

@@ -35,7 +35,9 @@ inside the VM, which carries Node.
    of its family. attendance answers `initialize`, `session/new` and
    `session/list` itself, from the host list, with no boot (decision
    CH21-7). It routes each other request and notification by its
-   `sessionId`, over one vmm stream per session. A message whose
+   `sessionId`, over one vmm stream per session. A notification for a
+   session with no open stream does nothing: no request is in flight
+   there (decision CH21-8). A message whose
    `params._meta` holds a key that starts with `creche/` gets
    `invalidParams` (-32602) and reaches no stream (contract 02 §5.1 rule
    5, decision CH21-4). An id that is not a
@@ -148,6 +150,10 @@ conversation and the one-writer rule (Flue's queue).
    break closes the connection. It keys a prompt id as the JavaScript
    facade reads it: a number by its double, a string apart from a number.
    It closes on a prompt whose number id is past the double range.
+10. The ACP door holds no session behind another. The read of the frames
+    awaits no vmm call and no stream open. It puts each frame in the lane
+    of its session, and each lane keeps its frames in order. A stream that
+    opens is closed on each way out of its handshake, a cancel included.
 
 ## Security rules
 

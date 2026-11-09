@@ -158,6 +158,7 @@ MAX_SOCKET_PATH: Final = 100
 
 _ROOT_PREFIX: Final = "cp"
 _SOCKET_NAME: Final = "attendance.sock"
+_VMM_SOCKET_NAME: Final = "vmm.sock"
 
 
 def repo_root() -> Path:
@@ -251,6 +252,11 @@ class Tree:
         return self.root / "sock" / _SOCKET_NAME
 
     @property
+    def vmm_socket(self) -> Path:
+        """Where the vmm stand-in listens: `vmm.sock` of decision CH20."""
+        return self.root / "sock" / _VMM_SOCKET_NAME
+
+    @property
     def audit_file(self) -> Path:
         """The audit file of the Rust chaperone. The noticeboard reads it."""
         return self.root / "chaperone" / "audit.jsonl"
@@ -322,6 +328,14 @@ class Tree:
     def creds_file(self, family: str = FAMILY) -> Path:
         """The credential file of contract 03 §12."""
         return self.mounts(family).creds / "creds.json"
+
+    def egress_file(self, family: str = FAMILY) -> Path:
+        """The egress allowlist of the vmm proxy (contract 01 §6.1.1)."""
+        return self.family_dir(family) / "egress.json"
+
+    def repos_file(self, family: str = FAMILY) -> Path:
+        """The clone list of the vmm mirror (contract 01 §6.1.1)."""
+        return self.family_dir(family) / "repos.json"
 
     def fault_file(self, writer: str, family: str = FAMILY) -> Path:
         """The open faults that one service reports for one family (contract 05 §3.3.1)."""
