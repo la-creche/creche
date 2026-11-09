@@ -1,1 +1,1 @@
-"""The noticeboard: every family, sandbox and session on one page."""
+"""The noticeboard: every family, VM and session on one page."""

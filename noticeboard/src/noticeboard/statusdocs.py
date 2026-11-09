@@ -1,15 +1,18 @@
 """`caregiver`'s status documents, as the noticeboard reads them (contract 05 §8).
 
-Invariant 20: one view shows every family, sandbox and session, and that
-view is the truth. Truth here means two things this module enforces.
+Invariant 20: one view shows every family, VM and session, and that view
+is the truth. Truth here means two things this module enforces.
 
 1. **A stale document is never shown as current** (contract 05 §2 rule 5).
    Past 90 seconds the family reads `unknown` and the row says why, because
    a `written_at` that old means `caregiver` is not running, not that the
    state below it still holds.
 2. **Spend is one number per family.** The budget belongs
-   to the family key, never to a sandbox (contract 05 §7 rule 1), so no
-   sandbox row carries one and `SandboxRow` has no field for it.
+   to the family key, never to a VM or a session (contract 05 §7 rule 1).
+
+The document holds no `sandboxes` list since contract 05 minor 18. The VM
+state of each session comes from `attendance` (decisions CH21-1, CH33 rule
+9), so this module reads no VM at all.
 
 Nothing here raises. A file that will not parse becomes a `problem` string
 on the row, which the page renders as a report.
@@ -32,16 +35,11 @@ STALE_AFTER_S: Final = 90
 STATUS_FILE: Final = "status.json"
 VALIDATION_FILE: Final = "validation.json"
 
-#: Caps on lists that come from another process (invariant 14). A family
-#: runs one or two sandboxes; twenty is far past a real document and stops
-#: one malformed file from growing a page without bound.
-MAX_SANDBOXES: Final = 20
+#: Caps on lists that come from another process (invariant 14). Twenty
+#: faults is far past a real document and stops one malformed file from
+#: growing a page without bound.
 MAX_FAULTS: Final = 20
 MAX_ISSUES: Final = 200
-
-#: How many characters of an image digest a row shows. Enough to tell two
-#: releases apart, short enough to sit in a table cell.
-DIGEST_CHARS: Final = 19
 
 #: What a page shows for a field of an issue that holds no text.
 NOT_TEXT: Final = "(not text)"
@@ -83,34 +81,11 @@ class FaultRow:
     source: str
     stale: bool
     message: str
-    sandbox: str
 
     @property
     def summary(self) -> str:
         detail = f": {self.message}" if self.message else ""
         return f"{self.code}{detail}"
-
-
-@dataclass(frozen=True)
-class SandboxRow:
-    """Contract 05 §4.1. It carries no spend and no budget, on purpose."""
-
-    id: str
-    state: str
-    power: str
-    image: str
-    cpus: int
-    memory: str
-    created_at: str
-    ready_at: str
-    channel: str
-    has_playpen_env: bool
-
-    @property
-    def serves_new_turns(self) -> bool:
-        """Contract 05 §4.2: only `ready` serves. `draining` finishes the
-        turns it already holds."""
-        return self.state == "ready"
 
 
 @dataclass(frozen=True)
@@ -165,14 +140,14 @@ class IssueRow:
 
 @dataclass(frozen=True)
 class ReconcileRow:
-    """Contract 05 §3.4. Null unless the family is `reconciling`."""
+    """Contract 05 §3.4. Null unless the family is `reconciling`. Minor 20
+    drops `needs_switch`."""
 
     since: str
     from_rev: str
     to_rev: str
     step: str
     attempts: int
-    needs_switch: bool
 
 
 @dataclass(frozen=True)
@@ -196,7 +171,6 @@ class FamilyRow:
     applied_rev: str
     config_rev: str
     epoch: int
-    sandboxes: tuple[SandboxRow, ...]
     faults: tuple[FaultRow, ...]
     spend: SpendRow | None
     validation: ValidationRow | None
@@ -210,23 +184,6 @@ class FamilyRow:
     def stale(self) -> bool:
         return self.health is Health.UNKNOWN
 
-    @property
-    def serving(self) -> SandboxRow | None:
-        """Which sandbox takes a new turn (contract 05 §4.2 rule 1).
-
-        A `ready` sandbox always wins. Otherwise the newest `creating` one,
-        because running the handshake is what promotes it. Nothing else is
-        dialled.
-        """
-        ready = [one for one in self.sandboxes if one.state == "ready"]
-
-        if ready:
-            return ready[0]
-
-        creating = [one for one in self.sandboxes if one.state == "creating"]
-
-        return creating[-1] if creating else None
-
     # There is no `turns_running` here: `caregiver` cannot count a running
     # turn, and a number it cannot count does not belong on the noticeboard
     # invariant 20 calls the truth. The live count belongs to `attendance`.
@@ -234,11 +191,6 @@ class FamilyRow:
     @property
     def blocking_faults(self) -> tuple[FaultRow, ...]:
         return tuple(one for one in self.faults if one.blocks_turns)
-
-    @property
-    def live_sandboxes(self) -> tuple[SandboxRow, ...]:
-        """Everything the document still names as existing."""
-        return tuple(one for one in self.sandboxes if one.state != "gone")
 
 
 @dataclass(frozen=True)
@@ -423,7 +375,6 @@ def _unreadable(name: str, problem: str) -> FamilyRow:
         applied_rev="",
         config_rev="",
         epoch=0,
-        sandboxes=(),
         faults=(),
         spend=None,
         validation=None,
@@ -452,7 +403,6 @@ def _row(name: str, body: Json, now: datetime) -> FamilyRow:
         applied_rev=jsonfiles.whole(body, "applied_rev"),
         config_rev=jsonfiles.whole(body, "config_rev"),
         epoch=jsonfiles.integer(jsonfiles.child(body, "credentials"), "epoch"),
-        sandboxes=_sandboxes(body),
         faults=faults,
         spend=_spend(body, written, now),
         validation=validation,
@@ -509,26 +459,6 @@ def _reason(
     return ""
 
 
-def _sandboxes(body: Json) -> tuple[SandboxRow, ...]:
-    return tuple(
-        SandboxRow(
-            id=jsonfiles.whole(one, "id"),
-            state=jsonfiles.whole(one, "state"),
-            power=jsonfiles.whole(one, "power"),
-            image=jsonfiles.whole(one, "image")[:DIGEST_CHARS],
-            cpus=jsonfiles.integer(one, "cpus"),
-            memory=jsonfiles.whole(one, "memory"),
-            created_at=jsonfiles.whole(one, "created_at"),
-            ready_at=jsonfiles.whole(one, "ready_at"),
-            channel=jsonfiles.whole(one, "channel"),
-            # Contract 05 §4.1.1 rule 4: a sandbox row without this path is
-            # a fault, because `attendance` cannot build a channel command.
-            has_playpen_env=bool(jsonfiles.whole(one, "supervisor_env")),
-        )
-        for one in jsonfiles.children(body, "sandboxes", MAX_SANDBOXES)
-    )
-
-
 def _faults(body: Json) -> tuple[FaultRow, ...]:
     return tuple(
         FaultRow(
@@ -538,7 +468,6 @@ def _faults(body: Json) -> tuple[FaultRow, ...]:
             source=jsonfiles.whole(one, "source"),
             stale=jsonfiles.flag(one, "stale"),
             message=jsonfiles.text(one, "message"),
-            sandbox=jsonfiles.whole(one, "sandbox"),
         )
         for one in jsonfiles.children(body, "faults", MAX_FAULTS)
     )
@@ -604,7 +533,6 @@ def _reconcile(body: Json) -> ReconcileRow | None:
         to_rev=jsonfiles.whole(found, "to_rev"),
         step=jsonfiles.whole(found, "step"),
         attempts=jsonfiles.integer(found, "attempts"),
-        needs_switch=jsonfiles.flag(found, "needs_switch"),
     )
 
 

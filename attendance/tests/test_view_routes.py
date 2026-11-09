@@ -52,6 +52,7 @@ from creche_wire import (
     TimerTrigger,
     Trigger,
     UnixMillis,
+    VmState,
 )
 from fake_facade import PromptMode
 from fake_vmm import BUSY, FakeVmm
@@ -194,6 +195,7 @@ async def test_the_session_list_pages_the_host_list(rig: Rig) -> None:
                     "name": "scrum-lead",
                     "chain": ["chat", "scrum-lead"],
                 },
+                "vm": "none",
             },
             {
                 "id": ids[1],
@@ -203,12 +205,26 @@ async def test_the_session_list_pages_the_host_list(rig: Rig) -> None:
                 "job_id": THIN_JOB,
                 "delegation": DELEGATION,
                 "trigger": None,
+                "vm": "none",
             },
         ],
         "next_cursor": "2",
     }
     assert [one["id"] for one in second.json()["sessions"]] == [ids[0]]
     assert second.json()["next_cursor"] is None
+    assert rig.vmm.opened == []
+
+
+@pytest.mark.parametrize("vm", list(VmState))
+async def test_a_view_row_passes_on_the_vm_of_the_list_row(rig: Rig, vm: VmState) -> None:
+    """Contract 02 §7 rule 2 minor 16: `vm` is the vmm's word as it is
+    (decisions CH21-1, CH33 rule 9, CH79 rule 4). A list boots no VM."""
+    await rig.row(SESSION_ID)
+    rig.vmm.vms[SESSION_ID] = vm
+
+    (listed,) = (await rig.get(SESSIONS)).json()["sessions"]
+
+    assert listed["vm"] == vm.value
     assert rig.vmm.opened == []
 
 

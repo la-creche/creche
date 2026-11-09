@@ -32,7 +32,8 @@ provides:
   # view and /busy. Minor 14 holds the host session list and the typed
   # origin (decisions CH21-4 to CH21-9). Minor 15 adds `session/delete`
   # (decision CH27) and `host_full` of the delegate door (CH83 rule 2).
-  - { contract: session-api, major: 0, minor: 15 }
+  # Minor 16 adds the `vm` of a view row (decision CH79 rule 4).
+  - { contract: session-api, major: 0, minor: 16 }
 requires:
   # Contract 05: it reads caregiver's status document and writes a fault file.
   # Minor 20 is caregiver's (plan PR CR10). This package reads no field that

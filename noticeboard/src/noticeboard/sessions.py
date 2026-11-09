@@ -8,12 +8,15 @@ because there is no code for it.
 
 `attendance` serves the two calls as read-only view routes:
 
-    GET /families/{family}/sessions          `session/list` of the facade
+    GET /families/{family}/sessions          the vmm list, no boot
     GET /families/{family}/sessions/{id}     `session/load` of the facade
 
-For each call, `attendance` opens one `acp-relay` to the family's facade,
-sends `initialize` and one read method, and answers JSON. The facade owns
-each conversation.
+The list is a page of the host session list (contract 02 §7 rule 1). Each
+row carries `vm`, the state of the session's VM that the vmm list row
+gives (contract 02 minor 16, decisions CH33 rule 9, CH79 rule 4). It is the
+one VM state the noticeboard shows (decision CH21-1). A transcript read
+opens the session's vmm stream, sends `initialize` and `session/load`, and
+answers JSON. The facade owns each conversation.
 
 Two shapes this module defends against.
 
@@ -106,6 +109,27 @@ class EntryKind(enum.StrEnum):
     TOOL_CALL = "tool_call"
 
 
+class VmState(enum.StrEnum):
+    """Contract 02 §7 rule 2: the `vm` of a view row, plus one word of this
+    reader.
+
+    `unreadable` is this noticeboard's word for a `vm` that is not one of
+    the four values of the contract, or no `vm` at all. The contract does
+    not name it, because `attendance` never sends one. A page shows the
+    word and keeps the rest of the row.
+    """
+
+    #: No session disk yet.
+    NONE = "none"
+    #: A session disk and no snapshot.
+    OFF = "off"
+    #: A snapshot can resume.
+    ASLEEP = "asleep"
+    #: A Cloud Hypervisor process runs the VM.
+    RUNNING = "running"
+    UNREADABLE = "unreadable"
+
+
 @dataclass(frozen=True)
 class SessionRow:
     """One row of `GET /families/{family}/sessions`."""
@@ -119,6 +143,7 @@ class SessionRow:
     job_id: str
     delegation: str
     trigger: str
+    vm: VmState
 
     @property
     def origin(self) -> str:
@@ -312,7 +337,23 @@ def _session(family: str, body: Json) -> SessionRow:
         job_id=jsonfiles.whole(body, "job_id"),
         delegation=jsonfiles.whole(body, "delegation"),
         trigger=_trigger(body),
+        vm=_vm(body),
     )
+
+
+def _vm(body: Json) -> VmState:
+    """The `vm` of a row. A value that is no text, or a text outside the
+    contract's four, reads `unreadable` (CONTRACT-QUESTION, noticeboard
+    Known gaps)."""
+    value = body.get("vm")
+
+    if not isinstance(value, str):
+        return VmState.UNREADABLE
+
+    try:
+        return VmState(value)
+    except ValueError:
+        return VmState.UNREADABLE
 
 
 def _trigger(body: Json) -> str:

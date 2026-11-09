@@ -22,7 +22,6 @@ from noticeboard_helpers import (
     fault_doc,
     make_state_root,
     outcome_doc,
-    sandbox_doc,
     status_doc,
     write_json,
 )
@@ -137,7 +136,6 @@ def test_a_missing_document_reports_and_does_not_raise(tmp_path: Path) -> None:
 
     assert row.health is Health.UNREADABLE
     assert row.problem == "status.json is missing"
-    assert row.sandboxes == ()
     assert row.spend is None
 
 
@@ -258,69 +256,44 @@ def test_reconciling_names_the_step(tmp_path: Path) -> None:
             "since": "2026-09-19T11:59:40Z",
             "from_rev": "reg-8c01aa",
             "to_rev": "reg-9f21c4",
-            "step": "switch_sandbox",
-            "attempts": 1,
-            "needs_switch": True,
-        },
-    )
-    write_json(root / "families" / "chat" / "status.json", doc)
-
-    row = read_family(root / "families", "chat", NOW)
-
-    assert row.health is Health.RECONCILING
-    assert row.reason == "step switch_sandbox, attempt 1"
-    assert row.reconcile is not None
-    assert row.reconcile.needs_switch
-
-
-def test_a_minor_20_document_reads_whole(tmp_path: Path) -> None:
-    """Contract 05 minor 18 drops `sandboxes`, and minor 20 drops
-    `needs_switch` (plan PR CR10). The reader takes such a document whole:
-    no problem, no sandbox, and the step of minor 20."""
-    root = tmp_path / "state"
-    doc = status_doc(
-        state="reconciling",
-        reconcile={
-            "since": "2026-09-19T11:59:40Z",
-            "from_rev": "reg-8c01aa",
-            "to_rev": "reg-9f21c4",
             "step": "write_config",
             "attempts": 1,
         },
     )
-    del doc["sandboxes"]
     write_json(root / "families" / "chat" / "status.json", doc)
 
     row = read_family(root / "families", "chat", NOW)
 
-    assert row.problem == ""
     assert row.health is Health.RECONCILING
     assert row.reason == "step write_config, attempt 1"
-    assert row.sandboxes == ()
-    assert row.serving is None
     assert row.reconcile is not None
-    assert not row.reconcile.needs_switch
+    assert row.reconcile.step == "write_config"
 
 
-def test_the_serving_sandbox_is_ready_before_creating(tmp_path: Path) -> None:
-    """Contract 05 §4.2 rule 1: a `ready` sandbox always wins."""
+def test_a_sandboxes_list_shows_no_vm(tmp_path: Path) -> None:
+    """Contract 05 minor 18 drops the `sandboxes` list, and minor 20 drops
+    `needs_switch`. A document that still holds them reads as before, and
+    the row names no VM: the VM state comes from `attendance` (decision
+    CH21-1)."""
     root = tmp_path / "state"
     doc = status_doc(
-        sandboxes=[
-            sandbox_doc("chat-s3", state="draining"),
-            sandbox_doc("chat-s4", state="ready"),
-            sandbox_doc("chat-s5", state="creating"),
-        ]
+        sandboxes=[{"id": "chat-s3", "state": "ready"}],
+        reconcile={"step": "write_config", "attempts": 1, "needs_switch": True},
+        faults=[fault_doc(sandbox="chat-s3")],
     )
     write_json(root / "families" / "chat" / "status.json", doc)
 
     row = read_family(root / "families", "chat", NOW)
 
-    assert row.serving is not None
-    assert row.serving.id == "chat-s4"
+    assert row.health is Health.IN_SYNC
+    assert not hasattr(row, "sandboxes")
+    assert not hasattr(row, "serving")
+    assert row.reconcile is not None
+    assert not hasattr(row.reconcile, "needs_switch")
+    assert not hasattr(row.faults[0], "sandbox")
 
 
-def test_no_sandbox_row_carries_a_running_turn_count(tmp_path: Path) -> None:
+def test_no_row_carries_a_running_turn_count(tmp_path: Path) -> None:
     """The status document carries no `turns_running`, and this page must
     not put it back by defaulting it.
 
@@ -332,33 +305,16 @@ def test_no_sandbox_row_carries_a_running_turn_count(tmp_path: Path) -> None:
     root = tmp_path / "state"
     write_json(
         root / "families" / "chat" / "status.json",
-        status_doc(sandboxes=[sandbox_doc("chat-s3", turns_running=7)]),
+        status_doc(turns_running=7),
     )
 
     row = read_family(root / "families", "chat", NOW)
 
     assert not hasattr(row, "turns_running")
-    assert not hasattr(row.sandboxes[0], "turns_running")
 
 
-def test_the_newest_creating_sandbox_serves_when_none_is_ready(tmp_path: Path) -> None:
-    root = tmp_path / "state"
-    doc = status_doc(
-        sandboxes=[
-            sandbox_doc("chat-s3", state="creating"),
-            sandbox_doc("chat-s4", state="creating"),
-        ]
-    )
-    write_json(root / "families" / "chat" / "status.json", doc)
-
-    row = read_family(root / "families", "chat", NOW)
-
-    assert row.serving is not None
-    assert row.serving.id == "chat-s4"
-
-
-def test_no_sandbox_carries_spend(tmp_path: Path) -> None:
-    """The budget belongs to the family, never a sandbox."""
+def test_spend_is_one_number_of_the_family(tmp_path: Path) -> None:
+    """The budget belongs to the family, never a VM (contract 05 §7 rule 1)."""
     root = make_state_root(tmp_path)
 
     row = read_family(root / "families", "chat", NOW)
@@ -366,9 +322,6 @@ def test_no_sandbox_carries_spend(tmp_path: Path) -> None:
     assert row.spend is not None
     assert row.spend.spend_usd == 3.42
     assert row.spend.budget_usd == 15.0
-    for sandbox in row.sandboxes:
-        assert not hasattr(sandbox, "spend_usd")
-        assert not hasattr(sandbox, "budget_usd")
 
 
 def test_spend_older_than_the_document_reads_stale(tmp_path: Path) -> None:
@@ -419,29 +372,16 @@ def test_spend_share_needs_both_numbers(tmp_path: Path) -> None:
     assert row.spend.known
 
 
-def test_a_sandbox_without_playpen_env_is_visible(tmp_path: Path) -> None:
-    """Contract 05 §4.1.1 rule 4 makes it a fault; the page must show it."""
-    root = tmp_path / "state"
-    write_json(
-        root / "families" / "chat" / "status.json",
-        status_doc(sandboxes=[sandbox_doc("chat-s3", supervisor_env="")]),
-    )
-
-    row = read_family(root / "families", "chat", NOW)
-
-    assert not row.sandboxes[0].has_playpen_env
-
-
 def test_a_count_field_that_is_not_a_number_reads_zero(tmp_path: Path) -> None:
     root = tmp_path / "state"
     write_json(
         root / "families" / "chat" / "status.json",
-        status_doc(sandboxes=[sandbox_doc("chat-s3", cpus=True)]),
+        status_doc(credentials={"epoch": True}),
     )
 
     row = read_family(root / "families", "chat", NOW)
 
-    assert row.sandboxes[0].cpus == 0
+    assert row.epoch == 0
 
 
 def test_limits_keep_null_apart_from_zero(tmp_path: Path) -> None:

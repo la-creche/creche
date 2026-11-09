@@ -944,6 +944,8 @@ def _list_surface(token_file: Path) -> Surface:
             "value.rows is each session of the answer. family is the family of the call. "
             "origin is what started the session: the kind and the name of the trigger, then "
             "delegation, then job. It is empty for a session with none of the three.",
+            "vm is the vm of the row: none, off, asleep or running (contract 02 §7 rule 2, "
+            "minor 16). Another value, or no vm, reads unreadable.",
             f"The reader takes the first {sessions.MAX_SESSIONS} items of the list and then "
             "drops each item that is no object.",
             _NOTE_LENIENT,

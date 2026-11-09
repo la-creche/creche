@@ -171,15 +171,15 @@ def test_the_read_time_is_the_instant_in_utc_with_whole_seconds(board: Harness) 
     assert "2031-04-18T08:43:10" not in answer.text
 
 
-def test_spend_appears_once_per_family_and_never_beside_a_sandbox(board: Harness) -> None:
+def test_spend_appears_once_per_family_and_never_beside_a_session(board: Harness) -> None:
     """Contract 05 §7 rule 1: the budget belongs to the family key."""
     home = board.get("/").text
     family = board.get("/families/chat").text
 
     assert home.count("$3.42") == 1
     assert home.count("$1.11") == 1
-    # The family page lists sandboxes and names no money at all, because
-    # a sandbox has no budget to name.
+    # The family page lists sessions and names no money at all, because
+    # a session has no budget to name.
     assert "$" not in family
 
 
@@ -329,12 +329,26 @@ def test_a_report_that_is_not_strict_records_a_notice_of_the_family(
     assert recorded.calls == [("status.report", "duplicate_key", CHAT, True)]
 
 
-def test_the_family_page_lists_sandboxes_and_sessions(board: Harness) -> None:
+def test_the_family_page_lists_sessions_with_their_vm_state(board: Harness) -> None:
+    """Decision CH21-1: the VM state comes from `attendance`, and the page
+    shows no sandbox table."""
     answer = board.get("/families/chat")
 
     assert answer.status_code == 200
-    assert "chat-s3" in answer.text
     assert "Boiler service date" in answer.text
+    assert "<th>vm</th>" in answer.text
+    assert "<td>asleep</td>" in answer.text
+    assert "sandboxes" not in answer.text
+
+
+def test_the_home_page_names_no_vm(board: Harness) -> None:
+    """The home page reads files and dials no service, so it shows no VM
+    state (decision CH21-1)."""
+    answer = board.get("/")
+
+    assert answer.status_code == 200
+    assert "serving" not in answer.text
+    assert board.fake.calls == []
 
 
 def test_the_outcomes_of_a_family_come_from_its_own_directory(board: Harness) -> None:

@@ -1,7 +1,7 @@
 # noticeboard
 
-The one view. One page shows every family, sandbox and session, and that
-view is the truth. It is also where the operator edits a family. The root
+The one view. One page shows every family, VM and session, and that view
+is the truth. It is also where the operator edits a family. The root
 `AGENTS.md` applies here too.
 
 Server-rendered HTML from FastAPI and Jinja2. No JavaScript build, no CDN, no
@@ -17,11 +17,11 @@ view that also applied would be a second writer to the same state.
 
 | It reads | From |
 |---|---|
-| family state, sandboxes, faults, spend | `caregiver`'s status documents |
+| family state, faults, spend | `caregiver`'s status documents |
 | why a family is invalid | the validation report |
 | what an autonomous run did | the outcome records |
 | every tool call and its decision | the chaperone's audit file, `/var/lib/chaperone/audit.jsonl` |
-| the sessions of a family, one page of a transcript | the two view routes of `attendance`, as the principal `noticeboard` |
+| the sessions of a family and the VM state of each, one page of a transcript | the two view routes of `attendance`, as the principal `noticeboard` |
 | the family file behind the form | the registry checkout |
 
 ## Perimeter rules
@@ -55,10 +55,13 @@ any use. A value that fails answers 404.
    string.
 10. A status document older than 90 seconds reads `unknown`, never its last
     state.
-11. Spend is one number per family. `SandboxRow` has no spend field. A count
-    comes from the service that can count it, or the page shows none.
+11. Spend is one number per family. No VM row and no session row has a
+    spend field. A count comes from the service that can count it, or the
+    page shows none.
 12. Read a session only through the view routes of `attendance`. The
-    noticeboard sends no ACP method and reads no file of the facade.
+    noticeboard sends no ACP method and reads no file of the facade. The
+    VM state of a session is the `vm` of its view row (contract 02 §7 rule
+    2, decisions CH21-1, CH33 rule 9). The status document names no VM.
 
 ## The form
 
@@ -170,6 +173,10 @@ prefixed `test_noticeboard_`.
   (`registrywrite.py`).
 - The family page reads whatever `report_path` the status document names
   (`pages.py`).
+- CONTRACT-QUESTION: contract 02 §7 rule 2 names the four values of `vm`
+  and no answer for a row that holds another value or none. The reader
+  reads such a `vm` as `unreadable` and keeps the row, as `Health` reads
+  an unknown `state` (`sessions.py`).
 - No contract gives a range for a count. `jsonfiles.integer` has no range
   of its own. Each reader reads strict JSON, so the function gets an integer
   of 64 bits at most.

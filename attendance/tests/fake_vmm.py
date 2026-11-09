@@ -58,6 +58,9 @@ class FakeVmm:
     #: answers, the handshake included.
     mute: set[str] = field(default_factory=set[str])
     rows: dict[str, SessionRow] = field(default_factory=dict[str, SessionRow])
+    #: The VM state that a list gives each session, by session id. A
+    #: session with no entry lists as `none` (decision CH79 rule 4).
+    vms: dict[str, VmState] = field(default_factory=dict[str, VmState])
     creates: list[CreateSession] = field(default_factory=list[CreateSession])
     lists: list[ListSessions] = field(default_factory=list[ListSessions])
     drops: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
@@ -95,7 +98,10 @@ class FakeVmm:
             if row.family == query.family and (query.cwd is None or row.cwd == query.cwd)
         ]
         start = query.cursor.root if query.cursor is not None else 0
-        page = [_listed(row) for row in rows[start : start + PAGE_ROWS]]
+        page = [
+            _listed(row, self.vms.get(row.id.root, VmState.NONE))
+            for row in rows[start : start + PAGE_ROWS]
+        ]
         more = start + PAGE_ROWS < len(rows)
         return SessionPage(next=ListCursor(start + PAGE_ROWS) if more else None, rows=page)
 
@@ -172,9 +178,8 @@ class FakeVmm:
             raise VmmRefused(code, f"the stand-in refuses {route}")
 
 
-def _listed(row: SessionRow) -> ListRow:
-    """The list row of `row` (decision CH79 rule 4). The stand-in boots no
-    VM and makes no disk, so each VM is `none`."""
+def _listed(row: SessionRow, vm: VmState) -> ListRow:
+    """The list row of `row` with the VM state `vm` (decision CH79 rule 4)."""
     return ListRow(
         created_at=row.created_at,
         cwd=row.cwd,
@@ -183,5 +188,5 @@ def _listed(row: SessionRow) -> ListRow:
         origin=row.origin,
         title=row.title,
         updated_at=row.updated_at,
-        vm=VmState.NONE,
+        vm=vm,
     )
