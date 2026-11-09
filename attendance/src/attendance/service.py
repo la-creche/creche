@@ -114,10 +114,10 @@ class SessionService:
         """Clear this writer's faults (contract 05 §3.3.1 rule 8).
 
         The fault file holds this writer's current open faults, and a fresh
-        process has observed none.
+        process has observed none. The clear covers each file in the
+        directory, so a family that `caregiver` removed keeps no fault.
         """
-        for family in self._status.families():
-            self._faults.clear_all(family)
+        self._faults.start()
 
     async def drop_job_rows(self) -> None:
         """Drop each job row of each family, before the first request

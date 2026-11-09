@@ -17,11 +17,14 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from .atomic import DIR_MODE_GROUP, MODE_GROUP_READ, ensure_dir, write_json
+from .atomic import DIR_MODE_GROUP, MODE_GROUP_READ, TEMP_SUFFIX, ensure_dir, write_json
 from .clock import now, rfc3339
+from .ids import is_family
 from .paths import fault_file, faults_dir
 
 FAULT_SOURCE = "attendance"
+
+_FAULT_SUFFIX = ".json"
 
 
 class FaultCode(StrEnum):
@@ -74,6 +77,28 @@ class FaultReporter:
         self._state_root = state_root
         self._open: dict[str, dict[FaultCode, Fault]] = {}
 
+    def start(self) -> None:
+        """Clear every fault this writer raised (contract 05 §3.3.1 rule 8).
+
+        A fresh process has observed no fault. Each fault file in this
+        writer's directory gets an empty list, whether or not its family
+        still exists. A temporary file that a crash left is removed. The
+        vmm's `FaultBook::start` does the same in its own directory.
+        """
+        self._open = {}
+        directory = faults_dir(self._state_root)
+        ensure_dir(directory, DIR_MODE_GROUP)
+
+        # The list is read whole first: each write below makes a temporary
+        # file in the same directory, and a lazy read could list it.
+        for entry in sorted(directory.iterdir()):
+            name = entry.name
+
+            if name.startswith(".") and name.endswith(TEMP_SUFFIX):
+                entry.unlink()
+            elif name.endswith(_FAULT_SUFFIX) and is_family(name.removesuffix(_FAULT_SUFFIX)):
+                self._publish(name.removesuffix(_FAULT_SUFFIX))
+
     def raise_fault(
         self,
         family: str,
@@ -103,11 +128,6 @@ class FaultReporter:
             # the next clear finds nothing to drop and writes nothing.
             family_faults[code] = kept
             raise
-
-    def clear_all(self, family: str) -> None:
-        """Clear every fault this service raised for the family."""
-        self._open[family] = {}
-        self._publish(family)
 
     def open_faults(self, family: str) -> list[Fault]:
         return sorted(self._open.get(family, {}).values(), key=lambda fault: fault.code.value)
