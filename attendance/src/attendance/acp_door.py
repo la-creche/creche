@@ -40,11 +40,12 @@ it, so the vmm can snapshot an idle VM (contract 02 §5.5 rule 5, decisions
 CH21-8, CH19 (6)). A request is in flight in either direction: a client
 request routed to the stream until the stream answers it, and a facade
 request until the client answers it. A `session/load` counts like a
-`session/prompt`. A notification opens no call, so a stream that only
-carried one closes right after it. The door connection stays open, and the
-next request of the session opens a new stream with a new handshake. That
-open waits until the old stream has closed, so the vmm meets one holder
-only (decision CH83 rule 4).
+`session/prompt`. A notification opens no call. It reaches an open
+stream, and it opens no stream: with no stream no request is in flight, so
+it has nothing to act on, and an open would boot or restore the VM. The
+door connection stays open, and the next request of the session opens a
+new stream with a new handshake. That open waits until the old stream has
+closed, so the vmm meets one holder only (decision CH83 rule 4).
 
 A stream that ends with a request in flight closes the connection with
 `Close.RELAY_GONE`, and the client opens the session again with
@@ -475,6 +476,14 @@ class _Door:
 
         if not isinstance(session, str):
             raise _Refusal(RPC_METHOD_NOT_FOUND, f"{method} names no session")
+
+        if "id" not in record and session not in self._held:
+            # A notification, in practice `session/cancel`, for a session
+            # with no open stream. The stream closes when no request is in
+            # flight (decision CH21-8), so the notification has nothing to
+            # act on. An open would boot or restore the VM for nothing, and
+            # a `host_full` there has no answer to carry it.
+            return None
 
         held = await self._stream(session)
         key = _rpc_id_key(record["id"]) if "id" in record else None

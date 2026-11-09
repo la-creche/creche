@@ -49,6 +49,9 @@ HTTP_FORBIDDEN = 403
 CWD = "/home/operator/la-creche"
 SBX_ERA_ID = "sess-1"
 
+#: How long a test waits to see that nothing happens.
+QUIET_S = 0.2
+
 #: One JSON-RPC line with text that a generic line reader splits: U+2028.
 INIT = json.dumps(
     {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"t": f"a{chr(0x2028)}é"}},
@@ -536,6 +539,28 @@ async def test_an_answered_prompt_closes_its_stream_and_keeps_the_connection(doo
 
 
 @pytest.mark.slow
+async def test_a_cancel_after_the_answer_opens_no_stream(door: Door) -> None:
+    """Decision CH21-8: the stream closed with no request in flight, so a
+    late `session/cancel` has nothing to act on. It boots or restores no VM."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        await connection.send(prompt(1, session))
+
+        for _ in range(3):
+            await asyncio.wait_for(connection.recv(), 5)
+
+        await wait_for(lambda: door.vmm.channels[session].closed)
+        cancel = {"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": session}}
+        await connection.send(json.dumps(cancel))
+        # The cancel goes to the lane of its session, so no answer on this
+        # connection says that it ran. A routed cancel opens its stream
+        # within one turn of the loop.
+        await asyncio.sleep(QUIET_S)
+
+    assert door.vmm.opened == [session]
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize("door", [PromptMode.HOLD], indirect=True)
 async def test_a_stream_closes_only_after_its_last_answer(door: Door) -> None:
     """A `session/load` counts like a `session/prompt`, and two requests in
@@ -555,20 +580,18 @@ async def test_a_stream_closes_only_after_its_last_answer(door: Door) -> None:
 
 
 @pytest.mark.slow
-async def test_a_notification_alone_closes_its_stream_after_it(door: Door) -> None:
-    """A notification opens no call. It reaches the facade, and the stream
-    closes with no request in flight."""
+async def test_a_notification_with_no_stream_opens_none(door: Door) -> None:
+    """A notification opens no call, and a session with no stream has no
+    request in flight. So a `session/cancel` there boots no VM."""
     async with door.door_acp() as connection:
         session = await new_session(connection)
         cancel = {"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": session}}
         await connection.send(json.dumps(cancel))
-        await wait_for(lambda: session in door.vmm.channels and door.vmm.channels[session].closed)
-        await wait_for(lambda: len(door.vmm.facades[session].methods) == 2)
+        await asyncio.sleep(QUIET_S)
 
         assert (await ask(connection, 3, "initialize"))["result"] == INITIALIZE_RESPONSE
 
-    assert door.vmm.facades[session].methods == ["initialize", "session/cancel"]
-    assert door.vmm.opened == [session]
+    assert door.vmm.opened == []
 
 
 @pytest.mark.slow
