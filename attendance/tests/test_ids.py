@@ -11,10 +11,11 @@ from attendance.ids import (
     UlidFactory,
     is_attachment,
     is_family,
-    is_sandbox,
     is_session,
     is_session_cwd,
+    is_session_id,
     is_ulid,
+    new_session_id,
     new_ulid,
 )
 
@@ -53,9 +54,33 @@ def test_session_cwd_form() -> None:
     assert not is_session_cwd(astral + "a")
 
 
-def test_sandbox_and_attachment_forms() -> None:
-    assert is_sandbox("chat-s3")
-    assert not is_sandbox("chat-3")
+def test_a_minted_session_id_is_a_wire_session_id() -> None:
+    """Contract 02 §2: a UUID in its lowercase hyphenated form (decision CH25
+    rule 2)."""
+    minted = {new_session_id() for _ in range(100)}
+
+    assert len(minted) == 100
+    assert all(is_session_id(one) for one in minted)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "sess-1",
+        "3F2A9C41-77B0-4A1E-9A4C-1D0E5F8B2C33",
+        "3f2a9c4177b04a1e9a4c1d0e5f8b2c33",
+        "{3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33}",
+        "3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33\n",
+        "",
+    ],
+    ids=["sbx_era", "upper", "no_hyphens", "braces", "newline", "empty"],
+)
+def test_an_id_of_another_form_is_no_session_id(value: str) -> None:
+    """Decision CH10-9: an sbx-era id is not found, with no vmm call."""
+    assert not is_session_id(value)
+
+
+def test_attachment_forms() -> None:
     assert is_attachment("data.csv")
     assert not is_attachment("..")
     assert not is_attachment("a/b")
@@ -68,7 +93,6 @@ def test_sandbox_and_attachment_forms() -> None:
         (is_family, "chat"),
         (is_session, "tui-abc"),
         (is_ulid, "01JBQ7WZ0X4T9V6K2H8M3N5PQR"),
-        (is_sandbox, "chat-s1"),
         (is_attachment, "data.csv"),
     ],
 )

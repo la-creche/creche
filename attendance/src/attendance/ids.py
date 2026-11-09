@@ -11,7 +11,11 @@ import re
 import secrets
 import threading
 import time
+import uuid
 from enum import StrEnum
+
+from creche_wire import SessionId
+from pydantic import ValidationError
 
 # Crockford base32: no I, L, O or U, so a read-back id cannot be mistyped.
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -37,7 +41,6 @@ SESSION_CWD_MAX = 4096
 _FAMILY_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}\Z")
 _SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}\Z")
-_SANDBOX_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}-s[0-9]{1,9}\Z")
 _ATTACHMENT_RE = re.compile(r"^[A-Za-z0-9._-]{1,120}\Z")
 _DOT_NAMES = frozenset({".", ".."})
 
@@ -65,14 +68,27 @@ def is_session(value: str) -> bool:
     return bool(_SESSION_RE.match(value))
 
 
+def new_session_id() -> str:
+    """A fresh session id: a UUID in its lowercase hyphenated form
+    (contract 02 §2). attendance chooses it on the vmm create (decision
+    CH25 rule 2)."""
+    return str(uuid.uuid4())
+
+
+def is_session_id(value: str) -> bool:
+    """True for a value of the wire type `SessionId` (decision CH1). An
+    sbx-era id of another form is not one (decision CH10-9)."""
+    try:
+        SessionId.model_validate(value, strict=True)
+    except ValidationError:
+        return False
+
+    return True
+
+
 def is_ulid(value: str) -> bool:
     """A 26-character Crockford base32 ULID. Turn ids take this form."""
     return bool(_ULID_RE.match(value))
-
-
-def is_sandbox(value: str) -> bool:
-    """A sandbox id, `<family>-s<N>`."""
-    return bool(_SANDBOX_RE.match(value))
 
 
 def is_attachment(value: str) -> bool:

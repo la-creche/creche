@@ -1,27 +1,19 @@
-"""The ACP link to one sandbox's facade: handshake, beat, shutdown, refusals."""
+"""The ACP link to the facade of one session, over its vmm ACP stream."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import json
-import sys
-import time
-from pathlib import Path
 from typing import Any
 
 import pytest
 from attendance.acp_link import (
     ACP_SCHEMA_SHA256,
     ACP_SDK_VERSION,
-    BEAT_INTERVAL_S,
-    EXIT_WAIT_S,
-    FACADE_COMMAND,
-    METHOD_BEAT,
+    HANDSHAKE_ID,
     METHOD_CANCEL,
-    METHOD_NEW_SESSION,
     METHOD_PROMPT,
-    METHOD_SHUTDOWN,
     SCHEMA_FILE,
     AcpCallFailed,
     AcpHandshakeError,
@@ -29,62 +21,28 @@ from attendance.acp_link import (
     AcpLinkLost,
     AgentAnswer,
     LinkState,
-    OrphanFacade,
     PromptEnd,
     StopReason,
     cancel_notice,
+    handshake,
     initialize_request,
-    new_session_request,
     prompt_request,
 )
-from attendance.atomic import write_json
-from attendance.channel import Channel, FakeChannel, SandboxDial
-from attendance.exec_channel import ExecChannel
-from attendance.faults import FaultCode, FaultReporter
-from attendance.paths import playpen_lock_file
-from attendance_harness import FAMILY, SANDBOX
-from fake_facade import ANSWER, ERROR_CODE, FacadeFleet, PromptMode
+from attendance.channel import ChannelClosed
+from attendance_harness import FAMILY
+from fake_channel import FakeChannel
+from fake_facade import ANSWER, ERROR_CODE, FakeFacade, PromptMode, chunk, serve
 
 PINNED_SDK = "2.0.2"
 PINNED_SHA256 = "4bcd1d2051ff7ed379bd9b234fb9b09c5ab9245478698e9fab805bd9b52a33a6"
-OTHER_SANDBOX = "chat-s2"
+SESSION = "78c1103d-6e82-4492-a598-bfb2e1e4eff1"
+OTHER_SESSION = "9a2f7b44-0c1d-4e6f-8a3b-5d7e9f1a2b3c"
 SMALL_CAP = 256
-SHORT_S = 0.05
-REPO = Path(__file__).resolve().parents[2]
-FAKE_SBX = REPO / "integration" / "tests" / "fake_sbx.py"
-FAKE_FACADE = Path(__file__).resolve().parent / "fake_facade.py"
 
 READY_RESULT: dict[str, Any] = {
     "protocolVersion": 1,
     "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"list": {}}},
 }
-
-#: Contract 03 §10's ping interval and stop grace. The link keeps the
-#: cadence of the playpen channel it replaces.
-PLAYPEN_PING_INTERVAL_S = 30
-PLAYPEN_STOP_GRACE_S = 5.0
-
-
-class Fleet:
-    """One `FakeChannel` per sandbox, and every channel loss in order."""
-
-    def __init__(self, state_root: Path, max_line_bytes: int = 1_048_576) -> None:
-        self.channels: dict[str, FakeChannel] = {}
-        self.lost: list[str] = []
-        self.faults = FaultReporter(state_root)
-        self._max_line_bytes = max_line_bytes
-
-    def factory(self, dial: SandboxDial) -> Channel:
-        channel = FakeChannel(dial.sandbox, self._max_line_bytes)
-        self.channels[dial.sandbox] = channel
-        return channel
-
-    async def on_lost(self, sandbox: str) -> None:
-        self.lost.append(sandbox)
-
-
-def make_link(tmp_path: Path, fleet: Fleet, **timing: float) -> AcpLink:
-    return AcpLink(FAMILY, fleet.factory, fleet.faults, tmp_path, fleet.on_lost, **timing)
 
 
 async def answer(channel: FakeChannel, result: dict[str, Any]) -> dict[str, Any]:
@@ -94,16 +52,31 @@ async def answer(channel: FakeChannel, result: dict[str, Any]) -> dict[str, Any]
     return request
 
 
-async def open_link(
-    tmp_path: Path, fleet: Fleet, sandbox: str = SANDBOX, **timing: float
-) -> AcpLink:
-    timing.setdefault("exit_wait_s", SHORT_S)
-    link = make_link(tmp_path, fleet, **timing)
-    start = asyncio.create_task(link.start(SandboxDial(sandbox, "/env")))
-    await asyncio.sleep(0)
-    await answer(fleet.channels[sandbox], READY_RESULT)
+async def open_link(channel: FakeChannel) -> AcpLink:
+    link = AcpLink(FAMILY, SESSION, channel)
+    start = asyncio.create_task(link.start())
+    await answer(channel, READY_RESULT)
     await start
     return link
+
+
+SERVED: set[asyncio.Task[None]] = set()
+
+
+async def served_link(mode: PromptMode = PromptMode.OK) -> tuple[AcpLink, FakeFacade]:
+    link, facade, _ = await served(mode)
+    return link, facade
+
+
+async def served(mode: PromptMode) -> tuple[AcpLink, FakeFacade, FakeChannel]:
+    channel = FakeChannel()
+    facade = FakeFacade(prompt_mode=mode)
+    task = asyncio.get_running_loop().create_task(serve(channel, facade))
+    SERVED.add(task)
+    task.add_done_callback(SERVED.discard)
+    link = AcpLink(FAMILY, SESSION, channel)
+    await link.start()
+    return link, facade, channel
 
 
 async def until(condition: Any, timeout: float = 2.0) -> None:
@@ -135,16 +108,41 @@ def test_the_initialize_request_fits_the_schema() -> None:
     assert "list" in defs["SessionCapabilities"]["properties"]
 
 
-async def test_an_answered_initialize_reads_ready(tmp_path: Path) -> None:
-    fleet = Fleet(tmp_path)
-    link = await open_link(tmp_path, fleet)
+def test_the_client_calls_fit_the_schema() -> None:
+    defs = json.loads(SCHEMA_FILE.read_text())["$defs"]
+    calls = {
+        "PromptRequest": prompt_request(2, SESSION, "hello"),
+        "CancelNotification": cancel_notice(SESSION),
+    }
 
-    assert link.status.state is LinkState.READY
-    assert link.status.sandbox == SANDBOX
-    assert link.status.agent == AgentAnswer(
-        protocol_version=1, load_session=True, session_list=True
-    )
-    await link.stop()
+    for name, call in calls.items():
+        schema = defs[name]
+        params = call["params"]
+
+        assert set(schema["required"]) <= set(params), name
+        assert set(params) <= set(schema["properties"]), name
+
+    assert calls["PromptRequest"]["method"] == METHOD_PROMPT
+    assert calls["PromptRequest"]["params"]["prompt"] == [{"type": "text", "text": "hello"}]
+    assert "_meta" not in calls["PromptRequest"]["params"]
+    assert calls["CancelNotification"]["method"] == METHOD_CANCEL
+    assert "id" not in calls["CancelNotification"]
+    assert {one["const"] for one in defs["StopReason"]["oneOf"]} == {
+        reason.value for reason in StopReason
+    }
+
+
+async def test_an_answered_initialize_reads_ready() -> None:
+    channel = FakeChannel()
+    link = AcpLink(FAMILY, SESSION, channel)
+    start = asyncio.create_task(link.start())
+    request = await answer(channel, READY_RESULT)
+
+    assert await start == AgentAnswer(protocol_version=1, load_session=True, session_list=True)
+    assert request["id"] == HANDSHAKE_ID
+    assert link.state is LinkState.READY
+    await link.close()
+    assert channel.closed
 
 
 @pytest.mark.parametrize(
@@ -157,20 +155,38 @@ async def test_an_answered_initialize_reads_ready(tmp_path: Path) -> None:
     ],
     ids=["protocol_2", "protocol_true", "no_load", "no_list"],
 )
-async def test_a_wrong_answer_fails_the_handshake(tmp_path: Path, result: dict[str, Any]) -> None:
-    fleet = Fleet(tmp_path)
-    link = make_link(tmp_path, fleet)
-    start = asyncio.create_task(link.start(SandboxDial(SANDBOX, "/env")))
-    await asyncio.sleep(0)
-    await answer(fleet.channels[SANDBOX], result)
+async def test_a_wrong_answer_fails_the_handshake(result: dict[str, Any]) -> None:
+    channel = FakeChannel()
+    start = asyncio.create_task(handshake(channel))
+    await answer(channel, result)
 
     with pytest.raises(AcpHandshakeError):
         await start
 
-    assert link.status.state is LinkState.CHANNEL_LOST
-    assert [fault.code for fault in fleet.faults.open_faults(FAMILY)] == [
-        FaultCode.PROTOCOL_MISMATCH
-    ]
+
+@pytest.mark.parametrize(
+    "line",
+    ["not json", '{"jsonrpc":"2.0","id":5,"result":{}}', '{"jsonrpc":"2.0","method":"x"}'],
+    ids=["not_json", "another_id", "a_notice"],
+)
+async def test_a_bad_first_line_fails_the_handshake(line: str) -> None:
+    channel = FakeChannel()
+    start = asyncio.create_task(handshake(channel))
+    await channel.next_host_line()
+    await channel.feed(line)
+
+    with pytest.raises(AcpHandshakeError):
+        await start
+
+
+async def test_a_stream_that_ends_first_fails_the_handshake() -> None:
+    channel = FakeChannel()
+    start = asyncio.create_task(handshake(channel))
+    await channel.next_host_line()
+    await channel.drop()
+
+    with pytest.raises(ChannelClosed):
+        await start
 
 
 BAD_LINES = {
@@ -185,300 +201,102 @@ BAD_LINES = {
     "bad_error": '{"jsonrpc":"2.0","id":1,"error":{"code":"x","message":"x"}}',
     "agent_request": '{"jsonrpc":"2.0","id":5,"method":"fs/read_text_file","params":{}}',
     "agent_notice": '{"jsonrpc":"2.0","method":"session/update","params":{}}',
+    "other_session": chunk(OTHER_SESSION, "x"),
     "extra_member": '{"jsonrpc":"2.0","id":1,"result":{},"x":1}',
+    "no_stop_reason": '{"jsonrpc":"2.0","id":1,"result":{}}',
 }
 
 
 @pytest.mark.parametrize("line", BAD_LINES.values(), ids=BAD_LINES.keys())
-async def test_a_bad_line_ends_in_channel_lost_and_the_service_keeps_serving(
-    tmp_path: Path, line: str
-) -> None:
-    fleet = Fleet(tmp_path)
-    broken = await open_link(tmp_path, fleet, SANDBOX)
-    other = await open_link(tmp_path, fleet, OTHER_SANDBOX, beat_interval_s=SHORT_S)
+async def test_a_bad_line_loses_the_link_and_fails_the_prompt(line: str) -> None:
+    channel = FakeChannel()
+    link = await open_link(channel)
+    asked = asyncio.create_task(link.prompt("hello"))
+    await channel.next_host_line()
+    await channel.feed(line)
 
-    await fleet.channels[SANDBOX].feed(line)
-    await until(lambda: fleet.lost != [])
-    await answer(fleet.channels[OTHER_SANDBOX], {})
+    with pytest.raises(AcpLinkLost):
+        await asked
 
-    assert fleet.lost == [SANDBOX]
-    assert broken.status.state is LinkState.CHANNEL_LOST
-    assert [fault.code for fault in fleet.faults.open_faults(FAMILY)] == [
-        FaultCode.PROTOCOL_VIOLATION
-    ]
-    assert other.status.state is LinkState.READY
-    await other.stop()
+    assert link.state is LinkState.LOST
+    await link.close()
 
 
-async def test_a_line_over_the_cap_ends_in_channel_lost(tmp_path: Path) -> None:
-    fleet = Fleet(tmp_path, max_line_bytes=SMALL_CAP)
-    link = await open_link(tmp_path, fleet)
+async def test_a_line_over_the_cap_loses_the_link() -> None:
+    channel = FakeChannel(max_line_bytes=SMALL_CAP)
+    link = await open_link(channel)
+    await channel.feed(json.dumps({"jsonrpc": "2.0", "pad": "x" * SMALL_CAP}))
 
-    await fleet.channels[SANDBOX].feed(json.dumps({"pad": "x" * SMALL_CAP}))
-    await until(lambda: fleet.lost != [])
-
-    assert fleet.lost == [SANDBOX]
-    assert link.status.state is LinkState.CHANNEL_LOST
+    await until(lambda: link.state is LinkState.LOST)
+    await link.close()
 
 
-async def test_beats_keep_the_playpen_cadence(tmp_path: Path) -> None:
-    fleet = Fleet(tmp_path)
-    link = await open_link(tmp_path, fleet, beat_interval_s=SHORT_S)
-    channel = fleet.channels[SANDBOX]
+async def test_a_prompt_collects_the_chunks_until_end_turn() -> None:
+    link, facade = await served_link()
 
-    first = await answer(channel, {})
-    second = await answer(channel, {})
-
-    assert BEAT_INTERVAL_S == PLAYPEN_PING_INTERVAL_S
-    assert first["method"] == second["method"] == METHOD_BEAT
-    assert second["id"] > first["id"]
-
-    await until(lambda: fleet.lost != [])
-    assert fleet.lost == [SANDBOX]
-    assert link.status.state is LinkState.CHANNEL_LOST
-
-
-async def test_stop_sends_shutdown_then_waits_the_grace(tmp_path: Path) -> None:
-    fleet = Fleet(tmp_path)
-    link = await open_link(tmp_path, fleet, exit_wait_s=SHORT_S * 4)
-    begun = time.monotonic()
-
-    await link.stop()
-    shutdown = json.loads(await fleet.channels[SANDBOX].next_host_line())
-
-    assert EXIT_WAIT_S == PLAYPEN_STOP_GRACE_S
-    assert shutdown == {"jsonrpc": "2.0", "method": METHOD_SHUTDOWN, "params": {}}
-    assert time.monotonic() - begun >= SHORT_S * 4
-    assert link.status.state is LinkState.STOPPED
-    assert fleet.lost == []
-
-
-async def test_a_live_lock_refuses_the_dial(tmp_path: Path) -> None:
-    fleet = Fleet(tmp_path)
-    lock = playpen_lock_file(tmp_path, FAMILY, SANDBOX)
-    link = make_link(tmp_path, fleet, lock_stale_s=1.0, lock_poll_s=0.01, host_deadline_s=0.2)
-
-    async def beat() -> None:
-        for count in range(100):
-            write_json(lock, {"beat": count})
-            await asyncio.sleep(0.01)
-
-    write_json(lock, {"beat": 0})
-    beating = asyncio.create_task(beat())
-
-    with pytest.raises(OrphanFacade):
-        await link.start(SandboxDial(SANDBOX, "/env"))
-
-    beating.cancel()
-    assert fleet.channels == {}
-
-
-def facade_dial(tmp_path: Path, mode: str) -> tuple[SandboxDial, Path]:
-    record = tmp_path / "methods.txt"
-    env_file = tmp_path / "facade.env"
-    env_file.write_text(f"FAKE_FACADE_MODE={mode}\nFAKE_FACADE_RECORD={record}\n")
-    return SandboxDial(SANDBOX, str(env_file)), record
-
-
-def exec_factory(dial: SandboxDial) -> Channel:
-    """`FACADE_COMMAND`, with `fake_sbx.py` for `sbx` and the fake for the facade."""
-    command = FACADE_COMMAND.replace("sbx", f"{sys.executable} -I {FAKE_SBX}", 1)
-    command = command.replace("creche-facade", f"{sys.executable} -I {FAKE_FACADE}")
-    return ExecChannel(dial, command)
-
-
-@pytest.mark.slow
-async def test_the_facade_starts_through_sbx_and_stops(tmp_path: Path) -> None:
-    dial, record = facade_dial(tmp_path, "serve")
-    link = AcpLink(FAMILY, exec_factory, FaultReporter(tmp_path), tmp_path, Fleet(tmp_path).on_lost)
-
-    await link.start(dial)
-    assert link.status.state is LinkState.READY
-    await link.stop()
-
-    assert record.read_text().split() == ["initialize", METHOD_SHUTDOWN]
-
-
-@pytest.mark.slow
-async def test_a_facade_that_writes_garbage_is_lost(tmp_path: Path) -> None:
-    dial, _ = facade_dial(tmp_path, "garbage")
-    fleet = Fleet(tmp_path)
-    link = AcpLink(FAMILY, exec_factory, FaultReporter(tmp_path), tmp_path, fleet.on_lost)
-
-    await link.start(dial)
-    await until(lambda: fleet.lost != [], 5.0)
-
-    assert fleet.lost == [SANDBOX]
-
-
-# ------------------------------------------------------- client calls
-
-
-async def served_link(
-    tmp_path: Path, mode: PromptMode = PromptMode.OK
-) -> tuple[AcpLink, FacadeFleet, Fleet]:
-    """A link whose far side is `FakeFacade`, in this process."""
-    facades = FacadeFleet(prompt_mode=mode)
-    fleet = Fleet(tmp_path)
-    link = AcpLink(
-        FAMILY, facades.factory, fleet.faults, tmp_path, fleet.on_lost, exit_wait_s=SHORT_S
-    )
-    await link.start(SandboxDial(SANDBOX, "/env"))
-    return link, facades, fleet
-
-
-def test_the_client_calls_fit_the_schema() -> None:
-    defs = json.loads(SCHEMA_FILE.read_text())["$defs"]
-    calls = {
-        "NewSessionRequest": new_session_request(1, "/srv/work", {"creche/job": "job-1"}),
-        "PromptRequest": prompt_request(2, "sess-1", "hello", {"creche/trigger": {}}),
-        "CancelNotification": cancel_notice("sess-1"),
-    }
-
-    for name, call in calls.items():
-        schema = defs[name]
-        params = call["params"]
-
-        assert set(schema["required"]) <= set(params), name
-        assert set(params) <= set(schema["properties"]), name
-
-    assert calls["NewSessionRequest"]["method"] == METHOD_NEW_SESSION
-    assert calls["PromptRequest"]["method"] == METHOD_PROMPT
-    assert calls["PromptRequest"]["params"]["prompt"] == [{"type": "text", "text": "hello"}]
-    assert "id" not in calls["CancelNotification"]
-    assert {one["const"] for one in defs["StopReason"]["oneOf"]} == {
-        reason.value for reason in StopReason
-    }
-
-
-async def test_a_prompt_collects_the_chunks_until_end_turn(tmp_path: Path) -> None:
-    link, facades, _ = await served_link(tmp_path)
-
-    session = await link.new_session("/srv/work", {"creche/job": "job-1"})
-    end = await link.prompt(session, "When was the boiler serviced?", None)
+    end = await link.prompt("When was the boiler serviced?")
 
     assert end == PromptEnd(stop_reason=StopReason.END_TURN, text=ANSWER)
-    assert facades.facades[SANDBOX].methods == [
-        "initialize",
-        METHOD_NEW_SESSION,
-        METHOD_PROMPT,
-    ]
-    await link.stop()
-    await facades.stop()
+    assert facade.methods == ["initialize", METHOD_PROMPT]
+    assert facade.received[-1]["params"]["sessionId"] == SESSION
+    await link.close()
 
 
-async def test_a_json_rpc_error_raises_call_failed(tmp_path: Path) -> None:
-    link, facades, fleet = await served_link(tmp_path, PromptMode.ERROR)
-    session = await link.new_session("/srv/work", None)
+async def test_a_json_rpc_error_raises_call_failed() -> None:
+    link, _ = await served_link(PromptMode.ERROR)
 
-    with pytest.raises(AcpCallFailed) as refused:
-        await link.prompt(session, "hello", None)
+    with pytest.raises(AcpCallFailed) as failed:
+        await link.prompt("hello")
 
-    assert refused.value.code == ERROR_CODE
-    assert link.status.state is LinkState.READY
-    assert fleet.lost == []
-    await link.stop()
-    await facades.stop()
+    assert failed.value.code == ERROR_CODE
+    await link.close()
 
 
-async def test_a_link_lost_mid_prompt_raises_link_lost(tmp_path: Path) -> None:
-    link, facades, fleet = await served_link(tmp_path, PromptMode.LOSE)
-    session = await link.new_session("/srv/work", None)
+async def test_a_link_lost_mid_prompt_raises_link_lost() -> None:
+    link, _ = await served_link(PromptMode.LOSE)
 
     with pytest.raises(AcpLinkLost):
-        await link.prompt(session, "hello", None)
+        await link.prompt("hello")
 
-    await until(lambda: fleet.lost != [])
-    assert link.status.state is LinkState.CHANNEL_LOST
-    await facades.stop()
-
-
-async def test_cancel_ends_a_held_prompt_with_cancelled(tmp_path: Path) -> None:
-    link, facades, _ = await served_link(tmp_path, PromptMode.HANG)
-    session = await link.new_session("/srv/work", None)
-    prompt = asyncio.create_task(link.prompt(session, "hello", None))
-    await until(lambda: session in facades.facades[SANDBOX].held)
-
-    await link.cancel(session)
-
-    assert (await prompt).stop_reason is StopReason.CANCELLED
-    assert facades.facades[SANDBOX].methods[-1] == METHOD_CANCEL
-    await link.stop()
-    await facades.stop()
+    assert link.state is LinkState.LOST
+    await link.close()
 
 
-async def test_a_late_answer_to_an_abandoned_prompt_is_dropped(tmp_path: Path) -> None:
-    link, facades, fleet = await served_link(tmp_path, PromptMode.HOLD)
-    session = await link.new_session("/srv/work", None)
-    prompt = asyncio.create_task(link.prompt(session, "hello", None))
-    await until(lambda: session in facades.facades[SANDBOX].held)
+async def test_cancel_ends_a_held_prompt_with_cancelled() -> None:
+    link, facade = await served_link(PromptMode.HANG)
+    asked = asyncio.create_task(link.prompt("hello"))
+    await until(lambda: SESSION in facade.held)
 
-    prompt.cancel()
-    await asyncio.gather(prompt, return_exceptions=True)
-    await facades.settle(SANDBOX, session)
-    again = await link.new_session("/srv/work", None)
+    await link.cancel()
 
-    assert again != session
-    assert fleet.lost == []
-    assert link.status.state is LinkState.READY
-    await link.stop()
-    await facades.stop()
+    assert (await asked).stop_reason is StopReason.CANCELLED
+    assert facade.methods[-1] == METHOD_CANCEL
+    await link.close()
 
 
-async def test_an_update_for_a_session_of_no_call_ends_the_link(tmp_path: Path) -> None:
-    link, facades, fleet = await served_link(tmp_path)
-    update = {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "x"}}
-    notice = {"jsonrpc": "2.0", "method": "session/update", "params": {}}
-    notice["params"] = {"sessionId": "sess-99", "update": update}
+async def test_a_late_answer_to_an_abandoned_prompt_is_dropped() -> None:
+    link, facade, channel = await served(PromptMode.HOLD)
+    asked = asyncio.create_task(link.prompt("hello"))
+    await until(lambda: SESSION in facade.held)
+    asked.cancel()
 
-    await facades.channels[SANDBOX].feed(json.dumps(notice))
-    await until(lambda: fleet.lost != [])
+    with pytest.raises(asyncio.CancelledError):
+        await asked
 
-    assert [fault.code for fault in fleet.faults.open_faults(FAMILY)] == [
-        FaultCode.PROTOCOL_VIOLATION
-    ]
-    await facades.stop()
+    held = facade.held.pop(SESSION)
+    late = {"jsonrpc": "2.0", "id": held.request_id, "result": {"stopReason": "end_turn"}}
+    await channel.feed(json.dumps(late))
+    facade.prompt_mode = PromptMode.OK
+    end = await link.prompt("again")
+
+    assert link.state is LinkState.READY
+    assert end.stop_reason is StopReason.END_TURN
+    await link.close()
 
 
-@pytest.mark.parametrize(
-    "result",
-    [{}, {"sessionId": 7}, {"sessionId": ""}],
-    ids=["no_id", "number", "empty"],
-)
-async def test_a_new_session_answer_without_an_id_ends_the_link(
-    tmp_path: Path, result: dict[str, Any]
-) -> None:
-    fleet = Fleet(tmp_path)
-    link = await open_link(tmp_path, fleet)
-    call = asyncio.create_task(link.new_session("/srv/work", None))
-
-    await answer(fleet.channels[SANDBOX], result)
+async def test_a_closed_link_refuses_a_prompt() -> None:
+    link, _ = await served_link()
+    await link.close()
 
     with pytest.raises(AcpLinkLost):
-        await call
-
-    await until(lambda: fleet.lost != [])
-    assert fleet.lost == [SANDBOX]
-
-
-async def test_two_late_beat_answers_keep_the_link(tmp_path: Path) -> None:
-    """A facade that was busy for one beat answers two beats in a row.
-
-    The first answer proves the facade alive and retires every beat in
-    flight. The second is the answer to a retired beat, not a protocol
-    violation: the link stays ready and records no fault.
-    """
-    fleet = Fleet(tmp_path)
-    link = await open_link(tmp_path, fleet, beat_interval_s=SHORT_S)
-    channel = fleet.channels[SANDBOX]
-
-    first = json.loads(await channel.next_host_line())
-    second = json.loads(await channel.next_host_line())
-    for beat in (first, second):
-        await channel.feed(json.dumps({"jsonrpc": "2.0", "id": beat["id"], "result": {}}))
-    await asyncio.sleep(SHORT_S / 2)
-
-    assert first["method"] == second["method"] == METHOD_BEAT
-    assert fleet.lost == []
-    assert link.status.state is LinkState.READY
-    await link.stop()
+        await link.prompt("hello")

@@ -6,15 +6,29 @@ string in the journal, the session file and the fault file has the same shape.
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 
 _UTC_OFFSET_SUFFIX = "+00:00"
+_NANOS_PER_MILLI = 1_000_000
+_MILLIS_PER_SECOND = 1000
 _ZULU = "Z"
 
 
 def now() -> datetime:
     """Current UTC time."""
     return datetime.now(UTC)
+
+
+def now_ms() -> int:
+    """Current UTC time in whole milliseconds since 1970: the one form of a
+    time on the wire (decision CH22-1)."""
+    return time.time_ns() // _NANOS_PER_MILLI
+
+
+def from_ms(millis: int) -> datetime:
+    """The UTC time of a wire time (decision CH22-1)."""
+    return datetime.fromtimestamp(millis / _MILLIS_PER_SECOND, UTC)
 
 
 def rfc3339(moment: datetime) -> str:

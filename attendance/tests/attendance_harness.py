@@ -1,8 +1,8 @@
 """The fixtures of the attendance tests: tokens, a status document, a config.
 
 Every external thing has a fake behind a small protocol, so no test needs
-the host, `sbx`, LiteLLM or the PEP. `fake_facade.py` is the far side of a
-link.
+the host, the vmm, LiteLLM or the PEP. `fake_vmm.py` is the vmm, and
+`fake_facade.py` is the far side of each stream.
 """
 
 from __future__ import annotations
@@ -14,19 +14,17 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from attendance.acp_jobs import CANCEL_WAIT_S
 from attendance.auth import MIN_TOKEN_BYTES, Principal
 from attendance.clock import now, rfc3339
 from attendance.config import Bind, Config
+from attendance.faults import FaultReporter
 from attendance.paths import status_file, token_file
+from attendance.queueing import MAX_QUEUED_TURNS
+from attendance.service import SessionService
+from attendance.vmm import Vmm
 
 FAMILY = "chat"
-SANDBOX = "chat-s1"
-
-# Contract 05 §4.1: the status document publishes one env file per sandbox,
-# and `attendance` refuses to dial without it. An obvious fixture path: nothing
-# in these tests opens the file, because `sbx exec --env-file` is what reads
-# it on the real host.
-PLAYPEN_ENV = "/srv/agents/state/creche/families/chat/supervisor.env"
 CHAT_SESSION = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 CONFIG_REV = "reg-9f21c4"
 SETTLE_TIMEOUT_S = 2.0
@@ -58,8 +56,6 @@ def write_status(
     family: str = FAMILY,
     kind: str = "attended",
     state: str = "in_sync",
-    sandboxes: tuple[tuple[str, str], ...] = ((SANDBOX, "ready"),),
-    playpen_env: str = PLAYPEN_ENV,
     never_valid: bool = False,
     faults: tuple[dict[str, Any], ...] = (),
     job_timeout_s: int | None = JOB_TIMEOUT_S,
@@ -85,10 +81,6 @@ def write_status(
         "config_rev": config_rev,
         "validation": {"never_valid": never_valid},
         "faults": list(faults),
-        "sandboxes": [
-            {"id": box, "state": box_state, "supervisor_env": playpen_env}
-            for box, box_state in sandboxes
-        ],
         # `caregiver` still publishes the epoch. `attendance` ignores it.
         "credentials": {"epoch": 7},
         "limits": limits,
@@ -108,7 +100,7 @@ def make_config(tmp_path: Path) -> Config:
         bind=Bind.SOCKET_ONLY,
         lan_address="192.0.2.10",
         lan_port=8350,
-        log_dir=tmp_path / "log",
+        vmm_socket=tmp_path / "vmm" / "vmm.sock",
     )
 
 
@@ -121,3 +113,14 @@ async def wait_until(test: Callable[[], bool], timeout: float = SETTLE_TIMEOUT_S
             raise AssertionError("condition never held")
 
         await asyncio.sleep(0.005)
+
+
+def make_service(
+    config: Config,
+    vmm: Vmm,
+    cancel_wait_s: float = CANCEL_WAIT_S,
+    max_queued_turns: int = MAX_QUEUED_TURNS,
+) -> SessionService:
+    """One service over `vmm`, with the fault file of `config`."""
+    faults = FaultReporter(config.state_root)
+    return SessionService(config, vmm, faults, cancel_wait_s, max_queued_turns)

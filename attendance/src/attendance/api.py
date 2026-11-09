@@ -1,8 +1,8 @@
-"""The HTTP surface (contract 02 §3, §12, §13.4, contract 05 §5).
+"""The HTTP surface (contract 02 §3, §5, §7, §12, §13.4).
 
 Three operations for the PEP's two doors, two for the trigger door, the
-single internal path `caregiver` calls, the read-only view and `/busy` for `noticeboard`, and the
-ACP door on the Unix socket. The shapes come from the contract, not from a
+read-only view and `/busy` for `noticeboard`, and the ACP door on the Unix
+socket. The shapes come from the contract, not from a
 framework: every body is parsed by `requests.py` so one refusal table
 serves every route.
 
@@ -124,20 +124,13 @@ def build_app(
         query = parse.read_trigger_jobs(await _json(request))
         return JSONResponse(content=service.read_trigger_jobs(principal, query))
 
-    @app.post("/internal/switch-sandbox")
-    async def _switch(request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
-        principal = _caller(tokens, request)
-        return JSONResponse(
-            content=await service.switch_sandbox(principal, parse.read_switch(await _json(request)))
-        )
-
     return app
 
 
 def _add_acp_door(app: FastAPI, service: SessionService, tokens: TokenBook) -> None:
     @app.websocket("/acp/{family}")
     async def _acp(websocket: WebSocket, family: str) -> None:  # pyright: ignore[reportUnusedFunction]
-        """Phase 2 plan, row 17. The bearer and the family before any `sbx exec`.
+        """Contract 02 §5.1. The bearer and the family before any frame.
 
         The upgrade is accepted first, so that a refusal can carry its code.
         No frame is read before the checks pass.
@@ -146,12 +139,12 @@ def _add_acp_door(app: FastAPI, service: SessionService, tokens: TokenBook) -> N
 
         try:
             principal = tokens.identify(websocket.headers.get("authorization"))
-            relay = await service.open_acp_relay(principal, family)
+            service.check_door(principal, family)
         except ApiError as error:
             await websocket.close(code=acp_door.refusal_code(error), reason=error.code.value)
             return
 
-        await acp_door.pipe(websocket, relay, prompts=service.door_prompts)
+        await service.serve_door(websocket, family)
 
 
 def _caller(tokens: TokenBook, request: Request) -> Principal:

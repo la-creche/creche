@@ -59,7 +59,7 @@ the variable.
 |---|---|
 | service | A program of this repository that the suite starts: one row of the service table. |
 | root | The temporary directory of one test. Every file and every Unix socket of the test is in it. |
-| stand-in | A program that takes the place of a program the suite cannot run: `sbx`, `systemctl`, the LiteLLM key API, TEI, the vmm host API, and an upstream and the approval channel of the Rust chaperone. |
+| stand-in | A program that takes the place of a program the suite cannot run: `systemctl`, the LiteLLM key API, TEI, the vmm host API, and an upstream and the approval channel of the Rust chaperone. |
 | ACP | The Agent Client Protocol, version 1. A client and an agent send JSON-RPC 2.0 messages. |
 | TEI | The embedding service that the index builder dials. It gives one vector for each text. |
 | topology | The services that one fixture starts together. |
@@ -192,17 +192,17 @@ It does not print the reference.
 Seven topologies exist. Each one keeps its number. The second topology ran
 the Python chaperone in front of `attendance`. It left with that chaperone
 in the phase 3 plan, row 22. The sixth left with the terminal door.
-`attendance` and the `sbx` stand-in are in the first topology.
+`attendance` and the vmm stand-in are in the first topology. The vmm
+stand-in keeps the host session list and boots no VM (`standin_vmm.py`).
 
 ```
 a test (plays a door)
   | HTTP over a Unix socket
   v
 attendance
-  | stdio, ACP v1
+  | POST /create, /list, /drop, /acp over vmm.sock (decision CH20)
   v
-sbx exec --env-file <env file> <sandbox> -- creche-facade
-             the sbx stand-in, found through PATH
+the vmm stand-in, at the path of ATTENDANCE_VMM_SOCKET
 ```
 
 The third topology starts `caregiver` alone. It starts no VM: the vmm
@@ -332,7 +332,6 @@ each one, and each one runs to its end.
 
 | File | Topology | What the scenarios check |
 |---|---|---|
-| `test_proc_switch.py` | `attendance` alone | the refusals of the switch call of contract 05 §5. The handshake runs over ACP since phase 2 row 20 |
 | `test_proc_caregiver_start.py` | `caregiver` alone | a start, a refused start, a signal, and the verbs that run to an end |
 | `test_proc_caregiver_files.py` | `caregiver` alone | each file that `caregiver` publishes, read as the next program reads it, and the seams of `integration/tests_manager` that assert on a file |
 | `test_proc_override.py` | `attendance` alone, and the last four topologies | a service starts through its variable: one that serves, one that runs to its end |
@@ -396,8 +395,7 @@ each one, and each one runs to its end.
 7. A service gets its whole environment from the test. No variable of the
    shell that runs the suite reaches a service, except `PATH`, `LANG` and
    `TMPDIR`.
-8. No variable of a stand-in is in the environment of a service. The `sbx`
-   wrapper sets what the sandbox image supplies.
+8. No variable of a stand-in is in the environment of a service.
 9. A socket is a Unix socket in the root or a loopback port. Never bind
    `0.0.0.0`. Keep the root path short: macOS refuses a socket path over 104
    bytes. Take a port from `Supervisor.free_port`, which keeps the port for
@@ -577,8 +575,7 @@ that the suite cannot run. Add one only when a scenario needs it.
 1. Decide how the service finds the real program. It finds it by name
    through `PATH`, by a path in a variable, or by an address in a variable.
 2. Write the stand-in as a program. Put its source in this directory, or use
-   a program that another package owns. This suite uses `fake_sbx.py` that
-   way.
+   a program that another package owns.
 3. Add an `install_` function to `proc_standins.py`. It writes a wrapper into
    the `bin` directory of the root. The wrapper records the call, then runs
    `exec` on the stand-in. The recorded pid is then the pid of the stand-in.
@@ -589,12 +586,6 @@ that the suite cannot run. Add one only when a scenario needs it.
 6. Give a stand-in that listens a Unix socket in the root or a loopback port
    from `Supervisor.free_port`.
 
-The `sbx` wrapper does two more things that the real `sbx` does. It drops
-`-it` after it recorded the call, because `fake_sbx.py` takes no such word.
-It sets `ATTENDANCE_SANDBOX_SESSIONS_MOUNT` from the family of the sandbox id
-(contract 03 §7.6 rule 4). No service of the suite runs `sbx exec -it`
-now. `test_proc_standins.py` holds both.
-
 ### The stand-in programs of this directory
 
 Six programs are in this directory. The docstring of each one lists its
@@ -602,7 +593,7 @@ verbs, its files and its tunings.
 
 | Program | Takes the place of | How a service finds it |
 |---|---|---|
-| `standin_vmm.py` | the vmm host API on `vmm.sock`: the drop route, with the wire types of `creche_wire` | by the path in `CAREGIVER_VMM_SOCKET` |
+| `standin_vmm.py` | the vmm host API on `vmm.sock`: the create, list, drop and `acp` routes, with the wire types of `creche_wire`. It boots no VM | by the path in `ATTENDANCE_VMM_SOCKET` and `CAREGIVER_VMM_SOCKET` |
 | `standin_systemctl.py` | `systemctl --user` | by name, through `PATH` |
 | `standin_litellm.py` | the key API of LiteLLM | by an address in an argument |
 | `standin_tei.py` | TEI, with the two routes that the index builder asks | by an address in a variable |
@@ -1242,7 +1233,7 @@ the text of the failure. Work down this list.
 | `standin_mcp.py` | the MCP server over stdio of the two effect stand-ins |
 | `proc_strict.py` | the strict reader of one JSON text |
 | `reader_store.mjs` | the Node program that reads one index store with the statements of the bridge |
-| `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
+| `proc_stack.py` | `attendance`, its environment, the vmm stand-in, and the start of a service on a free port |
 | `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_library.py`, `proc_chaperone_rs.py`, `proc_exit.py` | one topology each |
 | `proc_chaperone_pin.py`, `chaperone.pin` | the commit of the Rust chaperone, its build and its cache |
 | `proc_board_reports.py` | a start of the noticeboard with a changed environment, the readers of a report, of a paging link and of the cookie, the check of a JSON body, and a post of an exact size |

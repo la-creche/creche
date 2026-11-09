@@ -13,8 +13,9 @@ from attendance.api import build_app
 from attendance.auth import Principal, TokenBook
 from attendance.config import Config
 from attendance.service import SessionService
-from attendance_harness import FAMILY, SANDBOX, make_config, write_status, write_tokens
-from fake_facade import FacadeFleet, PromptMode
+from attendance_harness import FAMILY, make_config, make_service, write_status, write_tokens
+from fake_facade import PromptMode
+from fake_vmm import FakeVmm
 
 JOBS = "/dispatch/jobs"
 SWITCH = "/internal/switch-sandbox"
@@ -34,7 +35,7 @@ class Rig:
     service: SessionService
     client: httpx.AsyncClient
     tokens: dict[Principal, str]
-    facades: FacadeFleet
+    vmm: FakeVmm
 
     def head(self, principal: Principal) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.tokens[principal]}"}
@@ -42,7 +43,7 @@ class Rig:
     async def stop(self) -> None:
         await self.client.aclose()
         await self.service.close()
-        await self.facades.stop()
+        await self.vmm.stop()
 
 
 @pytest.fixture
@@ -54,13 +55,13 @@ async def rig(tmp_path: Path) -> AsyncIterator[Rig]:
     book.load()
 
     # A held prompt keeps a dispatched job running while a test reads it.
-    facades = FacadeFleet(prompt_mode=PromptMode.HOLD)
-    service = SessionService(config, acp_factory=facades.factory, cold_start_wait_s=1.0)
+    vmm = FakeVmm(prompt_mode=PromptMode.HOLD)
+    service = make_service(config, vmm)
     service.start()
     app = build_app(service, book)
     transport = httpx.ASGITransport(app=app)
     client = httpx.AsyncClient(transport=transport, base_url="http://sessiond")
-    built = Rig(config, service, client, made, facades)
+    built = Rig(config, service, client, made, vmm)
 
     yield built
 
@@ -148,19 +149,13 @@ async def test_an_exception_no_route_expects_is_internal(
     }
 
 
-async def test_switch_sandbox_takes_only_the_caregiver_token(rig: Rig) -> None:
-    """Contract 02 §3.1: no door reaches `/internal/*`."""
-    body = {"family": FAMILY, "from": SANDBOX, "to": "chat-s2", "mode": "drain", "reason": "x"}
-    refused = await rig.client.post(
-        SWITCH, json=body, headers=rig.head(Principal.CHAPERONE_DISPATCH)
-    )
-    # The rig publishes one sandbox, so `to` is not one this service would
-    # dial and contract 05 §5.3 rule 8 refuses it. The token reached it.
-    reached = await rig.client.post(SWITCH, json=body, headers=rig.head(Principal.CAREGIVER))
+@pytest.mark.parametrize("principal", list(Principal))
+async def test_the_switch_route_is_gone(rig: Rig, principal: Principal) -> None:
+    """Contract 05 minor 18 dropped the switch call (decision CH21-1)."""
+    body = {"family": FAMILY, "to": "chat-s2", "mode": "drain"}
+    answer = await rig.client.post(SWITCH, json=body, headers=rig.head(principal))
 
-    assert refused.status_code == HTTP_FORBIDDEN
-    assert reached.status_code == HTTP_BAD_REQUEST
-    assert reached.json()["error"]["code"] == "bad_request"
+    assert answer.status_code == HTTP_NOT_FOUND
 
 
 # One half of a surrogate pair, as the JSON escape of a body. A text that
@@ -174,14 +169,13 @@ NOT_JSON_ERROR = {
     "turn": None,
     "detail": {},
 }
-OTHER_SANDBOX = "chat-s2"
 JOB_FAMILY = "issue-worker"
-JOB_SANDBOX = "issue-worker-s1"
 DELEGATION = {
     "caller_family": FAMILY,
     "target_family": FAMILY,
     "delegation_id": "01JBQ7WZ0X4T9V6K2H8M3N5PQR",
     "message": "Summarise the ticket.",
+    "chain": [FAMILY, JOB_FAMILY],
 }
 
 
@@ -211,11 +205,6 @@ OTHER_TEXTS: dict[str, tuple[str, Principal, dict[str, object]]] = {
         Principal.CHAPERONE_DISPATCH,
         {"caller_family": FAMILY, "session": "auto-@"},
     ),
-    "switch_family": (
-        SWITCH,
-        Principal.CAREGIVER,
-        {"family": "chat@", "to": SANDBOX, "mode": "drain"},
-    ),
 }
 
 
@@ -230,18 +219,8 @@ async def test_a_text_with_no_utf8_form_is_refused_on_each_route(
     assert answer.json()["error"] == NOT_JSON_ERROR
 
 
-# Two texts reach a file only, and each file holds the escape. The service
+# One text reaches a file only, and its file holds the escape. The service
 # took such a text before, and it still does.
-
-
-async def test_a_switch_reason_with_no_utf8_form_is_read(rig: Rig) -> None:
-    """The switch runs. The reason reaches no answer."""
-    write_status(rig.config.state_root, sandboxes=((SANDBOX, "ready"), (OTHER_SANDBOX, "ready")))
-    body = _body(family=FAMILY, to=OTHER_SANDBOX, mode="interrupt", reason="removed@")
-    switched = await rig.client.post(SWITCH, content=body, headers=rig.head(Principal.CAREGIVER))
-
-    assert switched.status_code == HTTP_OK
-    assert switched.json()["switched"] is True
 
 
 async def test_a_dispatch_key_with_no_utf8_form_is_read(rig: Rig) -> None:
@@ -250,7 +229,6 @@ async def test_a_dispatch_key_with_no_utf8_form_is_read(rig: Rig) -> None:
         rig.config.state_root,
         family=JOB_FAMILY,
         kind="autonomous",
-        sandboxes=((JOB_SANDBOX, "ready"),),
         accepts_dispatch=True,
     )
     head = rig.head(Principal.CHAPERONE_DISPATCH)
@@ -273,7 +251,6 @@ async def test_a_text_with_a_whole_surrogate_pair_is_read(rig: Rig) -> None:
         rig.config.state_root,
         family=JOB_FAMILY,
         kind="autonomous",
-        sandboxes=((JOB_SANDBOX, "ready"),),
         accepts_dispatch=True,
     )
     fields = {**DELEGATION, "target_family": JOB_FAMILY, "message": "smile @"}

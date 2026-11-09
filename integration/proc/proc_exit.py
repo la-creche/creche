@@ -145,7 +145,6 @@ class ExitStack(ChaperoneRsStack):
 
     litellm: Child | None = None
     litellm_port: int = 0
-    vmm: Child | None = None
     caregiver: Child | None = None
 
     # ------------------------------------------------------------------ start

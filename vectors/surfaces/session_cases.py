@@ -360,62 +360,6 @@ JOBS_BODIES: Final[tuple[Body, ...]] = (
     _half_pair(_jobs("half-pair-in-since", since=f"2026-10-07T05:00:00Z{_HALF}")),
 )
 
-# --- the sandbox switch (contract 05 §5.1) -----------------------------------------
-
-_SWITCH: Final[dict[str, object]] = {"family": FAMILY, "to": "chat-s3", "mode": "drain"}
-
-
-def _switch(body_id: str, **fields: object) -> Body:
-    return _o(body_id, {**_SWITCH, **fields})
-
-
-SWITCH_BODIES: Final[tuple[Body, ...]] = (
-    _switch("full", reason="definition_changed", deadline_s=120, **{"from": SANDBOX}),
-    _switch("minimal"),
-    _switch("unknown-field", outgoing=SANDBOX, epoch=3),
-    _without("family-missing", _SWITCH, "family"),
-    _switch("family-empty", family=""),
-    _switch("family-number", family=5),
-    _switch("family-any-text", family="Not A Family\n"),
-    _without("to-missing", _SWITCH, "to"),
-    _switch("to-empty", to=""),
-    _switch("to-number", to=3),
-    _switch("to-any-text", to="Not A Sandbox\n"),
-    _switch("to-other-family", to="scrum-lead-s1"),
-    _without("mode-missing", _SWITCH, "mode"),
-    _switch("mode-interrupt", mode="interrupt"),
-    _switch("mode-unknown", mode="replace"),
-    _switch("mode-upper", mode="Drain"),
-    _switch("mode-empty", mode=""),
-    _switch("mode-number", mode=1),
-    _switch("reason-null", reason=None),
-    _switch("reason-empty", reason=""),
-    _switch("reason-number", reason=5),
-    _switch("reason-any-text", reason="Not A Reason\n" * 40),
-    _switch("from-null", **{"from": None}),
-    _switch("from-empty", **{"from": ""}),
-    _switch("from-number", **{"from": 2}),
-    _switch("from-any-text", **{"from": "Not A Sandbox\n"}),
-    _switch("deadline-1", deadline_s=1),
-    _switch("deadline-3600", deadline_s=3600),
-    _switch("deadline-0", deadline_s=0),
-    _switch("deadline-3601", deadline_s=3601),
-    _switch("deadline-null", deadline_s=None),
-    _switch("deadline-text", deadline_s="120"),
-    _switch("deadline-true", deadline_s=True),
-    _switch("deadline-float-whole", deadline_s=120.0),
-    _switch("deadline-past-64-bits", deadline_s=2**70),
-    _switch("family-missing-and-mode-unknown", family=None, mode="replace"),
-    _switch("mode-unknown-and-deadline-bad", mode="replace", deadline_s=0),
-    Body("no-body", b""),
-    Body("top-array", b"[]"),
-    _half_pair(_switch("half-pair-in-family", family=f"chat{_HALF}")),
-    _half_pair(_switch("half-pair-in-to", to=f"chat-s{_HALF}")),
-    _half_pair(_switch("half-pair-in-mode", mode=f"drain{_HALF}")),
-    _half_pair(_switch("half-pair-in-reason", reason=f"definition_changed{_HALF}")),
-    _half_pair(_switch("half-pair-in-from", **{"from": f"chat-s{_HALF}"})),
-)
-
 # --- the error body (§14) --------------------------------------------------------------
 
 

@@ -1,12 +1,9 @@
 """The fault file this service writes (contract 05 §3.3.1).
 
-Five of contract 05 §3.3's faults are detected here (§3.3.1):
-`protocol_mismatch`, `protocol_violation`, `orphan_processes`,
-`sandbox_start_failed` and `audit_unreadable`. `caregiver` also reports
-`sandbox_start_failed`, for a sandbox its own apply could not create.
-`attendance` never asks `caregiver` for anything. It
-reports what it sees in a file, and `caregiver` decides whether to replace a
-sandbox.
+Two of contract 05 §3.3's faults are detected here (§3.3.1):
+`vmm_protocol_mismatch` and `audit_unreadable`. The vmm detects the start
+faults of a VM and writes its own file (decision CH21-1). `attendance` never
+asks `caregiver` for anything. It reports what it sees in a file.
 
 The file holds this writer's current open faults for one family. It is not an
 event log. An empty list clears every fault this writer raised.
@@ -30,13 +27,10 @@ FAULT_SOURCE = "attendance"
 class FaultCode(StrEnum):
     """The codes this service detects (contract 05 §3.3)."""
 
-    PROTOCOL_MISMATCH = "protocol_mismatch"
-    PROTOCOL_VIOLATION = "protocol_violation"
-    ORPHAN_PROCESSES = "orphan_processes"
-    # Contract 05 §3.3.1: raised when the playpen answers contract 03
-    # §5.7's `fatal` instead of `ready`. Contract 05 §4.2 defines `ready` as
-    # "the channel handshake passed", which only this service runs.
-    SANDBOX_START_FAILED = "sandbox_start_failed"
+    #: Each of the 3 tries of a vmm call got the mismatch reply (decisions
+    #: CH25 rule 1, CH33 rule 10). A vmm reply with no mismatch clears it
+    #: (decision CH82 rule 4).
+    VMM_PROTOCOL_MISMATCH = "vmm_protocol_mismatch"
     #: The PEP's audit cannot be read, so `waiting-approval` is invisible
     #: (contract 05 §3.3). Turns still run: the tail is a
     #: label on a state, never a gate on one.
@@ -44,11 +38,9 @@ class FaultCode(StrEnum):
 
 
 # Contract 05 §3.3's table fixes this per code. It is not a caller's choice.
+# No fault of this writer blocks turns (decision CH82 rule 3).
 _BLOCKS_TURNS: dict[FaultCode, bool] = {
-    FaultCode.PROTOCOL_MISMATCH: True,
-    FaultCode.PROTOCOL_VIOLATION: True,
-    FaultCode.ORPHAN_PROCESSES: False,
-    FaultCode.SANDBOX_START_FAILED: True,
+    FaultCode.VMM_PROTOCOL_MISMATCH: False,
     FaultCode.AUDIT_UNREADABLE: False,
 }
 
@@ -60,7 +52,6 @@ class Fault:
     code: FaultCode
     since: datetime
     message: str | None = None
-    sandbox: str | None = None
 
     def to_file(self) -> dict[str, Any]:
         entry: dict[str, Any] = {
@@ -72,9 +63,6 @@ class Fault:
 
         if self.message is not None:
             entry["message"] = self.message
-
-        if self.sandbox is not None:
-            entry["sandbox"] = self.sandbox
 
         return entry
 
@@ -91,13 +79,12 @@ class FaultReporter:
         family: str,
         code: FaultCode,
         message: str | None = None,
-        sandbox: str | None = None,
     ) -> None:
         """Record a fault. `since` keeps the first sighting, not the latest."""
         family_faults = self._open.setdefault(family, {})
         existing = family_faults.get(code)
         since = existing.since if existing is not None else now()
-        family_faults[code] = Fault(code=code, since=since, message=message, sandbox=sandbox)
+        family_faults[code] = Fault(code=code, since=since, message=message)
         self._publish(family)
 
     def clear(self, family: str, code: FaultCode) -> None:

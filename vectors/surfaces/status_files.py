@@ -616,7 +616,6 @@ class Raise:
 
     code: FaultCode
     message: str | None = None
-    sandbox: str | None = None
 
 
 @dataclass(frozen=True)
@@ -637,38 +636,34 @@ class Reported:
 REPORTED: Final[tuple[Reported, ...]] = (
     Reported(
         "one-fault",
-        (
-            Raise(
-                FaultCode.ORPHAN_PROCESSES,
-                "foreign_pi_processes=2",
-                f"{FAMILY}-s3",
-            ),
-        ),
+        (Raise(FaultCode.VMM_PROTOCOL_MISMATCH, "the vmm speaks host API protocol 3"),),
     ),
     *(Reported(f"code-{code.value}", (Raise(code),)) for code in FaultCode),
-    Reported("message-only", (Raise(FaultCode.PROTOCOL_VIOLATION, "the refusal budget ran out"),)),
-    Reported("sandbox-only", (Raise(FaultCode.SANDBOX_START_FAILED, None, f"{FAMILY}-s4"),)),
-    Reported("message-empty", (Raise(FaultCode.AUDIT_UNREADABLE, "", ""),)),
+    Reported("message-only", (Raise(FaultCode.AUDIT_UNREADABLE, "the audit is not readable"),)),
+    Reported("message-empty", (Raise(FaultCode.AUDIT_UNREADABLE, ""),)),
     Reported(
         "each-code", tuple(Raise(code, f"about {code.value}") for code in reversed(FaultCode))
     ),
     Reported(
         "raised-again",
         (
-            Raise(FaultCode.PROTOCOL_MISMATCH, "first", f"{FAMILY}-s1"),
-            Raise(FaultCode.PROTOCOL_MISMATCH, "second", f"{FAMILY}-s2"),
+            Raise(FaultCode.VMM_PROTOCOL_MISMATCH, "first"),
+            Raise(FaultCode.VMM_PROTOCOL_MISMATCH, "second"),
         ),
     ),
     Reported(
         "one-cleared",
         (
-            Raise(FaultCode.PROTOCOL_MISMATCH),
-            Raise(FaultCode.ORPHAN_PROCESSES),
-            Clear(FaultCode.PROTOCOL_MISMATCH),
+            Raise(FaultCode.VMM_PROTOCOL_MISMATCH),
+            Raise(FaultCode.AUDIT_UNREADABLE),
+            Clear(FaultCode.VMM_PROTOCOL_MISMATCH),
         ),
     ),
-    Reported("all-cleared", (Raise(FaultCode.ORPHAN_PROCESSES), Clear(FaultCode.ORPHAN_PROCESSES))),
-    Reported("text-escapes", (Raise(FaultCode.ORPHAN_PROCESSES, _ODD_TEXT, _ODD_TEXT),)),
+    Reported(
+        "all-cleared",
+        (Raise(FaultCode.AUDIT_UNREADABLE), Clear(FaultCode.AUDIT_UNREADABLE)),
+    ),
+    Reported("text-escapes", (Raise(FaultCode.AUDIT_UNREADABLE, _ODD_TEXT),)),
 )
 
 
@@ -679,7 +674,7 @@ def _reported_file(reported: Reported, root: Path) -> tuple[dict[str, Json], byt
     with patch.object(attendance_faults, "now", read):
         for call in reported.calls:
             if isinstance(call, Raise):
-                reporter.raise_fault(FAMILY, call.code, call.message, call.sandbox)
+                reporter.raise_fault(FAMILY, call.code, call.message)
             else:
                 reporter.clear(FAMILY, call.code)
 

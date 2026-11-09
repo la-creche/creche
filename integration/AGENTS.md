@@ -18,9 +18,9 @@ Every test is marked `slow` in `conftest.py`. The suite needs no `node`.
 
 `tests/` held a second suite, which ran the doors, `attendance` and the
 playpen in one process over the session API. That API left `attendance` in
-the phase 2 plan, row 21, and the suite left with it. `tests/fake_sbx.py`
-stays: the process-level suite and the tests of `attendance` start it in
-place of `sbx`.
+the phase 2 plan, row 21, and the suite left with it. Its stand-in for
+`sbx`, `tests/fake_sbx.py`, left at the Cloud Hypervisor cut (plan PR CR2):
+`attendance` opens each ACP stream on the vmm.
 
 ## CI
 
@@ -70,7 +70,7 @@ Run each suite in its own pytest command.
 ## Rules
 
 1. Nothing under test may be faked. Three stand-ins exist, none under
-   test: `fake_sbx.py`, `FakeDriver` and `FakeLiteLLMKeys`.
+   test: `FakeLiteLLMKeys`, `FakeChecker` and `FakeUnits`.
 2. Retired with the playpen sources. The number stays, so that other
    documents keep their references.
 3. When a scenario fails, decide which side departs from a contract, then fix
@@ -111,7 +111,6 @@ Run each suite in its own pytest command.
 
 | File | Holds |
 |---|---|
-| `tests/fake_sbx.py` | `sbx exec --env-file` for a machine with no sbx |
 | `fixtures/*-registry/` | the families of the old stages. Read-only inputs. `vectors/` and `handover/` read them. |
 | `tests_manager/` | the `caregiver` writers against the real readers |
 | `proc/` | the process-level suite: each service is a process. `proc/AGENTS.md` has its rules. |

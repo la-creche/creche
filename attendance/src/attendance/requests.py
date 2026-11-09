@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 from typing import Any
 
 from .atomic import as_array
@@ -36,13 +35,6 @@ _FIRED_KINDS = {
 # The message for a body that is not JSON. A text with no UTF-8 form gets
 # the same message: such a body is not JSON in UTF-8.
 NOT_JSON = "body is not JSON"
-
-
-class SwitchMode(StrEnum):
-    """Contract 05 §5.1."""
-
-    DRAIN = "drain"
-    INTERRUPT = "interrupt"
 
 
 @dataclass(slots=True)
@@ -96,18 +88,6 @@ class JobQuery:
     session: str | None = None
     since: datetime | None = None
     limit: int = JOBS_LIMIT_DEFAULT
-
-
-@dataclass(slots=True)
-class SwitchRequest:
-    """Contract 05 §5.1's request body."""
-
-    family: str
-    to: str
-    mode: SwitchMode
-    reason: str
-    outgoing: str | None = None
-    deadline_s: int = 300
 
 
 def read_delegate(raw: dict[str, Any]) -> DelegateRequest:
@@ -280,26 +260,6 @@ def _dispatch_key(raw: dict[str, Any], family: str) -> str | None:
     return key
 
 
-def read_switch(raw: dict[str, Any]) -> SwitchRequest:
-    family = _require_text(raw, "family")
-    to_sandbox = _require_text(raw, "to")
-    mode_text = _require_text(raw, "mode")
-
-    try:
-        mode = SwitchMode(mode_text)
-    except ValueError as error:
-        raise _bad("mode is not drain or interrupt", family=family) from error
-
-    return SwitchRequest(
-        family=family,
-        to=to_sandbox,
-        mode=mode,
-        reason=_stored_text(raw, "reason") or "",
-        outgoing=_optional_text(raw, "from"),
-        deadline_s=_bounded(_optional_int(raw, "deadline_s"), 300, 1, 3600, "deadline_s"),
-    )
-
-
 def _bad(message: str, family: str | None = None, session: str | None = None) -> ApiError:
     return ApiError(ErrorCode.BAD_REQUEST, message, family=family, session=session)
 
@@ -326,9 +286,9 @@ def _optional_text(raw: dict[str, Any], name: str) -> str | None:
 def _stored_text(raw: dict[str, Any], name: str) -> str | None:
     """A text that reaches a file and the event stream only.
 
-    Two texts are read here: the reason of a switch and the key of a
-    dispatch. Each file holds the JSON escape of one half of a surrogate
-    pair, so nothing raises on such a text. The service took it before `_utf8_text`
+    One text is read here: the key of a dispatch. Its file holds the JSON
+    escape of one half of a surrogate pair, so nothing raises on such a
+    text. The service took it before `_utf8_text`
     came, and it still does. A refusal here is a decision of the owner.
     """
     value = raw.get(name)
@@ -346,10 +306,10 @@ def _utf8_text(text: str) -> str:
     CONTRACT-QUESTION: contract 02 §3 rule 3 says that a body is JSON and
     does not say what a reader does with such an escape. This reading
     refuses the body for each text that an answer, a line of the link or
-    a byte count can hold. It takes such an escape in the two texts of
+    a byte count can hold. It takes such an escape in the text of
     `_stored_text`, and in a member that no parser reads. The other reading
     replaces the character, which changes a text that a door sent. A
-    refusal of the two texts too costs two call sites.
+    refusal of that text too costs one call site.
     """
     try:
         text.encode("utf-8")

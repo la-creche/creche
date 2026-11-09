@@ -1,8 +1,9 @@
 """The read-only routes: the session list, one transcript, and `/busy`.
 
-Each view request opens one relay to the family's facade, sends
-`initialize` and one read method, and closes it. The relay is a
-`FakeChannel` that `FacadeFleet.relay` serves with scripted answers.
+The session list is a page of the host list, with no boot (contract 02 §7
+rule 1). A transcript opens the session's vmm stream, sends `initialize`
+and `session/load`, and closes it (§7 rule 3). `FakeVmm` keeps the rows,
+and its facades answer each stream with scripted replays.
 """
 
 from __future__ import annotations
@@ -15,14 +16,45 @@ from typing import Any
 import httpx
 import pytest
 from attendance.acp_door import Close, DoorPrompts
+from attendance.acp_link import loads_strict
 from attendance.api import build_app
 from attendance.auth import Principal, TokenBook
 from attendance.config import Config
 from attendance.paths import SANDBOX_MOUNT_ENV
 from attendance.service import SessionService
-from attendance_harness import FAMILY, make_config, wait_until, write_status, write_tokens
-from creche_vectors import meta_key
-from fake_facade import FacadeFleet, PromptMode
+from attendance_harness import (
+    FAMILY,
+    make_config,
+    make_service,
+    wait_until,
+    write_status,
+    write_tokens,
+)
+from creche_wire import (
+    Auto,
+    AutoJobId,
+    AutoOrigin,
+    CreateSession,
+    Delegate,
+    DelegateOrigin,
+    DelegationId,
+    Dispatch,
+    DispatchChain,
+    DispatchTrigger,
+    Door,
+    DoorOrigin,
+    FamilyName,
+    JobId,
+    SessionCwd,
+    SessionId,
+    SessionOrigin,
+    Timer,
+    TimerTrigger,
+    Trigger,
+    UnixMillis,
+)
+from fake_facade import PromptMode
+from fake_vmm import BUSY, FakeVmm
 
 from attendance import acp_view
 
@@ -33,22 +65,17 @@ HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
 HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
+HTTP_CONFLICT = 409
 HTTP_INTERNAL = 500
 HTTP_UNAVAILABLE = 503
 JOB_FAMILY = "issue-worker"
-JOB_SANDBOX = "issue-worker-s1"
-TRIGGER = {"kind": "dispatch", "name": "scrum-lead", "fired_at": "2026-10-25T12:00:00Z"}
-
-
-def row(number: int, **meta: Any) -> dict[str, Any]:
-    """One `session/list` row as the facade sends it."""
-    fields: dict[str, Any] = {
-        "sessionId": f"s-{number}",
-        "cwd": "/srv/agents/sessions/chat",
-        "title": f"Talk {number}",
-        "updatedAt": f"2026-10-2{number}T10:00:00.000Z",
-    }
-    return {**fields, "_meta": meta} if meta else fields
+CWD = "/srv/agents/sessions/chat"
+#: 2026-10-25T12:00:00Z, as a wire time.
+CREATED_MS = 1_792_929_600_000
+CREATED = "2026-10-25T12:00:00Z"
+AUTO_JOB = "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"
+THIN_JOB = "job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"
+DELEGATION = "01JBQ7WZ0X4T9V6K2H8M3N5PQR"
 
 
 def text(kind: str, said: str) -> dict[str, Any]:
@@ -76,19 +103,40 @@ def tool_end(call: str, status: str, said: str) -> dict[str, Any]:
     }
 
 
+def door_origin() -> SessionOrigin:
+    return SessionOrigin(DoorOrigin(door=Door()))
+
+
 @dataclass(slots=True)
 class Rig:
     config: Config
     service: SessionService
     client: httpx.AsyncClient
     tokens: dict[Principal, str]
-    facades: FacadeFleet
+    vmm: FakeVmm
 
     def head(self, principal: Principal = Principal.NOTICEBOARD) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.tokens[principal]}"}
 
     async def get(self, path: str, principal: Principal = Principal.NOTICEBOARD) -> httpx.Response:
         return await self.client.get(path, headers=self.head(principal))
+
+    async def row(self, session: str, origin: SessionOrigin | None = None) -> None:
+        """One row of the host list, as attendance makes it."""
+        await self.vmm.create(
+            CreateSession(
+                created_at=UnixMillis(CREATED_MS),
+                cwd=SessionCwd(CWD),
+                family=FamilyName(FAMILY),
+                id=SessionId(session),
+                origin=origin if origin is not None else door_origin(),
+            )
+        )
+        self.vmm.creates.clear()
+
+    async def replay(self, updates: list[dict[str, Any]]) -> None:
+        await self.row(SESSION_ID)
+        self.vmm.replays[SESSION_ID] = updates
 
 
 @pytest.fixture
@@ -98,75 +146,95 @@ async def rig(tmp_path: Path) -> AsyncIterator[Rig]:
     made = write_tokens(config.state_root)
     book = TokenBook(config.state_root)
     book.load()
-    facades = FacadeFleet(prompt_mode=PromptMode.HOLD)
-    service = SessionService(
-        config, acp_factory=facades.factory, relay_factory=facades.relay, cold_start_wait_s=1.0
-    )
+    vmm = FakeVmm(prompt_mode=PromptMode.HOLD)
+    service = make_service(config, vmm)
     service.start()
     transport = httpx.ASGITransport(app=build_app(service, book))
     client = httpx.AsyncClient(transport=transport, base_url="http://sessiond")
 
-    yield Rig(config, service, client, made, facades)
+    yield Rig(config, service, client, made, vmm)
 
     await client.aclose()
     await service.close()
-    await facades.stop()
+    await vmm.stop()
 
 
 def read_methods(rig: Rig) -> list[list[str]]:
-    return [facade.methods for facade in rig.facades.relays]
+    return [facade.methods for facade in rig.vmm.facades.values()]
 
 
-async def test_the_session_list_pages_with_the_facade_cursor(rig: Rig) -> None:
-    meta = {meta_key("job"): "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK", meta_key("trigger"): TRIGGER}
-    rig.facades.pages[""] = {"sessions": [row(2, **meta), row(1)], "nextCursor": "51"}
-    rig.facades.pages["51"] = {"sessions": [row(0)], "nextCursor": None}
+async def test_the_session_list_pages_the_host_list(rig: Rig) -> None:
+    """Contract 02 §7 rules 1 and 2: newest created first, no boot."""
+    ids = [f"3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c3{n}" for n in range(3)]
+    dispatch = Dispatch(
+        chain=DispatchChain([FamilyName("chat"), FamilyName("scrum-lead")]),
+        name=FamilyName("scrum-lead"),
+    )
+    auto = Auto(job=AutoJobId(AUTO_JOB), trigger=Trigger(DispatchTrigger(dispatch=dispatch)))
+    delegate = Delegate(delegation=DelegationId(DELEGATION), job=JobId(THIN_JOB))
+    await rig.row(ids[0])
+    await rig.row(ids[1], SessionOrigin(DelegateOrigin(delegate=delegate)))
+    await rig.row(ids[2], SessionOrigin(AutoOrigin(auto=auto)))
 
     first = await rig.get(SESSIONS)
-    second = await rig.get(f"{SESSIONS}?cursor=51")
+    second = await rig.get(f"{SESSIONS}?cursor={first.json()['next_cursor']}")
 
     assert first.status_code == HTTP_OK
     assert first.json() == {
         "sessions": [
             {
-                "id": "s-2",
-                "title": "Talk 2",
-                "created": None,
-                "updated": "2026-10-22T10:00:00.000Z",
-                "job_id": "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK",
+                "id": ids[2],
+                "title": None,
+                "created": CREATED,
+                "updated": CREATED,
+                "job_id": AUTO_JOB,
                 "delegation": None,
-                "trigger": TRIGGER,
+                "trigger": {
+                    "kind": "dispatch",
+                    "name": "scrum-lead",
+                    "chain": ["chat", "scrum-lead"],
+                },
             },
             {
-                "id": "s-1",
-                "title": "Talk 1",
-                "created": None,
-                "updated": "2026-10-21T10:00:00.000Z",
-                "job_id": None,
-                "delegation": None,
+                "id": ids[1],
+                "title": None,
+                "created": CREATED,
+                "updated": CREATED,
+                "job_id": THIN_JOB,
+                "delegation": DELEGATION,
                 "trigger": None,
             },
         ],
-        "next_cursor": "51",
+        "next_cursor": "2",
     }
-    assert [one["id"] for one in second.json()["sessions"]] == ["s-0"]
+    assert [one["id"] for one in second.json()["sessions"]] == [ids[0]]
     assert second.json()["next_cursor"] is None
-    assert read_methods(rig) == [["initialize", "session/list"], ["initialize", "session/list"]]
-    assert rig.facades.relays[1].received[1]["params"] == {"cursor": "51"}
+    assert rig.vmm.opened == []
+
+
+async def test_a_timer_row_has_a_trigger_with_no_name(rig: Rig) -> None:
+    auto = Auto(job=AutoJobId(AUTO_JOB), trigger=Trigger(TimerTrigger(timer=Timer())))
+    await rig.row(SESSION_ID, SessionOrigin(AutoOrigin(auto=auto)))
+
+    (listed,) = (await rig.get(SESSIONS)).json()["sessions"]
+
+    assert listed["trigger"] == {"kind": "timer", "name": None}
 
 
 async def test_a_transcript_holds_each_update_kind(rig: Rig) -> None:
-    rig.facades.replays[SESSION_ID] = [
-        text("user_message_chunk", "Is the boiler serviced?"),
-        text("agent_thought_chunk", "Check the log."),
-        tool_call("t1", "read"),
-        tool_end("t1", "completed", "serviced 2026-03-11"),
-        tool_call("t2", "bash"),
-        tool_end("t2", "failed", "exit 1"),
-        text("agent_message_chunk", "Yes, "),
-        text("agent_message_chunk", "in March."),
-        {"sessionUpdate": "session_info_update", "title": "Boiler"},
-    ]
+    await rig.replay(
+        [
+            text("user_message_chunk", "Is the boiler serviced?"),
+            text("agent_thought_chunk", "Check the log."),
+            tool_call("t1", "read"),
+            tool_end("t1", "completed", "serviced 2026-03-11"),
+            tool_call("t2", "bash"),
+            tool_end("t2", "failed", "exit 1"),
+            text("agent_message_chunk", "Yes, "),
+            text("agent_message_chunk", "in March."),
+            {"sessionUpdate": "session_info_update", "title": "Boiler"},
+        ]
+    )
 
     answer = await rig.get(ONE)
 
@@ -198,14 +266,17 @@ async def test_a_transcript_holds_each_update_kind(rig: Rig) -> None:
         "truncated": False,
     }
     assert read_methods(rig) == [["initialize", "session/load"]]
+    assert rig.vmm.channels[SESSION_ID].closed
 
 
 async def test_a_transcript_pages_by_position(rig: Rig) -> None:
-    rig.facades.replays[SESSION_ID] = [
-        text("user_message_chunk", "one"),
-        text("agent_message_chunk", "two"),
-        text("user_message_chunk", "three"),
-    ]
+    await rig.replay(
+        [
+            text("user_message_chunk", "one"),
+            text("agent_message_chunk", "two"),
+            text("user_message_chunk", "three"),
+        ]
+    )
 
     first = (await rig.get(f"{ONE}?limit=2")).json()
     rest = (await rig.get(f"{ONE}?start=2&limit=2")).json()
@@ -217,7 +288,7 @@ async def test_a_transcript_pages_by_position(rig: Rig) -> None:
 
 
 async def test_a_long_text_is_cut_at_the_cap(rig: Rig) -> None:
-    rig.facades.replays[SESSION_ID] = [text("agent_message_chunk", "é" * acp_view.MAX_TEXT_BYTES)]
+    await rig.replay([text("agent_message_chunk", "é" * acp_view.MAX_TEXT_BYTES)])
 
     entry = (await rig.get(ONE)).json()["entries"][0]
 
@@ -228,8 +299,9 @@ async def test_a_replay_over_the_update_cap_is_truncated(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(acp_view, "MAX_UPDATES", 2)
-    rig.facades.replays[SESSION_ID] = [text("user_message_chunk", str(n)) for n in range(5)]
-    rig.facades.replays[SESSION_ID][1] = text("agent_message_chunk", "1")
+    updates = [text("user_message_chunk", str(n)) for n in range(5)]
+    updates[1] = text("agent_message_chunk", "1")
+    await rig.replay(updates)
 
     answer = (await rig.get(ONE)).json()
 
@@ -245,22 +317,39 @@ async def test_a_bad_page_is_bad_request(rig: Rig, query: str) -> None:
     answer = await rig.get(f"{ONE}?{query}")
 
     assert answer.status_code == HTTP_BAD_REQUEST
-    assert rig.facades.relays == []
+    assert rig.vmm.opened == []
 
 
-@pytest.mark.parametrize("cursor", ["x" * (acp_view.MAX_CURSOR_BYTES + 1), "a b"])
+@pytest.mark.parametrize("cursor", ["0", "01", "x", "9007199254740992", "a b"])
 async def test_a_bad_cursor_is_bad_request(rig: Rig, cursor: str) -> None:
     answer = await rig.client.get(SESSIONS, params={"cursor": cursor}, headers=rig.head())
 
     assert answer.status_code == HTTP_BAD_REQUEST
-    assert rig.facades.relays == []
+    assert rig.vmm.lists == []
 
 
-async def test_an_unknown_session_is_not_found(rig: Rig) -> None:
+async def test_an_unknown_session_is_not_found_with_no_boot(rig: Rig) -> None:
     answer = await rig.get(ONE)
 
     assert answer.status_code == HTTP_NOT_FOUND
     assert answer.json()["error"]["code"] == "not_found"
+    assert rig.vmm.facades == {}
+
+
+async def test_an_sbx_era_id_is_not_found_with_no_vmm_call(rig: Rig) -> None:
+    """Decision CH10-9: an id that is no session id never reaches the vmm."""
+    answer = await rig.get(f"{SESSIONS}/sess-1")
+
+    assert answer.status_code == HTTP_NOT_FOUND
+    assert rig.vmm.opened == []
+
+
+async def test_a_session_the_facade_cannot_load_is_not_found(rig: Rig) -> None:
+    await rig.row(SESSION_ID)
+
+    answer = await rig.get(ONE)
+
+    assert answer.status_code == HTTP_NOT_FOUND
 
 
 async def test_an_unknown_family_is_not_found(rig: Rig) -> None:
@@ -270,49 +359,52 @@ async def test_an_unknown_family_is_not_found(rig: Rig) -> None:
     assert answer.json()["error"]["code"] == "family_unknown"
 
 
-async def test_a_family_with_no_sandbox_is_unavailable(rig: Rig) -> None:
-    write_status(rig.config.state_root, sandboxes=())
+async def test_a_held_stream_is_busy(rig: Rig) -> None:
+    """Decision CH83 rule 4: one holder of a session's stream at a time."""
+    await rig.replay([])
+    rig.vmm.refuse["acp"] = BUSY
+
+    answer = await rig.get(ONE)
+
+    assert answer.status_code == HTTP_CONFLICT
+    assert answer.json()["error"]["code"] == "busy"
+
+
+@pytest.mark.parametrize("code", ["host_full", "sandbox_start_failed", "unreachable"])
+async def test_a_vmm_refusal_is_unavailable(rig: Rig, code: str) -> None:
+    await rig.replay([])
+    rig.vmm.refuse["acp"] = code
+    rig.vmm.refuse["list"] = code
 
     for path in (SESSIONS, ONE):
         answer = await rig.get(path)
 
         assert answer.status_code == HTTP_UNAVAILABLE
         assert answer.json()["error"]["code"] == "sandbox_unavailable"
+        assert answer.json()["error"]["detail"] == {"reason": code}
 
-    assert rig.facades.relays == []
 
-
-async def test_a_cwd_that_the_wire_refuses_starts_no_relay(
+async def test_a_cwd_that_the_wire_refuses_starts_no_stream(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Decision CH21: the cwd is checked before the relay starts."""
+    """Decision CH21: the cwd is checked before the stream opens."""
     monkeypatch.setenv(SANDBOX_MOUNT_ENV, "sessions")
 
     answer = await rig.get(ONE)
 
     assert answer.status_code == HTTP_INTERNAL
     assert answer.json()["error"]["code"] == "internal"
-    assert rig.facades.relays == []
-
-
-async def test_a_relay_with_no_facade_is_unavailable(rig: Rig) -> None:
-    rig.facades.relay_gone = True
-
-    answer = await rig.get(SESSIONS)
-
-    assert answer.status_code == HTTP_UNAVAILABLE
-    assert answer.json()["error"]["code"] == "sandbox_unavailable"
+    assert rig.vmm.opened == []
 
 
 @pytest.mark.parametrize("path", [SESSIONS, ONE, "/busy"])
-@pytest.mark.parametrize(
-    "principal", [Principal.CHAPERONE_DISPATCH, Principal.DOOR_ACP, Principal.CAREGIVER]
-)
+@pytest.mark.parametrize("principal", [Principal.CHAPERONE_DISPATCH, Principal.DOOR_ACP])
 async def test_each_other_principal_is_forbidden(rig: Rig, path: str, principal: Principal) -> None:
     answer = await rig.get(path, principal)
 
     assert answer.status_code == HTTP_FORBIDDEN
-    assert rig.facades.relays == []
+    assert rig.vmm.opened == []
+    assert rig.vmm.lists == []
 
 
 async def test_busy_is_false_with_nothing_in_flight(rig: Rig) -> None:
@@ -332,7 +424,6 @@ async def test_busy_counts_running_and_queued_jobs(rig: Rig) -> None:
         rig.config.state_root,
         family=JOB_FAMILY,
         kind="autonomous",
-        sandboxes=((JOB_SANDBOX, "ready"),),
         accepts_dispatch=True,
         max_running_turns=1,
     )
@@ -341,6 +432,7 @@ async def test_busy_counts_running_and_queued_jobs(rig: Rig) -> None:
         "target_family": JOB_FAMILY,
         "delegation_id": "01JBQ7WZ0X4T9V6K2H8M3N5PQR",
         "message": "Work the ticket.",
+        "chain": [FAMILY, JOB_FAMILY],
     }
 
     for _ in range(2):
@@ -349,8 +441,8 @@ async def test_busy_counts_running_and_queued_jobs(rig: Rig) -> None:
         )
         assert sent.status_code == HTTP_OK
 
-    facades = rig.facades.facades
-    await wait_until(lambda: JOB_SANDBOX in facades and len(facades[JOB_SANDBOX].held) == 1)
+    facades = rig.vmm.facades
+    await wait_until(lambda: sum(len(one.held) for one in facades.values()) == 1)
     answer = await rig.get("/busy")
 
     assert answer.json() == {
@@ -365,9 +457,9 @@ def test_the_door_counts_a_prompt_until_its_answer() -> None:
     prompts = DoorPrompts()
 
     with prompts.connection() as one, prompts.connection() as two:
-        one.sent('{"jsonrpc":"2.0","id":"p","method":"session/prompt","params":{}}')
-        two.sent('{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{}}')
-        two.sent('{"jsonrpc":"2.0","id":5,"method":"session/list","params":{}}')
+        one.sent(record('{"jsonrpc":"2.0","id":"p","method":"session/prompt","params":{}}'))
+        two.sent(record('{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{}}'))
+        two.sent(record('{"jsonrpc":"2.0","id":5,"method":"session/list","params":{}}'))
         assert prompts.in_flight == 2
 
         two.answered('{"jsonrpc":"2.0","id":"4","result":{"stopReason":"end_turn"}}')
@@ -402,7 +494,7 @@ def test_the_door_keys_a_number_id_by_its_double(sent: str, answered: str) -> No
     prompts = DoorPrompts()
 
     with prompts.connection() as one:
-        assert one.sent(prompt(sent)) is None
+        assert one.sent(record(prompt(sent))) is None
         assert prompts.in_flight == 1
 
         one.answered(answer(answered))
@@ -413,8 +505,8 @@ def test_the_door_keeps_a_string_id_apart_from_a_number_id() -> None:
     prompts = DoorPrompts()
 
     with prompts.connection() as one:
-        one.sent(prompt('"1"'))
-        one.sent(prompt("1"))
+        one.sent(record(prompt('"1"')))
+        one.sent(record(prompt("1")))
         assert prompts.in_flight == 2
 
         one.answered(answer("1.0"))
@@ -431,5 +523,12 @@ def test_the_door_refuses_a_prompt_id_past_the_double_range(rpc_id: str) -> None
     prompts = DoorPrompts()
 
     with prompts.connection() as one:
-        assert one.sent(prompt(rpc_id)) is Close.BAD_FRAME
+        assert one.sent(record(prompt(rpc_id))) is Close.BAD_FRAME
         assert prompts.in_flight == 0
+
+
+def record(text: str) -> dict[str, Any]:
+    """One client line as the door reads it."""
+    parsed = loads_strict(text)
+    assert isinstance(parsed, dict)
+    return parsed  # pyright: ignore[reportUnknownVariableType]

@@ -218,15 +218,6 @@ ROUTES: Final[tuple[Route, ...]] = (
         cases.DELEGATE_BODIES,
         _argument(1),
     ),
-    Route(
-        "switch",
-        "/internal/switch-sandbox",
-        "attendance.requests.read_switch",
-        "§5, contract 05 §5.1",
-        cases.SWITCH_BODIES,
-        _argument(1),
-        ("value.outgoing is the field `from` of the body.",),
-    ),
 )
 
 

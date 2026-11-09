@@ -59,7 +59,6 @@ def test_a_reapply_keeps_the_document_readable(reader: StatusReader, applied: Ap
     status = reader.read(FAMILY)
     assert status is not None
     assert status.state is FamilyState.IN_SYNC
-    assert status.sandboxes == []
 
 
 # --- the env file caregiver wrote, carried by the command attendance builds --

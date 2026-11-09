@@ -1,13 +1,16 @@
-"""The read-only view of one family's sessions, over one `acp-relay`.
+"""The read-only view of one family's sessions, for the noticeboard.
 
-    GET /families/{f}/sessions        initialize, session/list, close
-    GET /families/{f}/sessions/{id}   initialize, session/load, close
+    GET /families/{f}/sessions        vmm list, no boot
+    GET /families/{f}/sessions/{id}   vmm ACP stream: initialize, session/load, close
 
-The view sends `initialize` and one read method on a relay of its own,
-and never `session/prompt`. The facade owns each conversation. This module
-turns its answer into JSON for the noticeboard.
+The page of sessions comes from the host session list, with no boot
+(contract 02 §7 rule 1). A transcript comes from the facade of the
+session: the view opens the session's vmm stream, sends `initialize` and
+`session/load`, and closes the stream. So the read boots or restores the
+VM, and it can meet `host_full` or `busy` (decision CH21-9, CH83 rule 4).
+It never sends `session/prompt`.
 
-Every line from the relay is a claim. A line that is not one strict
+Every line from the stream is a claim. A line that is not one strict
 JSON-RPC answer or update ends the read in `sandbox_unavailable`. Each text
 is cut to a byte cap, and a half of a surrogate pair becomes `?`.
 """
@@ -21,32 +24,41 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from .acp_jobs import META_DELEGATION, META_JOB, META_TRIGGER
+from creche_wire import (
+    AutoOrigin,
+    DelegateOrigin,
+    FamilyName,
+    ListCursor,
+    ListSessions,
+    SessionRow,
+    TimerTrigger,
+    WebhookTrigger,
+)
+
 from .acp_link import (
     JSONRPC,
+    MAX_ACP_LINE_BYTES,
     METHOD_UPDATE,
     AcpHandshakeError,
     Malformed,
     Notice,
     RpcError,
-    initialize_request,
+    handshake,
     parse_message,
-    parse_response,
-    read_agent,
 )
 from .atomic import as_array, as_object
 from .channel import Channel, ChannelClosed
+from .clock import from_ms, rfc3339
 from .errors import ApiError, ErrorCode
 from .lines import cut_bytes
+from .vmm import NOT_FOUND, Vmm, VmmRefused
 
-METHOD_LIST = "session/list"
 METHOD_LOAD = "session/load"
 
 #: The cap of one text of the transcript: the facade's own forward cap.
 MAX_TEXT_BYTES = 65_536
 #: The cap of an id, a title, a time or a cursor.
 MAX_NAME_BYTES = 256
-MAX_CURSOR_BYTES = MAX_NAME_BYTES
 #: The most updates one read takes. The rest of the replay is not read.
 MAX_UPDATES = 20_000
 #: The entries of one transcript page, and the bytes of their JSON.
@@ -60,23 +72,21 @@ READ_DEADLINE_S = 30.0
 RPC_NOT_FOUND = -32002
 RPC_INVALID_PARAMS = -32602
 
-#: CONTRACT-QUESTION: ACP's session row has no creation time, and the
-#: vector file names no key for one. The view reads this key of the row's
-#: `_meta`. The facade sends no `_meta` on a row yet, so `created`,
-#: `job_id`, `delegation` and `trigger` read null until it does.
-META_CREATED = "creche/created_at"
+#: The vmm code of a session whose stream another holder holds (decision
+#: CH83 rule 4).
+_BUSY = "busy"
 
 _TOOL_STATUSES = frozenset({"pending", "in_progress", "completed", "failed"})
-_TRIGGER_KEYS = frozenset({"kind", "name", "fired_at", "chain"})
 _TEXT_KINDS = {
     "user_message_chunk": "user",
     "agent_message_chunk": "agent",
     "agent_thought_chunk": "thought",
 }
-_CURSOR_RE = re.compile(r"^[\x21-\x7e]{1,256}\Z")
+#: The decimal text of the vmm's `ListCursor`, 1 to 2^53 - 1.
+_CURSOR_RE = re.compile(r"^[1-9][0-9]{0,15}\Z")
+_CURSOR_MAX = 2**53 - 1
 _COUNT_RE = re.compile(r"^[0-9]{1,9}\Z")
-_INIT_ID = 0
-_READ_ID = 1
+_LOAD_ID = 1
 
 
 @dataclass(slots=True, frozen=True)
@@ -87,14 +97,17 @@ class Page:
     limit: int = DEFAULT_PAGE_ENTRIES
 
 
-def read_cursor(query: Mapping[str, str]) -> str | None:
-    """The facade's cursor, opaque. Printable ASCII, at most 256 bytes."""
+def read_cursor(query: Mapping[str, str]) -> ListCursor | None:
+    """The cursor of a page that this view gave: the `next` of the vmm."""
     cursor = query.get("cursor")
 
-    if cursor is not None and not _CURSOR_RE.match(cursor):
+    if cursor is None:
+        return None
+
+    if not _CURSOR_RE.match(cursor) or int(cursor) > _CURSOR_MAX:
         raise ApiError(ErrorCode.BAD_REQUEST, "cursor is not one that a page gave")
 
-    return cursor
+    return ListCursor(int(cursor))
 
 
 def read_page(query: Mapping[str, str]) -> Page:
@@ -120,38 +133,49 @@ def _count(query: Mapping[str, str], name: str, default: int) -> int:
     return int(value)
 
 
-async def list_sessions(relay: Channel, family: str, cursor: str | None) -> dict[str, Any]:
-    """One page of `session/list`, newest first, with the facade's cursor."""
-    params: dict[str, Any] = {} if cursor is None else {"cursor": cursor}
-    result = await _read(relay, family, METHOD_LIST, params, None)
+async def list_sessions(vmm: Vmm, family: str, cursor: ListCursor | None) -> dict[str, Any]:
+    """One page of the host list, newest created first (contract 02 §7 rule 1)."""
+    query = ListSessions(cursor=cursor, cwd=None, family=FamilyName(family))
 
     try:
-        return _list_view(result)
-    except Malformed as error:
-        raise _unavailable(family, str(error)) from error
+        page = await vmm.list_page(query)
+    except VmmRefused as error:
+        raise _unavailable(family, error.code) from error
+
+    cursor_text = str(page.next.root) if page.next is not None else None
+    return {"sessions": [_view_row(row) for row in page.rows], "next_cursor": cursor_text}
 
 
 async def load_transcript(
-    relay: Channel, family: str, session: str, cwd: str, page: Page
+    vmm: Vmm, family: str, session: str, cwd: str, page: Page
 ) -> dict[str, Any]:
     """The replay of `session/load`, folded into entries, one page of them."""
+    try:
+        stream = await vmm.open_acp(family, session, MAX_ACP_LINE_BYTES)
+    except VmmRefused as error:
+        raise _vmm_refusal(family, error) from error
+
     transcript = Transcript(session)
     params: dict[str, Any] = {"sessionId": session, "cwd": cwd, "mcpServers": []}
-    await _read(relay, family, METHOD_LOAD, params, transcript.add)
+
+    try:
+        await _read(stream, family, params, transcript.add)
+    finally:
+        await stream.close()
+
     return transcript.page(page)
 
 
 async def _read(
-    relay: Channel,
+    stream: Channel,
     family: str,
-    method: str,
     params: dict[str, Any],
-    on_update: Callable[[dict[str, Any]], bool] | None,
-) -> object:
-    """`initialize`, then one read. None when `on_update` took enough."""
+    on_update: Callable[[dict[str, Any]], bool],
+) -> None:
+    """`initialize`, then `session/load`, until the answer or the update cap."""
     try:
         async with asyncio.timeout(READ_DEADLINE_S):
-            return await _exchange(relay, method, params, on_update)
+            await _exchange(stream, params, on_update)
     except (Malformed, AcpHandshakeError, ChannelClosed, TimeoutError) as error:
         raise _unavailable(family, str(error) or type(error).__name__) from error
     except _Refused as refused:
@@ -159,48 +183,39 @@ async def _read(
 
 
 async def _exchange(
-    relay: Channel,
-    method: str,
-    params: dict[str, Any],
-    on_update: Callable[[dict[str, Any]], bool] | None,
-) -> object:
-    await relay.send(_line(initialize_request(_INIT_ID)))
-    answer = parse_response(await _next(relay))
-
-    if answer.id != _INIT_ID:
-        raise Malformed("the answer names another request")
-
-    read_agent(answer)
-    await relay.send(
-        _line({"jsonrpc": JSONRPC, "id": _READ_ID, "method": method, "params": params})
+    stream: Channel, params: dict[str, Any], on_update: Callable[[dict[str, Any]], bool]
+) -> None:
+    await handshake(stream)
+    await stream.send(
+        _line({"jsonrpc": JSONRPC, "id": _LOAD_ID, "method": METHOD_LOAD, "params": params})
     )
 
     while True:
-        message = parse_message(await _next(relay))
+        message = parse_message(await _next(stream))
 
         if isinstance(message, Notice):
-            if message.method != METHOD_UPDATE or on_update is None:
+            if message.method != METHOD_UPDATE:
                 raise Malformed(f"a notification this read does not take: {message.method}")
 
             if not on_update(message.params):
-                return None
+                return
 
             continue
 
-        if message.id != _READ_ID:
+        if message.id != _LOAD_ID:
             raise Malformed("an answer to no request")
 
         if message.error is not None:
             raise _Refused(message.error)
 
-        return message.result
+        return
 
 
-async def _next(relay: Channel) -> str:
-    raw = await relay.receive()
+async def _next(stream: Channel) -> str:
+    raw = await stream.receive()
 
     if raw is None:
-        raise ChannelClosed("the relay ended")
+        raise ChannelClosed("the stream ended")
 
     if raw.text is None:
         raise Malformed(f"refused line: {raw.refusal}")
@@ -224,73 +239,69 @@ def _refusal(family: str, error: RpcError) -> ApiError:
     return _unavailable(family, f"the facade answered error {error.code}")
 
 
+def _vmm_refusal(family: str, error: VmmRefused) -> ApiError:
+    """`not_found` is 404 with no boot (decision CH21-9). `busy` is 409
+    (decision CH83 rule 4). Each other refusal is `sandbox_unavailable`."""
+    if error.code == NOT_FOUND:
+        return ApiError(ErrorCode.NOT_FOUND, "no such session", family=family)
+
+    if error.code == _BUSY:
+        return ApiError(ErrorCode.BUSY, "another holder holds the session", family=family)
+
+    return _unavailable(family, error.code)
+
+
 def _unavailable(family: str, why: str) -> ApiError:
     return ApiError(
         ErrorCode.SANDBOX_UNAVAILABLE,
-        f"family {family} facade gave no answer to read",
+        f"family {family} gave no answer to read",
         family=family,
         detail={"reason": _clean(cut_bytes(why, MAX_NAME_BYTES))},
     )
 
 
-# ------------------------------------------------------------ session/list
+# ------------------------------------------------------------ the host list
 
 
-def _list_view(result: object) -> dict[str, Any]:
-    answer = as_object(result) or {}
-    rows = as_array(answer.get("sessions"))
-    cursor = answer.get("nextCursor")
+def _view_row(row: SessionRow) -> dict[str, Any]:
+    """Contract 02 §7 rule 2: one view row of one host row."""
+    origin = row.origin.root
+    job: str | None = None
+    delegation: str | None = None
+    trigger: dict[str, Any] | None = None
 
-    if rows is None:
-        raise Malformed("session/list named no sessions")
+    if isinstance(origin, DelegateOrigin):
+        job = origin.delegate.job.root
+        delegation = origin.delegate.delegation.root
+    elif isinstance(origin, AutoOrigin):
+        job = origin.auto.job.root
+        trigger = _trigger(origin)
 
-    if cursor is not None and not (isinstance(cursor, str) and _CURSOR_RE.match(cursor)):
-        raise Malformed("session/list named a cursor that is not one")
-
-    return {"sessions": [_row(one) for one in rows], "next_cursor": cursor}
-
-
-def _row(value: object) -> dict[str, Any]:
-    row = as_object(value)
-
-    if row is None:
-        raise Malformed("a session row is not an object")
-
-    meta = as_object(row.get("_meta")) or {}
     return {
-        "id": _name(row.get("sessionId")),
-        "title": _optional(row.get("title")),
-        "created": _optional(meta.get(META_CREATED)),
-        "updated": _optional(row.get("updatedAt")),
-        "job_id": _optional(meta.get(META_JOB)),
-        "delegation": _optional(meta.get(META_DELEGATION)),
-        "trigger": _trigger(meta.get(META_TRIGGER)),
+        "id": row.id.root,
+        "title": row.title.root if row.title is not None else None,
+        "created": rfc3339(from_ms(row.created_at.root)),
+        "updated": rfc3339(from_ms(row.updated_at.root)),
+        "job_id": job,
+        "delegation": delegation,
+        "trigger": trigger,
     }
 
 
-def _trigger(value: object) -> dict[str, Any] | None:
-    """The trigger of contract 02 §13.2, rebuilt from its checked fields."""
-    if value is None:
-        return None
+def _trigger(origin: AutoOrigin) -> dict[str, Any]:
+    """The trigger of contract 02 §13.2 with no `fired_at`: the `created`
+    time stands in for it (decision CH21-4a)."""
+    fired = origin.auto.trigger.root
 
-    trigger = as_object(value)
+    if isinstance(fired, TimerTrigger):
+        return {"kind": "timer", "name": None}
 
-    if trigger is None or not set(trigger) <= _TRIGGER_KEYS or "kind" not in trigger:
-        raise Malformed("a trigger that is not of its shape")
+    if isinstance(fired, WebhookTrigger):
+        return {"kind": "webhook", "name": fired.webhook.name.root}
 
-    built: dict[str, Any] = {"kind": _name(trigger["kind"])}
-    built["name"] = _optional(trigger.get("name"))
-    built["fired_at"] = _optional(trigger.get("fired_at"))
-
-    if "chain" in trigger:
-        chain = as_array(trigger["chain"])
-
-        if not chain:
-            raise Malformed("a trigger chain that is not a list of families")
-
-        built["chain"] = [_name(one) for one in chain]
-
-    return built
+    dispatch = fired.dispatch
+    chain = [name.root for name in dispatch.chain.root]
+    return {"kind": "dispatch", "name": dispatch.name.root, "chain": chain}
 
 
 def _name(value: object) -> str:

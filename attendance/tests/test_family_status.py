@@ -11,7 +11,6 @@ from attendance.clock import now, rfc3339
 from attendance.errors import ApiError, ErrorCode
 from attendance.family_status import (
     FamilyState,
-    SandboxState,
     StatusReader,
     check_may_serve,
     served_kind,
@@ -53,110 +52,16 @@ def _publish(root: Path, **overrides: Any) -> StatusReader:
 
 
 def test_reads_the_fields_this_service_needs(tmp_path: Path) -> None:
+    """The vmm owns each VM, so the `sandboxes` list of the document is not
+    read (decision CH1)."""
     status = _publish(tmp_path).read(_FAMILY)
 
     assert status is not None
+    assert not hasattr(status, "sandboxes")
     assert status.kind is SessionKind.ATTENDED
     assert status.state is FamilyState.IN_SYNC
     assert status.config_rev == "reg-9f21c4"
     assert status.is_stale() is False
-
-
-def test_the_newest_ready_sandbox_serves(tmp_path: Path) -> None:
-    status = _publish(tmp_path).read(_FAMILY)
-
-    assert status is not None
-    ready = status.ready_sandbox()
-    assert ready is not None
-    assert ready.id == "chat-s4"
-    assert ready.state is SandboxState.READY
-
-
-def test_a_cold_start_is_visible(tmp_path: Path) -> None:
-    creating = [{"id": "chat-s5", "state": "creating"}]
-    status = _publish(tmp_path, sandboxes=creating).read(_FAMILY)
-
-    assert status is not None
-    assert status.ready_sandbox() is None
-    assert status.has_cold_start() is True
-
-
-def test_a_creating_sandbox_is_startable(tmp_path: Path) -> None:
-    """Contract 05 §4.2: `ready` means the handshake passed, and §4.3 steps
-    6 and 7 run that handshake on the channel. This service holds the only
-    channel, so a `creating` sandbox is the one it dials to get there."""
-    creating = [{"id": "chat-s5", "state": "creating"}]
-    status = _publish(tmp_path, sandboxes=creating).read(_FAMILY)
-
-    assert status is not None
-    startable = status.startable_sandbox()
-    assert startable is not None
-    assert startable.id == "chat-s5"
-
-
-def test_a_ready_sandbox_beats_a_newer_creating_one(tmp_path: Path) -> None:
-    """A switch is in flight. The one that already handshook keeps serving."""
-    during_switch = [
-        {"id": "chat-s4", "state": "ready"},
-        {"id": "chat-s5", "state": "creating"},
-    ]
-    status = _publish(tmp_path, sandboxes=during_switch).read(_FAMILY)
-
-    assert status is not None
-    startable = status.startable_sandbox()
-    assert startable is not None
-    assert startable.id == "chat-s4"
-
-
-def test_a_planned_sandbox_is_not_startable(tmp_path: Path) -> None:
-    """`planned` means nothing exists yet, so there is nothing to dial."""
-    planned = [{"id": "chat-s5", "state": "planned"}]
-    status = _publish(tmp_path, sandboxes=planned).read(_FAMILY)
-
-    assert status is not None
-    assert status.startable_sandbox() is None
-    assert status.has_cold_start() is True
-
-
-def test_a_failed_sandbox_is_not_startable(tmp_path: Path) -> None:
-    failed = [{"id": "chat-s5", "state": "failed"}]
-    status = _publish(tmp_path, sandboxes=failed).read(_FAMILY)
-
-    assert status is not None
-    assert status.startable_sandbox() is None
-    assert status.has_cold_start() is False
-
-
-def test_the_env_file_path_is_read_per_sandbox(tmp_path: Path) -> None:
-    """Contract 05 §4.1: `attendance` hands this path to
-    `sbx exec --env-file`, which is the only way the playpen learns
-    where its mounts are (contract 03 §7.1)."""
-    rows = [{"id": "chat-s5", "state": "ready", "supervisor_env": "/srv/a/supervisor.env"}]
-    status = _publish(tmp_path, sandboxes=rows).read(_FAMILY)
-
-    assert status is not None
-    box = status.sandbox_by_id("chat-s5")
-    assert box is not None
-    assert box.playpen_env == "/srv/a/supervisor.env"
-
-
-def test_a_sandbox_row_with_no_env_file_reads_empty(tmp_path: Path) -> None:
-    """The reader never invents a path. `service.py` turns the empty value
-    into a fault, because no in-VM mount path exists to fall back to."""
-    rows = [{"id": "chat-s5", "state": "ready"}]
-    status = _publish(tmp_path, sandboxes=rows).read(_FAMILY)
-
-    assert status is not None
-    box = status.sandbox_by_id("chat-s5")
-    assert box is not None
-    assert box.playpen_env == ""
-
-
-def test_an_unknown_sandbox_id_is_none(tmp_path: Path) -> None:
-    status = _publish(tmp_path).read(_FAMILY)
-
-    assert status is not None
-    assert status.sandbox_by_id("chat-s99") is None
 
 
 def test_a_missing_document_is_family_unknown(tmp_path: Path) -> None:
@@ -226,7 +131,6 @@ def test_junk_fields_take_their_defaults(tmp_path: Path) -> None:
         kind=42,
         state="not-a-state",
         credentials={"epoch": "seven"},
-        sandboxes=["chat-s4", {"id": "../escape", "state": "ready"}, {"state": "ready"}],
         faults="not a list",
     ).read(_FAMILY)
 
@@ -235,7 +139,6 @@ def test_junk_fields_take_their_defaults(tmp_path: Path) -> None:
     # attended doors, and a default state reports a health nobody published.
     assert status.kind is None
     assert status.state is None
-    assert status.sandboxes == []
     assert status.blocking_fault is None
 
 

@@ -46,7 +46,6 @@ class Principal(StrEnum):
     #: The ACP door (phase 2 plan, row 17). It reaches `WS /acp/{family}` and
     #: nothing else.
     DOOR_ACP = "door-acp"
-    CAREGIVER = "caregiver"
 
 
 #: The two token files the PEP reads as user `chaperone`, and the only ones rule 5's
@@ -61,8 +60,7 @@ class Access(StrEnum):
 
     WRITE = "write"
     READ = "read"
-    INTERNAL = "internal"
-    #: A byte pipe to one sandbox's facade. No session route takes it.
+    #: The ACP door: every session of one family. No other route takes it.
     ACP = "acp"
 
 
@@ -84,7 +82,6 @@ _GRANTS: dict[Principal, Grant] = {
     # door. Reading taken: attended families only, the kind of the two doors
     # it replaces. A change costs this one row.
     Principal.DOOR_ACP: Grant(Access.ACP, SessionKind.ATTENDED),
-    Principal.CAREGIVER: Grant(Access.INTERNAL, None),
 }
 
 
