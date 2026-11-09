@@ -96,7 +96,7 @@ _ODD_TEXT: Final = 'caf\u00e9 \U0001f600 \u2028 "quoted" back\\slash a/b \n\r\t\
 def _sandbox(
     number: int, state: SandboxLifecycle = SandboxLifecycle.READY, **changes: object
 ) -> SandboxStatus:
-    """One sandbox row as `caregiver.sandboxes.status_of` makes it."""
+    """One sandbox row of contract 05 minor 17, as `caregiver.status.SandboxStatus` holds it."""
     name = f"{FAMILY}-s{number}"
     running = state in (SandboxLifecycle.READY, SandboxLifecycle.DRAINING)
     row = SandboxStatus(

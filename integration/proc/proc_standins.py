@@ -9,14 +9,15 @@ back is what that program left on disk.
 Eight stand-ins exist, and none is under test:
 
 `sbx`
-    Two forms. The first is `integration/tests/fake_sbx.py`, unchanged,
-    behind a wrapper: it knows `exec` and nothing else. The second is
-    `standin_sbx.py`, with each verb that `caregiver` runs. The wrapper of
-    each form records the call. It also sets the variables that stand for
-    what the sandbox image supplies, so no service holds them in its own
-    environment. It drops `-it` after the record: the real `sbx exec -it`
-    gives the command the terminal of the caller, and a program that becomes
-    the command keeps that terminal with no flag.
+    `integration/tests/fake_sbx.py`, unchanged, behind a wrapper: it knows
+    `exec` and nothing else. The wrapper records the call. It also sets the
+    variables that stand for what the sandbox image supplies, so no service
+    holds them in its own environment. It drops `-it` after the record: the
+    real `sbx exec -it` gives the command the terminal of the caller, and a
+    program that becomes the command keeps that terminal with no flag.
+the vmm host API
+    `standin_vmm.py`. It listens on `vmm.sock` of the root, so the
+    supervisor of the test starts it, and no wrapper exists for it.
 `systemctl`
     `standin_systemctl.py`, behind a wrapper. `caregiver` finds it through
     `PATH`.
@@ -29,9 +30,6 @@ the LiteLLM key API
 the embedding service
     `standin_tei.py`. It listens on a loopback port too, and the index
     builder finds it through an address in a variable.
-the model
-    `standin_model.py`, a scripted chat completions server. It listens on a
-    loopback port, and the agent module finds it through an address.
 the upstream and the approval channel of the Rust chaperone
     `standin_upstream.py` and `standin_approval.py`, each behind a wrapper.
     The chaperone starts each one as an effect plugin, by the absolute path
@@ -62,18 +60,17 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
-from urllib.parse import quote, unquote
 
 import standin_approval
-import standin_model
-import standin_sbx
 import standin_tei
 import standin_upstream
+import standin_vmm
 from proc_harness import (
     Child,
     ProcError,
     Supervisor,
     TcpAddress,
+    UnixAddress,
     kill_pid,
     pids_gone_by,
     port_is_free,
@@ -88,18 +85,14 @@ CHAPERONE_CHECK: Final = "chaperone-check"
 #: The file name of the stand-in program of `chaperone check`.
 CHAPERONE: Final = "chaperone"
 LITELLM: Final = "litellm"
+VMM: Final = "vmm"
 TEI: Final = "tei"
-MODEL: Final = "model"
 UPSTREAM: Final = "upstream"
 APPROVAL: Final = "approval"
 
 #: Each stand-in that a wrapper starts. The teardown waits for each recorded
 #: process of these.
 _WRAPPED: Final = (SBX, SYSTEMCTL, UPSTREAM, APPROVAL)
-
-#: The two kinds of policy row that the `sbx` stand-in keeps.
-ALLOW: Final = "allow"
-DENY: Final = "deny"
 
 #: The tunings of the TEI stand-in. The program holds each name, and its
 #: docstring says what each one changes.
@@ -110,8 +103,6 @@ TEI_FAIL_INFO: Final = standin_tei.TUNE_FAIL_INFO
 TEI_FAIL_EMBED: Final = standin_tei.TUNE_FAIL_EMBED
 TEI_HOLD_EMBED: Final = standin_tei.TUNE_HOLD_EMBED
 
-#: The tuning of the model stand-in: the milliseconds between two chunks.
-MODEL_DELAY_MS: Final = standin_model.TUNE_DELAY_MS
 
 #: The two answers of the approval stand-in that a scenario writes.
 APPROVED: Final = '{"answer":"approved"}'
@@ -206,28 +197,6 @@ def install_sbx(tree: Tree, tmp: SandboxTmp = SandboxTmp.SHARED) -> None:
     _install_sbx(tree, [str(fake_sbx_script())], tmp)
 
 
-def install_sbx_verbs(tree: Tree, tmp: SandboxTmp = SandboxTmp.SHARED) -> None:
-    """Put the `sbx` with each verb of `caregiver` in the root's `bin`.
-
-    `exec` starts a facade only for a sandbox that `create` made. `tmp` is
-    as `install_sbx` takes it.
-    """
-    state_dir(tree, SBX).mkdir(parents=True, exist_ok=True)
-    _install_sbx(tree, [str(standin_script(SBX)), str(state_dir(tree, SBX))], tmp)
-
-
-def set_sbx_view(tree: Tree, view: Mapping[str, str]) -> None:
-    """What each VM of the `sbx` with verbs sees of the host (`standin_sbx.py`, rule 5).
-
-    Each key is the start of a value in an env file: a URL on the LAN
-    address, or a host path. Its value is the place of the root that plays it.
-    """
-    path = state_dir(tree, SBX) / standin_sbx.NOTICEBOARD_FILE
-    temp = path.with_name(f".{path.name}.tmp")
-    temp.write_text(json.dumps(dict(view)), encoding="utf-8")
-    temp.replace(path)
-
-
 def vm_tmp(tree: Tree, sandbox: str) -> Path:
     """The `TMPDIR` of one sandbox, under an `sbx` with `SandboxTmp.OWN`.
 
@@ -271,6 +240,28 @@ def install_chaperone_check(tree: Tree) -> Path:
 def chaperone_check_program(tree: Tree) -> Path:
     """The path of the stand-in of `chaperone check`."""
     return _program(tree, CHAPERONE_CHECK)
+
+
+def start_vmm(tree: Tree, supervisor: Supervisor, env: Mapping[str, str]) -> Child:
+    """Start the vmm stand-in on `vmm.sock` of the root, and wait for it."""
+    state = state_dir(tree, VMM)
+    state.mkdir(parents=True, exist_ok=True)
+    tree.vmm_socket.parent.mkdir(parents=True, exist_ok=True)
+    program = [sys.executable, str(standin_script(VMM)), str(state), str(tree.vmm_socket)]
+    child = supervisor.spawn(VMM, program, env, tree.root)
+    supervisor.wait_ready(child, UnixAddress(tree.vmm_socket))
+
+    return child
+
+
+def vmm_calls(tree: Tree) -> list[dict[str, Any]]:
+    """Each request that the vmm stand-in got, in arrival order: its route and its body."""
+    try:
+        raw = (state_dir(tree, VMM) / standin_vmm.CALLS_FILE).read_bytes()
+    except FileNotFoundError:
+        return []
+
+    return [json.loads(line) for line in raw.split(b"\n")[:-1] if line.strip()]
 
 
 def start_litellm(tree: Tree, supervisor: Supervisor, env: Mapping[str, str]) -> tuple[Child, int]:
@@ -328,62 +319,6 @@ def start_tei(tree: Tree, supervisor: Supervisor, env: Mapping[str, str]) -> tup
     raise ProcError(f"the TEI stand-in found no free port in {_BIND_ATTEMPTS} attempts")
 
 
-def start_model(
-    tree: Tree, supervisor: Supervisor, env: Mapping[str, str], *keys: str
-) -> tuple[Child, int]:
-    """Start the model stand-in with an empty script, and wait for it.
-
-    `keys` are the bearers that it takes. `set_model_keys` changes them. A
-    test writes the turns with `script_model`. A start that fails because
-    another program took the port first is tried again on another port.
-    """
-    state = state_dir(tree, MODEL)
-    state.mkdir(parents=True, exist_ok=True)
-    set_model_keys(tree, *keys)
-    script_model(tree, [])
-    program = [sys.executable, str(standin_script(MODEL)), str(state)]
-
-    for _ in range(_BIND_ATTEMPTS):
-        port = supervisor.free_port()
-        child = supervisor.spawn(MODEL, [*program, str(port)], env, tree.root)
-
-        try:
-            supervisor.wait_ready(child, TcpAddress(port))
-        except ProcError:
-            if child.exit_code() is None or port_is_free(port):
-                raise
-
-            continue
-
-        return child, port
-
-    raise ProcError(f"the model stand-in found no free port in {_BIND_ATTEMPTS} attempts")
-
-
-def set_model_keys(tree: Tree, *keys: str) -> None:
-    """Write the bearers of the model stand-in, one on each line, by rename."""
-    path = state_dir(tree, MODEL) / standin_model.KEY_FILE
-    temp = path.with_name(f".{path.name}.tmp")
-    temp.write_text("".join(f"{key}\n" for key in keys), encoding="utf-8")
-    temp.replace(path)
-
-
-def script_model(tree: Tree, turns: list[dict[str, Any]]) -> None:
-    """Write the turns of the model stand-in, by rename. The next completion reads them."""
-    path = state_dir(tree, MODEL) / standin_model.TURNS_FILE
-    temp = path.with_name(f".{path.name}.tmp")
-    temp.write_text(json.dumps(turns), encoding="utf-8")
-    temp.replace(path)
-
-
-def text_turn(text: str) -> dict[str, Any]:
-    return {"text": text}
-
-
-def tool_turn(name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
-    return {"tool_call": {"name": name, "arguments": dict(arguments)}}
-
-
 def install_effects(tree: Tree) -> None:
     """Write the wrappers of the upstream and of the approval channel into the root's `bin`.
 
@@ -417,11 +352,6 @@ def answer_gate(tree: Tree, name: str, answer: str = APPROVED) -> None:
 
 def unanswer_gate(tree: Tree, name: str) -> None:
     (state_dir(tree, APPROVAL) / standin_approval.ANSWERS_DIR / name).unlink(missing_ok=True)
-
-
-def model_calls(tree: Tree) -> list[dict[str, Any]]:
-    """Each request that the model stand-in got, in arrival order: path and body."""
-    return _lines_of(state_dir(tree, MODEL) / standin_model.CALLS_FILE)
 
 
 def upstream_calls(tree: Tree) -> list[dict[str, Any]]:
@@ -484,29 +414,6 @@ def tune(tree: Tree, name: str, what: str, text: str = "") -> None:
 def untune(tree: Tree, name: str, what: str) -> None:
     """Take one tuning away. The stand-in does the default thing again."""
     (state_dir(tree, name) / "tune" / what).unlink(missing_ok=True)
-
-
-def sbx_sandboxes(tree: Tree) -> dict[str, dict[str, Any]]:
-    """Each sandbox that `sbx create` made and no `sbx rm` removed, by id."""
-    found: dict[str, dict[str, Any]] = {}
-
-    for path in sorted((state_dir(tree, SBX) / "vms").glob("*.json")):
-        try:
-            found[unquote(path.stem)] = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            continue
-
-    return found
-
-
-def sbx_rows(tree: Tree, sandbox: str, kind: str) -> list[str]:
-    """The hosts with a policy row of one kind for one sandbox, sorted."""
-    directory = state_dir(tree, SBX) / "policy" / quote(sandbox, safe="") / kind
-
-    if not directory.is_dir():
-        return []
-
-    return sorted(unquote(path.name) for path in directory.iterdir())
 
 
 def litellm_calls(tree: Tree) -> list[dict[str, Any]]:

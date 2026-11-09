@@ -1,10 +1,10 @@
 """The family token and `creds.json` (contract 04 section 2, contract 03
 section 12, contract 05 section 6.2).
 
-The token names the family and nothing narrower. `caregiver` mints it, hands
-it to the sandbox through a mounted file, and keeps only its digest in the
-table of the family in `policy.toml`. It never appears on argv, in a URL or
-in a log line (invariant 13)."""
+The token names the family and nothing narrower. `caregiver` mints it, writes
+it into `creds.json`, which the vmm serves to the VM (decision CH5b), and
+keeps only its digest in the table of the family in `policy.toml`. It never
+appears on argv, in a URL or in a log line (invariant 13)."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ TOKEN_BYTES: Final = 32
 _TOKEN: Final = re.compile(r"[0-9a-f]{64}")
 
 #: Contract 03 section 12.2: creds.json is mode 0600, readable only by the
-#: user caregiver runs as until the sandbox mounts it read-only.
+#: user caregiver runs as. The vmm runs as the same user (decision CH5b).
 CREDS_FILE_MODE: Final = 0o600
 
 

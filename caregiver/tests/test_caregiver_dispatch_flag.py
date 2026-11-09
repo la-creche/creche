@@ -13,7 +13,6 @@ import json
 from pathlib import Path
 
 from caregiver.apply import apply_once
-from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.status import TriggersBlock
 from caregiver_helpers import FENCES, fake_policy, write_registry
@@ -21,7 +20,6 @@ from caregiver_helpers import FENCES, fake_policy, write_registry
 from caregiver import paths
 
 WORKER = "worker-docs"
-IMAGE = "sha256:" + "0" * 63 + "1"
 
 
 def _published_triggers(tmp_path: Path, triggers: list[dict[str, object]]) -> dict[str, object]:
@@ -35,8 +33,6 @@ def _published_triggers(tmp_path: Path, triggers: list[dict[str, object]]) -> di
         state_root=state_root,
         fences=FENCES,
         policy=fake_policy(state_root),
-        image=IMAGE,
-        driver=FakeDriver(),
         litellm=FakeLiteLLMKeys(),
     )
     assert result.ok, result.status

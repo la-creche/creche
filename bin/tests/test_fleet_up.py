@@ -409,8 +409,8 @@ def test_up_writes_the_env_files_at_0600(ready: Host) -> None:
 
     managerd = (ready.state / "caregiver.env").read_text(encoding="utf-8")
     assert f"LITELLM_MASTER_KEY={MASTER_KEY}\n" in managerd
-    assert f"AGENT_SANDBOX_IMAGE={IMAGE_BASE}\n" in managerd
-    assert f"AGENT_SANDBOX_PYTHON_IMAGE={IMAGE_PYTHON}\n" in managerd
+    # caregiver creates no sandbox, so its file holds no image (decision CH1).
+    assert "AGENT_SANDBOX_IMAGE" not in managerd
     assert "AGENT_PEP_URL=http://192.0.2.10:8300\n" in managerd
 
     view = (ready.state / "noticeboard.env").read_text(encoding="utf-8")

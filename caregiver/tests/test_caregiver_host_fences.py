@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 from caregiver.cli import EXIT_CONFIG, EXIT_OK, EXIT_PROBLEM
-from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver_helpers import FENCE_ENV, main, write_registry
 
@@ -19,12 +18,9 @@ def _apply_once(registry: Path, state: Path, environ: dict[str, str]) -> int:
             "apply-once",
             str(registry),
             "chat",
-            "--image",
-            "sha256:x",
             "--state-root",
             str(state),
         ],
-        driver=FakeDriver(),
         litellm=FakeLiteLLMKeys(),
         environ=environ,
     )
@@ -38,8 +34,6 @@ def test_a_verb_that_applies_stops_without_the_mount_roots(
     argv = [verb, str(registry)]
     if verb != "serve":
         argv.append("chat")
-    if verb in ("apply-once", "reconcile-once", "serve"):
-        argv += ["--image", "sha256:x"]
     if verb == "rotate":
         argv += ["--reason", "suspicion"]
 

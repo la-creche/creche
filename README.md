@@ -83,7 +83,7 @@ The other directories:
 | Change what a family file may say | `family/src/agent_family/model.py` (shape), `validate.py` (values) |
 | Change how a family change is priced as live or replace | `family/src/agent_family/classify.py` |
 | Change a reconcile step | `caregiver/src/caregiver/steps.py`, `reconcile.py` |
-| Change the sbx commands the host runs | `caregiver/src/caregiver/driver.py` |
+| Change the call caregiver makes to the vmm | `caregiver/src/caregiver/vmm.py` |
 | Change a delegate job, a dispatched job or the switch | `attendance/src/attendance/service.py`, `acp_jobs.py` |
 | Change the ACP link, host side | `attendance/src/attendance/acp_link.py` |
 | Change the sandbox image | `playpen/Dockerfile` |

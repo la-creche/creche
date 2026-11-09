@@ -49,7 +49,6 @@ from attendance.api import build_app as build_attendance_app
 from attendance.auth import Principal, TokenBook, TokenError
 from attendance.paths import token_file
 from attendance.service import SessionService
-from caregiver.switch import SwitchError, read_token
 from fastapi import FastAPI
 from noticeboard.app import build_app as build_noticeboard_app
 from noticeboard.config import Config as NoticeboardConfig
@@ -1097,8 +1096,6 @@ class Returns(enum.Enum):
 
     #: Nothing. A call that returns is a file that the reader took.
     NOTHING = "nothing"
-    #: The token as text.
-    TOKEN = "token"
     #: The token as text, or None for a file that the reader does not trust.
     TOKEN_OR_NONE = "token_or_none"
 
@@ -1185,12 +1182,6 @@ _NOTE_NO_VALUE: Final = (
     "the bytes of the file with no decode, less the six bytes of ASCII whitespace at the two "
     "ends: space, tab, LF, CR, VT and FF."
 )
-_NOTE_TEXT: Final = (
-    "The reader reads the file as UTF-8 text, in the text mode of Python. That mode gives "
-    "LF for each CR and for each CR LF. Then the reader removes the whitespace of Python "
-    "str.strip from the two ends. value.token is the text that the reader returns."
-)
-
 TOKEN_READERS: Final[tuple[TokenReader, ...]] = (
     TokenReader(
         name="attendance",
@@ -1243,22 +1234,6 @@ TOKEN_READERS: Final[tuple[TokenReader, ...]] = (
             "the reader returns.",
             "A refused vector is an input for which the reader returns None. The reader "
             "gives no reason, so a refused vector has no refusal.",
-        ),
-    ),
-    TokenReader(
-        name="caregiver",
-        entry="caregiver.switch.read_token",
-        contract="contract 02 §3 rule 5",
-        prepare=_one_file(read_token),
-        returns=Returns.TOKEN,
-        files=(*TEXT_FILES, *OTHER_FILES),
-        refusal=SwitchError,
-        kinds=(("cannot read", "unreadable"), ("is empty", "empty")),
-        notes=(
-            _NOTE_TEXT,
-            "refusal is the kind of the refusal: unreadable or empty. unreadable is also "
-            "the kind of a file that is not UTF-8. The reader has no least count of bytes "
-            "and checks no mode.",
         ),
     ),
 )

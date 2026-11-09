@@ -175,7 +175,7 @@ a shell builtin, so the value reaches no argv. It never prints the value.
 | Unit | Runs from | `up` starts it |
 |---|---|---|
 | `creche-attendance.service` | the `attendance` tree | yes, first |
-| `creche-caregiver.service` | the `caregiver` tree | yes, when `caregiver.env` holds the master key and both images |
+| `creche-caregiver.service` | the `caregiver` tree | yes, when `caregiver.env` holds the master key |
 | `creche-noticeboard.service` | the `noticeboard` tree | yes |
 | `creche-door-acp.service` | the `attendance` tree | yes |
 | `creche-door-trigger.service` | the `attendance` tree | yes |

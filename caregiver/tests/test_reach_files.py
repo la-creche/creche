@@ -1,4 +1,4 @@
-"""`egress.json` and `repos.json` beside the config mount (contract 01
+"""`egress.json` and `repos.json` beside the config directory (contract 01
 §6.1.1, decisions CH69 rules 3 to 6, CH70 rule 4, CH71, CH73 rules 2 and
 3)."""
 
@@ -11,7 +11,7 @@ from typing import Final, Literal, cast
 import pytest
 from agent_family import FamilyFile
 from agent_family.grammar import REPO_NAME_MAX, REPOS_MAX, is_repo_name
-from caregiver.egress import EgressConfig
+from caregiver.lan import Port, url
 from caregiver.reach_files import (
     EGRESS_CAP,
     EgressTooLargeError,
@@ -122,9 +122,8 @@ def test_the_planes_never_enter_the_file(tmp_path: Path) -> None:
     allowlist of the proxy holds the family list alone."""
     land(chat_family(egress=["github.com"]), tmp_path)
     text = paths.egress_path(tmp_path, "chat").read_text(encoding="utf-8")
-    planes = EgressConfig()
-    for endpoint in (planes.litellm, planes.chaperone):
-        assert endpoint.partition(":")[0] not in text
+    for plane in (Port.LITELLM, Port.PEP):
+        assert url(plane).removeprefix("http://").partition(":")[0] not in text
 
     assert pairs(written(tmp_path)) == [("github.com", 443)]
 

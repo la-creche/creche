@@ -17,8 +17,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from caregiver.images import SandboxImages
-from caregiver.released import read_images
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUILD = REPO_ROOT / "playpen" / "bin" / "playpen-build"
@@ -136,17 +134,6 @@ def test_the_build_stages_one_digest_per_flavor(host: _Host) -> None:
     }
 
 
-def test_the_caregiver_reads_the_file_the_build_wrote(host: _Host) -> None:
-    """Two programs in two languages hold one file shape. This is the test
-    that the writer and the reader agree."""
-    host.build()
-
-    assert read_images(host.staged / "images.env") == SandboxImages(
-        base=f"{REGISTRY}/{BASE}@{DIGEST[BASE]}",
-        python=f"{REGISTRY}/{PYTHON}@{DIGEST[PYTHON]}",
-    )
-
-
 def test_the_build_stages_the_verify_hook(host: _Host) -> None:
     """Contract 06 §4 rule 6: the hook ships in the artifact. The executor
     refuses a staged tree that does not hold `verify.command[0]`."""
@@ -160,7 +147,7 @@ def test_the_build_stages_the_verify_hook(host: _Host) -> None:
 
 def test_the_build_passes_docker_no_build_argument(host: _Host) -> None:
     """The image fixes no address. A sandbox reads the two plane URLs from
-    the env file that caregiver writes, so the build reads no site file."""
+    its env file, so the build reads no site file."""
     host.build()
 
     builds = [line for line in host.docker_calls() if line.startswith("build ")]

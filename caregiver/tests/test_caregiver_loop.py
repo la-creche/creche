@@ -2,8 +2,8 @@
 
 `caregiver` is "a reconciler, not a command the operator runs" (contract 05 §1).
 These tests hold the four things a loop adds over a single pass: when it
-looks, how often it republishes, how long it waits after a create burnt an
-id, and what it does about a family file that disappeared."""
+looks, how often it republishes, how long it waits after a pass raised,
+and what it does about a family file that disappeared."""
 
 from __future__ import annotations
 
@@ -15,11 +15,10 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
-from agent_family import FamilyState
-from caregiver.driver import DriverError, FakeDriver, SandboxSpec
-from caregiver.egress import EgressConfig
+from agent_family import FamilyState, Registry
 from caregiver.litellm_keys import FakeLiteLLMKeys, key_alias
 from caregiver.loop import (
     BACKOFF_FIRST_S,
@@ -31,13 +30,13 @@ from caregiver.loop import (
     look,
     serve,
 )
-from caregiver.reconcile import Actors
-from caregiver.switch import FakeSwitchClient
+from caregiver.reconcile import Actors, ReconcileResult
 from caregiver.timers import FakeUnits
 from caregiver_helpers import (
     FENCES,
     KIND_MOVED,
     REFUSED_TOOLS,
+    FakeVmm,
     accepted_digests,
     current_digest,
     expire_overlap,
@@ -48,19 +47,26 @@ from caregiver_helpers import (
 )
 
 from caregiver import loop as loop_module
-from caregiver import paths, sandboxes
-
-IMAGE: str = "sha256:deadbeef"
+from caregiver import paths
 
 #: Long enough that a wait which does NOT end early fails the test by
 #: hanging the suite, rather than by passing a lenient bound.
 LONG_WAIT_S: float = 30.0
 
 
-class FailingCreate(FakeDriver):
-    def create(self, spec: SandboxSpec) -> None:
-        super().create(spec)
-        raise DriverError(f"sbx create {spec.name} failed: no such image")
+class RaisingLiteLLM(FakeLiteLLMKeys):
+    """A LiteLLM client whose key call raises an error no step handles, so
+    the pass of each family in `broken` raises."""
+
+    def __init__(self, broken: frozenset[str] = frozenset({"chat"})) -> None:
+        super().__init__()
+        self.broken = broken
+
+    def ensure_key(self, family: str, models: list[str], budget_usd_per_day: float) -> str:
+        if family in self.broken:
+            raise OSError("the state root went away")
+
+        return super().ensure_key(family, models, budget_usd_per_day)
 
 
 class Bench:
@@ -69,9 +75,8 @@ class Bench:
     def __init__(self, tmp_path: Path) -> None:
         self.registry_root = tmp_path / "registry"
         self.state_root = tmp_path / "state"
-        self.driver = FakeDriver()
-        self.litellm = FakeLiteLLMKeys()
-        self.switch = FakeSwitchClient()
+        self.vmm = FakeVmm()
+        self.litellm: FakeLiteLLMKeys = FakeLiteLLMKeys()
         self.units = FakeUnits()
         self.state = LoopState()
 
@@ -79,21 +84,14 @@ class Bench:
         fields: dict[str, object] = {
             "registry_root": self.registry_root,
             "state_root": self.state_root,
-            "image": IMAGE,
             "fences": FENCES,
+            "vmm": self.vmm,
         }
         fields.update(overrides)
         return LoopConfig(**fields)  # type: ignore[arg-type]
 
     def actors(self) -> Actors:
-        return Actors(
-            self.driver,
-            self.litellm,
-            self.switch,
-            EgressConfig(),
-            self.units,
-            fake_policy(self.state_root),
-        )
+        return Actors(self.litellm, self.units, fake_policy(self.state_root))
 
     def look(self, **overrides: object) -> tuple[str, ...]:
         """The families this look ran a pass for. It waits for them: a
@@ -179,86 +177,37 @@ def test_a_look_leaves_the_family_in_sync(bench: Bench) -> None:
 
 def test_one_family_that_raises_does_not_stop_the_others(bench: Bench) -> None:
     write_registry(bench.registry_root, name="ops")
-
-    class HalfBroken(FakeDriver):
-        def create(self, spec: SandboxSpec) -> None:
-            if spec.name.startswith("chat"):
-                raise OSError("the state root went away")
-
-            super().create(spec)
-
-    bench.driver = HalfBroken()
+    bench.litellm = RaisingLiteLLM()
     # Both are STARTED: a look dispatches, and one of the two then dies in
     # its own thread without touching the other.
     assert bench.look() == ("chat", "ops")
     assert bench.status_of("ops")["state"] == FamilyState.IN_SYNC
-    # `chat` published that it was creating, then died inside the create.
-    assert bench.status_of("chat")["state"] == FamilyState.RECONCILING
+    # `chat` died before it published anything.
+    assert not paths.status_path(bench.state_root, "chat").exists()
 
 
-def test_a_restart_mid_replacement_converges(bench: Bench) -> None:
-    """A kill between the create and the switch leaves two sandboxes and
-    the old applied snapshot. A fresh `LoopState`, as a restart gives,
-    must finish the same replacement, not start a third."""
-    bench.look()
-    bench.switch = FakeSwitchClient(refuse="killed before the answer landed")
-    write_registry(bench.registry_root, sandbox={"cpus": 4})
-    bench.look()
-    assert set(live_ids(bench)) == {"chat-s1", "chat-s2"}
-
-    bench.switch = FakeSwitchClient()
-    bench.state = LoopState()
-    bench.look()
-    assert live_ids(bench) == ("chat-s2",)
-    assert bench.status_of("chat")["state"] == FamilyState.IN_SYNC
+# --- a pass that raised ---------------------------------------------------------------
 
 
-def test_the_replacement_never_holds_reach_the_new_file_dropped(bench: Bench) -> None:
-    """One revision that both narrows egress and forces a replacement. At
-    no point may a sandbox of this family carry a row the file dropped."""
-    write_registry(bench.registry_root, egress=["docs.python.org:443"])
-    bench.look()
-    write_registry(bench.registry_root, egress=[], sandbox={"cpus": 4})
-    bench.look()
-    for record in sandboxes.read_ledger(bench.state_root, "chat"):
-        if record.id == "chat-s2":
-            assert "docs.python.org:443" not in record.allow
-
-
-def live_ids(bench: Bench) -> tuple[str, ...]:
-    return tuple(
-        one.id
-        for one in sandboxes.read_ledger(bench.state_root, "chat")
-        if one.state in sandboxes.LIVE_STATES
-    )
-
-
-# --- a create that failed ------------------------------------------------------------
-
-
-def test_a_failed_create_is_not_retried_on_the_next_tick(bench: Bench) -> None:
-    """Each attempt burns an id, and an id is never reused (contract 05
-    §4.1). A retry per tick would spend the id space in minutes."""
-    bench.driver = FailingCreate()
-    bench.look()
-    assert paths.read_sandbox_sequence(bench.state_root, "chat") == 1
-    bench.look(heartbeat_s=0.0)
-    assert paths.read_sandbox_sequence(bench.state_root, "chat") == 1
+def test_a_pass_that_raised_is_not_retried_on_the_next_tick(bench: Bench) -> None:
+    """A retry per tick is a busy loop against whatever is broken."""
+    bench.litellm = RaisingLiteLLM()
+    assert bench.look() == ("chat",)
+    assert bench.look(heartbeat_s=0.0) == ()
 
 
 def test_the_backoff_doubles_with_each_failure(bench: Bench) -> None:
-    bench.driver = FailingCreate()
+    bench.litellm = RaisingLiteLLM()
     bench.look()
     assert delay_of(bench) == BACKOFF_FIRST_S
 
     expire(bench)
     bench.look(heartbeat_s=0.0)
     assert delay_of(bench) == BACKOFF_FIRST_S * 2
-    assert paths.read_sandbox_sequence(bench.state_root, "chat") == 2
 
 
 def test_the_backoff_stops_doubling_at_the_ceiling(bench: Bench) -> None:
-    bench.driver = FailingCreate()
+    bench.litellm = RaisingLiteLLM()
     bench.look()
     for _ in range(10):
         expire(bench)
@@ -270,9 +219,9 @@ def test_the_backoff_stops_doubling_at_the_ceiling(bench: Bench) -> None:
 def test_an_edit_clears_the_backoff_at_once(bench: Bench) -> None:
     """The operator acted. The edit may be the fix the family is waiting
     for, so it must not sit out the rest of its wait."""
-    bench.driver = FailingCreate()
+    bench.litellm = RaisingLiteLLM()
     bench.look()
-    bench.driver = FakeDriver()
+    bench.litellm = FakeLiteLLMKeys()
     write_registry(bench.registry_root, description="Fixed.")
     bench.look()
     assert bench.state.of("chat").backoff is None
@@ -280,10 +229,10 @@ def test_an_edit_clears_the_backoff_at_once(bench: Bench) -> None:
 
 
 def test_a_success_forgets_the_backoff(bench: Bench) -> None:
-    bench.driver = FailingCreate()
+    bench.litellm = RaisingLiteLLM()
     bench.look()
     expire(bench)
-    bench.driver = FakeDriver()
+    bench.litellm = FakeLiteLLMKeys()
     bench.look(heartbeat_s=0.0)
     assert bench.state.of("chat").backoff is None
 
@@ -298,29 +247,43 @@ def test_a_deleted_family_file_deletes_the_family(bench: Bench) -> None:
     bench.look()
     assert not paths.family_dir(bench.state_root, "ops").exists()
     assert key_alias("ops") in bench.litellm.deleted
+    assert bench.vmm.dropped == ["ops"]
 
 
-def test_a_deleted_family_loses_its_key_before_its_sandbox(bench: Bench) -> None:
+def test_a_deleted_family_loses_its_key_before_its_sessions(bench: Bench) -> None:
     """Credentials die before processes (invariant 13)."""
     write_registry(bench.registry_root, name="ops")
     bench.look()
     seen: list[str] = []
-
-    class WatchingDriver(FakeDriver):
-        def destroy(self, name: str, allow: tuple[str, ...]) -> None:
-            seen.append(f"destroy {name}")
-            super().destroy(name, allow)
 
     class WatchingLiteLLM(FakeLiteLLMKeys):
         def delete_key(self, family: str) -> None:
             seen.append(f"delete_key {family}")
             super().delete_key(family)
 
-    bench.driver = WatchingDriver()
+    bench.vmm = FakeVmm(on_drop=lambda family: seen.append(f"drop {family}"))
     bench.litellm = WatchingLiteLLM()
     shutil.rmtree(bench.registry_root / "families" / "ops")
     bench.look()
-    assert seen == ["delete_key ops", "destroy ops-s1"]
+    assert seen == ["delete_key ops", "drop ops"]
+
+
+def test_a_drop_the_vmm_refuses_is_tried_again_after_a_wait(bench: Bench) -> None:
+    """Decision CH20: a vmm that does not answer is transient. The state of
+    the family stays, so a later look runs the delete again."""
+    write_registry(bench.registry_root, name="ops")
+    bench.look()
+    shutil.rmtree(bench.registry_root / "families" / "ops")
+    bench.vmm = FakeVmm(refuse="unreachable")
+    bench.look()
+    assert paths.family_dir(bench.state_root, "ops").is_dir()
+    assert delay_of(bench, "ops") == BACKOFF_FIRST_S
+
+    expire(bench, "ops")
+    bench.vmm = FakeVmm()
+    bench.look(heartbeat_s=0.0)
+    assert not paths.family_dir(bench.state_root, "ops").exists()
+    assert bench.vmm.dropped == ["ops"]
 
 
 def test_an_empty_registry_deletes_nothing(bench: Bench) -> None:
@@ -365,7 +328,7 @@ def test_a_family_whose_file_went_away_keeps_its_state(
     bench: Bench, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The directory stays and holds no file. The loop ignores it: no pass
-    and no delete, so the key and the sandbox of the family stay."""
+    and no delete, so the key and the sessions of the family stay."""
     write_registry(bench.registry_root, name="ops")
     bench.look()
     (bench.registry_root / "families" / "ops" / "family.toml").unlink()
@@ -374,7 +337,7 @@ def test_a_family_whose_file_went_away_keeps_its_state(
 
     assert paths.creds_path(bench.state_root, "ops").exists()
     assert bench.litellm.deleted == []
-    assert "destroy" not in bench.driver.ops()
+    assert bench.vmm.dropped == []
     assert _errors(caplog) == []
 
 
@@ -539,26 +502,37 @@ def loop_states(monkeypatch: pytest.MonkeyPatch) -> list[LoopState]:
     return made
 
 
-def test_a_hangup_brings_the_next_pass_forward(bench: Bench, loop_states: list[LoopState]) -> None:
-    """`SIGHUP` says "look now". A pass that must try a step again, such as
-    a switch call that `attendance` refused, then runs at the next look. It
-    does not wait for the heartbeat."""
-    bench.switch = FakeSwitchClient(refuse="attendance answered 503")
+@pytest.fixture
+def passes_of(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The family of each pass that the loop runs, in order."""
+    ran: list[str] = []
+    real = loop_module.reconcile_family
 
+    def counted(registry: Registry, family_name: str, **kwargs: Any) -> ReconcileResult:
+        ran.append(family_name)
+        return real(registry, family_name, **kwargs)
+
+    monkeypatch.setattr(loop_module, "reconcile_family", counted)
+    return ran
+
+
+def test_a_hangup_brings_the_next_pass_forward(
+    bench: Bench, loop_states: list[LoopState], passes_of: list[str]
+) -> None:
+    """`SIGHUP` says "look now". The family then takes a pass at the next
+    look. It does not wait for the heartbeat."""
     serve(bench.config(), bench.actors(), Asked(loop_states, hangup=True))
 
-    assert len(bench.switch.requests) == 2
+    assert passes_of == ["chat", "chat"]
 
 
 def test_a_wait_that_runs_out_brings_no_pass_forward(
-    bench: Bench, loop_states: list[LoopState]
+    bench: Bench, loop_states: list[LoopState], passes_of: list[str]
 ) -> None:
     """Without the signal, the family waits for its heartbeat."""
-    bench.switch = FakeSwitchClient(refuse="attendance answered 503")
-
     serve(bench.config(), bench.actors(), Asked(loop_states, hangup=False))
 
-    assert len(bench.switch.requests) == 1
+    assert passes_of == ["chat"]
 
 
 def test_a_termination_signal_stops_the_loop(restored_handlers: object) -> None:

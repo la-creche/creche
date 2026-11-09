@@ -3,8 +3,8 @@
 Invariant 9 is what these tests hold in place: "A permission change needs
 one action and no manual apply. It never ends a session. A removal applies
 at once." Each test drives one family file to a second revision and asks
-what the fakes saw — which sandbox, in which order, and whether any moment
-of the pass left more reach than the target."""
+what the fakes and the files saw. A pass starts and stops no VM (decision
+CH1): the vmm reads the files the pass writes."""
 
 from __future__ import annotations
 
@@ -17,25 +17,21 @@ from pathlib import Path
 
 import httpx
 import pytest
-from agent_family import FamilyState, SwitchMode, load_registry
+from agent_family import FamilyState, load_registry
 from agent_family.registry import FAMILY_FILE
-from caregiver.applied import read_applied, write_applied
+from caregiver.applied import read_applied
 from caregiver.clock import seconds_from_now
-from caregiver.driver import DriverError, FakeDriver, SandboxSpec
-from caregiver.egress import EgressConfig, litellm_endpoint, pep_endpoint
-from caregiver.lan import Port, url
 from caregiver.litellm_keys import FakeLiteLLMKeys, HttpLiteLLMKeys, LiteLLMError, Spend
 from caregiver.reach_files import EGRESS_CAP
 from caregiver.reconcile import (
-    DESTROY_STEP,
-    SWITCH_STEP,
+    TIMERS_STEP,
+    VALIDATE_STEP,
     Actors,
     FamilyNotFoundError,
     ReconcileResult,
     SpendRead,
     reconcile_family,
 )
-from caregiver.switch import FakeSwitchClient, SwitchRequest
 from caregiver.timers import FakeUnits
 from caregiver_helpers import (
     fake_policy,
@@ -45,27 +41,14 @@ from caregiver_helpers import (
     write_registry,
 )
 
-from caregiver import paths, sandboxes
+from caregiver import paths
 
 FAMILY: str = "chat"
-IMAGE: str = "sha256:deadbeef"
-
-
-def planes() -> tuple[str, ...]:
-    return (litellm_endpoint(), pep_endpoint())
 
 
 DOCS: str = "docs.python.org:443"
 HOURLY: str = "0 * * * *"
 SERVER: str = "kagi"
-
-
-class FailingCreate(FakeDriver):
-    """`sbx create` that reports failure after making the VM."""
-
-    def create(self, spec: SandboxSpec) -> None:
-        super().create(spec)
-        raise DriverError(f"sbx create {spec.name} failed: out of memory")
 
 
 class BlindSpend(FakeLiteLLMKeys):
@@ -92,71 +75,26 @@ class AwaySpend(FakeLiteLLMKeys):
         return real.read_spend(key)
 
 
-class Stopped(StrEnum):
-    """Whether the pass runs with its stop already set."""
-
-    NO = "no"
-    YES = "yes"
-
-
 @dataclass
 class Fleet:
-    """One family's whole world: a registry, a state root, three fakes."""
+    """One family's whole world: a registry, a state root, two fakes."""
 
     registry_root: Path
     state_root: Path
-    driver: FakeDriver = field(default_factory=FakeDriver)
     litellm: FakeLiteLLMKeys = field(default_factory=FakeLiteLLMKeys)
-    switch: FakeSwitchClient = field(default_factory=FakeSwitchClient)
     units: FakeUnits = field(default_factory=FakeUnits)
 
     def write(self, **overrides: object) -> None:
         write_registry(self.registry_root, **overrides)
 
-    def run(
-        self,
-        *,
-        spend: SpendRead = SpendRead.SKIP,
-        image: str = IMAGE,
-        stopped: Stopped = Stopped.NO,
-    ) -> ReconcileResult:
-        actors = Actors(
-            self.driver,
-            self.litellm,
-            self.switch,
-            EgressConfig(),
-            self.units,
-            fake_policy(self.state_root),
-        )
+    def run(self, *, spend: SpendRead = SpendRead.SKIP) -> ReconcileResult:
+        actors = Actors(self.litellm, self.units, fake_policy(self.state_root))
         return reconcile_family(
             load_registry(self.registry_root),
             FAMILY,
             state_root=self.state_root,
-            image=image,
             actors=actors,
             spend=spend,
-            stop=lambda: stopped is Stopped.YES,
-        )
-
-    def ops(self) -> tuple[str, ...]:
-        return self.driver.ops()
-
-    def forget_calls(self) -> None:
-        """Only the second pass's calls matter to most tests here."""
-        self.driver.calls.clear()
-
-    def allow_of(self, sandbox_id: str) -> tuple[str, ...]:
-        for record in sandboxes.read_ledger(self.state_root, FAMILY):
-            if record.id == sandbox_id:
-                return record.allow
-
-        raise AssertionError(f"no ledger row for {sandbox_id}")
-
-    def live_ids(self) -> tuple[str, ...]:
-        return tuple(
-            one.id
-            for one in sandboxes.read_ledger(self.state_root, FAMILY)
-            if one.state in sandboxes.LIVE_STATES
         )
 
 
@@ -183,46 +121,17 @@ def _rfc3339(epoch_s: float) -> str:
     return datetime.fromtimestamp(epoch_s, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def hosts_of(driver: FakeDriver, op: str) -> list[tuple[str, tuple[str, ...]]]:
-    """Every `set_egress` or `remove_egress` call, as (sandbox, hosts)."""
-    found: list[tuple[str, tuple[str, ...]]] = []
-    for call in driver.calls:
-        if call.op != op:
-            continue
-
-        sandbox, hosts = call.args[0], call.args[1]
-        found.append((str(sandbox), tuple(str(one) for one in tuple(hosts))))  # type: ignore[call-overload]
-
-    return found
-
-
-def granted_hosts(driver: FakeDriver, sandbox_id: str) -> set[str]:
-    """Every host this driver was ever asked to allow for one sandbox."""
-    granted: set[str] = set()
-    for name, hosts in hosts_of(driver, "set_egress"):
-        if name == sandbox_id:
-            granted.update(hosts)
-
-    return granted
-
-
 def family_text(fleet: Fleet) -> str:
     return (fleet.registry_root / "families" / FAMILY / FAMILY_FILE).read_text(encoding="utf-8")
-
-
-def roll_back(fleet: Fleet, *, rev: str, text: str) -> None:
-    """Put the applied snapshot back where a crash would have left it: the
-    steps ran, the snapshot did not move."""
-    write_applied(fleet.state_root, FAMILY, rev=rev, image=IMAGE, family_text=text)
 
 
 # --- a first pass brings the family up ------------------------------------------
 
 
-def test_a_first_pass_creates_the_first_sandbox(fleet: Fleet) -> None:
+def test_a_first_pass_reaches_in_sync(fleet: Fleet) -> None:
     result = fleet.run()
     assert result.status.state is FamilyState.IN_SYNC
-    assert fleet.live_ids() == ("chat-s1",)
+    assert result.status.sandboxes == ()
 
 
 def test_a_first_pass_records_the_revision_it_applied(fleet: Fleet) -> None:
@@ -230,73 +139,11 @@ def test_a_first_pass_records_the_revision_it_applied(fleet: Fleet) -> None:
     applied = read_applied(fleet.state_root, FAMILY)
     assert applied is not None
     assert applied.rev == result.status.registry_rev
-    assert applied.image == IMAGE
-
-
-def test_a_first_pass_asks_for_the_handshake(fleet: Fleet) -> None:
-    """Contract 05 §5.1's `from` is "null on a first create" and §5.3 rule 8
-    says "a first switch always names a `creating` sandbox, because running
-    the handshake is what promotes it". That call is the only way `caregiver`
-    can learn the handshake passed (§1), so it is not optional."""
-    fleet.run()
-
-    assert [(one.outgoing, one.to) for one in fleet.switch.requests] == [(None, "chat-s1")]
-
-
-def test_a_passing_handshake_makes_the_sandbox_ready(fleet: Fleet) -> None:
-    """Contract 05 §4.3 step 7. Without it `ready_at` stays null and `power`
-    reads `stopped` for a sandbox that is serving turns."""
-    result = fleet.run()
-
-    row = result.status.sandboxes[0]
-    assert str(row.state) == "ready"
-    assert row.ready_at is not None
-    assert str(row.power) == "running"
-
-
-def test_a_refused_handshake_leaves_the_sandbox_creating(fleet: Fleet) -> None:
-    """A refusal changes nothing. `attendance` still dials a `creating`
-    sandbox (§4.2 rule 1), so the family keeps serving, and §3.3's
-    `sandbox_start_failed` means "after the retry budget" — not after one
-    refusal — so no fault is raised."""
-    fleet.switch = FakeSwitchClient(refuse="attendance is not listening")
-
-    result = fleet.run()
-
-    assert str(result.status.sandboxes[0].state) == "creating"
-    assert result.status.sandboxes[0].ready_at is None
-    assert result.status.faults == ()
-
-
-def test_a_pass_after_a_refused_handshake_asks_again(fleet: Fleet) -> None:
-    """Every step is idempotent, so an interrupted pass simply repeats."""
-    fleet.switch = FakeSwitchClient(refuse="attendance is not listening")
-    fleet.run()
-    fleet.switch = FakeSwitchClient()
-
-    result = fleet.run()
-
-    assert [one.to for one in fleet.switch.requests] == ["chat-s1"]
-    assert str(result.status.sandboxes[0].state) == "ready"
-
-
-def test_a_ready_sandbox_is_never_asked_again(fleet: Fleet) -> None:
-    """`ready` means the handshake passed, which is a fact and not a state
-    to re-prove. A second call per pass would cost an `sbx exec` every two
-    seconds."""
-    fleet.run()
-    fleet.switch.requests.clear()
-
-    fleet.run()
-
-    assert fleet.switch.requests == []
 
 
 def test_an_unchanged_second_pass_touches_nothing(fleet: Fleet) -> None:
     fleet.run()
-    fleet.forget_calls()
     result = fleet.run()
-    assert fleet.ops() == ()
     assert result.ran == ()
     assert result.status.state is FamilyState.IN_SYNC
 
@@ -313,52 +160,26 @@ def test_an_unchanged_pass_does_not_re_push_the_key(fleet: Fleet) -> None:
 # --- the live axes: egress -------------------------------------------------------
 
 
-def test_an_added_egress_host_lands_on_the_running_sandbox(fleet: Fleet) -> None:
+def test_an_egress_edit_is_the_step_set_egress(fleet: Fleet) -> None:
+    """Contract 05 §3.4: `set_egress` writes `egress.json` and `repos.json`.
+    The vmm proxy reads the file on every CONNECT, so no VM is replaced
+    (§3.5)."""
     fleet.run()
-    fleet.forget_calls()
     fleet.write(egress=[DOCS])
     result = fleet.run()
-    assert "create" not in fleet.ops()
-    assert hosts_of(fleet.driver, "set_egress") == [("chat-s1", (DOCS,))]
+    assert "set_egress" in result.ran
     assert result.status.state is FamilyState.IN_SYNC
 
 
-def test_a_removed_egress_host_is_dropped_before_anything_is_added(fleet: Fleet) -> None:
-    """Invariant 9, narrowing before widening: an interruption between the
-    halves must leave LESS reach than the target, never more."""
-    fleet.write(egress=[DOCS])
+def test_a_repos_edit_is_the_step_set_egress(fleet: Fleet) -> None:
     fleet.run()
-    fleet.forget_calls()
-    fleet.write(egress=["pypi.org:443"])
-    fleet.run()
-    assert fleet.ops() == ("remove_egress", "set_egress")
-    assert hosts_of(fleet.driver, "remove_egress") == [("chat-s1", (DOCS,))]
-    assert hosts_of(fleet.driver, "set_egress") == [("chat-s1", ("pypi.org:443",))]
-
-
-def test_an_egress_edit_never_removes_a_plane_endpoint(fleet: Fleet) -> None:
-    """Both planes are `caregiver`'s own config. No family file names them,
-    so no family edit may take them away (contract 01 §3.7 rule 4)."""
-    fleet.write(egress=[DOCS])
-    fleet.run()
-    fleet.forget_calls()
-    fleet.write(egress=[])
-    fleet.run()
-    removed = hosts_of(fleet.driver, "remove_egress")[0][1]
-    assert litellm_endpoint() not in removed
-    assert pep_endpoint() not in removed
-
-
-def test_an_egress_edit_moves_the_rows_a_destroy_will_remove(fleet: Fleet) -> None:
-    fleet.run()
-    fleet.write(egress=[DOCS])
-    fleet.run()
-    assert fleet.allow_of("chat-s1") == (*planes(), DOCS)
+    fleet.write(repos=["creche"])
+    result = fleet.run()
+    assert "set_egress" in result.ran
 
 
 def test_a_pass_writes_the_egress_file(fleet: Fleet) -> None:
-    """Contract 01 §6.1.1, decision CH69 rule 6: every pass, beside the
-    sbx egress step, which stays until the cut."""
+    """Contract 01 §6.1.1, decision CH69 rule 6: every pass."""
     fleet.run()
     egress_path = paths.egress_path(fleet.state_root, FAMILY)
     assert json.loads(egress_path.read_bytes()) == {"hosts": []}
@@ -409,24 +230,6 @@ def test_a_pass_with_no_change_restores_a_reach_file(
             reach.write_bytes(b"{}\n")
     fleet.run()
     assert reach.read_bytes() == canonical
-
-
-def test_a_pass_writes_the_reach_files_before_the_create(fleet: Fleet) -> None:
-    """Decision CH69 rule 6: both files are on disk before the sandbox
-    step, so a cut pass or a failed create still leaves the lists of its
-    revision."""
-    seen: list[tuple[bool, bool]] = []
-    egress_path = paths.egress_path(fleet.state_root, FAMILY)
-    repos_path = paths.repos_path(fleet.state_root, FAMILY)
-
-    class CheckingDriver(FakeDriver):
-        def create(self, spec: SandboxSpec) -> None:
-            seen.append((egress_path.exists(), repos_path.exists()))
-            super().create(spec)
-
-    fleet.driver = CheckingDriver()
-    fleet.run()
-    assert seen == [(True, True)]
 
 
 def test_an_invalid_edit_keeps_the_egress_file(fleet: Fleet) -> None:
@@ -489,7 +292,6 @@ def test_an_egress_list_over_the_cap_is_refused(fleet: Fleet) -> None:
     first = fleet.run()
     before = landed_bytes(fleet)
     budgets = dict(fleet.litellm.budgets)
-    fleet.forget_calls()
     fleet.write(
         egress=[f"h{index:05}.example.com" for index in range(1000)],
         model={"router": "agent-fast", "budget_usd_per_day": 5},
@@ -504,51 +306,15 @@ def test_an_egress_list_over_the_cap_is_refused(fleet: Fleet) -> None:
     assert first_error.endswith(f"the cap is {EGRESS_CAP}")
     assert landed_bytes(fleet) == before
     assert fleet.litellm.budgets == budgets
-    assert fleet.ops() == ()
-
-
-def test_a_refused_egress_call_raises_a_blocking_fault(fleet: Fleet) -> None:
-    fleet.write(egress=[DOCS])
-    fleet.run()
-
-    class RefusingPolicy(FakeDriver):
-        def remove_egress(self, name: str, hosts: tuple[str, ...]) -> None:
-            raise DriverError(f"policy rm for {name} failed")
-
-    fleet.driver = RefusingPolicy()
-    fleet.write(egress=[])
-    result = fleet.run()
-    assert result.status.state is FamilyState.DEGRADED
-    assert [one.code for one in result.status.faults] == ["egress_assert_failed"]
-
-
-def test_a_refused_egress_call_leaves_the_revision_unapplied(fleet: Fleet) -> None:
-    """The snapshot moves only at the end of a successful pass, so the next
-    pass computes the same diff and retries the same removal."""
-    fleet.write(egress=[DOCS])
-    first = fleet.run()
-
-    class RefusingPolicy(FakeDriver):
-        def remove_egress(self, name: str, hosts: tuple[str, ...]) -> None:
-            raise DriverError(f"policy rm for {name} failed")
-
-    fleet.driver = RefusingPolicy()
-    fleet.write(egress=[])
-    fleet.run()
-    applied = read_applied(fleet.state_root, FAMILY)
-    assert applied is not None
-    assert applied.rev == first.status.registry_rev
 
 
 # --- the live axes: model and budget ---------------------------------------------
 
 
-def test_a_model_change_updates_the_key_and_creates_nothing(fleet: Fleet) -> None:
+def test_a_model_change_updates_the_key(fleet: Fleet) -> None:
     fleet.run()
-    fleet.forget_calls()
     fleet.write(model={"router": "agent-fast", "budget_usd_per_day": 15})
     fleet.run()
-    assert fleet.ops() == ()
     assert fleet.litellm.budgets["family-chat"] == (["agent-fast"], 15.0)
 
 
@@ -732,308 +498,61 @@ def test_a_directory_with_no_family_file_has_no_pass(fleet: Fleet) -> None:
     caller gets the answer for a name that the registry does not hold, and
     the pass writes nothing."""
     write_no_file_dir(fleet.registry_root)
-    actors = Actors(
-        fleet.driver,
-        fleet.litellm,
-        fleet.switch,
-        EgressConfig(),
-        fleet.units,
-        fake_policy(fleet.state_root),
-    )
+    actors = Actors(fleet.litellm, fleet.units, fake_policy(fleet.state_root))
 
     with pytest.raises(FamilyNotFoundError):
         reconcile_family(
             load_registry(fleet.registry_root),
             "stray",
             state_root=fleet.state_root,
-            image=IMAGE,
             actors=actors,
         )
 
     assert not paths.family_dir(fleet.state_root, "stray").exists()
 
 
-# --- the replace axis ------------------------------------------------------------
+# --- the shape and the reconcile block -------------------------------------------
+
+#: Contract 05 §3.4's step names, and the name of the timer step that the
+#: CONTRACT-QUESTION of `reconcile.TIMERS_STEP` keeps.
+STEP_NAMES = (
+    VALIDATE_STEP,
+    "write_grants",
+    "update_key",
+    "write_config",
+    "set_egress",
+    TIMERS_STEP,
+)
 
 
-def test_more_cpus_builds_a_second_sandbox_and_drains_the_first(fleet: Fleet) -> None:
-    """Contract 05 §5.4: an addition drains, so running turns finish."""
+def test_a_shape_change_starts_no_vm(fleet: Fleet) -> None:
+    """Contract 05 §3.5: a new shape reaches a VM at its next start. The
+    vmm starts and stops each VM (decision CH1), so the pass converges."""
     fleet.run()
-    fleet.forget_calls()
     fleet.write(sandbox={"cpus": 4})
     result = fleet.run()
-    assert fleet.ops() == ("create", "set_egress", "assert_egress", "destroy")
-    assert fleet.switch.requests[-1].mode is SwitchMode.DRAIN
-    assert result.ran[-2:] == (SWITCH_STEP, DESTROY_STEP)
-    assert fleet.live_ids() == ("chat-s2",)
-
-
-def test_fewer_cpus_interrupts_instead_of_draining(fleet: Fleet) -> None:
-    """A removal applies at once (invariant 9). A turn holding the reach the
-    edit removed must not be allowed to finish (§5.3 rule 3)."""
-    fleet.write(sandbox={"cpus": 4})
-    fleet.run()
-    fleet.write(sandbox={"cpus": 2})
-    fleet.run()
-    # The last call is the replacement's. The first is the promote every
-    # family's first sandbox needs (§4.3 step 7).
-    assert fleet.switch.requests[-1].mode is SwitchMode.INTERRUPT
-
-
-def test_the_replacement_is_built_before_the_switch_is_asked_for(fleet: Fleet) -> None:
-    """Make before break. `attendance` may only be told to move onto a
-    sandbox whose egress is already proved (§4.3 step 2)."""
-    fleet.run()
-    fleet.forget_calls()
-    seen: list[str] = []
-
-    class RecordingSwitch(FakeSwitchClient):
-        def switch(self, request: SwitchRequest) -> object:
-            seen.extend(fleet.ops())
-            return super().switch(request)
-
-    fleet.switch = RecordingSwitch()
-    fleet.write(sandbox={"cpus": 4})
-    fleet.run()
-    assert seen == ["create", "set_egress", "assert_egress"]
-
-
-def test_the_document_names_the_replacement_before_the_call(fleet: Fleet) -> None:
-    """Contract 05 §4.3 step 5b. The status document is the only thing that
-    crosses between the two services (§1), so a `to` it does not name is a
-    `to` `attendance` will not dial, and §5.3 rule 8 refuses the switch."""
-    fleet.run()
-    published: list[list[str]] = []
-
-    class RecordingSwitch(FakeSwitchClient):
-        def switch(self, request: SwitchRequest) -> object:
-            published.append(_sandbox_ids(fleet.state_root))
-            return super().switch(request)
-
-    fleet.switch = RecordingSwitch()
-    fleet.write(sandbox={"cpus": 4})
-    fleet.run()
-
-    assert published == [["chat-s1", "chat-s2"]]
-
-
-def _sandbox_ids(state_root: Path) -> list[str]:
-    """Every sandbox the published status document names, in file order."""
-    body = json.loads(paths.status_path(state_root, FAMILY).read_text(encoding="utf-8"))
-    return [str(one["id"]) for one in body["sandboxes"]]
-
-
-def _published(state_root: Path) -> dict[str, object]:
-    """The status document as a reader finds it at this moment."""
-    body: object = json.loads(paths.status_path(state_root, FAMILY).read_text(encoding="utf-8"))
-    assert isinstance(body, dict)
-
-    return {str(key): value for key, value in body.items()}
-
-
-def _step_in_flight(state_root: Path) -> tuple[object, object]:
-    """The step and the switch flag of the published reconcile block."""
-    block = _published(state_root)["reconcile"]
-    assert isinstance(block, dict)
-
-    return block["step"], block["needs_switch"]
-
-
-def test_the_document_names_the_first_handshake_before_the_call(fleet: Fleet) -> None:
-    """Contract 05 §3.4: `step` is the step in flight, and the pass
-    publishes the block before that step runs."""
-    seen: list[tuple[object, object]] = []
-
-    class RecordingSwitch(FakeSwitchClient):
-        def switch(self, request: SwitchRequest) -> object:
-            seen.append(_step_in_flight(fleet.state_root))
-            return super().switch(request)
-
-    fleet.switch = RecordingSwitch()
-    fleet.run()
-
-    assert seen == [(SWITCH_STEP, True)]
-
-
-def test_the_document_names_the_switch_before_the_call(fleet: Fleet) -> None:
-    """Contract 05 §3.4. A drain can take the whole deadline of the call,
-    and a reader of the document must find the switch there, not the
-    create that ended before it."""
-    fleet.run()
-    seen: list[tuple[object, object]] = []
-
-    class RecordingSwitch(FakeSwitchClient):
-        def switch(self, request: SwitchRequest) -> object:
-            seen.append(_step_in_flight(fleet.state_root))
-            return super().switch(request)
-
-    fleet.switch = RecordingSwitch()
-    fleet.write(sandbox={"cpus": 4})
-    fleet.run()
-
-    assert seen == [(SWITCH_STEP, True)]
-
-
-def test_the_document_names_the_destroy_before_it_runs(fleet: Fleet) -> None:
-    """Contract 05 §3.4 and §4.3 step 7. The switch answered, so the
-    replacement is `ready`, and the destroy of the outgoing sandbox is the
-    step in flight. A destroy can take a minute."""
-    fleet.run()
-    seen: list[tuple[object, dict[str, str]]] = []
-
-    class RecordingDriver(FakeDriver):
-        def destroy(self, name: str, allow: tuple[str, ...]) -> None:
-            body = _published(fleet.state_root)
-            rows = body["sandboxes"]
-            assert isinstance(rows, list)
-            states = {str(one["id"]): str(one["state"]) for one in rows}
-            seen.append((_step_in_flight(fleet.state_root)[0], states))
-            super().destroy(name, allow)
-
-    fleet.driver = RecordingDriver()
-    fleet.write(sandbox={"cpus": 4})
-    fleet.run()
-
-    assert seen == [(DESTROY_STEP, {"chat-s1": "ready", "chat-s2": "ready"})]
-
-
-def test_the_replacement_is_ready_once_the_switch_answers(fleet: Fleet) -> None:
-    """Contract 05 §5.3 rule 8 runs the incoming handshake BEFORE anything
-    moves, so an answer that switched is the same evidence §4.3 step 7 asks
-    for. The replacement must not inherit `creating` from its create."""
-    fleet.run()
-    fleet.write(sandbox={"cpus": 4})
-
-    result = fleet.run()
-
-    row = result.status.sandboxes[0]
-    assert (row.id, str(row.state)) == ("chat-s2", "ready")
-    assert row.ready_at is not None
-
-
-def test_the_replacement_carries_the_same_reach_as_the_outgoing_one(fleet: Fleet) -> None:
-    fleet.write(egress=[DOCS])
-    fleet.run()
-    fleet.write(egress=[DOCS], sandbox={"cpus": 4})
-    fleet.run()
-    assert fleet.allow_of("chat-s2") == (*planes(), DOCS)
-
-
-def test_a_refused_switch_keeps_the_outgoing_sandbox(fleet: Fleet) -> None:
-    """`attendance` owns the sessions. Destroying the sandbox it still sends
-    every turn to would end every one of them (§5.3 rule 1)."""
-    fleet.run()
-    fleet.switch = FakeSwitchClient(refuse="attendance answered 503")
-    fleet.write(sandbox={"cpus": 4})
-    result = fleet.run()
-    assert set(fleet.live_ids()) == {"chat-s1", "chat-s2"}
-    assert "destroy" not in fleet.ops()
-    assert result.status.state is FamilyState.RECONCILING
-
-
-def test_adopting_a_replacement_rewrites_its_env_file(fleet: Fleet) -> None:
-    """Contract 05 §4.1.1 rule 4: a sandbox without the file publishes no
-    path, and `attendance` refuses every turn on it. A create writes it once,
-    and `caregiver` is its only writer, so the pass that adopts a sandbox an
-    earlier pass left behind has to put it back."""
-    fleet.run()
-    fleet.switch = FakeSwitchClient(refuse="attendance answered 503")
-    fleet.write(sandbox={"cpus": 4})
-    fleet.run()
-
-    env_path = paths.playpen_env_path(fleet.state_root, FAMILY, "chat-s2")
-    env_path.unlink()
-    fleet.switch = FakeSwitchClient()
-    fleet.run()
-
-    lines = env_path.read_text(encoding="utf-8")
-    assert "AGENT_SANDBOX=chat-s2" in lines
-    assert f"AGENT_PEP_URL={url(Port.PEP)}\n" in lines
-    assert f"AGENT_LITELLM_BASE_URL={url(Port.LITELLM)}\n" in lines
-
-
-def test_a_restart_after_a_refused_switch_converges(fleet: Fleet) -> None:
-    """The applied snapshot never moved, so the next pass computes the same
-    diff, finds the replacement it already built, and retries the one call
-    §5.3 rule 7 makes idempotent."""
-    fleet.run()
-    fleet.switch = FakeSwitchClient(refuse="attendance answered 503")
-    fleet.write(sandbox={"cpus": 4})
-    fleet.run()
-    fleet.switch = FakeSwitchClient()
-    result = fleet.run()
-    assert fleet.live_ids() == ("chat-s2",)
     assert result.status.state is FamilyState.IN_SYNC
-    assert fleet.switch.requests[0].outgoing == "chat-s1"
-    assert fleet.switch.requests[0].to == "chat-s2"
-
-
-def test_a_crash_between_the_switch_and_the_destroy_converges(fleet: Fleet) -> None:
-    """Both sandboxes are alive and the snapshot names the old spec. The
-    next pass must reuse the replacement it already built, retry the one
-    call §5.3 rule 7 makes idempotent, and finish the destroy."""
-    first = fleet.run()
-    fleet.switch = FakeSwitchClient(refuse="killed before the answer landed")
-    fleet.write(sandbox={"cpus": 4})
-    fleet.run()
-    assert set(fleet.live_ids()) == {"chat-s1", "chat-s2"}
-
-    fleet.switch = FakeSwitchClient()
-    result = fleet.run()
-    assert fleet.live_ids() == ("chat-s2",)
-    assert result.status.applied_rev != first.status.applied_rev
-    assert result.status.state is FamilyState.IN_SYNC
-
-
-def test_a_crash_between_the_destroy_and_the_snapshot_converges(fleet: Fleet) -> None:
-    """Only the replacement is alive, and the snapshot still names the old
-    spec. The next pass must adopt the survivor rather than build a third."""
-    first = fleet.run()
-    old_text = family_text(fleet)
-    fleet.write(sandbox={"cpus": 4})
-    fleet.run()
-    roll_back(fleet, rev=first.status.applied_rev, text=old_text)
-
-    fleet.forget_calls()
-    result = fleet.run()
-    assert fleet.live_ids() == ("chat-s2",)
-    assert "create" not in fleet.ops()
-    assert result.status.state is FamilyState.IN_SYNC
-
-
-def test_the_replacement_of_a_narrowed_family_never_carries_the_old_reach(
-    fleet: Fleet,
-) -> None:
-    """One revision that both narrows egress and forces a replacement. At no
-    point may a sandbox of this family hold a row the new file dropped."""
-    fleet.write(egress=[DOCS])
-    fleet.run()
-    fleet.write(egress=[], sandbox={"cpus": 4})
-    fleet.run()
-    assert fleet.allow_of("chat-s2") == planes()
-    assert DOCS not in granted_hosts(fleet.driver, "chat-s2")
+    assert result.status.reconcile is None
 
 
 def test_a_reconciling_family_publishes_the_reconcile_block(fleet: Fleet) -> None:
+    """A model change is `reconciling` until the LiteLLM cache turns over
+    (contract 05 §7 rule 6). caregiver switches no VM (decision CH21-1)."""
     fleet.run()
-    fleet.switch = FakeSwitchClient(refuse="attendance answered 503")
-    fleet.write(sandbox={"cpus": 4})
+    fleet.write(model={"router": "agent-fast", "budget_usd_per_day": 15})
     result = fleet.run()
     assert result.status.reconcile is not None
-    assert result.status.reconcile["needs_switch"] is True
+    assert result.status.reconcile["needs_switch"] is False
     assert result.status.reconcile["to_rev"] == result.status.registry_rev
 
 
 def test_the_published_step_is_one_of_the_contracts_names(fleet: Fleet) -> None:
-    """Contract 05 §3.4 fixes eight step names. `ran` carries a refusal's
-    reason after a colon for the log line, and that detail may not reach
-    the document."""
+    """Contract 05 §3.4 fixes the step names."""
     fleet.run()
-    fleet.switch = FakeSwitchClient(refuse="attendance answered 503")
-    fleet.write(sandbox={"cpus": 4})
+    fleet.write(model={"router": "agent-fast", "budget_usd_per_day": 15})
     result = fleet.run()
     assert result.status.reconcile is not None
-    assert result.status.reconcile["step"] == SWITCH_STEP
+    assert result.status.reconcile["step"] in STEP_NAMES
 
 
 def test_an_in_sync_family_publishes_no_reconcile_block(fleet: Fleet) -> None:
@@ -1047,13 +566,11 @@ def test_an_in_sync_family_publishes_no_reconcile_block(fleet: Fleet) -> None:
 
 def test_an_invalid_file_keeps_the_last_good_revision_serving(fleet: Fleet) -> None:
     first = fleet.run()
-    fleet.forget_calls()
     fleet.write(kind="nonsense")
     result = fleet.run()
     assert result.status.state is FamilyState.INVALID
     assert result.status.applied_rev == first.status.registry_rev
-    assert fleet.ops() == ()
-    assert fleet.live_ids() == ("chat-s1",)
+    assert result.ran == ()
 
 
 def test_an_invalid_file_keeps_publishing_the_last_good_limits(fleet: Fleet) -> None:
@@ -1071,12 +588,11 @@ def test_a_changed_kind_is_refused_and_nothing_moves(fleet: Fleet) -> None:
     """`kind` is immutable (contract 01 §3.1), and only the OLD revision
     proves it, so no single-file check can catch this."""
     first = fleet.run()
-    fleet.forget_calls()
     fleet.write(kind="autonomous", triggers=[{"cron": HOURLY}])
     result = fleet.run()
     assert result.status.state is FamilyState.INVALID
     assert result.status.applied_rev == first.status.registry_rev
-    assert fleet.ops() == ()
+    assert result.ran == ()
 
 
 # --- a timer nothing could enable -------------------------------------------------
@@ -1111,39 +627,6 @@ def test_an_enabled_timer_raises_nothing(fleet: Fleet) -> None:
     fleet.write(kind="autonomous", triggers=[{"cron": HOURLY}])
     result = fleet.run()
     assert not result.status.faults
-
-
-# --- a failed create --------------------------------------------------------------
-
-
-def test_a_failed_create_degrades_and_burns_its_id(fleet: Fleet) -> None:
-    fleet.driver = FailingCreate()
-    result = fleet.run()
-    assert result.status.state is FamilyState.DEGRADED
-    assert [one.code for one in result.status.faults] == ["sandbox_start_failed"]
-    assert read_applied(fleet.state_root, FAMILY) is None
-
-
-def test_the_retry_after_a_failed_create_takes_the_next_id(fleet: Fleet) -> None:
-    fleet.driver = FailingCreate()
-    fleet.run()
-    fleet.driver = FakeDriver()
-    result = fleet.run()
-    assert fleet.live_ids() == ("chat-s2",)
-    assert result.status.state is FamilyState.IN_SYNC
-
-
-def test_a_failed_replacement_keeps_the_outgoing_sandbox(fleet: Fleet) -> None:
-    fleet.run()
-    # The first pass's own §5 call promoted chat-s1 (§4.3 step 7). Only what
-    # the REPLACEMENT pass asks for matters here.
-    fleet.switch.requests.clear()
-    fleet.driver = FailingCreate()
-    fleet.write(sandbox={"cpus": 4})
-    result = fleet.run()
-    assert result.status.state is FamilyState.DEGRADED
-    assert fleet.switch.requests == []
-    assert "chat-s1" in fleet.live_ids()
 
 
 # --- faults another service wrote -------------------------------------------------
@@ -1213,86 +696,6 @@ def test_a_litellm_that_is_away_is_a_fault_and_never_the_end_of_the_pass(fleet: 
     assert all(one.blocks_turns is False for one in result.status.faults)
 
 
-class WatchingDriver(FakeDriver):
-    """A driver that reads the family's status document from INSIDE the
-    create, which is where a reader meets it on the real host: `sbx create`
-    runs for one to three minutes."""
-
-    def __init__(self, state_root: Path) -> None:
-        super().__init__()
-        self._status = paths.status_path(state_root, FAMILY)
-        self.seen: list[dict[str, object]] = []
-
-    def create(self, spec: SandboxSpec) -> None:
-        if self._status.is_file():
-            self.seen.append(json.loads(self._status.read_text(encoding="utf-8")))
-
-        super().create(spec)
-
-
-NEWER_IMAGE = "127.0.0.1:5000/agent-sandbox@sha256:" + "9" * 64
-
-
-def test_a_new_image_is_reconciling_while_its_sandbox_is_built(fleet: Fleet) -> None:
-    """An image move leaves the registry where it is, so `applied_rev ==
-    registry_rev`, and a document written just before the create would say
-    `in_sync` with `step` null while the new sandbox is `creating`.
-    `rework-cutover.sh up` waits for every family to be `in_sync` and
-    `ready` in a fresh document, so it would call the fleet converged before
-    the first replacement finished. A pass
-    that is inside a step is `reconciling`, whatever moved."""
-    fleet.run()
-    watching = WatchingDriver(fleet.state_root)
-    watching.calls.extend(fleet.driver.calls)
-    fleet.driver = watching
-
-    result = fleet.run(image=NEWER_IMAGE)
-
-    assert len(watching.seen) == 1, "the image move built one new sandbox"
-    during = watching.seen[0]
-    assert during["state"] == "reconciling"
-    block = during["reconcile"]
-    assert isinstance(block, dict)
-    assert block["step"] == "create_sandbox"
-    # And the pass ends where it always did.
-    assert result.status.state is FamilyState.IN_SYNC
-    assert [one.image for one in result.status.sandboxes if one.state == "ready"] == [NEWER_IMAGE]
-
-
-# --- a pass that stops in front of a slow step ------------------------------------
-
-MOVED_IMAGE: str = "sha256:" + "5" * 64
-
-
-def test_a_stopped_pass_whose_image_moved_never_reads_in_sync(fleet: Fleet) -> None:
-    """Only the image moved, so the registry revision and the applied one
-    are equal. The pass stops in front of the create it still has to run.
-    Read as `in_sync`, its document would call a sandbox on the OLD image
-    converged, under a new `written_at`."""
-    fleet.run()
-    applied = read_applied(fleet.state_root, FAMILY)
-    fleet.forget_calls()
-
-    result = fleet.run(image=MOVED_IMAGE, stopped=Stopped.YES)
-
-    assert result.halted is True
-    assert result.status.state is FamilyState.RECONCILING
-    assert result.status.as_json()["reconcile"] is not None
-    assert "create" not in fleet.ops()
-    assert read_applied(fleet.state_root, FAMILY) == applied
-
-
-def test_a_stopped_pass_with_no_slow_step_to_run_is_a_whole_pass(fleet: Fleet) -> None:
-    """Nothing moved, so the pass reaches no slow step and no stop. It is
-    converged, and it says so."""
-    fleet.run()
-
-    result = fleet.run(stopped=Stopped.YES)
-
-    assert result.halted is False
-    assert result.status.state is FamilyState.IN_SYNC
-
-
 # --- the applied copy has the name of the registry file ----------------------------
 
 
@@ -1305,20 +708,12 @@ def test_a_registry_file_of_another_name_moves_no_copy(fleet: Fleet, name: str) 
     fleet.write(description="Changed.")
     registry = load_registry(fleet.registry_root)
     report = replace(registry.reports[FAMILY], file=f"families/{FAMILY}/{name}")
-    actors = Actors(
-        fleet.driver,
-        fleet.litellm,
-        fleet.switch,
-        EgressConfig(),
-        fleet.units,
-        fake_policy(fleet.state_root),
-    )
+    actors = Actors(fleet.litellm, fleet.units, fake_policy(fleet.state_root))
 
     reconcile_family(
         replace(registry, reports={**registry.reports, FAMILY: report}),
         FAMILY,
         state_root=fleet.state_root,
-        image=IMAGE,
         actors=actors,
     )
 

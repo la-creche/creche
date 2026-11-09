@@ -13,13 +13,9 @@ import pytest
 from agent_family import FamilyState
 from caregiver.apply import ApplyResult, FamilyNotFoundError, apply_once
 from caregiver.credentials import read_creds, write_creds
-from caregiver.driver import DriverError, FakeDriver, SandboxSpec
-from caregiver.lan import Port, url
 from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError, key_alias
-from caregiver.playpen_env import read_playpen_env
 from caregiver.reach_files import EGRESS_CAP
 from caregiver.status import now_rfc3339
-from caregiver.switch import FakeSwitchClient, SwitchClient
 from caregiver_helpers import (
     FENCES,
     UNREADABLE_JSON,
@@ -49,9 +45,7 @@ def apply_chat(
     registry_root: Path,
     state_root: Path,
     *,
-    driver: FakeDriver | None = None,
     litellm: FakeLiteLLMKeys | None = None,
-    switch: SwitchClient | None = None,
 ) -> ApplyResult:
     return apply_once(
         registry_root,
@@ -59,10 +53,7 @@ def apply_chat(
         state_root=state_root,
         fences=FENCES,
         policy=fake_policy(state_root),
-        image="sha256:deadbeef",
-        driver=driver if driver is not None else FakeDriver(),
         litellm=litellm if litellm is not None else FakeLiteLLMKeys(),
-        switch=switch,
     )
 
 
@@ -117,40 +108,18 @@ def test_apply_once_writes_the_repos_file(tmp_path: Path, state_root: Path) -> N
     assert body == {"repos": ["creche", "mcp"]}
 
 
-def test_apply_once_writes_the_reach_files_before_the_create(
-    registry_root: Path, state_root: Path
-) -> None:
-    """Decision CH69 rule 6: both files are on disk before the sandbox
-    step, so a create that fails still leaves the lists of its revision."""
-    seen: list[tuple[bool, bool]] = []
-
-    class CheckingDriver(FakeDriver):
-        def create(self, spec: SandboxSpec) -> None:
-            seen.append(
-                (
-                    paths.egress_path(state_root, "chat").exists(),
-                    paths.repos_path(state_root, "chat").exists(),
-                )
-            )
-            super().create(spec)
-
-    apply_chat(registry_root, state_root, driver=CheckingDriver())
-    assert seen == [(True, True)]
-
-
 def test_an_egress_list_over_the_cap_stops_the_apply(registry_root: Path, state_root: Path) -> None:
     """Decision CH71: the refusal comes before the key step, so no key is
-    minted, no sandbox call runs and the last good file stays byte for
-    byte. The one error names the cap."""
+    minted and the last good file stays byte for byte. The one error names
+    the cap."""
     write_registry(registry_root, egress=["github.com"])
     good = apply_chat(registry_root, state_root)
     egress_path = paths.egress_path(state_root, "chat")
     before = egress_path.read_bytes()
 
     write_registry(registry_root, egress=[f"h{index:05}.example.com" for index in range(1000)])
-    driver = FakeDriver()
     litellm = FakeLiteLLMKeys()
-    bad = apply_chat(registry_root, state_root, driver=driver, litellm=litellm)
+    bad = apply_chat(registry_root, state_root, litellm=litellm)
 
     assert bad.ok is False
     assert bad.status.state is FamilyState.INVALID
@@ -161,172 +130,9 @@ def test_an_egress_list_over_the_cap_stops_the_apply(registry_root: Path, state_
     assert first_error.endswith(f"the cap is {EGRESS_CAP}")
     assert egress_path.read_bytes() == before
     assert litellm.minted == 0
-    assert driver.calls == []
-
-
-def test_it_creates_the_sandbox_once(registry_root: Path, state_root: Path) -> None:
-    driver = FakeDriver()
-    apply_chat(registry_root, state_root, driver=driver)
-    assert driver.ops() == ("create", "set_egress", "assert_egress")
-    assert paths.sandbox_seq_path(state_root, "chat").read_text(encoding="utf-8").strip() == "1"
-
-
-def test_the_sandbox_spec_puts_sessions_first_as_the_rw_primary(
-    registry_root: Path, state_root: Path
-) -> None:
-    driver = FakeDriver()
-    apply_chat(registry_root, state_root, driver=driver)
-    spec = driver.calls[0].args[0]
-    assert isinstance(spec, SandboxSpec)
-    assert spec.mounts[0].path == "/srv/agents/sessions/chat"
-    assert spec.mounts[0].readonly is False
-
-
-def test_an_apply_with_no_switch_client_leaves_the_sandbox_creating(
-    registry_root: Path, state_root: Path
-) -> None:
-    """No handshake can run without one, and contract 05 §4.2 rule 4 forbids
-    writing `ready` after `sbx create` alone. `attendance` still dials a
-    `creating` sandbox, so the family serves either way."""
-    result = apply_chat(registry_root, state_root)
-    assert len(result.status.sandboxes) == 1
-    assert str(result.status.sandboxes[0].state) == "creating"
-
-
-def test_an_apply_with_a_switch_client_reaches_ready(registry_root: Path, state_root: Path) -> None:
-    """Contract 05 §4.3 steps 6 and 7. Without the handshake, `apply-once`
-    leaves a serving sandbox `creating` in its status document."""
-    switch = FakeSwitchClient()
-
-    result = apply_chat(registry_root, state_root, switch=switch)
-
-    assert [(one.outgoing, one.to) for one in switch.requests] == [(None, "chat-s1")]
-    assert str(result.status.sandboxes[0].state) == "ready"
-    assert result.status.sandboxes[0].ready_at is not None
-
-
-def test_a_refused_handshake_keeps_the_apply_ok(registry_root: Path, state_root: Path) -> None:
-    """`up` runs `apply-once` before `attendance` is listening, so a refusal
-    here is the normal first pass and must not fail the verb."""
-    switch = FakeSwitchClient(refuse="connection refused")
-
-    result = apply_chat(registry_root, state_root, switch=switch)
-
-    assert result.ok is True
-    assert str(result.status.sandboxes[0].state) == "creating"
-    assert result.status.faults == ()
-
-
-def test_a_second_apply_promotes_what_the_first_could_not(
-    registry_root: Path, state_root: Path
-) -> None:
-    """Every step is idempotent. `up` starts the services after the first
-    apply, so the pass that follows is the one that can complete the
-    handshake, and it must adopt the sandbox rather than build a second."""
-    # One driver and one LiteLLM across both passes, because the host has one
-    # of each: a second fake would not know the key the first pass minted.
-    driver, litellm = FakeDriver(), FakeLiteLLMKeys()
-    refused = FakeSwitchClient(refuse="connection refused")
-    apply_chat(registry_root, state_root, driver=driver, litellm=litellm, switch=refused)
-
-    result = apply_chat(
-        registry_root, state_root, driver=driver, litellm=litellm, switch=FakeSwitchClient()
-    )
-
-    assert [one.id for one in result.status.sandboxes] == ["chat-s1"]
-    assert str(result.status.sandboxes[0].state) == "ready"
-    assert driver.ops().count("create") == 1
-
-
-def test_every_mount_is_named_by_its_host_path(registry_root: Path, state_root: Path) -> None:
-    """Contract 03 §7.1: sbx mounts a host directory at that same path
-    inside the VM, so a spec carries one path per mount and no target."""
-    driver = FakeDriver()
-    apply_chat(registry_root, state_root, driver=driver)
-    spec = driver.calls[0].args[0]
-    assert isinstance(spec, SandboxSpec)
-    assert [mount.path for mount in spec.mounts] == [
-        "/srv/agents/sessions/chat",
-        str(paths.creds_dir(state_root, "chat")),
-        str(paths.config_dir(state_root, "chat")),
-        str(paths.control_dir(state_root, "chat", "chat-s1")),
-    ]
 
 
 # --- supervisor.env (contract 03 §7.1) ---------------------------------------
-
-
-def test_creating_the_sandbox_writes_playpen_env(registry_root: Path, state_root: Path) -> None:
-    """`sbx exec` forwards no host environment, so this file is the only
-    way the playpen learns where its three mounts are."""
-    apply_chat(registry_root, state_root)
-    values = read_playpen_env(paths.playpen_env_path(state_root, "chat", "chat-s1"))
-    assert values["AGENT_CRED_DIR"] == str(paths.creds_dir(state_root, "chat"))
-    assert values["AGENT_FAMILY_CONFIG_DIR"] == str(paths.config_dir(state_root, "chat"))
-    assert values["AGENT_CONTROL_DIR"] == str(paths.control_dir(state_root, "chat", "chat-s1"))
-    assert values["AGENT_SANDBOX"] == "chat-s1"
-
-
-def test_the_env_file_names_the_two_planes_on_the_lan_address(
-    registry_root: Path, state_root: Path
-) -> None:
-    """The URL of each plane is the URL that this service builds for its own
-    calls: the LAN address of the site and the port of the plane."""
-    apply_chat(registry_root, state_root)
-    values = read_playpen_env(paths.playpen_env_path(state_root, "chat", "chat-s1"))
-
-    assert values["AGENT_PEP_URL"] == url(Port.PEP)
-    assert values["AGENT_LITELLM_BASE_URL"] == url(Port.LITELLM)
-
-
-def test_the_status_document_publishes_the_env_file_path(
-    registry_root: Path, state_root: Path
-) -> None:
-    """Contract 05 §4.1. `attendance` reads the path from here and hands it
-    to `sbx exec --env-file`. A document without it is a fault, not a
-    guess, so the document must carry it."""
-    result = apply_chat(registry_root, state_root)
-    published = result.status.sandboxes[0].playpen_env
-    assert published == str(paths.playpen_env_path(state_root, "chat", "chat-s1"))
-    assert Path(published).is_file()
-
-
-def test_the_env_file_survives_the_control_directory_being_emptied(
-    registry_root: Path, state_root: Path
-) -> None:
-    """Contract 05 §4.3 rule 5 empties the sandbox's control directory at
-    every create. The env file sits beside it, so the emptying cannot take
-    it."""
-    apply_chat(registry_root, state_root)
-    env_path = paths.playpen_env_path(state_root, "chat", "chat-s1")
-    assert env_path.is_file()
-    assert not env_path.is_relative_to(paths.control_root(state_root, "chat"))
-
-
-def test_a_failed_create_writes_no_env_file(registry_root: Path, state_root: Path) -> None:
-    """A file naming a sandbox that does not exist would send `attendance`
-    at a VM nobody made."""
-    apply_chat(registry_root, state_root, driver=FailingDriver())
-    assert not paths.playpen_env_path(state_root, "chat", "chat-s1").exists()
-
-
-def test_a_second_apply_keeps_the_env_file_current(registry_root: Path, state_root: Path) -> None:
-    """An apply that creates nothing still republishes it: a family whose
-    env file went missing would fail every turn with no way back."""
-    driver = FakeDriver()
-    litellm = FakeLiteLLMKeys()
-    apply_chat(registry_root, state_root, driver=driver, litellm=litellm)
-    paths.playpen_env_path(state_root, "chat", "chat-s1").unlink()
-
-    result = apply_chat(registry_root, state_root, driver=driver, litellm=litellm)
-
-    assert paths.playpen_env_path(state_root, "chat", "chat-s1").is_file()
-    assert result.status.sandboxes[0].playpen_env == str(
-        paths.playpen_env_path(state_root, "chat", "chat-s1")
-    )
-    values = read_playpen_env(paths.playpen_env_path(state_root, "chat", "chat-s1"))
-    assert values["AGENT_PEP_URL"] == url(Port.PEP)
-    assert values["AGENT_LITELLM_BASE_URL"] == url(Port.LITELLM)
 
 
 # --- idempotency -----------------------------------------------------------
@@ -339,20 +145,10 @@ def test_a_second_apply_does_not_remint_the_key(registry_root: Path, state_root:
     assert litellm.minted == 1
 
 
-def test_a_second_apply_does_not_recreate_the_sandbox(
-    registry_root: Path, state_root: Path
-) -> None:
-    driver = FakeDriver()
-    apply_chat(registry_root, state_root, driver=driver)
-    apply_chat(registry_root, state_root, driver=driver)
-    assert driver.ops().count("create") == 1
-
-
 def test_a_second_apply_still_reaches_in_sync(registry_root: Path, state_root: Path) -> None:
-    driver = FakeDriver()
     litellm = FakeLiteLLMKeys()
-    apply_chat(registry_root, state_root, driver=driver, litellm=litellm)
-    result = apply_chat(registry_root, state_root, driver=driver, litellm=litellm)
+    apply_chat(registry_root, state_root, litellm=litellm)
+    result = apply_chat(registry_root, state_root, litellm=litellm)
     assert result.ok is True
     assert result.status.state is FamilyState.IN_SYNC
 
@@ -430,8 +226,6 @@ def test_family_not_in_the_registry_raises(registry_root: Path, state_root: Path
             state_root=state_root,
             fences=FENCES,
             policy=fake_policy(state_root),
-            image="x",
-            driver=FakeDriver(),
             litellm=FakeLiteLLMKeys(),
         )
 
@@ -448,8 +242,6 @@ def test_a_directory_with_no_family_file_raises(registry_root: Path, state_root:
             state_root=state_root,
             fences=FENCES,
             policy=fake_policy(state_root),
-            image="x",
-            driver=FakeDriver(),
             litellm=FakeLiteLLMKeys(),
         )
 
@@ -459,17 +251,15 @@ def test_a_directory_with_no_family_file_raises(registry_root: Path, state_root:
 # --- an invalid family (invariant 19) ---------------------------------------
 
 
-def test_an_invalid_family_stops_before_any_credential_or_sandbox_work(
+def test_an_invalid_family_stops_before_any_credential_work(
     registry_root: Path, state_root: Path
 ) -> None:
     write_registry(registry_root, kind="not-a-real-kind")
-    driver = FakeDriver()
     litellm = FakeLiteLLMKeys()
-    result = apply_chat(registry_root, state_root, driver=driver, litellm=litellm)
+    result = apply_chat(registry_root, state_root, litellm=litellm)
     assert result.ok is False
     assert result.status.state is FamilyState.INVALID
     assert litellm.minted == 0
-    assert driver.calls == []
 
 
 def test_an_invalid_family_still_writes_the_validation_report(
@@ -559,19 +349,6 @@ def test_an_invalid_revision_does_not_touch_the_existing_fragment(
     assert before == after
 
 
-def test_an_invalid_revision_does_not_touch_the_sandbox(
-    registry_root: Path, state_root: Path
-) -> None:
-    driver = FakeDriver()
-    apply_chat(registry_root, state_root, driver=driver)
-    calls_after_good_apply = len(driver.calls)
-
-    write_registry(registry_root, kind="not-a-real-kind")
-    apply_chat(registry_root, state_root, driver=driver)
-
-    assert len(driver.calls) == calls_after_good_apply
-
-
 # --- operational failures (caregiver-detected faults) -------------------------
 
 
@@ -593,29 +370,6 @@ def test_a_litellm_failure_degrades_and_raises_no_exception(
 def test_a_litellm_failure_writes_no_fragment(registry_root: Path, state_root: Path) -> None:
     apply_chat(registry_root, state_root, litellm=FailingLiteLLM())
     assert not paths.policy_fragment_path(state_root, "chat").exists()
-
-
-def test_a_litellm_failure_creates_no_sandbox(registry_root: Path, state_root: Path) -> None:
-    driver = FakeDriver()
-    apply_chat(registry_root, state_root, driver=driver, litellm=FailingLiteLLM())
-    assert driver.calls == []
-
-
-class FailingDriver(FakeDriver):
-    def create(self, spec: SandboxSpec) -> None:
-        raise DriverError("simulated sbx outage")
-
-
-def test_a_sandbox_failure_degrades_but_keeps_the_credentials_and_grants(
-    registry_root: Path, state_root: Path
-) -> None:
-    litellm = FakeLiteLLMKeys()
-    result = apply_chat(registry_root, state_root, driver=FailingDriver(), litellm=litellm)
-    assert result.ok is False
-    assert result.status.state is FamilyState.DEGRADED
-    assert result.status.faults[0].code == "sandbox_start_failed"
-    assert litellm.minted == 1
-    assert paths.policy_fragment_path(state_root, "chat").exists()
 
 
 # --- folded faults (contract 05 section 3.3.1) -------------------------------
@@ -651,12 +405,12 @@ def test_a_folded_pep_fault_marks_an_otherwise_healthy_family_degraded(
     assert result.status.faults[0].source == "pep"
 
 
-def test_a_folded_fault_still_lets_credentials_and_the_sandbox_apply(
+def test_a_folded_fault_still_lets_the_credentials_and_the_files_apply(
     registry_root: Path, state_root: Path
 ) -> None:
     write_pep_fault(state_root, "chat", "grants_stale")
     litellm = FakeLiteLLMKeys()
-    driver = FakeDriver()
-    apply_chat(registry_root, state_root, driver=driver, litellm=litellm)
+    apply_chat(registry_root, state_root, litellm=litellm)
     assert litellm.minted == 1
-    assert driver.ops() == ("create", "set_egress", "assert_egress")
+    assert paths.egress_path(state_root, "chat").exists()
+    assert paths.repos_path(state_root, "chat").exists()

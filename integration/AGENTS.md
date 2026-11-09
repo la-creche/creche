@@ -52,8 +52,7 @@ before you push a change to this directory.
 ## What runs
 
 `tests_manager/` runs the real `caregiver` writers against the real
-readers: the sandbox env file and the status document that `attendance`
-reads.
+reader: the status document that `attendance` reads.
 
 ## The process-level suite
 

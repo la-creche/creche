@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from caregiver.faults import read_fault_file, rescope_by_fleet
+from caregiver.faults import read_fault_file
 from caregiver_helpers import UNREADABLE_JSON
 
 NOW = datetime(2026, 9, 19, 12, 0, 0, tzinfo=UTC)
@@ -269,54 +269,3 @@ def test_attendance_may_raise_sandbox_start_failed(tmp_path: Path) -> None:
     assert result is not None
     assert [one.code for one in result.faults] == ["sandbox_start_failed"]
     assert result.faults[0].detail["sandbox"] == "chat-s1"
-
-
-def test_the_lone_sandbox_failing_blocks_turns(tmp_path: Path) -> None:
-    """Section 3.3's own wording: "no sandbox reached `ready`". One live
-    sandbox, and that one fatal, means the family cannot serve."""
-    path = tmp_path / "chat.json"
-    attendance_file(path, "chat-s1")
-    read = read_fault_file(path, "attendance", now=NOW)
-    assert read is not None
-
-    rescoped = rescope_by_fleet(read.faults, ("chat-s1",))
-
-    assert rescoped[0].blocks_turns is True
-
-
-def test_a_replacement_failing_keeps_the_family_up(tmp_path: Path) -> None:
-    """The reason the code was dropped rather than accepted. During a
-    make-before-break replacement the fault names the INCOMING sandbox while
-    the outgoing one serves every turn, and section 5.3 promises the family
-    keeps serving. So `blocks_turns` comes from the fleet, not the code."""
-    path = tmp_path / "chat.json"
-    attendance_file(path, "chat-s2")
-    read = read_fault_file(path, "attendance", now=NOW)
-    assert read is not None
-
-    rescoped = rescope_by_fleet(read.faults, ("chat-s1", "chat-s2"))
-
-    assert rescoped[0].blocks_turns is False
-    # Nothing is hidden: the entry, its message and its sandbox all survive.
-    assert rescoped[0].code == "sandbox_start_failed"
-    assert rescoped[0].detail["sandbox"] == "chat-s2"
-
-
-def test_the_fleet_rule_touches_no_other_code(tmp_path: Path) -> None:
-    """Every other code of section 3.3 is fixed per code, as the table says.
-    Only this one is defined fleet-wide."""
-    path = tmp_path / "chat.json"
-    write(
-        path,
-        {
-            "family": "chat",
-            "written_at": (NOW - timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
-            "faults": [{"code": "protocol_mismatch", "since": "x", "source": "attendance"}],
-        },
-    )
-    read = read_fault_file(path, "attendance", now=NOW)
-    assert read is not None
-
-    rescoped = rescope_by_fleet(read.faults, ("chat-s1", "chat-s2"))
-
-    assert rescoped[0].blocks_turns is True

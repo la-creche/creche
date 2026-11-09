@@ -304,7 +304,6 @@ def applied(state_root: Path) -> None:
         state_root,
         FAMILY,
         rev="reg-1",
-        image="sha256:abc",
         family_text=family_toml(),
     )
 
@@ -350,7 +349,6 @@ def test_a_snapshot_under_another_name_serves_nobody(tmp_path: Path, state_root:
         state_root,
         FAMILY,
         rev="reg-1",
-        image="sha256:abc",
         family_text=family_toml(name="ops"),
     )
     registry = load_registry(write_registry(tmp_path / "registry"))

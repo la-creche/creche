@@ -1,16 +1,15 @@
 """Packet C2's shared fixtures: one applied `chat` family, real on both sides.
 
-`caregiver` writes three things that two other programs read:
+`caregiver` writes the files that two other programs read:
 
     caregiver.apply_once
-        |-- config/ (runtime.json, instructions.md, skills/) -> the playpen
-        |-- creds/ + control/ (mounts) -----------> the playpen
-        `-- families/<family>/status.json --------> attendance
+        |-- config/ (runtime.json, instructions.md, skills/) -> the vmm
+        |-- creds/creds.json -----------------------------> the vmm
+        `-- families/<family>/status.json ----------------> attendance
 
-Every test here runs the REAL writer and the REAL reader. Only the two
-things that would touch a host are faked: the sandbox driver (`FakeDriver`)
-and LiteLLM (`FakeLiteLLMKeys`). Nothing dials the host's LAN address and nothing
-needs the host.
+Every test here runs the REAL writer and the REAL reader. Only the one
+thing that would touch a host is faked: LiteLLM (`FakeLiteLLMKeys`).
+Nothing dials the host's LAN address and nothing needs the host.
 
 Every test in this directory is marked `slow`: one marker over the
 directory beats a reader guessing which is which.
@@ -27,7 +26,6 @@ import pytest
 from agent_family import Fences
 from caregiver.apply import ApplyResult, apply_once
 from caregiver.credentials import read_creds
-from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.policy_fleet import FakeChecker, FleetPolicy, PolicyTarget
 from noticeboard.tomlout import to_toml
@@ -48,13 +46,6 @@ FENCES: Final = Fences(
 
 FAMILY: Final = "chat"
 SKILL: Final = "kitchen"
-
-#: The one sandbox an apply makes. The control directory is per sandbox
-#: (contract 03 §7.1), so a fixture path needs the id.
-FIRST_SANDBOX: Final = "chat-s1"
-
-#: An obvious fixture, never resolved: contract 06 owns digest selection.
-IMAGE: Final = "sha256:0000000000000000000000000000000000000000000000000000000000000001"
 
 #: The repo root, four levels up from this file
 #: (integration/tests_manager/conftest.py).
@@ -94,15 +85,14 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 @dataclass
 class Applied:
-    """One applied family: every path its readers open, and the two fakes.
+    """One applied family: every path its readers open, and the fake.
 
-    The fakes live here rather than per call because both stand in for a
+    The fake lives here rather than per call because it stands in for a
     service that outlives one `apply_once`. A second `FakeLiteLLMKeys` would
     have forgotten the key the first one minted, which no real LiteLLM does.
     """
 
     result: ApplyResult
-    driver: FakeDriver
     litellm: FakeLiteLLMKeys
     registry_root: Path
     state_root: Path
@@ -114,11 +104,11 @@ class Applied:
 
     def reapply(self, body: dict[str, Any] | None = None) -> ApplyResult:
         """Rewrite the family file, then apply again, against the same
-        LiteLLM and the same sandbox driver."""
+        LiteLLM."""
         if body is not None:
             write_family(self.registry_root, body)
 
-        self.result = apply(self.registry_root, self.state_root, self.driver, self.litellm)
+        self.result = apply(self.registry_root, self.state_root, self.litellm)
         return self.result
 
     @property
@@ -136,11 +126,6 @@ class Applied:
     @property
     def creds_dir(self) -> Path:
         return paths.creds_dir(self.state_root, FAMILY)
-
-    @property
-    def control_dir(self) -> Path:
-        """The first sandbox's own control directory (contract 03 §7.1)."""
-        return paths.control_dir(self.state_root, FAMILY, FIRST_SANDBOX)
 
     @property
     def status_path(self) -> Path:
@@ -162,28 +147,22 @@ def write_family(registry_root: Path, body: dict[str, Any]) -> None:
         (skill_dir / "SKILL.md").write_text(f"# {name}\n\nA fixture skill.\n", encoding="utf-8")
 
 
-def apply(
-    registry_root: Path, state_root: Path, driver: FakeDriver, litellm: FakeLiteLLMKeys
-) -> ApplyResult:
-    """One `apply_once`, with the two host-touching things faked."""
+def apply(registry_root: Path, state_root: Path, litellm: FakeLiteLLMKeys) -> ApplyResult:
+    """One `apply_once`, with LiteLLM faked."""
     return apply_once(
         registry_root,
         FAMILY,
         state_root=state_root,
         fences=FENCES,
         policy=FleetPolicy(PolicyTarget(state_root.parent / "chaperone"), FakeChecker()),
-        image=IMAGE,
-        driver=driver,
         litellm=litellm,
     )
 
 
 def run_apply(registry_root: Path, state_root: Path, sessions_root: Path) -> Applied:
-    driver = FakeDriver()
     litellm = FakeLiteLLMKeys()
     return Applied(
-        result=apply(registry_root, state_root, driver, litellm),
-        driver=driver,
+        result=apply(registry_root, state_root, litellm),
         litellm=litellm,
         registry_root=registry_root,
         state_root=state_root,

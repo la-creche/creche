@@ -7,11 +7,11 @@ import json
 from pathlib import Path
 
 import pytest
-from caregiver.cli import EXIT_OK, EXIT_PROBLEM, EXIT_USAGE
+from caregiver.cli import EXIT_CONFIG, EXIT_OK, EXIT_PROBLEM, EXIT_USAGE
 from caregiver.credentials import read_creds
-from caregiver.driver import DriverError, FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError
-from caregiver_helpers import UNREADABLE_JSON, main, write_no_file_dir, write_registry
+from caregiver.vmm import UNREACHABLE
+from caregiver_helpers import UNREADABLE_JSON, FakeVmm, main, write_no_file_dir, write_registry
 
 from caregiver import paths
 
@@ -34,24 +34,19 @@ def state_root(tmp_path: Path) -> Path:
 def test_apply_once_without_write_makes_no_change(
     registry_root: Path, state_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    driver = FakeDriver()
     litellm = FakeLiteLLMKeys()
     code = main(
         [
             "apply-once",
             str(registry_root),
             "chat",
-            "--image",
-            "sha256:x",
             "--state-root",
             str(state_root),
         ],
-        driver=driver,
         litellm=litellm,
     )
     assert code == EXIT_OK
     assert litellm.minted == 0
-    assert driver.calls == []
     assert not paths.creds_path(state_root, "chat").exists()
 
 
@@ -63,104 +58,34 @@ def test_apply_once_without_write_prints_the_plan(
             "apply-once",
             str(registry_root),
             "chat",
-            "--image",
-            "sha256:x",
             "--state-root",
             str(state_root),
         ],
-        driver=FakeDriver(),
         litellm=FakeLiteLLMKeys(),
     )
     out = capsys.readouterr().out
     assert "family: chat" in out
     assert "mint a new LiteLLM key" in out
-    assert "create sandbox chat-s1" in out
+    assert "the config directory and the reach files" in out
 
 
 def test_apply_once_with_write_actually_applies(registry_root: Path, state_root: Path) -> None:
-    driver = FakeDriver()
     litellm = FakeLiteLLMKeys()
     code = main(
         [
             "apply-once",
             str(registry_root),
             "chat",
-            "--image",
-            "sha256:x",
             "--state-root",
             str(state_root),
             "--write",
         ],
-        driver=driver,
         litellm=litellm,
     )
     assert code == EXIT_OK
     assert litellm.minted == 1
     assert read_creds(paths.creds_path(state_root, "chat")) is not None
-    assert driver.ops() == ("create", "set_egress", "assert_egress")
-
-
-def _write_caregiver_token(state_root: Path) -> None:
-    """What `attendance` mints on a host that has run `up` before."""
-    token = paths.caregiver_token_path(state_root)
-    token.parent.mkdir(parents=True, exist_ok=True)
-    token.write_text("fixture-caregiver-token-" + "m" * 32, encoding="utf-8")
-    token.chmod(0o600)
-
-
-def test_apply_once_runs_when_the_caregiver_token_exists(
-    registry_root: Path, state_root: Path
-) -> None:
-    """With a token file present the CLI goes on to read `args.attendance_url`,
-    which `apply-once` must declare, or it dies of an AttributeError before
-    it builds the family. Every other test here has no token file, so
-    `read_token` refuses first and would hide it.
-    Nothing listens at the address, so the handshake is skipped and the
-    family still comes up."""
-    _write_caregiver_token(state_root)
-    code = main(
-        [
-            "apply-once",
-            str(registry_root),
-            "chat",
-            "--image",
-            "sha256:x",
-            "--state-root",
-            str(state_root),
-            "--attendance-url",
-            "http://127.0.0.1:9",
-            "--write",
-        ],
-        driver=FakeDriver(),
-        litellm=FakeLiteLLMKeys(),
-    )
-    assert code == EXIT_OK
-    assert read_creds(paths.creds_path(state_root, "chat")) is not None
-
-
-def test_apply_once_takes_attendance_by_its_unix_socket(
-    registry_root: Path, state_root: Path, tmp_path: Path
-) -> None:
-    """A gate runs `attendance` on a Unix socket and nothing else, so a URL
-    alone can never reach it and the sandbox would stay `creating`."""
-    _write_caregiver_token(state_root)
-    code = main(
-        [
-            "apply-once",
-            str(registry_root),
-            "chat",
-            "--image",
-            "sha256:x",
-            "--state-root",
-            str(state_root),
-            "--attendance-socket",
-            str(tmp_path / "no-such.sock"),
-            "--write",
-        ],
-        driver=FakeDriver(),
-        litellm=FakeLiteLLMKeys(),
-    )
-    assert code == EXIT_OK
+    assert paths.egress_path(state_root, "chat").exists()
 
 
 def test_apply_once_plan_on_an_invalid_family_says_so_and_stops(
@@ -172,13 +97,10 @@ def test_apply_once_plan_on_an_invalid_family_says_so_and_stops(
             "apply-once",
             str(registry_root),
             "chat",
-            "--image",
-            "sha256:x",
             "--state-root",
             str(state_root),
             "--write",
         ],
-        driver=FakeDriver(),
         litellm=FakeLiteLLMKeys(),
     )
     assert code == EXIT_PROBLEM
@@ -193,12 +115,9 @@ def test_apply_once_of_an_unknown_family_is_a_usage_error(
             "apply-once",
             str(registry_root),
             "no-such-family",
-            "--image",
-            "sha256:x",
             "--state-root",
             str(state_root),
         ],
-        driver=FakeDriver(),
         litellm=FakeLiteLLMKeys(),
     )
     assert code == EXIT_USAGE
@@ -209,12 +128,10 @@ def test_apply_once_of_a_directory_with_no_family_file_is_a_usage_error(
 ) -> None:
     """Contract 01 §5.6 rule 3: `caregiver` ignores the directory."""
     write_no_file_dir(registry_root)
-    words = ["apply-once", str(registry_root), "stray", "--image", "sha256:x"]
+    words = ["apply-once", str(registry_root), "stray"]
     litellm = FakeLiteLLMKeys()
 
-    code = main(
-        [*words, "--state-root", str(state_root), "--write"], driver=FakeDriver(), litellm=litellm
-    )
+    code = main([*words, "--state-root", str(state_root), "--write"], litellm=litellm)
 
     assert code == EXIT_USAGE
     assert litellm.minted == 0
@@ -228,18 +145,15 @@ def test_apply_once_a_second_time_reports_refresh_not_mint(
         "apply-once",
         str(registry_root),
         "chat",
-        "--image",
-        "sha256:x",
         "--state-root",
         str(state_root),
         "--write",
     ]
-    main(args, driver=FakeDriver(), litellm=FakeLiteLLMKeys())
+    main(args, litellm=FakeLiteLLMKeys())
     capsys.readouterr()
-    main(args, driver=FakeDriver(), litellm=FakeLiteLLMKeys())
+    main(args, litellm=FakeLiteLLMKeys())
     out = capsys.readouterr().out
     assert "refresh the existing LiteLLM key" in out
-    assert "already exists; leave it" in out
 
 
 # --- status ------------------------------------------------------------
@@ -280,13 +194,10 @@ def test_status_after_apply_prints_the_family_and_state(
             "apply-once",
             str(registry_root),
             "chat",
-            "--image",
-            "sha256:x",
             "--state-root",
             str(state_root),
             "--write",
         ],
-        driver=FakeDriver(),
         litellm=FakeLiteLLMKeys(),
     )
     capsys.readouterr()
@@ -304,13 +215,10 @@ def test_status_json_round_trips_the_document(
             "apply-once",
             str(registry_root),
             "chat",
-            "--image",
-            "sha256:x",
             "--state-root",
             str(state_root),
             "--write",
         ],
-        driver=FakeDriver(),
         litellm=FakeLiteLLMKeys(),
     )
     capsys.readouterr()
@@ -331,13 +239,10 @@ def test_status_with_no_family_lists_every_family(
             "apply-once",
             str(registry_root),
             "chat",
-            "--image",
-            "sha256:x",
             "--state-root",
             str(state_root),
             "--write",
         ],
-        driver=FakeDriver(),
         litellm=FakeLiteLLMKeys(),
     )
     main(
@@ -345,13 +250,10 @@ def test_status_with_no_family_lists_every_family(
             "apply-once",
             str(registry_root),
             "code",
-            "--image",
-            "sha256:x",
             "--state-root",
             str(state_root),
             "--write",
         ],
-        driver=FakeDriver(),
         litellm=FakeLiteLLMKeys(),
     )
     capsys.readouterr()
@@ -368,9 +270,7 @@ def test_delete_without_write_makes_no_change(state_root: Path) -> None:
     fragment.parent.mkdir(parents=True)
     fragment.write_text("[apps.chat]\n", encoding="utf-8")
     litellm = FakeLiteLLMKeys()
-    code = main(
-        ["delete", "chat", "--state-root", str(state_root)], litellm=litellm, driver=FakeDriver()
-    )
+    code = main(["delete", "chat", "--state-root", str(state_root)], litellm=litellm, vmm=FakeVmm())
     assert code == EXIT_OK
     assert litellm.deleted == []
     assert fragment.exists()
@@ -381,39 +281,54 @@ def test_delete_without_write_prints_the_plan(
 ) -> None:
     main(
         ["delete", "chat", "--state-root", str(state_root)],
-        driver=FakeDriver(),
+        vmm=FakeVmm(),
         litellm=FakeLiteLLMKeys(),
     )
     out = capsys.readouterr().out
     assert "family: chat" in out
     assert "delete the LiteLLM key" in out
+    assert "drop every session of the family on the vmm" in out
 
 
 def test_delete_with_write_actually_deletes(registry_root: Path, state_root: Path) -> None:
-    driver = FakeDriver()
+    vmm = FakeVmm()
     litellm = FakeLiteLLMKeys()
     main(
         [
             "apply-once",
             str(registry_root),
             "chat",
-            "--image",
-            "sha256:x",
             "--state-root",
             str(state_root),
             "--write",
         ],
-        driver=driver,
         litellm=litellm,
     )
     code = main(
         ["delete", "chat", "--state-root", str(state_root), "--write"],
-        driver=driver,
+        vmm=vmm,
         litellm=litellm,
     )
     assert code == EXIT_OK
     assert not paths.family_dir(state_root, "chat").exists()
-    assert any(call.op == "destroy" for call in driver.calls)
+    assert vmm.dropped == ["chat"]
+
+
+def test_delete_with_write_and_no_vmm_socket_names_the_key(
+    state_root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Decision CH20: the unit names `vmm.sock` in `CAREGIVER_VMM_SOCKET`.
+    With no value the verb would leave the VMs of the family running, so it
+    stops before the first step."""
+    litellm = FakeLiteLLMKeys()
+    code = main(
+        ["delete", "chat", "--state-root", str(state_root), "--write"],
+        litellm=litellm,
+        environ={},
+    )
+    assert code == EXIT_CONFIG
+    assert "CAREGIVER_VMM_SOCKET" in capsys.readouterr().err
+    assert litellm.deleted == []
 
 
 class KeyStays(FakeLiteLLMKeys):
@@ -423,19 +338,11 @@ class KeyStays(FakeLiteLLMKeys):
         raise LiteLLMError(f"key delete failed for {family!r}: HTTP 500")
 
 
-class NoDestroy(FakeDriver):
-    """A driver whose destroy fails."""
-
-    def destroy(self, name: str, allow: tuple[str, ...]) -> None:
-        raise DriverError(f"sbx rm {name} failed: the daemon does not answer")
-
-
-def _applied(registry_root: Path, state_root: Path, driver: FakeDriver) -> None:
-    """One family with its credentials and one sandbox."""
-    words = ["apply-once", str(registry_root), "chat", "--image", "sha256:x"]
+def _applied(registry_root: Path, state_root: Path) -> None:
+    """One family with its credentials."""
+    words = ["apply-once", str(registry_root), "chat"]
     code = main(
         [*words, "--state-root", str(state_root), "--write"],
-        driver=driver,
         litellm=FakeLiteLLMKeys(),
     )
     assert code == EXIT_OK
@@ -445,39 +352,39 @@ def test_delete_says_a_key_that_stays_in_one_line(
     registry_root: Path, state_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Invariant 13: the key is first. The delete stops there, and the verb
-    says why in one line. The credential file and the sandbox stay."""
-    driver = FakeDriver()
-    _applied(registry_root, state_root, driver)
+    says why in one line. The credential file and the sessions stay."""
+    vmm = FakeVmm()
+    _applied(registry_root, state_root)
     capsys.readouterr()
 
     code = main(
         ["delete", "chat", "--state-root", str(state_root), "--write"],
-        driver=driver,
+        vmm=vmm,
         litellm=KeyStays(),
     )
 
     assert code == EXIT_PROBLEM
     assert capsys.readouterr().err.strip() == "caregiver: key delete failed for 'chat': HTTP 500"
     assert paths.creds_path(state_root, "chat").exists()
-    assert "destroy" not in driver.ops()
+    assert vmm.dropped == []
 
 
-def test_delete_says_a_destroy_that_fails_in_one_line(
+def test_delete_says_a_drop_that_fails_in_one_line(
     registry_root: Path, state_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The credentials are gone when the destroy fails, and the state of
-    the family stays. A second run of the verb ends the work."""
-    _applied(registry_root, state_root, FakeDriver())
+    """The credentials are gone when the drop fails, and the state of the
+    family stays. A second run of the verb ends the work."""
+    _applied(registry_root, state_root)
     capsys.readouterr()
     delete = ["delete", "chat", "--state-root", str(state_root), "--write"]
 
-    code = main(delete, driver=NoDestroy(), litellm=FakeLiteLLMKeys())
+    code = main(delete, vmm=FakeVmm(refuse=UNREACHABLE), litellm=FakeLiteLLMKeys())
 
     assert code == EXIT_PROBLEM
     assert capsys.readouterr().err.strip() == (
-        "caregiver: sbx rm chat-s1 failed: the daemon does not answer"
+        "caregiver: unreachable: the fake vmm refused the drop of chat"
     )
     assert not paths.creds_path(state_root, "chat").exists()
     assert paths.family_dir(state_root, "chat").exists()
-    assert main(delete, driver=FakeDriver(), litellm=FakeLiteLLMKeys()) == EXIT_OK
+    assert main(delete, vmm=FakeVmm(), litellm=FakeLiteLLMKeys()) == EXIT_OK
     assert not paths.family_dir(state_root, "chat").exists()

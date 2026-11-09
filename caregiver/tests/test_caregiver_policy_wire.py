@@ -17,8 +17,6 @@ from caregiver.apply import ApplyResult, apply_once
 from caregiver.cli import main
 from caregiver.credentials import read_creds, token_sha256
 from caregiver.delete import delete_family
-from caregiver.driver import FakeDriver
-from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.policy_fleet import FakeChecker, FleetPolicy, PolicyTarget, TargetFile
 from caregiver.reconcile import Actors, ReconcileResult, reconcile_family
@@ -33,14 +31,12 @@ from caregiver.rotate import (
     valid_family,
 )
 from caregiver.steps import WHOLE_FILE
-from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import FENCE_ENV, FENCES, expire_overlap, toml_text, write_registry
+from caregiver_helpers import FENCE_ENV, FENCES, FakeVmm, expire_overlap, toml_text, write_registry
 
 from caregiver import paths
 
 FAMILY = "chat"
-IMAGE = "sha256:deadbeef"
 SERVER = "kagi"
 REVISION = "reg-policy-wire"
 
@@ -54,7 +50,6 @@ class Fleet:
     state_root: Path
     config_dir: Path
     checker: FakeChecker = field(default_factory=FakeChecker)
-    driver: FakeDriver = field(default_factory=FakeDriver)
     litellm: FakeLiteLLMKeys = field(default_factory=FakeLiteLLMKeys)
 
     @property
@@ -62,19 +57,11 @@ class Fleet:
         return FleetPolicy(PolicyTarget(self.config_dir), self.checker)
 
     def run(self) -> ReconcileResult:
-        actors = Actors(
-            self.driver,
-            self.litellm,
-            FakeSwitchClient(),
-            EgressConfig(),
-            FakeUnits(),
-            self.policy,
-        )
+        actors = Actors(self.litellm, FakeUnits(), self.policy)
         return reconcile_family(
             load_registry(self.registry_root),
             FAMILY,
             state_root=self.state_root,
-            image=IMAGE,
             actors=actors,
         )
 
@@ -153,7 +140,7 @@ def test_a_family_the_assembler_leaves_out_reads_invalid(fleet: Fleet) -> None:
     assert result.status.state is FamilyState.INVALID
     assert result.status.validation is not None
     assert result.status.validation.first_error == f"{WHOLE_FILE}: the app {FAMILY} is refused"
-    assert fleet.driver.ops() == ()
+    assert result.ran == ()
 
 
 def test_status_prints_the_line_of_the_assembly(
@@ -231,8 +218,6 @@ def test_a_refused_apply_once_keeps_the_last_good_egress_file(fleet: Fleet) -> N
             state_root=fleet.state_root,
             fences=FENCES,
             policy=fleet.policy,
-            image=IMAGE,
-            driver=fleet.driver,
             litellm=fleet.litellm,
         )
 
@@ -334,7 +319,7 @@ def test_a_delete_removes_the_fragment_and_the_app_table(fleet: Fleet) -> None:
     left = delete_family(
         FAMILY,
         state_root=fleet.state_root,
-        driver=fleet.driver,
+        vmm=FakeVmm(),
         litellm=fleet.litellm,
         policy=fleet.policy,
     )
@@ -349,7 +334,7 @@ def test_a_delete_whose_assembly_fails_says_why(fleet: Fleet) -> None:
     left = delete_family(
         FAMILY,
         state_root=fleet.state_root,
-        driver=fleet.driver,
+        vmm=FakeVmm(),
         litellm=fleet.litellm,
         policy=fleet.policy,
     )
@@ -365,8 +350,6 @@ def test_reconcile_once_writes_policy_toml_into_the_named_directory(
         "reconcile-once",
         str(fleet.registry_root),
         FAMILY,
-        "--image",
-        IMAGE,
         "--state-root",
         str(fleet.state_root),
         "--chaperone-config-dir",
@@ -375,9 +358,7 @@ def test_reconcile_once_writes_policy_toml_into_the_named_directory(
     ]
     code = main(
         argv,
-        driver=fleet.driver,
         litellm=fleet.litellm,
-        switch=FakeSwitchClient(),
         units=FakeUnits(),
         checker=fleet.checker,
         environ=FENCE_ENV,
@@ -391,17 +372,13 @@ def test_a_run_with_a_state_root_of_its_own_writes_inside_that_root(fleet: Fleet
         "reconcile-once",
         str(fleet.registry_root),
         FAMILY,
-        "--image",
-        IMAGE,
         "--state-root",
         str(fleet.state_root),
         "--write",
     ]
     main(
         argv,
-        driver=fleet.driver,
         litellm=fleet.litellm,
-        switch=FakeSwitchClient(),
         units=FakeUnits(),
         checker=fleet.checker,
         environ=FENCE_ENV,

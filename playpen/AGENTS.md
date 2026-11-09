@@ -90,9 +90,9 @@ CI builds each flavor on each code change (`bin/playpen-ci`).
    row bundles those.
 5. `bin/playpen-verify` changes nothing and reaches nothing outside the
    host. It asks the registry for each digest in `images.env`.
-6. Keep the flavor lists equal: the flavors in `bin/playpen-build` and
-   `SBX_FLAVORS` in `caregiver/images.py`, the members of `SandboxFlavor`
-   with an sbx image. `bin/playpen-ci` lists those, then the flavors that
+6. Keep the flavor lists equal: the flavors in `bin/playpen-build` are
+   the members of `SandboxFlavor` with an sbx image. `bin/playpen-ci` lists
+   those, then the flavors that
    ship as a root disk only (today `coding`). The targets of
    `Dockerfile` are the `bin/playpen-ci` list.
 7. `bin/tests/test_playpen_release.py` runs both scripts against a stub

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Final
@@ -22,12 +21,8 @@ from agent_family import FamilyFile, Index, Kind, duration_s
 from . import paths
 from .config_mount import RuntimeConfig, config_mount_matches, write_config_mount
 from .credentials import Credentials, mint_token, read_creds, token_sha256, write_creds
-from .driver import DriverError, SandboxDriver
-from .egress import EgressConfig
-from .faults import FaultEntry, read_fault_file, rescope_by_fleet
-from .lan import Port, url
+from .faults import FaultEntry, read_fault_file
 from .litellm_keys import LiteLLMError, LiteLLMKeys
-from .playpen_env import write_playpen_env
 from .policy_file import build_app
 from .policy_fleet import FleetPolicy, Standing, land_app, land_digests
 from .status import CredentialsBlock, LimitsBlock, RotationState, now_rfc3339
@@ -59,25 +54,18 @@ FAULT_SOURCES: Final = ("attendance", "pep")
 _ONE_DIGEST: Final = token_sha256("")
 
 
-def read_faults(
-    state_root: Path, family_name: str, live_sandboxes: tuple[str, ...] = ()
-) -> tuple[FaultEntry, ...]:
+def read_faults(state_root: Path, family_name: str) -> tuple[FaultEntry, ...]:
     """Contract 05 §3.3.1: fold both writers' open faults. A missing file
     (no fault raised) or an unreadable one contributes nothing —
     `read_fault_file` already treats both as "no fault", never as a reason
-    to stop.
-
-    `live_sandboxes` is the family's fleet, which decides `blocks_turns` for
-    the one code §3.3 states fleet-wide (`faults.rescope_by_fleet`). A caller
-    that passes none gets the per-code value, which is the conservative
-    reading: a fault that stops turns rather than one that does not."""
+    to stop. Each fault keeps the `blocks_turns` of its code."""
     collected: list[FaultEntry] = []
     for source in FAULT_SOURCES:
         fault_file = read_fault_file(paths.fault_path(state_root, source, family_name), source)
         if fault_file is not None:
             collected.extend(fault_file.faults)
 
-    return rescope_by_fleet(tuple(collected), live_sandboxes)
+    return tuple(collected)
 
 
 class KeyRefresh(StrEnum):
@@ -247,72 +235,6 @@ def write_config(
 
     write_config_mount(target, instructions=instructions, skills=skills, runtime=runtime)
     return True
-
-
-def publish_playpen_env(state_root: Path, family: FamilyFile, sandbox: str) -> None:
-    """Rewrite one sandbox's `supervisor.env` (contract 03 §7.1).
-
-    A create writes it once. This puts it back for a sandbox an earlier
-    pass created and then left: a sandbox whose file is missing publishes
-    no path, and `attendance` refuses every turn on it with
-    `sandbox_unavailable` rather than dialling a playpen that would
-    answer `fatal` (contract 05 §4.1.1 rule 4). Nothing else can repair it,
-    because `caregiver` is the file's only writer."""
-    write_playpen_env(
-        paths.playpen_env_path(state_root, family.name, sandbox),
-        state_root=state_root,
-        family=family.name,
-        sandbox=sandbox,
-        pep_url=url(Port.PEP),
-        litellm_base_url=url(Port.LITELLM),
-        index_root=paths.index_root(family),
-    )
-
-
-@dataclass(frozen=True)
-class LiveSandbox:
-    """One sandbox an egress edit lands on, and the rows it carries now.
-
-    Two sandboxes of one family can carry different rows: a replacement
-    created in an earlier pass already holds the new list. Diffing each
-    against its own rows is what keeps `sbx policy rm` from being asked
-    for a row that is not there."""
-
-    id: str
-    allow: tuple[str, ...]
-
-
-def apply_egress(
-    family: FamilyFile,
-    live: tuple[LiveSandbox, ...],
-    driver: SandboxDriver,
-    egress: EgressConfig,
-) -> tuple[FaultEntry, ...]:
-    """Contract 05 §3.4's `set_egress`, on every live sandbox.
-
-    **Removals first, across every sandbox.** An interruption between the
-    two halves then leaves LESS reach than the target, never more
-    (invariant 9). Both plane endpoints survive every edit: they are
-    `caregiver`'s own config and no family file may name them (contract 01
-    §3.7 rules 4 and 6)."""
-    wanted = egress.allowed(family.egress)
-    try:
-        for one in live:
-            driver.remove_egress(one.id, tuple(row for row in one.allow if row not in wanted))
-
-        for one in live:
-            driver.set_egress(one.id, tuple(row for row in wanted if row not in one.allow))
-    except DriverError as exc:
-        fault = FaultEntry(
-            code="egress_assert_failed",
-            blocks_turns=True,
-            since=now_rfc3339(),
-            source="caregiver",
-            detail={"message": str(exc)},
-        )
-        return (fault,)
-
-    return ()
 
 
 def limits_for(family: FamilyFile) -> LimitsBlock:

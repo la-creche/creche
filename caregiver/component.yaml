@@ -21,11 +21,12 @@ provides:
   # Contract 01: the family.yaml and mcp/<name>/server.yaml schemas.
   # Minor 17 adds the flavor `coding` (CH79 rule 1).
   - { contract: family-file, major: 0, minor: 17 }
-  # Contract 05: per-family status, sandbox state, switch-sandbox.
+  # Contract 05: per-family status. caregiver makes no switch call and
+  # creates no sandbox (decisions CH1, CH21-1).
   - { contract: manager-status, major: 0, minor: 17 }
-requires:
-  # Contract 02: it asks attendance to drain a session before a replacement.
-  - { contract: session-api, major: 0, min_minor: 12 }
+# Contract 02 is not required: the switch call to attendance is gone
+# (decision CH21-1), so caregiver calls no route of attendance.
+requires: []
 depends_on: [chaperone]
 verify:
   # --env-file: root's executor hands the hook none of the unit's
