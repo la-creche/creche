@@ -39,6 +39,8 @@ class FakeVmm:
     )
     #: An open of a session with a gate here waits for the gate.
     open_gates: dict[str, asyncio.Event] = field(default_factory=dict[str, asyncio.Event])
+    #: A list of a family with a gate here waits for the gate.
+    list_gates: dict[str, asyncio.Event] = field(default_factory=dict[str, asyncio.Event])
     #: The sessions whose stream has no facade on its far side: nothing
     #: answers, the handshake included.
     mute: set[str] = field(default_factory=set[str])
@@ -68,6 +70,11 @@ class FakeVmm:
 
     async def list_page(self, query: ListSessions) -> SessionPage:
         self.lists.append(query)
+        gate = self.list_gates.get(query.family.root)
+
+        if gate is not None:
+            await gate.wait()
+
         self._refused("list")
         rows = [
             row

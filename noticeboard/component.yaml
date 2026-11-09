@@ -20,7 +20,7 @@ install:
 provides: []
 requires:
   # Contract 02: it reads the view of each family's sessions.
-  - { contract: session-api, major: 0, min_minor: 12 }
+  - { contract: session-api, major: 0, min_minor: 14 }
   # Contract 05: it reads the per-family status document.
   - { contract: manager-status, major: 0, min_minor: 17 }
   # Contract 04: it reads the audit record.

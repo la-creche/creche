@@ -110,7 +110,7 @@ async def run_job(
     try:
         return await _on_session(vmm, plan, session)
     finally:
-        await _drop(vmm, plan.family, session)
+        await drop_job_session(vmm, plan.family, session)
 
 
 async def _on_session(vmm: Vmm, plan: JobPlan, session: str) -> JobEnd:
@@ -132,8 +132,8 @@ async def _on_session(vmm: Vmm, plan: JobPlan, session: str) -> JobEnd:
         await link.close()
 
 
-async def _drop(vmm: Vmm, family: str, session: str) -> None:
-    """Drop the session of the job (decision CH21-2). A failed drop leaves
+async def drop_job_session(vmm: Vmm, family: str, session: str) -> None:
+    """Drop the session of a job (decision CH21-2). A failed drop leaves
     the row, and the log names it."""
     try:
         await vmm.drop(family, session)

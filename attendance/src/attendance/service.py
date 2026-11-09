@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Final
 
 from creche_wire import (
     Auto,
@@ -28,8 +28,11 @@ from creche_wire import (
     Dispatch,
     DispatchChain,
     DispatchTrigger,
+    DoorOrigin,
     FamilyName,
     JobId,
+    ListCursor,
+    ListSessions,
     SessionOrigin,
     Timer,
     TimerTrigger,
@@ -38,11 +41,12 @@ from creche_wire import (
     WebhookName,
     WebhookTrigger,
 )
+from creche_wire.routes import DROP_CLIENT_TIMEOUT_S
 from starlette.websockets import WebSocket
 
 from . import acp_door, acp_view, dispatch, jobs, outcomes
 from .acp_door import DoorPrompts
-from .acp_jobs import CANCEL_WAIT_S, JobEnd, JobPlan, run_job
+from .acp_jobs import CANCEL_WAIT_S, JobEnd, JobPlan, drop_job_session, run_job
 from .atomic import read_json
 from .auth import Access, Principal, check_access, check_family_kind
 from .clock import now
@@ -57,12 +61,19 @@ from .paths import outcome_file, sandbox_sessions_mount
 from .queueing import MAX_QUEUED_TURNS, JobQueue
 from .requests import DelegateRequest, DispatchRequest, JobQuery, TriggerRequest
 from .tasks import report_failure
-from .vmm import Vmm
+from .vmm import Vmm, VmmRefused
 
 _LOG = logging.getLogger("attendance")
 
 # How often the upkeep loop tries the head of each dispatch queue again.
 PUMP_INTERVAL_S = 1.0
+
+#: The most that the drop of the job rows at a start may take, in seconds.
+#: Past it the start goes on, and the rows that are left stay for the next
+#: start (see the CONTRACT-QUESTION of `drop_job_rows`). It is the timeout
+#: of one vmm call, so a vmm that hangs keeps the sockets of attendance
+#: unbound for one call at most, whatever the count of families.
+JOB_ROWS_BOUND_S: Final = DROP_CLIENT_TIMEOUT_S
 
 #: The `sandbox` of an outcome record. A job runs in a VM of its own
 #: session, which no sandbox id names (decision CH83 rule 3).
@@ -107,6 +118,66 @@ class SessionService:
         """
         for family in self._status.families():
             self._faults.clear_all(family)
+
+    async def drop_job_rows(self) -> None:
+        """Drop each job row of each family, before the first request
+        (contract 02 §6 rule 5, decision CH83 rule 5).
+
+        No job outlives a restart (§13.3), so a row whose origin is
+        `delegate` or `auto` names a job that is over. Its drop also leaves
+        no transcript of a thin job on a session disk (§12 rule 6). A `door`
+        row stays. The drops run at once, so the stops of their VMs overlap.
+
+        CONTRACT-QUESTION: decision CH83 rule 5 says "at start" and names
+        no step for a vmm that does not answer then. The reading here: a
+        list or a drop that the vmm refuses leaves the rows, and the log
+        names the family. The families run at once, and the whole step
+        ends within `JOB_ROWS_BOUND_S`. Past it the rows that are left
+        stay, and the log names each family whose step did not end. The
+        next start tries again.
+        """
+        families = self._status.families()
+        pending = set(families)
+
+        async def drop_family(family: str) -> None:
+            try:
+                sessions = await self._job_rows(family)
+            except VmmRefused as error:
+                _LOG.warning("family=%s the job rows stay: %s", family, error)
+                sessions = []
+
+            await asyncio.gather(
+                *(drop_job_session(self._vmm, family, session) for session in sessions)
+            )
+            pending.discard(family)
+
+        try:
+            async with asyncio.timeout(JOB_ROWS_BOUND_S):
+                await asyncio.gather(*(drop_family(family) for family in families))
+        except TimeoutError:
+            _LOG.warning(
+                "families=%s the job rows may stay: the drop passed %g s",
+                ",".join(sorted(pending)),
+                JOB_ROWS_BOUND_S,
+            )
+
+    async def _job_rows(self, family: str) -> list[str]:
+        """The id of each row of the family whose origin is not `door`. It
+        reads every page before a drop, so no drop moves a cursor."""
+        rows: list[str] = []
+        cursor: ListCursor | None = None
+
+        while True:
+            query = ListSessions(cursor=cursor, cwd=None, family=FamilyName(family))
+            page = await self._vmm.list_page(query)
+            rows.extend(
+                row.id.root for row in page.rows if not isinstance(row.origin.root, DoorOrigin)
+            )
+
+            if page.next is None:
+                return rows
+
+            cursor = page.next
 
     def start_upkeep(self) -> None:
         """Begin the queue pump. Call it inside the event loop: it owns a task."""

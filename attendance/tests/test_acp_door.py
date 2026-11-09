@@ -204,6 +204,55 @@ async def test_a_bad_session_new_is_invalid_params(door: Door, params: dict[str,
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("method", ["session/new", "session/list", "session/prompt"])
+async def test_a_creche_meta_key_is_invalid_params(door: Door, method: str) -> None:
+    """Contract 02 §5.1 rule 5: a door client sets no creche key. The
+    request reaches no vmm route and no stream (decision CH21-4)."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        meta = {"creche/job": "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"}
+        params: dict[str, Any] = {
+            "sessionId": session,
+            "cwd": CWD,
+            "mcpServers": [],
+            "prompt": [],
+            "_meta": meta,
+        }
+        answer = await ask(connection, 6, method, **params)
+
+        assert answer["error"]["code"] == RPC_INVALID_PARAMS
+        assert door.service.busy(Principal.NOTICEBOARD)["prompts_in_flight"] == 0
+
+    assert len(door.vmm.creates) == 1
+    assert door.vmm.lists == []
+    assert door.vmm.opened == []
+
+
+@pytest.mark.slow
+async def test_a_creche_meta_notification_reaches_no_stream(door: Door) -> None:
+    """A refused notification gets no answer, so the next answer is the
+    next request's."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        cancel: dict[str, Any] = {"sessionId": session, "_meta": {"creche/trigger": {}}}
+        message: dict[str, Any] = {"jsonrpc": "2.0", "method": "session/cancel", "params": cancel}
+        await connection.send(json.dumps(message))
+        answer = await ask(connection, 8, "initialize")
+
+    assert answer["result"] == INITIALIZE_RESPONSE
+    assert door.vmm.opened == []
+
+
+@pytest.mark.slow
+async def test_another_meta_key_passes(door: Door) -> None:
+    async with door.door_acp() as connection:
+        meta = {"agmente/draft": True, "crechex": 1}
+        answer = await ask(connection, 3, "session/new", cwd=CWD, mcpServers=[], _meta=meta)
+
+    assert is_session_id(answer["result"]["sessionId"])
+
+
+@pytest.mark.slow
 async def test_session_list_pages_the_host_list(door: Door) -> None:
     """Contract 02 §5.4: newest created first, the vmm cursor as a string."""
     async with door.door_acp() as connection:

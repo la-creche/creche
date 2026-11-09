@@ -73,6 +73,7 @@ async def serve(config: Config, tokens: TokenBook) -> None:
     vmm = HttpVmm.over_socket(config.vmm_socket, faults)
     service = SessionService(config, vmm, faults)
     service.start()
+    await service.drop_job_rows()
     service.start_upkeep()
     socket_app = build_app(service, tokens, Listener.SOCKET)
     lan_app = build_app(service, tokens, Listener.LAN)
