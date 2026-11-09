@@ -52,8 +52,8 @@ use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
 use creche_wire::{
-    DropError, DropRoute, DropSession, DropTarget, Dropped, FacadeState, FamilyName, OpenAcp,
-    PerFlavor, SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
+    DropError, DropRoute, DropSession, DropTarget, Dropped, FacadeState, FamilyName, FamilyShape,
+    OpenAcp, PerFlavor, SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
 };
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::watch;
@@ -63,6 +63,12 @@ const B: &str = "1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d";
 const C: &str = "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f";
 const CH: &str = "/opt/ch/cloud-hypervisor";
 const SHAPE: &str = r#"{"cpus":1,"flavor":"base","memory_mib":512}"#;
+
+/// The shape of `SHAPE`, as the vmm reads it from `shape.json`.
+#[cfg(test)]
+fn shape() -> FamilyShape {
+    serde_json::from_str(SHAPE).expect("SHAPE is a shape")
+}
 const READY: &str =
     r#"{"facade":{"running":{"last_turn_end":null,"pid":42,"starts":1,"turn_running":false}}}"#;
 const TURN: &str =
@@ -582,7 +588,7 @@ impl Test {
     fn key(&self) -> SnapshotKey {
         let images = ImageStore::new(&self.state, PathBuf::from("/usr/bin/zstd"));
         let empty = images.check(EMPTY.parse().unwrap()).unwrap();
-        SnapshotKey::current(self.ch, &empty, &empty, &empty)
+        SnapshotKey::current(self.ch, &empty, &empty, &empty, shape())
     }
 
     /// Makes generation 1 of row `index` with `key`, or with a key of
@@ -949,7 +955,7 @@ fn every_start_names_the_initramfs() {
     let images = ImageStore::new(&test.state, PathBuf::from("/usr/bin/zstd"));
     let empty = images.check(EMPTY.parse().unwrap()).unwrap();
     let checked = images.check(initramfs).unwrap();
-    let key = SnapshotKey::current(test.ch, &empty, &checked, &empty);
+    let key = SnapshotKey::current(test.ch, &empty, &checked, &empty, shape());
     test.snapshot(0, Some(&key));
     test.reply(0, "Paused", &[]);
     assert_eq!(test.start(0), Ok(()));

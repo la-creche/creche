@@ -74,6 +74,12 @@ The second file has the table of the three vmm crates.
   checked initramfs, and the key file holds its digest as a string. A
   key file with `null` there holds no key, so it drops as unreadable.
   "Disk digest" of CH7-6 means the root disk only (CH62 rule 24).
+- Decision CH82 rule 7 (plan PR CP3, `key.rs`): the key also names the
+  family shape, the vCPUs, the guest RAM and the flavor of
+  `config/shape.json`. A running VM keeps its shape until it sleeps or
+  stops. A restore with another shape drops the snapshot, and the VM
+  cold-boots, as a disk digest change does. The key file holds the shape
+  as two numbers and a flavor name.
 - Decision CH44 rule 6 (PR D11, `claim.rs`): a failed make or sync of
   the `consumed` mark leaves no durable mark. So the claim renames
   `snapshots/<n>` to `snapshots/<n>.retired`, and the caller cold-boots

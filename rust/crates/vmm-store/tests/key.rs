@@ -1,6 +1,7 @@
 //! A snapshot keeps only while its key equals the current key: the CH rev,
-//! the kernel digest, the initramfs digest, the root disk digest and the
-//! guest init protocol (decisions CH7-6, CH61 rule 3, CH62 rule 24). The vmm
+//! the kernel digest, the initramfs digest, the root disk digest, the
+//! guest init protocol and the family shape (decisions CH7-6, CH61 rule 3,
+//! CH62 rule 24, CH82 rule 7). The vmm
 //! accepts its `cloud-hypervisor` only when
 //! `--version` reports `CH_VERSION` (decision CH36 with gap G10).
 //!
@@ -20,13 +21,16 @@ use creche_vmm_store::key::{
     check_newest, write_key,
 };
 use creche_vmm_store::layout::{SessionDir, SnapshotGeneration, StateRoot};
-use creche_wire::{GUEST_INIT_PROTOCOL, SessionId};
+use creche_wire::{FamilyShape, GUEST_INIT_PROTOCOL, SessionId};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 const ID: &str = "0f8e2a4c-1b3d-4e5f-8a9b-0c1d2e3f4a5b";
 const TIMEOUT: Duration = Duration::from_secs(10);
 const FIRST: SnapshotGeneration = SnapshotGeneration(1);
+
+/// The family VM shape of each key but the ones a test changes.
+const SHAPE: &str = r#"{"cpus":1,"flavor":"base","memory_mib":256}"#;
 
 /// A state root with three imported images and one session, in a new temp
 /// dir, removed on drop.
@@ -82,10 +86,23 @@ impl Temp {
 
     /// The key of a VM with images `kernel`, `initramfs` and `root_disk`.
     fn key_with(&self, kernel: usize, initramfs: usize, root_disk: usize) -> SnapshotKey {
+        self.key_of(kernel, initramfs, root_disk, SHAPE)
+    }
+
+    /// The key of a VM with images `kernel`, `initramfs` and `root_disk`
+    /// and the shape `shape`.
+    fn key_of(
+        &self,
+        kernel: usize,
+        initramfs: usize,
+        root_disk: usize,
+        shape: &str,
+    ) -> SnapshotKey {
         let ch = self.ch("v54.0.0").expect("the version check");
         let [kernel, initramfs, root_disk] =
             [kernel, initramfs, root_disk].map(|i| &self.images[i]);
-        SnapshotKey::current(ch, kernel, initramfs, root_disk)
+        let shape: FamilyShape = serde_json::from_str(shape).expect("a shape");
+        SnapshotKey::current(ch, kernel, initramfs, root_disk, shape)
     }
 
     /// Makes a generation dir with one file and writes `key` into it.
@@ -246,6 +263,41 @@ fn another_guest_init_protocol_drops_the_snapshot() {
     temp.snapshot(FIRST, &temp.key(0, 1));
     let next = GUEST_INIT_PROTOCOL.saturating_add(1);
     temp.edit_key(FIRST, "guest_init_protocol", Value::from(next));
+    temp.assert_dropped(DropReason::Differs);
+}
+
+/// A running VM keeps its shape until it sleeps or stops. A restore with
+/// another vCPU count, guest RAM or flavor drops the snapshot and
+/// cold-boots, as a disk digest change does (decision CH82 rule 7).
+#[test]
+fn another_shape_drops_the_snapshot() {
+    let temp = Temp::new("shape");
+    let others = [
+        r#"{"cpus":2,"flavor":"base","memory_mib":256}"#,
+        r#"{"cpus":1,"flavor":"base","memory_mib":512}"#,
+        r#"{"cpus":1,"flavor":"python","memory_mib":256}"#,
+    ];
+    for other in others {
+        temp.snapshot(FIRST, &temp.key_of(0, 2, 1, other));
+        temp.assert_dropped(DropReason::Differs);
+    }
+    temp.snapshot(FIRST, &temp.key_of(0, 2, 1, SHAPE));
+    let check = check_newest(&temp.session, &temp.key(0, 1)).expect("the check");
+    assert!(matches!(check, KeyCheck::Keyed(_)), "{check:?}");
+}
+
+/// The key file holds the shape as numbers and a flavor name, so a key
+/// from another release reads and then differs (decision CH82 rule 7).
+#[test]
+fn the_key_names_the_shape() {
+    let temp = Temp::new("shape-fields");
+    temp.snapshot(FIRST, &temp.key(0, 1));
+    let text = fs::read_to_string(temp.session.snapshot_key(FIRST)).expect("the key");
+    let key: Value = serde_json::from_str(&text).expect("a JSON key");
+    assert_eq!(key["cpus"], Value::from(1));
+    assert_eq!(key["memory_mib"], Value::from(256));
+    assert_eq!(key["flavor"], Value::from("base"));
+    temp.edit_key(FIRST, "cpus", Value::from(4));
     temp.assert_dropped(DropReason::Differs);
 }
 

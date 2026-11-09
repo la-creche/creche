@@ -270,8 +270,9 @@ struct Listeners {
 enum Slot<P> {
     /// A start passed admission and holds this much guest RAM.
     Starting(u64, PoolSlot),
-    /// The VM runs, or its stop failed (decision CH50 rule 4).
-    Running(Vm<P>),
+    /// The VM runs, or its stop failed (decision CH50 rule 4). The box
+    /// keeps the enum small.
+    Running(Box<Vm<P>>),
     /// Admission evicts the VM, which holds this much guest RAM.
     Evicting(u64, PoolSlot),
     /// The `StopVm` hook stops the VM, which holds this much guest RAM.
@@ -423,7 +424,7 @@ impl<P: VmProcess> Pending<P> {
                 listeners: Some(Box::new(listeners)),
                 last_use: Instant::now(),
             };
-            lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
+            lock(&self.table).insert(self.id.clone(), Slot::Running(Box::new(vm)));
             self.done = true;
         }
     }
@@ -452,7 +453,7 @@ impl<P: VmProcess> Drop for Pending<P> {
                     listeners: None,
                     last_use: Instant::now(),
                 };
-                table.insert(self.id.clone(), Slot::Running(vm));
+                table.insert(self.id.clone(), Slot::Running(Box::new(vm)));
             }
             None => {
                 release(&self.in_use, &self.root, &self.id);
@@ -476,7 +477,7 @@ impl<P: VmProcess> Eviction<P> {
     /// Puts the VM back in the table as it is.
     fn put_back(mut self) {
         if let Some(vm) = self.vm.take() {
-            lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
+            lock(&self.table).insert(self.id.clone(), Slot::Running(Box::new(vm)));
         }
     }
 
@@ -504,7 +505,7 @@ impl<P: VmProcess> Drop for Eviction<P> {
             let _ = vm.process.kill();
             vm.link = None;
             vm.listeners = None;
-            lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
+            lock(&self.table).insert(self.id.clone(), Slot::Running(Box::new(vm)));
         }
     }
 }
@@ -697,7 +698,7 @@ fn take_out<P: VmProcess>(
     Some(Eviction {
         table: Arc::clone(table),
         id: session,
-        vm: Some(vm),
+        vm: Some(*vm),
     })
 }
 
@@ -1790,7 +1791,7 @@ fn launch<L: Launcher>(
     let serial =
         SerialLog::fresh(&session).map_err(|error| format!("{error}: {}", error.source))?;
     let limits = VmLimits::from(shape);
-    let key = SnapshotKey::current(config.ch_version, &kernel, &initramfs, &root);
+    let key = SnapshotKey::current(config.ch_version, &kernel, &initramfs, &root, shape);
     // The initramfs of the ruleset. A snapshot with the current key names
     // this same `store/<sha256>` file, so a restore reads it as a boot
     // does (decision CH61 rule 3).
@@ -2049,7 +2050,7 @@ mod tests {
     use creche_vmm_store::key::{SnapshotKey, check_cloud_hypervisor, write_key};
     use creche_vmm_store::layout::{SnapshotGeneration, StateRoot};
     use creche_vmm_store::retention::InUse;
-    use creche_wire::SessionId;
+    use creche_wire::{FamilyShape, SessionId};
 
     use super::claim_newest;
 
@@ -2074,7 +2075,9 @@ mod tests {
             "/tests/fixtures/cloud-hypervisor"
         );
         let ch = check_cloud_hypervisor(stub.as_ref(), Duration::from_secs(10)).unwrap();
-        let key = SnapshotKey::current(ch, &empty, &empty, &empty);
+        let shape: FamilyShape =
+            serde_json::from_str(r#"{"cpus":1,"flavor":"base","memory_mib":256}"#).unwrap();
+        let key = SnapshotKey::current(ch, &empty, &empty, &empty, shape);
         let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
         let session = state.session(&id);
         let generation = SnapshotGeneration(1);

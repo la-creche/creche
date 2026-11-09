@@ -24,6 +24,9 @@ use creche_wire::{FamilyShape, SessionId};
 
 const ID: &str = "0123abcd-0000-4000-8000-00000000c7c7";
 
+/// The family VM shape of each test: 2 vCPUs and 2048 MiB.
+const SHAPE: &str = r#"{"cpus":2,"flavor":"base","memory_mib":2048}"#;
+
 /// The SHA-256 of the bytes `kernel`, `initramfs` and `disk`, the three
 /// image sources.
 const KERNEL_DIGEST: &str = "6923dd1bc0460082c5d55a831908c24a282860b7f1cd6c2b79cf1bc8857c639c";
@@ -151,7 +154,14 @@ impl Temp {
             .join("../vmm-store/tests/fixtures/cloud-hypervisor");
         std::os::unix::fs::symlink(stub, &ch).unwrap();
         let checked = check_cloud_hypervisor(&ch, Duration::from_secs(10)).unwrap();
-        let key = SnapshotKey::current(checked, &self.kernel, &self.initramfs, &self.root_disk);
+        let shape: FamilyShape = serde_json::from_str(SHAPE).unwrap();
+        let key = SnapshotKey::current(
+            checked,
+            &self.kernel,
+            &self.initramfs,
+            &self.root_disk,
+            shape,
+        );
 
         let session = self.state.session(&id());
         let generation = SnapshotGeneration(1);
@@ -187,8 +197,7 @@ fn id() -> SessionId {
 
 #[cfg(test)]
 fn limits() -> VmLimits {
-    let text = r#"{"cpus":2,"flavor":"base","memory_mib":2048}"#;
-    VmLimits::from(serde_json::from_str::<FamilyShape>(text).unwrap())
+    VmLimits::from(serde_json::from_str::<FamilyShape>(SHAPE).unwrap())
 }
 
 /// Checks the rules that every argv keeps: no network card, seccomp on,
