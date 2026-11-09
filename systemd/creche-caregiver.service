@@ -2,8 +2,9 @@
 #
 # It watches the rework registry and converges every family to its
 # family.toml: the LiteLLM key, the PEP token, the table of
-# the family in /etc/chaperone/policy.toml, the family config mount, the
-# sandbox and the trigger timers. Invariant 9 is the whole
+# the family in /etc/chaperone/policy.toml, the family config directory,
+# egress.json, repos.json and the trigger timers. It starts no VM: the vmm
+# starts one VM per session (decision CH1). Invariant 9 is the whole
 # point — "a permission change needs one action and no manual apply" — so
 # this runs as a daemon, not as a command anybody types.
 #
@@ -13,7 +14,10 @@
 # cannot wait two seconds does not have to.
 [Unit]
 Description=caregiver, the rework family manager
-After=network-online.target
+# Decision CH20: a client of vmm.sock orders after the vmm at most. No
+# Requires= and no BindsTo=: a vmm restart drops each connection, and the
+# delete of a family tries its drop again at the next look.
+After=network-online.target creche-vmm.service
 Wants=network-online.target
 # THE REWORK RESTART POLICY. Decided once, argued here, and named by the
 # other four always-on rework units (`creche-attendance`,
@@ -53,10 +57,14 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=/opt/creche
-# sbx panics without both: its state is per-user and a user manager sets
-# neither (systemd/AGENTS.md). caregiver shells out to sbx for every sandbox.
+# Every user unit carries both (systemd/AGENTS.md). timers.py writes the
+# generated timer units under XDG_CONFIG_HOME.
 Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
+# Decision CH20: vmm.sock is /run/user/<uid>/vmm/vmm.sock, the run root of
+# creche-vmm.service. %t is /run/user/<uid> in a user unit. caregiver calls
+# the vmm when it deletes a family (decision CH21-10).
+Environment=CAREGIVER_VMM_SOCKET=%t/vmm/vmm.sock
 # invariant 13: the LiteLLM master key never rides on argv, in a URL or in a
 # log line. This file is root-owned and mode 0600; the unit only names it.
 EnvironmentFile=/srv/agents/state/creche/caregiver.env
@@ -66,15 +74,6 @@ EnvironmentFile=/etc/creche/site.env
 # shared workspace venv. The release executor swaps `<install.to>` and
 # restarts this unit, so a unit that ran from anywhere else would relaunch
 # the old code after a release the ledger called a success.
-# `--attendance-socket`: `attendance` answers on its Unix socket and nowhere else
-# (its LAN listener is off), and `serve`'s default is a LAN URL. Without this
-# line every `ready` handshake is refused with ConnectError, and every sandbox
-# stays `creating` for ever: families `in_sync`, no fault, none `ready`.
-# `--image-python`: contract 01 §3.9's second flavor. `playpen/Dockerfile`
-# builds both targets and `bin/rework-cutover.sh` writes both values into
-# caregiver.env. An empty value is allowed and means this host has no python
-# image: a family with `sandbox.image: python` then raises
-# `image_flavor_unconfigured` and gets no sandbox, rather than a base one.
 # `--pep-url`: contract 05 §3.3. The PEP is the one door to every action, and
 # an unwatched PEP can be down while every family's document reads
 # `in_sync`. The reconciler probes /healthz for the
@@ -89,10 +88,7 @@ EnvironmentFile=/etc/creche/site.env
 # /opt/components/chaperone/bin/chaperone, the released tree.
 ExecStart=%h/.local/components/caregiver/bin/caregiver serve \
   /srv/agents/registry \
-  --image ${AGENT_SANDBOX_IMAGE} \
-  --image-python ${AGENT_SANDBOX_PYTHON_IMAGE} \
   --state-root /srv/agents/state/creche \
-  --attendance-socket /srv/agents/state/creche/sock/attendance.sock \
   --chaperone-config-dir /etc/chaperone \
   --pep-url ${AGENT_PEP_URL} \
   --write
@@ -102,20 +98,16 @@ Restart=always
 RestartSec=5s
 RestartSteps=5
 RestartMaxDelaySec=120s
-# SIGTERM stops the loop and lets the passes in flight finish the STEP they
-# are inside; none of them starts another one, and `serve` then returns.
-# 60 s is not enough for that: one step is `sbx create`, and a full
-# replacement measured 3.4 min on this host on 2026-09-21 (image pull
-# included; about 1 min for each family after it). caregiver's own ceiling
-# for that step is driver.py's CREATE_TIMEOUT_S, 300 s, plus the same step's
-# `sbx policy` calls at POLICY_TIMEOUT_S, 30 s each.
+# SIGTERM stops the loop and lets the passes in flight end; none starts
+# another one, and `serve` then returns. A pass makes calls of up to 30 s
+# each (LiteLLM, `chaperone check`, systemctl), and the vmm drop of a delete
+# waits up to 60 s.
 #
 # So: 360 s here, and loop.py's STOP_GRACE_S is 330 s. The service gives up
-# on the step 30 s before systemd would, which is what makes the journal say
-# which family was still inside a step rather than leaving a SIGKILL to
-# guess. A step that outruns even that is safe to cut: a `planned` sandbox
-# row is retired and its id burnt on the next start (contract 05 §4.2), and
-# every other step is idempotent and repeated by the next pass.
+# on a pass 30 s before systemd would, which is what makes the journal say
+# which family was still in flight rather than leaving a SIGKILL to guess.
+# A pass that outruns even that is safe to cut: every step is idempotent
+# and repeated by the next pass.
 KillSignal=SIGTERM
 TimeoutStopSec=360
 

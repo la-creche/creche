@@ -247,9 +247,6 @@ did not.
 - Two configs have no entry point that takes a map of variables, so no
   vector covers them: `caregiver.cli` and `agent_door_trigger.config`. The
   door reads a key file while it parses.
-- `config.playpen_env.read` takes a text. No vector covers an env file
-  that is not UTF-8. `caregiver.playpen_env.read_playpen_env` reads such a
-  file as a file with no variable.
 - No vector covers a reader of the playpen: `runtime-config.ts`, `creds.ts`
   and `mounts.ts` are TypeScript and have no Python entry point.
 - `config.site_file` has no vector for a file that another account owns. The
@@ -266,10 +263,10 @@ did not.
   3. A port or a count of seconds with a decimal digit outside ASCII.
   4. A count of seconds that no duration can hold.
   5. A URL with no scheme or with a user part.
-- Three writer surfaces hold only arguments that the caregiver gives the
-  entry point: `config.runtime_json.write`, `config.creds_json.write` and
-  `config.playpen_env.write`. The entry point checks no argument, and the
-  Rust writer takes typed values. A plain test of the Rust module
+- Two writer surfaces hold only arguments that the caregiver gives the
+  entry point: `config.runtime_json.write` and `config.creds_json.write`.
+  The entry point checks no argument, and the Rust writer takes typed
+  values. A plain test of the Rust module
   `config::mounts` holds each argument that has no vector. One example is a
   tool that the family file check refuses.
 - `config.creds_json.read` holds no file that the Python reader takes with

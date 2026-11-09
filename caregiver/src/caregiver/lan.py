@@ -1,11 +1,11 @@
-"""The host's LAN address, and the plane endpoints on it.
+"""The host's LAN address, and the plane URLs on it.
 
 The address is the site's: the unit's
 `EnvironmentFile=/etc/creche/site.env` sets `AGENT_LAN_ADDRESS`.
 The ports are this code's. There is no default address: a default would be
 somebody's host, so a missing one stops with the variable's name.
 
-    AGENT_LAN_ADDRESS=192.0.2.10   ->   endpoint(Port.PEP) == "192.0.2.10:8300"
+    AGENT_LAN_ADDRESS=192.0.2.10   ->   url(Port.PEP) == "http://192.0.2.10:8300"
 
 Read when a value is built, never at import: a module-level read would
 break every import in a test.
@@ -26,10 +26,6 @@ class Port(IntEnum):
     #: Contract 01 §3.7 rule 4.
     LITELLM = 4000
     PEP = 8300
-    #: Contract 02 §3 rule 9: `attendance`'s optional LAN port.
-    ATTENDANCE = 8350
-    #: Open WebUI: a LAN neighbour no sandbox has business reaching.
-    OPEN_WEBUI = 8181
 
 
 class ConfigError(RuntimeError):
@@ -45,11 +41,6 @@ def lan_address() -> str:
     return address
 
 
-def endpoint(port: Port) -> str:
-    """`host:port`, the form an egress allow names."""
-    return f"{lan_address()}:{int(port)}"
-
-
 def url(port: Port) -> str:
     """`http://host:port`, the form a client dials."""
-    return f"http://{endpoint(port)}"
+    return f"http://{lan_address()}:{int(port)}"

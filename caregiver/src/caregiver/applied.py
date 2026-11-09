@@ -6,7 +6,7 @@ registry holds only the new one. So the reconciler keeps the old one here,
 verbatim, and re-parses it on the next pass:
 
     families/<family>/applied/family.toml   the text that was applied
-    families/<family>/applied/applied.json  its revision, image and time
+    families/<family>/applied/applied.json  its revision and time
 
 The copy has the name of the registry file. A write writes the copy, then
 the meta file. A copy that caregiver cannot read gives nothing applied.
@@ -44,7 +44,6 @@ class AppliedState:
     """One family's live definition, as `caregiver` last applied it."""
 
     rev: str
-    image: str
     applied_at: str
     family: FamilyFile
     #: When a `/key/update` may be treated as live on every LiteLLM worker
@@ -59,7 +58,6 @@ def write_applied(
     family_name: str,
     *,
     rev: str,
-    image: str,
     family_text: str,
     model_live_at: str | None = None,
 ) -> None:
@@ -73,7 +71,6 @@ def write_applied(
 
     meta = {
         "rev": rev,
-        "image": image,
         "applied_at": now_rfc3339(),
         "model_live_at": model_live_at,
     }
@@ -102,7 +99,6 @@ def read_applied(state_root: Path, family_name: str) -> AppliedState | None:
     live_at = meta.get("model_live_at")
     return AppliedState(
         rev=str(meta.get("rev", "")),
-        image=str(meta.get("image", "")),
         applied_at=str(meta.get("applied_at", "")),
         family=family,
         model_live_at=live_at if isinstance(live_at, str) else None,

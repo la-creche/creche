@@ -1,9 +1,11 @@
-"""The family config mount (contract 01 section 6.1, contract 03 section
-7.1): `instructions.md`, `skills/<name>/SKILL.md`, `runtime.json`.
+"""The family config directory (contract 01 section 6.1):
+`instructions.md`, `skills/<name>/SKILL.md`, `runtime.json`.
 
-`caregiver` is its only writer. The directory is built fully in a staging
-copy, then swapped in with one atomic operation, so a reader never sees
-half a revision (contract 01 section 6.1 rule 1). One counter versions the
+`caregiver` is its only writer (decision CH5b). The directory is built fully
+in a staging copy, then swapped in with one atomic operation, so a reader
+never sees half a revision (contract 01 section 6.1 rule 1). The vmm reads
+it as the operator through one directory handle and handles the rename
+window (decision CH5b). One counter versions the
 whole directory; this module writes the files and leaves stamping
 `config_rev` into the status document to its caller, which is the one
 place that knows the registry revision this write came from."""
@@ -42,10 +44,9 @@ class RuntimeConfig:
     def as_json(self) -> dict[str, Any]:
         """The file's content. `system_prompt` is written only when it is not
         the default: `config_mount_matches` compares bytes, so a key every
-        family carried would rewrite every family's mount at the first pass
-        after a release, and a swapped directory leaves a running sandbox's
-        read-only mount dead until that sandbox restarts. The playpen
-        reads a missing key as the default."""
+        family carried would rewrite every family's directory at the first
+        pass after a release. The playpen reads a missing key as the
+        default."""
         body: dict[str, Any] = {
             "shell": self.shell,
             "sandbox_tools": list(self.sandbox_tools),

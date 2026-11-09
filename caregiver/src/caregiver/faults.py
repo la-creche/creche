@@ -9,7 +9,7 @@ document."""
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, cast
@@ -37,15 +37,6 @@ FAULT_CODES_BY_SOURCE: Final[dict[str, frozenset[str]]] = {
     ),
     "pep": frozenset({"grants_stale"}),
 }
-
-#: Section 3.3 defines this one code FLEET-wide -- "no sandbox reached
-#: `ready` after the retry budget" -- while `attendance` can only ever see one
-#: sandbox at a time. `rescope_by_fleet` closes that gap.
-FLEET_WIDE_CODE: Final = "sandbox_start_failed"
-
-#: The smallest fleet in which one sandbox failing still leaves another to
-#: serve. Below it, the fleet-wide code means what it says.
-FLEET_WITH_A_SPARE: Final = 2
 
 #: Contract 05 section 3.3's table, fixed per code. The reader sets this
 #: from the code, never from the untrusted file's own claim (00-common-
@@ -125,37 +116,6 @@ def read_fault_file(path: Path, source: str, *, now: datetime | None = None) -> 
             faults.append(entry)
 
     return FaultFile(family=family, source=source, written_at=written_at, faults=tuple(faults))
-
-
-def rescope_by_fleet(
-    faults: tuple[FaultEntry, ...], live_sandboxes: tuple[str, ...]
-) -> tuple[FaultEntry, ...]:
-    """Decide `blocks_turns` for the one code section 3.3 defines fleet-wide.
-
-    `sandbox_start_failed` reads "no sandbox reached `ready` after the retry
-    budget", but `attendance` raises it per SANDBOX. During a make-before-break
-    replacement (section 5) the entry names the INCOMING sandbox while the
-    outgoing one serves every turn, and section 5.3 promises the family keeps
-    serving. Taking `blocks_turns` from the code alone would stop it.
-
-    So: the fault stops turns only while it names the family's ONLY live
-    sandbox. Nothing is hidden either way -- the entry, its message and its
-    sandbox reach the status document unchanged, and the noticeboard still shows it.
-
-    Every other code keeps the value section 3.3's table fixes.
-    """
-    if len(live_sandboxes) < FLEET_WITH_A_SPARE:
-        return faults
-
-    return tuple(_downgraded(one, live_sandboxes) for one in faults)
-
-
-def _downgraded(entry: FaultEntry, live_sandboxes: tuple[str, ...]) -> FaultEntry:
-    named = entry.detail.get("sandbox")
-    if entry.code != FLEET_WIDE_CODE or named not in live_sandboxes:
-        return entry
-
-    return replace(entry, blocks_turns=False)
 
 
 def _one_fault(raw: Any, source: str, allowed: frozenset[str], *, stale: bool) -> FaultEntry | None:

@@ -28,20 +28,15 @@ from typing import Final
 
 import pytest
 from agent_family import FamilyState, revision_of
-from caregiver.driver import FakeDriver
-from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.loop import BACKOFF_FIRST_S, Backoff, LoopConfig, LoopState, look
 from caregiver.reconcile import Actors
 from caregiver.status import forget_published
-from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import FENCES, fake_policy, published, write_registry
+from caregiver_helpers import FENCES, FakeVmm, fake_policy, published, write_registry
 
 from caregiver import loop as loop_module
 from caregiver import paths
-
-IMAGE: Final = "sha256:deadbeef"
 
 #: The two families every test converges. ONE unreadable path costs
 #: neither of them a pass.
@@ -68,19 +63,12 @@ class Bench:
         return LoopConfig(
             registry_root=self.registry_root,
             state_root=self.state_root,
-            image=IMAGE,
             fences=FENCES,
+            vmm=FakeVmm(),
         )
 
     def actors(self) -> Actors:
-        return Actors(
-            FakeDriver(),
-            FakeLiteLLMKeys(),
-            FakeSwitchClient(),
-            EgressConfig(),
-            FakeUnits(),
-            fake_policy(self.state_root),
-        )
+        return Actors(FakeLiteLLMKeys(), FakeUnits(), fake_policy(self.state_root))
 
     def look(self, **overrides: float) -> tuple[str, ...]:
         """One real pass of the loop, registry read and all."""
@@ -285,7 +273,7 @@ def test_a_listing_that_raises_does_not_end_the_look(
     """The deletes follow the families. An error that leaves them must not
     leave the look, and the look must still record the revision. A look
     with no revision reads every later tick as an edit, and an edit clears
-    each create backoff."""
+    each backoff."""
     monkeypatch.setattr(loop_module, "_families_with_state", refuse)
 
     assert bench.look() == FAMILIES
@@ -293,7 +281,7 @@ def test_a_listing_that_raises_does_not_end_the_look(
     assert bench.look() == ()
 
 
-@pytest.mark.parametrize("step", ["delete_family", "remove_timers", "read_applied"])
+@pytest.mark.parametrize("step", ["delete_family", "remove_timers"])
 def test_a_delete_that_raises_ends_in_the_handler_of_the_loop(
     bench: Bench, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, step: str
 ) -> None:
@@ -353,7 +341,7 @@ def test_a_delete_that_raises_waits_before_the_next_try(
 def test_a_delete_starts_again_when_its_wait_ends(
     bench: Bench, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The second failure doubles the wait, as a second failed create does."""
+    """The second failure doubles the wait, as a second pass that raised does."""
     bench.look()
     gone = FAMILIES[0]
     shutil.rmtree(bench.registry_root / "families" / gone)

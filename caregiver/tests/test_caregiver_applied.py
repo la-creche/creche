@@ -16,8 +16,8 @@ from caregiver_helpers import FAMILY_TOML, UNREADABLE_JSON, family_toml
 from caregiver import paths
 
 
-def write_chat(tmp_path: Path, *, rev: str = "reg-aaaaaa", image: str = "sha256:one") -> None:
-    write_applied(tmp_path, "chat", rev=rev, image=image, family_text=family_toml())
+def write_chat(tmp_path: Path, *, rev: str = "reg-aaaaaa") -> None:
+    write_applied(tmp_path, "chat", rev=rev, family_text=family_toml())
 
 
 def test_nothing_applied_yet_reads_none(tmp_path: Path) -> None:
@@ -29,20 +29,19 @@ def test_it_round_trips_the_family_file(tmp_path: Path) -> None:
     applied = read_applied(tmp_path, "chat")
     assert applied is not None
     assert applied.rev == "reg-aaaaaa"
-    assert applied.image == "sha256:one"
     assert applied.family.name == "chat"
     assert applied.family.model.router == "agent-router"
 
 
 def test_it_keeps_the_text_verbatim(tmp_path: Path) -> None:
     text = family_toml(description="A very specific description.")
-    write_applied(tmp_path, "chat", rev="reg-aaaaaa", image="sha256:one", family_text=text)
+    write_applied(tmp_path, "chat", rev="reg-aaaaaa", family_text=text)
     copy = paths.applied_family_path(tmp_path, "chat")
     assert copy.read_text(encoding="utf-8") == text
 
 
 def test_the_copy_has_the_name_of_the_registry_file(tmp_path: Path) -> None:
-    write_applied(tmp_path, "chat", rev="reg-cccccc", image="sha256:one", family_text=FAMILY_TOML)
+    write_applied(tmp_path, "chat", rev="reg-cccccc", family_text=FAMILY_TOML)
 
     copy = paths.applied_family_path(tmp_path, "chat")
     assert copy.name == "family.toml"
@@ -50,7 +49,7 @@ def test_the_copy_has_the_name_of_the_registry_file(tmp_path: Path) -> None:
 
 
 def test_the_copy_reads_with_the_toml_parser(tmp_path: Path) -> None:
-    write_applied(tmp_path, "chat", rev="reg-cccccc", image="sha256:one", family_text=FAMILY_TOML)
+    write_applied(tmp_path, "chat", rev="reg-cccccc", family_text=FAMILY_TOML)
 
     applied = read_applied(tmp_path, "chat")
     assert applied is not None
@@ -64,13 +63,11 @@ def test_a_second_write_replaces_the_first(tmp_path: Path) -> None:
         tmp_path,
         "chat",
         rev="reg-bbbbbb",
-        image="sha256:two",
         family_text=family_toml(description="Second."),
     )
     applied = read_applied(tmp_path, "chat")
     assert applied is not None
     assert applied.rev == "reg-bbbbbb"
-    assert applied.image == "sha256:two"
     assert applied.family.description == "Second."
 
 
@@ -152,7 +149,6 @@ def test_it_round_trips_the_model_deadline(tmp_path: Path) -> None:
         tmp_path,
         "chat",
         rev="reg-aaaaaa",
-        image="sha256:one",
         family_text=family_toml(),
         model_live_at="2026-09-19T10:00:10Z",
     )

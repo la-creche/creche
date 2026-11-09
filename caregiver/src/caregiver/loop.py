@@ -11,12 +11,13 @@
 
 ## Why the families do not take turns
 
-A pass that replaces a sandbox costs 1 to 3.5 minutes. One pass at a
-time, eleven families take twenty minutes after a new image, and for all
-of it an edit to the family at the back of the queue waits for the ten
-in front of it (invariant 9 says one action and no manual apply), and
-the waiting documents keep a `written_at` that contract 05 §2 rule 5
-makes a reader publish as `unknown`.
+A pass writes files and calls LiteLLM, `chaperone check` and systemctl.
+Each call has a timeout of up to 30 s. One pass at a time, one call that
+hangs holds every other family for as long as it waits, and an edit to the
+family at the back of the queue waits for the ten in front of it
+(invariant 9 says one action and no manual apply). The waiting documents
+keep a `written_at` that contract 05 §2 rule 5 makes a reader publish as
+`unknown`.
 
 ## The mechanism, and why this one
 
@@ -34,15 +35,14 @@ the bound full is started by the next look, which is also where every
 other dispatch decision is made.
 
 Every actor a pass touches is therefore shared between threads.
-`httpx.Client` is thread-safe, so `HttpLiteLLMKeys` and
-`HttpSwitchClient` are; `SbxDriver` keeps no state between calls;
-`EgressConfig` is frozen; `UserUnits` takes a lock of its own around the
-write-then-`systemctl` pair. Everything else a pass writes is under that
-family's own directory, and `status.py` holds one lock per document
-because the loop restamps a document whose pass is inside a slow step.
+`httpx.Client` is thread-safe, so `HttpLiteLLMKeys` and `HttpVmmClient`
+are. `UserUnits` takes a lock of its own around the write-then-`systemctl`
+pair. Everything else a pass writes is under that family's own
+directory, and `status.py` holds one lock per document because the loop
+restamps a document whose pass is still in flight.
 
 It sits beside `reconcile.py` rather than under it: it calls three
-siblings (`reconcile`, `delete`, `applied`), which a leaf may not do
+siblings (`reconcile`, `delete`, `rotate`), which a leaf may not do
 (`AGENTS.md`, layers)."""
 
 from __future__ import annotations
@@ -61,15 +61,13 @@ from typing import Any, Final, Protocol
 from agent_family import Fences, HostFacts, Registry, load_registry, revision_of
 
 from . import paths
-from .applied import read_applied
 from .chaperone_watch import PepReport, PepWatch, unwatched
 from .delete import delete_family
-from .images import SandboxImages
 from .reconcile import Actors, SpendRead, has_family_file, reconcile_family
-from .released import ReleasedImages
 from .rotate import settle
 from .status import published_here, restamp_status
 from .timers import remove_timers
+from .vmm import VmmClient
 
 log = logging.getLogger("caregiver.loop")
 
@@ -87,14 +85,11 @@ HEARTBEAT_S: Final = 20.0
 #: per minute, not one per tick — spend moves with turns, not with ticks.
 SPEND_INTERVAL_S: Final = 60.0
 
-#: A failed create burns an id, and an id is never reused (contract 05
-#: §4.1). Retrying every tick would burn one every two seconds, so each
-#: failure doubles the wait up to the ceiling.
+#: A pass that raised, or a delete that did not end, tries again after a
+#: wait. Retrying every tick is a busy loop against whatever is broken, so
+#: each failure doubles the wait up to the ceiling.
 BACKOFF_FIRST_S: Final = 5.0
 BACKOFF_MAX_S: Final = 300.0
-
-#: The fault a create raises. A family carrying it waits out a backoff.
-SANDBOX_START_FAILED: Final = "sandbox_start_failed"
 
 #: A monotonic reading before any tick, so the first look is always a full
 #: pass.
@@ -106,14 +101,9 @@ FORCE_PASS: Final = "\x00force-pass"
 
 #: How many families may have a pass in flight at once.
 #:
-#: Not eleven. The host has cores and memory to spare, so neither is the
-#: constraint; the shared image store is. The one expensive step of a
-#: fleet-wide replacement is the FIRST pull of a new image (3.4 min on
-#: 2026-09-21, against about 1 min for every family after it), and asking
-#: eleven `sbx create` calls to pull the same image at once buys nothing
-#: that the second one does not already get from the store. Four keeps
-#: that to at most four first pulls, and still turns twenty minutes of
-#: replacements into about five. `--max-concurrent-passes` moves it.
+#: Four. A pass holds its thread for the time its calls take, up to 30 s
+#: for one call that hangs, so four keep one slow LiteLLM or chaperone
+#: check from holding the fleet. `--max-concurrent-passes` moves it.
 MAX_CONCURRENT_PASSES: Final = 4
 
 #: How long a repeated complaint waits before it is summarised again.
@@ -130,13 +120,15 @@ REPEAT_EVERY_S: Final = 600.0
 #: grow one entry per pass for as long as it lasted.
 MAX_COMPLAINTS: Final = 64
 
-#: How long `serve` waits for the steps in flight after a stop.
+#: How long `serve` waits for the passes in flight after a stop.
 #:
-#: The longest single step is a create: `driver.CREATE_TIMEOUT_S` gives up
-#: on `sbx create` at 300 s, and the same step's `sbx policy` calls add
-#: `POLICY_TIMEOUT_S` each. The unit's `TimeoutStopSec` is 360 s, so this
-#: leaves 30 s for the last publish and the exit: the service reports its
-#: own stop rather than being killed halfway through one.
+#: A pass makes a few calls with a timeout of up to 30 s each:
+#: `litellm_keys.REQUEST_TIMEOUT_S`, `policy_fleet.CHECK_TIMEOUT_S` and
+#: `timers.SYSTEMCTL_TIMEOUT_S`. A delete waits up to
+#: `DROP_CLIENT_TIMEOUT_S`, 60 s, for the vmm. 330 s is above each of them.
+#: The unit's `TimeoutStopSec` is 360 s, so this leaves 30 s for the last
+#: publish and the exit: the service reports its own stop rather than being
+#: killed halfway through a pass.
 STOP_GRACE_S: Final = 330.0
 
 
@@ -276,13 +268,12 @@ class Passes:
         pass of `name` is already in flight, or the bound is full.
 
         `Slot.BEYOND` skips the bound and nothing else. It is for a look
-        (`_look_at`), which runs no slow step: the bound exists because a
-        create holds its thread for minutes, and a look ends in the time
-        its cheap steps take.
+        (`_look_at`), the first pass of a family whose document another
+        process wrote.
 
         The thread is a daemon: a step that outruns the stop grace is one
-        `serve` has already decided to abandon, and what it leaves behind
-        is what the next start recovers from (contract 05 §4.2)."""
+        `serve` has already decided to abandon. Every step is idempotent, so
+        the next start repeats it."""
         with self._done:
             full = slot is Slot.BOUNDED and len(self._running) >= self._bound
             if name in self._running or full:
@@ -347,19 +338,14 @@ class LoopConfig:
 
     registry_root: Path
     state_root: Path
-    image: str
     #: The allowed mount roots and the platform families of the host
     #: (`agent_family.fences`). Required: a loop with no fences would apply
     #: a family that the fences refuse.
     fences: Fences
-    #: The second flavor's reference (contract 01 §3.9). Empty means this
-    #: host was given none, and a family that asks for it is faulted
-    #: rather than built from `base`.
-    python_image: str = ""
-    #: What a `playpen` release installed (`released.py`). When it has read
-    #: one, its references win over the two above. None means this manager
-    #: reads no released file, which is what a scratch run wants.
-    released: ReleasedImages | None = None
+    #: The vmm that the delete of a family drops its sessions on (decision
+    #: CH21-10). Required: a delete with no vmm would leave the VMs of the
+    #: family running.
+    vmm: VmmClient
     poll_interval_s: float = POLL_INTERVAL_S
     heartbeat_s: float = HEARTBEAT_S
     spend_interval_s: float = SPEND_INTERVAL_S
@@ -378,7 +364,7 @@ class LoopConfig:
 
 @dataclass(frozen=True)
 class Backoff:
-    """When this family may try to create a sandbox again, and how long it
+    """When this family may try a pass or a delete again, and how long it
     waited to get here."""
 
     next_at: float
@@ -389,10 +375,10 @@ class Backoff:
 class FamilyLoop:
     """What the loop remembers about ONE family between looks: the revision
     its last pass ran against, when its document was last written, when its
-    spend was last read, and how long it must wait after a burnt id.
+    spend was last read, and how long it must wait after a failure.
 
     Per family, not per fleet: a family behind by one revision must not
-    wait for another family's create."""
+    wait for another family's failure."""
 
     revision: str = ""
     published_at: float = NEVER
@@ -461,8 +447,8 @@ class LoopState:
             }
 
     def clear_backoff(self) -> None:
-        """The operator acted. Every family waiting out a create backoff
-        gets its retry now, because the edit may be the fix."""
+        """The operator acted. Every family waiting out a backoff gets its
+        retry now, because the edit may be the fix."""
         with self._mutex:
             self._families = {
                 name: replace(one, backoff=None) for name, one in self._families.items()
@@ -479,7 +465,7 @@ class LoopState:
         next tick rather than one heartbeat later.
 
         It ignores a family that cannot act on being behind — one whose
-        pass is still in flight, one waiting out a create backoff — or a
+        pass is still in flight, one waiting out a backoff — or a
         single broken family would turn every two-second poll into a full
         registry read for as long as it stayed broken. Neither loses
         anything: an edit moves the content hash, which is the other half
@@ -505,46 +491,28 @@ class LoopState:
         return time.monotonic() - oldest >= heartbeat_s
 
 
-def images_now(config: LoopConfig) -> SandboxImages:
-    """The references this pass creates a sandbox from: a `playpen` release's
-    when the manager has read one, the flags' when it has not. Read once per
-    pass, so a release reaches every family within one heartbeat."""
-    given = SandboxImages(base=config.image, python=config.python_image)
-    if config.released is None:
-        return given
-
-    return config.released.current(given)
-
-
 def serve(config: LoopConfig, actors: Actors, control: Control) -> LoopState:
     """Look, converge, wait, repeat, until `control` says stop.
 
-    A stop starts no new pass — the loop has left — and the passes in
-    flight see the same moment through `stopping`: each finishes the step
-    it is inside and returns between steps."""
+    A stop starts no new pass — the loop has left — and `Passes` waits out
+    the passes in flight, up to the stop grace."""
     state = LoopState()
-    stopping = threading.Event()
     log.info(
-        "caregiver: watching %s, state %s, images base=%s python=%s, up to %d passes at once, "
-        "chaperone watch %s",
+        "caregiver: watching %s, state %s, up to %d passes at once, chaperone watch %s",
         config.registry_root,
         config.state_root,
-        config.image,
-        config.python_image or "(none)",
         config.max_concurrent_passes,
         _pep_report(config).url or "OFF (no --pep-url: nothing watches the PEP)",
     )
     with Passes(config.max_concurrent_passes, grace_s=config.stop_grace_s) as passes:
         while not control.stopped():
-            _one_look(config, actors, state, passes, stopping.is_set)
+            _one_look(config, actors, state, passes)
             if control.wait(config.poll_interval_s):
                 # "Look now" is a look at each family. Without this, a
                 # look with no edit reads one content hash and stops, and
                 # a pass that must try a step again waits for the
-                # heartbeat. A create backoff stays as it is.
+                # heartbeat. A backoff stays as it is.
                 state.force_pass()
-
-        stopping.set()
 
     log.info("caregiver: stopped")
     return state
@@ -555,7 +523,6 @@ def _one_look(
     actors: Actors,
     state: LoopState,
     passes: Passes,
-    stop: Callable[[], bool],
 ) -> None:
     """THE ONE GUARD AT THE LOOP'S TOP.
 
@@ -574,7 +541,7 @@ def _one_look(
     see it.
     """
     try:
-        look(config, actors, state, passes, stop=stop)
+        look(config, actors, state, passes)
     except Exception as exc:
         state.said.say("look", exc)
 
@@ -584,8 +551,6 @@ def look(
     actors: Actors,
     state: LoopState,
     passes: Passes | None = None,
-    *,
-    stop: Callable[[], bool] = lambda: False,
 ) -> tuple[str, ...]:
     """One look at the registry. Answers the families whose pass it
     STARTED, which is empty when nothing moved and no document is due.
@@ -595,14 +560,14 @@ def look(
     one-shot caller and a test both want that. `serve` passes its own,
     and then a look dispatches and returns while the passes run on."""
     if passes is not None:
-        return _look(config, actors, state, passes, stop)
+        return _look(config, actors, state, passes)
 
     with Passes(config.max_concurrent_passes, grace_s=config.stop_grace_s) as own:
-        return _one_shot(config, actors, state, own, stop)
+        return _one_shot(config, actors, state, own)
 
 
 def _one_shot(
-    config: LoopConfig, actors: Actors, state: LoopState, passes: Passes, stop: Callable[[], bool]
+    config: LoopConfig, actors: Actors, state: LoopState, passes: Passes
 ) -> tuple[str, ...]:
     """One look, waited out. Every due family gets exactly ONE pass.
 
@@ -618,7 +583,7 @@ def _one_shot(
     revision, registry = ready
     done: set[str] = set()
     while True:
-        wave = _sweep(config, actors, registry, state, passes, stop, frozenset(done))
+        wave = _sweep(config, actors, registry, state, passes, frozenset(done))
         passes.drain(config.stop_grace_s)
         if not wave:
             break
@@ -635,14 +600,13 @@ def _look(
     actors: Actors,
     state: LoopState,
     passes: Passes,
-    stop: Callable[[], bool],
 ) -> tuple[str, ...]:
     ready = _begin(config, state, passes)
     if ready is None:
         return ()
 
     revision, registry = ready
-    started = _sweep(config, actors, registry, state, passes, stop, frozenset())
+    started = _sweep(config, actors, registry, state, passes, frozenset())
     _finish(config, actors, registry, state, passes, revision)
     return started
 
@@ -699,13 +663,12 @@ def _sweep(
     registry: Registry,
     state: LoopState,
     passes: Passes,
-    stop: Callable[[], bool],
     skip: frozenset[str],
 ) -> tuple[str, ...]:
     return tuple(
         name
         for name in _oldest_first(registry, state)
-        if name not in skip and _dispatch(config, actors, registry, name, state, passes, stop)
+        if name not in skip and _dispatch(config, actors, registry, name, state, passes)
     )
 
 
@@ -734,7 +697,7 @@ def _finish(
     The deletes have a guard of their own. The revision is recorded
     whatever they did. A look that left it unrecorded would read every
     later tick as an edit, and an edit reads the whole registry and clears
-    each create backoff."""
+    each backoff."""
     try:
         _forget_deleted(config, actors, registry, state, passes)
     except Exception as exc:
@@ -750,7 +713,6 @@ def _dispatch(
     name: str,
     state: LoopState,
     passes: Passes,
-    stop: Callable[[], bool],
 ) -> bool:
     """One family's dispatch, and its own guard.
 
@@ -773,7 +735,7 @@ def _dispatch(
         return False
 
     try:
-        return _dispatch_one(config, actors, registry, name, state, passes, stop)
+        return _dispatch_one(config, actors, registry, name, state, passes)
     except Exception as exc:
         state.said.say(f"{name}: dispatch", exc)
         return False
@@ -786,20 +748,19 @@ def _dispatch_one(
     name: str,
     state: LoopState,
     passes: Passes,
-    stop: Callable[[], bool],
 ) -> bool:
     """Start this family's pass, or keep its document fresh instead.
 
     A family gets a pass when it is behind the revision its last pass ran
     against, or when its document is going stale. It gets a restamp when
-    it is due but cannot run: a pass of its own is still inside a step, the
-    bound is full, or a burnt id has it waiting out a backoff. Either way
+    it is due but cannot run: a pass of its own is still in flight, the
+    bound is full, or a failure has it waiting out a backoff. Either way
     the document is rewritten, which is what contract 05 §2 rule 4 asks
     for and §2 rule 5 punishes."""
     slot = state.of(name)
     if _due(config, slot, registry.revision) and _may_run(slot):
         spend = _spend_due(config, slot)
-        work = _pass(config, actors, registry, name, state, spend, stop)
+        work = _pass(config, actors, registry, name, state, spend)
         if passes.start(name, work):
             state.note(name, passed_at=time.monotonic())
             if spend is SpendRead.READ:
@@ -813,7 +774,7 @@ def _dispatch_one(
         # The document is fresh, so this family is not due on the heartbeat
         # half until the next one comes round. Without this the loop would
         # read the whole registry every two seconds for as long as one
-        # family sat inside a three-minute create.
+        # family waited for a slot.
         state.note(name, published_at=time.monotonic())
 
     return False
@@ -831,19 +792,15 @@ def _look_at(
     """Give a family that waits for a slot this process's own document.
 
     Contract 05 §2 rule 8 forbids a restamp of a document another process
-    wrote: it is a verdict about another commit, another image, or both. So
-    a family that waits behind four creates after a restart kept the OLD
-    document for minutes, a reader called it `unknown` past 90 seconds, and
-    the verify hook failed on `heartbeat` (2026-10-04, a release that
-    restarted the manager while the fleet moved onto a new image).
+    wrote: it is a verdict about another commit. So a family that waited
+    for a slot after a restart kept the OLD document, a reader called it
+    `unknown` past 90 seconds, and the verify hook failed on `heartbeat`
+    (2026-10-04, a release that restarted the manager while the fleet was
+    busy).
 
     Rule 8 ends "until this process has looked", and this is that look: the
-    family's own pass, with a stop that is already set. Every cheap step
-    runs. The pass halts in front of the first slow one, which is every
-    place `reconcile._halt_if` stands, and publishes what it found. A
-    family with nothing slow to do is converged by it, and says `in_sync`.
-    A family with a create to run says `reconciling`, never `in_sync`
-    (`reconcile._publish`), and stays behind, so it takes the next slot.
+    family's own pass, beyond the bound. A pass starts and stops no VM
+    (decision CH1), so it ends in the time its calls take.
 
     Once per family per process. The look publishes, so from then on the
     document is this process's and `_keep_fresh` restamps it. A family with
@@ -853,14 +810,9 @@ def _look_at(
     if name in passes.running() or published_here(path) or not path.is_file():
         return
 
-    work = _pass(config, actors, registry, name, state, spend, _already_stopped)
+    work = _pass(config, actors, registry, name, state, spend)
     if passes.start(name, work, slot=Slot.BEYOND) and spend is SpendRead.READ:
         state.note(name, spend_at=time.monotonic())
-
-
-def _already_stopped() -> bool:
-    """The stop of a look: set before the pass begins."""
-    return True
 
 
 def _due(config: LoopConfig, slot: FamilyLoop, revision: str) -> bool:
@@ -871,9 +823,9 @@ def _due(config: LoopConfig, slot: FamilyLoop, revision: str) -> bool:
 
 
 def _may_run(slot: FamilyLoop) -> bool:
-    """A create that failed burnt an id, and an id is never reused
-    (contract 05 §4.1). Retrying every tick would burn one every two
-    seconds."""
+    """A family whose pass raised, or whose delete did not end, waits out
+    its backoff. Retrying every tick is a busy loop against whatever is
+    broken."""
     return slot.backoff is None or time.monotonic() >= slot.backoff.next_at
 
 
@@ -881,10 +833,10 @@ def _keep_fresh(config: LoopConfig, name: str) -> bool:
     """Contract 05 §2 rule 4 for a family nothing is about to publish.
     Answers whether the document is fresh now.
 
-    A `sbx create` runs for minutes and writes no document of its own, and
-    §2 rule 5 makes a reader call a document older than 90 seconds
-    `unknown`. Without a restamp, a healthy family reads `unknown` for as
-    long as that runs.
+    A family that waits for a slot or out a backoff writes no document of
+    its own, and §2 rule 5 makes a reader call a document older than 90
+    seconds `unknown`. Without a restamp, a healthy family reads `unknown`
+    for as long as it waits.
 
     A restamp that did not fire means the document is younger than the
     bound, which is the same answer: fresh. Only a family with no document
@@ -912,7 +864,6 @@ def _pass(
     name: str,
     state: LoopState,
     spend: SpendRead,
-    stop: Callable[[], bool],
 ) -> Callable[[], None]:
     """One family's pass, ready to run in its own thread.
 
@@ -928,16 +879,12 @@ def _pass(
     def run() -> None:
         try:
             _settle_rotation(config, actors, name)
-            images = images_now(config)
             result = reconcile_family(
                 registry,
                 name,
                 state_root=config.state_root,
-                image=images.base,
-                python_image=images.python,
                 actors=actors,
                 spend=spend,
-                stop=stop,
                 chaperone=_pep_report(config),
             )
         except Exception as exc:
@@ -965,21 +912,7 @@ def _pass(
         # One line per family per pass, the family name first, so two
         # interleaved families are still followable.
         log.info("%s", result.log_line())
-        if result.halted:
-            # No `revision`: a pass that stopped in front of a slow step
-            # converged to nothing, so the family is still behind and the
-            # next free slot is its own. This is how a look hands over to
-            # the pass (`_look_at`).
-            state.note(name, published_at=time.monotonic())
-            return
-
-        failed = any(one.code == SANDBOX_START_FAILED for one in result.status.faults)
-        state.note(
-            name,
-            revision=registry.revision,
-            published_at=time.monotonic(),
-            backoff=_backoff(state.of(name), name) if failed else None,
-        )
+        state.note(name, revision=registry.revision, published_at=time.monotonic(), backoff=None)
 
     return run
 
@@ -1001,10 +934,8 @@ def _settle_rotation(config: LoopConfig, actors: Actors, name: str) -> None:
 
 
 def _backoff(slot: FamilyLoop, name: str) -> Backoff:
-    """A create that failed burnt an id. Doubling the wait is what keeps a
-    family whose image does not exist from spending the whole id space
-    before anybody reads the fault. A pass that raised gets the same wait
-    for the same reason: two seconds is too soon to try again."""
+    """A pass that raised waits before it tries again: two seconds is too
+    soon, and each try calls each client again."""
     wait = _longer_wait(slot)
     log.warning("%s: pass did not converge, next attempt in %.0fs", name, wait.delay_s)
     return wait
@@ -1021,12 +952,12 @@ def _forget_deleted(
     config: LoopConfig, actors: Actors, registry: Registry, state: LoopState, passes: Passes
 ) -> tuple[str, ...]:
     """A family file that is gone is a family that is gone: credentials
-    first, then its sandboxes, then its state (invariant 13, contract 05
-    §4.4).
+    first, then its files, then its sessions on the vmm, then its state
+    (invariant 13, contract 05 §4.4).
 
     The delete runs through `Passes` like a pass does, and for the same
-    reason: it destroys the sandboxes a pass of that family may be in the
-    middle of creating. A family whose own pass is still in flight keeps
+    reason: it removes the files a pass of that family may be in the
+    middle of writing. A family whose own pass is still in flight keeps
     its name, so the delete waits for the next look.
 
     **An empty registry deletes nothing.** A vanished mount and a deleted
@@ -1046,7 +977,8 @@ def _forget_deleted(
         # document fails the `heartbeat` check of `caregiver-verify`, so a
         # release of `caregiver` fails while the directory stays as it is.
         # To read the directory as absent, this line must ask for the file,
-        # and the loop then deletes the key and each sandbox of that family.
+        # and the loop then deletes the key and drops the sessions of that
+        # family.
         if name in registry.reports:
             if not has_family_file(registry, name):
                 state.said.warn(
@@ -1090,28 +1022,21 @@ def _delete_work(
             return
 
         state.forget(name)
-        log.info("%s: family file gone, deleted credentials then sandboxes", name)
+        log.info("%s: family file gone, deleted credentials, then dropped its sessions", name)
 
     return run
 
 
 def _delete_one(config: LoopConfig, actors: Actors, name: str) -> None:
-    """The last applied file names the egress rows this family's sandboxes
-    carry, and those rows must come out with them (contract 05 §4.4 step
-    3).
-
-    The timers go first of all. A schedule that outlives its family would
+    """The timers go first of all. A schedule that outlives its family would
     keep asking for a session for a family with no key."""
     remove_timers(name, actors.units)
-    applied = read_applied(config.state_root, name)
     delete_family(
         name,
         state_root=config.state_root,
-        driver=actors.driver,
+        vmm=config.vmm,
         litellm=actors.litellm,
         policy=actors.policy,
-        egress=tuple(applied.family.egress) if applied is not None else (),
-        egress_config=actors.egress,
     )
 
 

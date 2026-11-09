@@ -24,19 +24,15 @@ from caregiver.chaperone_watch import (
     PepWatch,
     RaisingPepProbe,
 )
-from caregiver.driver import FakeDriver
-from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.loop import LoopConfig, LoopState, look
 from caregiver.reconcile import Actors
-from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import FENCES, fake_policy, write_registry
+from caregiver_helpers import FENCES, FakeVmm, fake_policy, write_registry
 
 from caregiver import paths
 
 PEP_URL: str = "http://chaperone.test:8300"
-IMAGE: str = "sha256:deadbeef"
 
 
 class Ticks:
@@ -298,21 +294,14 @@ class Fleet:
         self.state_root = tmp_path / "state"
         self.watch = watch
         self.state = LoopState()
-        self.actors = Actors(
-            FakeDriver(),
-            FakeLiteLLMKeys(),
-            FakeSwitchClient(),
-            EgressConfig(),
-            FakeUnits(),
-            fake_policy(self.state_root),
-        )
+        self.actors = Actors(FakeLiteLLMKeys(), FakeUnits(), fake_policy(self.state_root))
 
     def look(self) -> None:
         config = LoopConfig(
             registry_root=self.registry_root,
             state_root=self.state_root,
-            image=IMAGE,
             fences=FENCES,
+            vmm=FakeVmm(),
             chaperone=self.watch,
         )
         look(config, self.actors, self.state)
@@ -393,17 +382,3 @@ def test_a_document_says_the_watch_is_off(tmp_path: Path) -> None:
         "unreachable_since": None,
     }
     assert fleet.codes("chat") == []
-
-
-def test_no_sandbox_row_claims_a_running_turn(tmp_path: Path) -> None:
-    """No row carries `turns_running`: `caregiver` cannot count running
-    turns, and a 0 in every row would read as "0 running" on the
-    noticeboard's front page."""
-    fleet = Fleet(tmp_path, None)
-    write_registry(fleet.registry_root)
-
-    fleet.look()
-
-    rows = cast("list[dict[str, Any]]", fleet.document("chat")["sandboxes"])
-    assert rows
-    assert all("turns_running" not in one for one in rows)

@@ -2,7 +2,7 @@
 delete.
 
 Every mutating verb prints its plan and needs `--write` to act -- a plan
-readable before anything touches LiteLLM, `policy.toml` or a sandbox.
+readable before anything touches LiteLLM, `policy.toml` or the vmm.
 `status` is read-only and needs no gate.
 
 `serve` is the one the operator actually runs, through
@@ -32,15 +32,11 @@ from .chaperone_watch import (
     PepWatch,
 )
 from .delete import delete_family
-from .driver import DriverError, SandboxDriver, SbxDriver
-from .egress import EgressConfig
-from .images import SandboxImages
 from .lan import ConfigError, Port, url
 from .litellm_keys import HttpLiteLLMKeys, LiteLLMError, LiteLLMKeys
 from .loop import LoopConfig, SignalControl, serve
 from .policy_fleet import ChaperoneChecker, FleetPolicy, PolicyChecker, PolicyTarget
 from .reconcile import Actors, SpendRead, has_family_file, reconcile_family
-from .released import RELEASED_IMAGES, ReleasedImages
 from .rotate import (
     Mode,
     Reason,
@@ -55,25 +51,23 @@ from .rotate import (
     serving_family,
     valid_family,
 )
-from .switch import HttpSwitchClient, SwitchClient, SwitchError, read_token
 from .timers import UnitWriter, UserUnits
+from .vmm import VMM_SOCKET_ENV, HttpVmmClient, VmmClient, VmmError, socket_from
 
 EXIT_OK: Final = 0
 EXIT_PROBLEM: Final = 1
 EXIT_USAGE: Final = 2
-#: The fences of the host do not read: the exit status of `creche-env` for a
-#: fault of the env files. Each verb that applies the registry needs them.
+#: The fences of the host do not read, or the env key of the vmm socket is
+#: absent: the exit status of `creche-env` for a fault of the env files.
+#: Each verb that applies the registry needs the fences. `serve` and
+#: `delete` need the socket to act.
 EXIT_CONFIG: Final = 78
 
-# The three plane URLs below default to the site's LAN address (`lan.py`),
+# The two plane URLs below default to the site's LAN address (`lan.py`),
 # never loopback, built when a verb needs one: a verb that reaches no plane
 # needs no address. An explicit flag always wins.
 #
 # LiteLLM:  `--litellm-base-url`, else `url(Port.LITELLM)`.
-#
-# attendance: contract 02 §3 rules 1 and 2. It binds a Unix socket and, when
-#           configured, the LAN address at 8350. `--attendance-url`, else
-#           `url(Port.ATTENDANCE)`.
 #
 # PEP:      where it answers `/healthz` (contract 05 §3.3). The production
 #           address is the DEFAULT, not an empty string: the PEP binds the
@@ -94,15 +88,8 @@ def _parser() -> argparse.ArgumentParser:
     apply_cmd = sub.add_parser("apply-once", help="bring one family up from its registry file")
     apply_cmd.add_argument("registry", type=Path, help="the registry root, holding families/")
     apply_cmd.add_argument("family")
-    apply_cmd.add_argument(
-        "--image",
-        required=True,
-        help="the sandbox image digest for flavor 'base' (contract 06 chooses it, not this CLI)",
-    )
-    _python_image_arg(apply_cmd)
     apply_cmd.add_argument("--state-root", type=Path, default=paths.STATE_ROOT)
     apply_cmd.add_argument("--litellm-base-url", default=None)
-    _attendance_args(apply_cmd)
     _chaperone_args(apply_cmd)
     apply_cmd.add_argument(
         "--write", action="store_true", help="act. Without it, print the plan only"
@@ -153,18 +140,12 @@ def _parser() -> argparse.ArgumentParser:
     status_cmd.add_argument("--json", action="store_true")
 
     delete_cmd = sub.add_parser(
-        "delete", help="delete a family: its credentials, then its sandboxes"
+        "delete", help="delete a family: its credentials, then its sessions on the vmm"
     )
     delete_cmd.add_argument("family")
     delete_cmd.add_argument("--state-root", type=Path, default=paths.STATE_ROOT)
     delete_cmd.add_argument("--litellm-base-url", default=None)
     _chaperone_args(delete_cmd)
-    delete_cmd.add_argument(
-        "--egress",
-        action="append",
-        default=[],
-        help="a hostname sbx should stop allowing (repeatable); best effort, see delete_family",
-    )
     delete_cmd.add_argument("--write", action="store_true")
 
     return parser
@@ -174,34 +155,10 @@ def _watch_args(parser: argparse.ArgumentParser) -> None:
     """What `serve` and `reconcile-once` both need. One place, so the unit
     file and a hand-run pass cannot drift apart."""
     parser.add_argument("registry", type=Path, help="the registry root, holding families/")
-    parser.add_argument(
-        "--image", required=True, help="the approved sandbox image digest for flavor 'base'"
-    )
-    _python_image_arg(parser)
-    parser.add_argument(
-        "--released-images",
-        type=Path,
-        default=None,
-        help="the file a playpen release installed. Its references win over --image and "
-        f"--image-python. Default {RELEASED_IMAGES}, and none for a --state-root of its own",
-    )
     parser.add_argument("--state-root", type=Path, default=paths.STATE_ROOT)
     parser.add_argument("--litellm-base-url", default=None)
-    _attendance_args(parser)
     _chaperone_args(parser)
     parser.add_argument("--write", action="store_true", help="act. Without it, print the plan only")
-
-
-def _python_image_arg(parser: argparse.ArgumentParser) -> None:
-    """Contract 01 §3.9's second flavor. NOT required: a host that has not
-    built it yet runs fine, and only a family that asks for `python` is
-    faulted. Required would stop every family over one image."""
-    parser.add_argument(
-        "--image-python",
-        default="",
-        help="the approved sandbox image digest for flavor 'python'. Without it, a family "
-        "with sandbox.image: python raises image_flavor_unconfigured and gets no sandbox",
-    )
 
 
 def _pep_watch_args(parser: argparse.ArgumentParser) -> None:
@@ -252,22 +209,6 @@ def _pep_watch(args: argparse.Namespace) -> PepWatch | None:
     )
 
 
-def _attendance_args(parser: argparse.ArgumentParser) -> None:
-    """Where `attendance` answers. Every verb that can build a switch client
-    declares BOTH, in one place: `apply-once` once read `args.attendance_url`
-    without declaring it, and died on the first host that had a token file."""
-    # The flags keep the old name: the installed caregiver unit passes
-    # `--attendance-socket`, and that unit changes only by a host step.
-    parser.add_argument("--attendance-url", dest="attendance_url", default=None)
-    parser.add_argument(
-        "--attendance-socket",
-        dest="attendance_socket",
-        type=Path,
-        default=None,
-        help="attendance's Unix socket. When given, it wins over --attendance-url",
-    )
-
-
 def _chaperone_args(parser: argparse.ArgumentParser) -> None:
     """Where the one `policy.toml` goes, and the binary that checks it.
     Every verb that moves a grant or a token declares both."""
@@ -290,8 +231,7 @@ def _chaperone_args(parser: argparse.ArgumentParser) -> None:
 
 def _chaperone_config_dir(args: argparse.Namespace) -> Path:
     """The flag, else the host directory. A run with a `--state-root` of
-    its own writes into that root, never into the directory of the host:
-    the rule of `--released-images`."""
+    its own writes into that root, never into the directory of the host."""
     if args.chaperone_config_dir is not None:
         return Path(args.chaperone_config_dir)
 
@@ -325,10 +265,6 @@ def _litellm_url(args: argparse.Namespace) -> str:
     return args.litellm_base_url or url(Port.LITELLM)
 
 
-def _attendance_url(args: argparse.Namespace) -> str:
-    return args.attendance_url or url(Port.ATTENDANCE)
-
-
 def _master_key() -> str:
     # invariant 13: never on argv, never in a URL, never in a log line. An
     # environment variable is the one channel that satisfies all three.
@@ -342,9 +278,7 @@ def _apply_plan(state_root: Path, family: str, report: Report) -> list[str]:
         f"({report.errors} errors, {report.warnings} warnings)",
     ]
     if not report.ok:
-        lines.append(
-            "plan: stop here (invariant 19); no credential, grant, config or sandbox change"
-        )
+        lines.append("plan: stop here (invariant 19); no credential, grant or config change")
         return lines
 
     has_creds = paths.creds_path(state_root, family).is_file()
@@ -353,20 +287,13 @@ def _apply_plan(state_root: Path, family: str, report: Report) -> list[str]:
         if not has_creds
         else "plan: refresh the existing LiteLLM key's model and budget"
     )
-    lines.append("plan: write the table of policy.toml and the config mount")
-    sequence = paths.read_sandbox_sequence(state_root, family)
-    lines.append(
-        f"plan: create sandbox {paths.sandbox_id(family, 1)}"
-        if sequence == 0
-        else f"plan: sandbox {paths.sandbox_id(family, sequence)} already exists; leave it"
-    )
+    lines.append("plan: write the table of policy.toml, the config directory and the reach files")
     return lines
 
 
 def _apply_once_command(
     args: argparse.Namespace,
     fences: Fences,
-    driver: SandboxDriver | None,
     litellm: LiteLLMKeys | None,
     checker: PolicyChecker | None,
 ) -> int:
@@ -387,130 +314,71 @@ def _apply_once_command(
     resolved_litellm = (
         litellm if litellm is not None else HttpLiteLLMKeys(_litellm_url(args), _master_key())
     )
-    resolved_driver = driver if driver is not None else SbxDriver()
     result = apply_once(
         args.registry,
         args.family,
         state_root=args.state_root,
-        image=args.image,
-        python_image=args.image_python,
         fences=fences,
-        driver=resolved_driver,
         litellm=resolved_litellm,
         policy=_fleet_policy(args, checker),
-        switch=_optional_switch(args),
     )
     print(f"result: {'ok' if result.ok else 'not ok'}, state={result.status.state}")
     return EXIT_OK if result.ok else EXIT_PROBLEM
 
 
-def _optional_switch(args: argparse.Namespace) -> SwitchClient | None:
-    """The client `apply_once` asks for the handshake with, or `None`.
-
-    `up` runs this verb BEFORE `attendance` is listening, and on a fresh host
-    before its token file exists. Neither is an error: with no client the
-    sandbox stays `creating` (contract 05 §4.2 rule 4), and the apply that
-    runs once the service is up promotes it. A missing token must not fail
-    the verb that builds the family in the first place.
-    """
-    try:
-        return _switch_client(args)
-    except SwitchError as exc:
-        print(f"caregiver: no handshake this pass ({exc})", file=sys.stderr)
-        return None
-
-
 def _actors(
     args: argparse.Namespace,
-    driver: SandboxDriver | None,
     litellm: LiteLLMKeys | None,
-    switch: SwitchClient | None,
     units: UnitWriter | None,
     checker: PolicyChecker | None,
 ) -> Actors:
     """Build the live clients, or take the fakes a test injected. Nothing
-    here is built before `--write`: an `HttpSwitchClient` reads the token
-    file in its constructor, and a plan run must not need one."""
+    here is built before `--write`."""
     return Actors(
-        driver=driver if driver is not None else SbxDriver(),
         litellm=litellm
         if litellm is not None
         else HttpLiteLLMKeys(_litellm_url(args), _master_key()),
-        switch=switch if switch is not None else _switch_client(args),
-        egress=EgressConfig(),
         units=units if units is not None else UserUnits(),
         policy=_fleet_policy(args, checker),
     )
 
 
-def _released(args: argparse.Namespace) -> ReleasedImages | None:
-    """The released file this run reads, or None.
+def _vmm(vmm: VmmClient | None, environ: Mapping[str, str]) -> VmmClient | None:
+    """The client a test injected, or the vmm on the socket that
+    `CAREGIVER_VMM_SOCKET` names (decision CH20). None after one line that
+    names the key."""
+    if vmm is not None:
+        return vmm
 
-    The default belongs to the real plane and to no other: a scratch run
-    names a `--state-root` of its own and is given its images by its caller,
-    so it must not pick up what the host's own `playpen` release installed.
-    No unit names the flag, so an installer can put a new unit file over
-    an older `caregiver` tree."""
-    if args.released_images is not None:
-        return ReleasedImages(args.released_images)
-
-    if args.state_root != paths.STATE_ROOT:
+    socket = socket_from(environ)
+    if socket is None:
+        print(
+            f"caregiver: {VMM_SOCKET_ENV} is not set. It names vmm.sock, "
+            "the socket of the vmm (decision CH20)",
+            file=sys.stderr,
+        )
         return None
 
-    return ReleasedImages(RELEASED_IMAGES)
-
-
-def _images(args: argparse.Namespace) -> SandboxImages:
-    """One read, for a command that runs one pass."""
-    given = SandboxImages(base=args.image, python=args.image_python)
-    released = _released(args)
-
-    return released.current(given) if released is not None else given
-
-
-def _switch_client(args: argparse.Namespace) -> SwitchClient:
-    token = read_token(paths.caregiver_token_path(args.state_root))
-    if args.attendance_socket is not None:
-        return HttpSwitchClient.over_socket(args.attendance_socket, token)
-
-    return HttpSwitchClient(_attendance_url(args), token)
+    return HttpVmmClient.over_socket(socket)
 
 
 def _watch_plan(args: argparse.Namespace, families: Sequence[str]) -> list[str]:
-    # What a pass will use, not what the flags say: a `playpen` release's
-    # references win over them (`released.py`).
-    images = _images(args)
-
     return [
         f"registry: {args.registry}",
         f"state: {args.state_root}",
-        f"image: {images.base}",
-        f"image (python): {images.python or '(none configured)'}",
         f"families: {', '.join(families) if families else '(none)'}",
-        f"attendance: {_attendance_address(args)}, "
-        f"token {paths.caregiver_token_path(args.state_root)}",
         _chaperone_line(args),
     ]
-
-
-def _attendance_address(args: argparse.Namespace) -> str:
-    """What `_switch_client` dials, for the banner. It once printed the LAN
-    URL while the socket was in use, and sent a reader looking for a listener
-    that production does not have."""
-    if args.attendance_socket is not None:
-        return f"socket {args.attendance_socket}"
-
-    return _attendance_url(args)
 
 
 def _serve_command(
     args: argparse.Namespace,
     fences: Fences,
-    driver: SandboxDriver | None,
+    vmm: VmmClient | None,
     litellm: LiteLLMKeys | None,
-    switch: SwitchClient | None,
     units: UnitWriter | None,
     checker: PolicyChecker | None,
+    environ: Mapping[str, str],
 ) -> int:
     registry = load_registry(args.registry, fences=fences)
     families = sorted(name for name in registry.reports if has_family_file(registry, name))
@@ -528,36 +396,31 @@ def _serve_command(
         print("plan: watch and converge. Pass --write to start.")
         return EXIT_OK
 
+    resolved_vmm = _vmm(vmm, environ)
+    if resolved_vmm is None:
+        return EXIT_CONFIG
+
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
     control = SignalControl()
     control.install()
     config = LoopConfig(
         registry_root=args.registry,
         state_root=args.state_root,
-        image=args.image,
         fences=fences,
-        python_image=args.image_python,
-        released=_released(args),
+        vmm=resolved_vmm,
         poll_interval_s=args.poll_interval_s,
         max_concurrent_passes=args.max_concurrent_passes,
         stop_grace_s=args.stop_grace_s,
         chaperone=_pep_watch(args),
     )
-    try:
-        serve(config, _actors(args, driver, litellm, switch, units, checker), control)
-    except SwitchError as exc:
-        print(f"caregiver: {exc}", file=sys.stderr)
-        return EXIT_PROBLEM
-
+    serve(config, _actors(args, litellm, units, checker), control)
     return EXIT_OK
 
 
 def _reconcile_once_command(
     args: argparse.Namespace,
     fences: Fences,
-    driver: SandboxDriver | None,
     litellm: LiteLLMKeys | None,
-    switch: SwitchClient | None,
     units: UnitWriter | None,
     checker: PolicyChecker | None,
 ) -> int:
@@ -574,20 +437,11 @@ def _reconcile_once_command(
         return EXIT_OK
 
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
-    try:
-        actors = _actors(args, driver, litellm, switch, units, checker)
-    except SwitchError as exc:
-        print(f"caregiver: {exc}", file=sys.stderr)
-        return EXIT_PROBLEM
-
-    images = _images(args)
     result = reconcile_family(
         registry,
         args.family,
         state_root=args.state_root,
-        image=images.base,
-        python_image=images.python,
-        actors=actors,
+        actors=_actors(args, litellm, units, checker),
         spend=SpendRead.READ,
     )
     print(result.log_line())
@@ -778,20 +632,21 @@ def _status_command(args: argparse.Namespace) -> int:
 
 
 def _delete_plan(state_root: Path, family: str) -> list[str]:
-    sequence = paths.read_sandbox_sequence(state_root, family)
     return [
         f"family: {family}",
         "plan: delete the LiteLLM key, the table of policy.toml and creds.json",
-        f"plan: destroy {sequence} sandbox(es)" if sequence else "plan: no sandbox to destroy",
+        "plan: remove config/, egress.json and repos.json",
+        "plan: drop every session of the family on the vmm",
         f"plan: remove {paths.family_dir(state_root, family)}",
     ]
 
 
 def _delete_command(
     args: argparse.Namespace,
-    driver: SandboxDriver | None,
+    vmm: VmmClient | None,
     litellm: LiteLLMKeys | None,
     checker: PolicyChecker | None,
+    environ: Mapping[str, str],
 ) -> int:
     for line in _delete_plan(args.state_root, args.family):
         print(line)
@@ -801,17 +656,19 @@ def _delete_command(
     if not args.write:
         return EXIT_OK
 
+    resolved_vmm = _vmm(vmm, environ)
+    if resolved_vmm is None:
+        return EXIT_CONFIG
+
     resolved_litellm = (
         litellm if litellm is not None else HttpLiteLLMKeys(_litellm_url(args), _master_key())
     )
-    resolved_driver = driver if driver is not None else SbxDriver()
     kept = delete_family(
         args.family,
         state_root=args.state_root,
-        driver=resolved_driver,
+        vmm=resolved_vmm,
         litellm=resolved_litellm,
         policy=_fleet_policy(args, checker),
-        egress=tuple(args.egress),
     )
     print("deleted.")
     if kept is not None:
@@ -827,63 +684,62 @@ def _delete_command(
 def main(
     argv: Sequence[str] | None = None,
     *,
-    driver: SandboxDriver | None = None,
+    vmm: VmmClient | None = None,
     litellm: LiteLLMKeys | None = None,
-    switch: SwitchClient | None = None,
     units: UnitWriter | None = None,
     checker: PolicyChecker | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> int:
-    """The six keyword arguments are for a test to inject fakes and an
+    """The five keyword arguments are for a test to inject fakes and an
     environment. The real CLI never passes them: each `--write` path builds
     the live client itself, once it knows the action will actually run, and
-    the fences come from the environment of the process."""
+    the fences and the vmm socket come from the environment of the
+    process."""
     args = _parser().parse_args(argv)
     try:
-        return _run(args, driver, litellm, switch, units, checker, environ)
+        return _run(args, vmm, litellm, units, checker, environ)
     except ConfigError as exc:
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_USAGE
-    except (DriverError, LiteLLMError) as exc:
-        # No master key, or a call that LiteLLM or `sbx` refused in a step
-        # with no handler of its own: a delete, and the destroy step of a
-        # replacement. The message holds no secret: no client puts one
-        # into its error.
+    except (VmmError, LiteLLMError) as exc:
+        # No master key, or a call that LiteLLM or the vmm refused in a step
+        # with no handler of its own: a delete. The message holds no
+        # secret: no client puts one into its error.
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_PROBLEM
 
 
 def _run(
     args: argparse.Namespace,
-    driver: SandboxDriver | None,
+    vmm: VmmClient | None,
     litellm: LiteLLMKeys | None,
-    switch: SwitchClient | None,
     units: UnitWriter | None,
     checker: PolicyChecker | None,
     environ: Mapping[str, str] | None,
 ) -> int:
     """The verb `args` names."""
+    env = environ if environ is not None else os.environ
     if args.command == "status":
         return _status_command(args)
 
     if args.command == "delete":
-        return _delete_command(args, driver, litellm, checker)
+        return _delete_command(args, vmm, litellm, checker, env)
 
-    fences = _fences(environ if environ is not None else os.environ)
+    fences = _fences(env)
     if fences is None:
         return EXIT_CONFIG
 
     if args.command == "serve":
-        return _serve_command(args, fences, driver, litellm, switch, units, checker)
+        return _serve_command(args, fences, vmm, litellm, units, checker, env)
 
     if args.command == "reconcile-once":
-        return _reconcile_once_command(args, fences, driver, litellm, switch, units, checker)
+        return _reconcile_once_command(args, fences, litellm, units, checker)
 
     if args.command == "rotate":
         return _rotate_command(args, fences, litellm, checker)
 
     if args.command == "apply-once":
-        return _apply_once_command(args, fences, driver, litellm, checker)
+        return _apply_once_command(args, fences, litellm, checker)
 
     return EXIT_USAGE  # unreachable: the subparsers group is required=True
 

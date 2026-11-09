@@ -2,7 +2,7 @@
 
 Every one of them mutates, so every one keeps the `--write` gate. These
 tests hold that gate and the wiring behind it: a plan run must reach no
-client at all, not even to read the `attendance` token file."""
+client at all."""
 
 from __future__ import annotations
 
@@ -12,13 +12,12 @@ import pytest
 from agent_family import FamilyState, load_registry
 from caregiver.cli import EXIT_OK, EXIT_PROBLEM, EXIT_USAGE
 from caregiver.credentials import read_creds, token_sha256
-from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys, key_alias
-from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
 from caregiver_helpers import (
     KIND_MOVED,
     REFUSED_TOOLS,
+    FakeVmm,
     accepted_digests,
     current_digest,
     grants_alone,
@@ -31,14 +30,11 @@ from caregiver_helpers import (
 
 from caregiver import cli, paths
 
-IMAGE: str = "sha256:deadbeef"
-
 #: The variable that holds the master key of LiteLLM.
 KEY_VARIABLE: str = "LITELLM_MASTER_KEY"
 
-#: Two addresses of TEST-NET-1. No test dials them.
+#: An address of TEST-NET-1. No test dials it.
 LITELLM_URL: str = "http://192.0.2.10:4000"
-ATTENDANCE_URL: str = "http://192.0.2.10:8350"
 
 #: What the default `chat` family asks LiteLLM for. An invalid or refused
 #: file in these tests asks for `OTHER_MODEL`, which must reach no key.
@@ -50,27 +46,18 @@ class Bench:
     def __init__(self, tmp_path: Path) -> None:
         self.registry_root = tmp_path / "registry"
         self.state_root = tmp_path / "state"
-        self.driver = FakeDriver()
+        self.vmm = FakeVmm()
         self.litellm = FakeLiteLLMKeys()
-        self.switch = FakeSwitchClient()
         self.units = FakeUnits()
 
     def run(self, *args: str) -> int:
-        return main(
-            list(args),
-            driver=self.driver,
-            litellm=self.litellm,
-            switch=self.switch,
-            units=self.units,
-        )
+        return main(list(args), vmm=self.vmm, litellm=self.litellm, units=self.units)
 
     def reconcile(self, *extra: str) -> int:
         return self.run(
             "reconcile-once",
             str(self.registry_root),
             "chat",
-            "--image",
-            IMAGE,
             "--state-root",
             str(self.state_root),
             *extra,
@@ -100,20 +87,14 @@ def bench(tmp_path: Path) -> Bench:
 def test_a_plan_run_makes_no_change(bench: Bench, capsys: pytest.CaptureFixture[str]) -> None:
     assert bench.reconcile() == EXIT_OK
     assert "plan:" in capsys.readouterr().out
-    assert bench.driver.calls == []
+    assert bench.litellm.minted == 0
     assert not paths.creds_path(bench.state_root, "chat").exists()
-
-
-def test_a_plan_run_never_reads_the_attendance_token(bench: Bench) -> None:
-    """`HttpSwitchClient` reads the token file in its constructor. A plan
-    run on a host where `attendance` has not started yet must still print."""
-    assert bench.reconcile() == EXIT_OK
 
 
 def test_a_write_run_brings_the_family_up(bench: Bench) -> None:
     assert bench.reconcile("--write") == EXIT_OK
     assert read_creds(paths.creds_path(bench.state_root, "chat")) is not None
-    assert "create" in bench.driver.ops()
+    assert paths.config_dir(bench.state_root, "chat").is_dir()
 
 
 def test_a_write_run_prints_the_one_decision_line(
@@ -132,8 +113,6 @@ def test_an_unknown_family_is_a_usage_mistake(bench: Bench) -> None:
             "reconcile-once",
             str(bench.registry_root),
             "nope",
-            "--image",
-            IMAGE,
             "--state-root",
             str(bench.state_root),
         )
@@ -145,7 +124,7 @@ def test_a_directory_with_no_family_file_is_a_usage_mistake(bench: Bench) -> Non
     """Contract 01 §5.6 rule 3: `caregiver` ignores the directory, so the
     verb has no family of that name."""
     write_no_file_dir(bench.registry_root)
-    words = ["reconcile-once", str(bench.registry_root), "stray", "--image", IMAGE]
+    words = ["reconcile-once", str(bench.registry_root), "stray"]
 
     assert bench.run(*words, "--state-root", str(bench.state_root), "--write") == EXIT_USAGE
     assert not paths.family_dir(bench.state_root, "stray").exists()
@@ -165,8 +144,6 @@ def test_serve_without_write_only_prints_the_plan(
     code = bench.run(
         "serve",
         str(bench.registry_root),
-        "--image",
-        IMAGE,
         "--state-root",
         str(bench.state_root),
     )
@@ -174,7 +151,7 @@ def test_serve_without_write_only_prints_the_plan(
     assert code == EXIT_OK
     assert "Pass --write to start" in out
     assert "families: chat" in out
-    assert bench.driver.calls == []
+    assert bench.litellm.minted == 0
 
 
 def test_the_plan_of_serve_names_no_directory_with_no_family_file(
@@ -184,9 +161,7 @@ def test_the_plan_of_serve_names_no_directory_with_no_family_file(
     does not name it as a family."""
     write_no_file_dir(bench.registry_root)
 
-    bench.run(
-        "serve", str(bench.registry_root), "--image", IMAGE, "--state-root", str(bench.state_root)
-    )
+    bench.run("serve", str(bench.registry_root), "--state-root", str(bench.state_root))
 
     assert "families: chat\n" in capsys.readouterr().out
 
@@ -211,7 +186,7 @@ class NoSignals:
 def _words_with_no_key(bench: Bench, verb: str) -> list[str]:
     """The words of one verb that acts, with each address given."""
     state = ["--state-root", str(bench.state_root), "--litellm-base-url", LITELLM_URL, "--write"]
-    watch = [str(bench.registry_root), "--image", IMAGE, "--attendance-url", ATTENDANCE_URL]
+    watch = [str(bench.registry_root)]
     words = {
         "serve": ["serve", *watch, "--pep-url", ""],
         "reconcile-once": ["reconcile-once", *watch, "chat"],
@@ -236,16 +211,32 @@ def test_a_verb_that_acts_refuses_to_start_with_no_master_key(
     monkeypatch.delenv(KEY_VARIABLE, raising=False)
     monkeypatch.setattr(cli, "SignalControl", NoSignals)
 
-    code = main(
-        _words_with_no_key(bench, verb),
-        driver=bench.driver,
-        switch=bench.switch,
-        units=bench.units,
-    )
+    code = main(_words_with_no_key(bench, verb), vmm=bench.vmm, units=bench.units)
 
     assert code == EXIT_PROBLEM
     assert capsys.readouterr().err.strip().splitlines() == [f"caregiver: {KEY_VARIABLE} is not set"]
-    assert bench.driver.calls == []
+    assert bench.vmm.dropped == []
+
+
+def test_serve_with_write_and_no_vmm_socket_names_the_key(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Decision CH20: the unit names `vmm.sock` in `CAREGIVER_VMM_SOCKET`.
+    A loop with no vmm could not drop a deleted family, so it does not
+    start. Its exit code is the one of a key the env files do not give."""
+    monkeypatch.setattr(cli, "SignalControl", NoSignals)
+
+    code = main(
+        ["serve", str(bench.registry_root), "--state-root", str(bench.state_root), "--write"],
+        litellm=bench.litellm,
+        units=bench.units,
+    )
+
+    assert code == cli.EXIT_CONFIG
+    assert capsys.readouterr().err.strip().splitlines() == [
+        "caregiver: CAREGIVER_VMM_SOCKET is not set. It names vmm.sock, "
+        "the socket of the vmm (decision CH20)"
+    ]
 
 
 # --- rotate -----------------------------------------------------------------------

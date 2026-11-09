@@ -404,7 +404,7 @@ env_from_catalog() {  # env_from_catalog <file> <key...>
 }
 
 up_env_files() {
-  local pep_url base python key
+  local pep_url key
   hdr "3. env files"
   pep_url="$(creche_env_get AGENT_PEP_URL --env "$SITE_FILE")" \
     || die "creche-env cannot read AGENT_PEP_URL from $SITE_FILE"
@@ -434,17 +434,6 @@ up_env_files() {
   env_set "$CAREGIVER_ENV" CAREGIVER_STATE_ROOT "$STATE_ROOT"
   env_set "$CAREGIVER_ENV" AGENT_PEP_URL "$pep_url"
 
-  # The images of the last playpen release. caregiver reads that file
-  # itself and its references win. The unit still passes both flags.
-  base="$(envfile_value "$IMAGES_ENV" base)"
-  python="$(envfile_value "$IMAGES_ENV" python)"
-  if [[ -n "$base" && -n "$python" ]]; then
-    env_set "$CAREGIVER_ENV" AGENT_SANDBOX_IMAGE "$base"
-    env_set "$CAREGIVER_ENV" AGENT_SANDBOX_PYTHON_IMAGE "$python"
-  else
-    pending "no image in $IMAGES_ENV: release playpen first (handover request playpen)"
-  fi
-
   # The one secret fleet-up does not mint. It reads the value from
   # hooks.env and never writes hooks.env. `envfile_append_once` writes with
   # printf, a builtin, so the value reaches no argv.
@@ -462,13 +451,11 @@ up_env_files() {
   say "  set LITELLM_MASTER_KEY in $CAREGIVER_ENV (from $HOOKS_ENV, the value is never printed)"
 }
 
-# caregiver refuses to start with no master key, and its unit passes both
-# image flags. A start before the file is whole only fills the journal.
+# caregiver refuses to start with no master key. A start before the file
+# holds it only fills the journal. caregiver creates no sandbox, so it takes
+# no image (decision CH1).
 caregiver_is_whole() {
-  local key
-  for key in LITELLM_MASTER_KEY AGENT_SANDBOX_IMAGE AGENT_SANDBOX_PYTHON_IMAGE; do
-    [[ -n "$(envfile_value "$CAREGIVER_ENV" "$key")" ]] || return 1
-  done
+  [[ -n "$(envfile_value "$CAREGIVER_ENV" LITELLM_MASTER_KEY)" ]]
 }
 
 install_unit() {  # install_unit <unit>: 0 when the file moved, 1 when it did not
@@ -514,7 +501,7 @@ up_units() {
     in_words "$unit" "$ENABLED_UNITS" || continue
     systemctl --user is-enabled "$unit" >/dev/null 2>&1 && continue
     if [[ "$unit" == creche-caregiver.service ]] && ! caregiver_is_whole; then
-      say "  not started: $unit. $CAREGIVER_ENV has no master key or no image yet."
+      say "  not started: $unit. $CAREGIVER_ENV has no master key yet."
       continue
     fi
 

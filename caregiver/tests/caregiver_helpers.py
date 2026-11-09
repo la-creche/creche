@@ -8,21 +8,21 @@ in a module with a unique basename and are imported by name."""
 from __future__ import annotations
 
 import json
+import threading
 import tomllib
-from collections.abc import Sequence
-from dataclasses import replace
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final, cast
 
 from agent_family import FamilyFile, Fences, Markup, parse_family
 from caregiver.cli import main as cli_main
 from caregiver.credentials import read_creds, token_sha256, write_creds
-from caregiver.driver import SandboxDriver
 from caregiver.litellm_keys import LiteLLMKeys
 from caregiver.policy_file import DIGESTS_KEY, render_digests
 from caregiver.policy_fleet import FakeChecker, FleetPolicy, PolicyChecker, PolicyTarget
-from caregiver.switch import SwitchClient
 from caregiver.timers import UnitWriter
+from caregiver.vmm import VmmError
 
 from caregiver import paths
 
@@ -177,12 +177,36 @@ def fake_policy(root: Path, checker: FakeChecker | None = None) -> FleetPolicy:
     )
 
 
+@dataclass
+class FakeVmm:
+    """A vmm that drops what it is asked to drop, and records each call.
+
+    `refuse` makes each drop raise `VmmError` with that code. `on_drop`
+    runs inside the call, so a test can look at the host at the moment of
+    the drop. A lock, because the loop runs a delete in a thread of its
+    own."""
+
+    refuse: str | None = None
+    on_drop: Callable[[str], None] | None = None
+    dropped: list[str] = field(default_factory=list[str])
+    _mutex: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def drop_family(self, family: str) -> None:
+        with self._mutex:
+            self.dropped.append(family)
+
+        if self.on_drop is not None:
+            self.on_drop(family)
+
+        if self.refuse is not None:
+            raise VmmError(self.refuse, f"the fake vmm refused the drop of {family}")
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
-    driver: SandboxDriver | None = None,
+    vmm: FakeVmm | None = None,
     litellm: LiteLLMKeys | None = None,
-    switch: SwitchClient | None = None,
     units: UnitWriter | None = None,
     checker: PolicyChecker | None = None,
     environ: dict[str, str] | None = None,
@@ -191,9 +215,8 @@ def main(
     test runs a `chaperone` binary, and the fences of the test host."""
     return cli_main(
         argv,
-        driver=driver,
+        vmm=vmm,
         litellm=litellm,
-        switch=switch,
         units=units,
         checker=checker if checker is not None else FakeChecker(),
         environ=environ if environ is not None else FENCE_ENV,

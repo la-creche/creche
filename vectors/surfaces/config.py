@@ -22,7 +22,7 @@ from typing import Final
 from handover.errors import Refusal
 
 from attendance import config as attendance_config
-from caregiver import config_mount, credentials, playpen_env
+from caregiver import config_mount, credentials
 from handover import site as handover_site
 from noticeboard import config as noticeboard_config
 from vectors.core import (
@@ -39,7 +39,6 @@ from vectors.core import (
     raised,
     refused,
     repeat_input,
-    text_input,
 )
 
 # --- the site file ----------------------------------------------------------
@@ -595,150 +594,6 @@ def _creds_surfaces(scratch: Path) -> tuple[Surface, ...]:
     )
 
 
-# --- the env file of the playpen --------------------------------------------
-
-PLAYPEN_ENV_CONTRACT: Final = "contract 03 §7.1"
-
-_STATE_ROOT: Final = "/srv/agents/state/creche"
-
-#: The URL of each plane in an env file, on a TEST-NET-1 address (RFC 5737).
-_PEP_URL: Final = "http://192.0.2.10:8300"
-_LITELLM_BASE_URL: Final = "http://192.0.2.10:4000"
-
-
-@dataclass(frozen=True)
-class EnvWrite:
-    """One env file to write: the arguments of `write_playpen_env`."""
-
-    id: str
-    state_root: str = _STATE_ROOT
-    family: str = "chat"
-    sandbox: str = "chat-s3"
-    pep_url: str = _PEP_URL
-    litellm_base_url: str = _LITELLM_BASE_URL
-    index_root: str | None = None
-
-
-ENV_WRITES: Final[tuple[EnvWrite, ...]] = (
-    EnvWrite("one-sandbox"),
-    EnvWrite("family-with-hyphens", family="dev-team", sandbox="dev-team-s12"),
-    EnvWrite("root-is-the-state-root", state_root="/"),
-    EnvWrite("state-root-final-slash", state_root="/tmp/state/"),
-    EnvWrite("state-root-two-slashes", state_root="//net/state"),
-    EnvWrite("state-root-dot-segment", state_root="/tmp/./state"),
-    EnvWrite("with-index-root", index_root="/srv/agents/state/index"),
-)
-
-
-def _env_write_vector(write: EnvWrite, scratch: Path) -> Vector:
-    args = {
-        "state_root": write.state_root,
-        "family": write.family,
-        "sandbox": write.sandbox,
-        "pep_url": write.pep_url,
-        "litellm_base_url": write.litellm_base_url,
-    }
-    if write.index_root is not None:
-        args["index_root"] = write.index_root
-
-    given: dict[str, Json] = {"args": normalize(args)}
-    target = scratch / "write" / write.id / "supervisor.env"
-    outcome = attempt(
-        lambda: playpen_env.write_playpen_env(
-            target,
-            state_root=Path(write.state_root),
-            family=write.family,
-            sandbox=write.sandbox,
-            pep_url=write.pep_url,
-            litellm_base_url=write.litellm_base_url,
-            index_root=Path(write.index_root) if write.index_root is not None else None,
-        )
-    )
-    if isinstance(outcome, Raised):
-        return raised(write.id, given, outcome.exc)
-
-    return accepted(write.id, given, output=bytes_input(target.read_bytes()))
-
-
-@dataclass(frozen=True)
-class EnvText:
-    """One env file to read: an id and its text."""
-
-    id: str
-    text: str
-
-
-_ENV_FILE: Final = (
-    f"AGENT_CRED_DIR={_STATE_ROOT}/families/chat/creds\n"
-    f"AGENT_FAMILY_CONFIG_DIR={_STATE_ROOT}/families/chat/config\n"
-    f"AGENT_CONTROL_DIR={_STATE_ROOT}/families/chat/control/chat-s3\n"
-    "AGENT_SANDBOX=chat-s3\n"
-    f"AGENT_PEP_URL={_PEP_URL}\n"
-    f"AGENT_LITELLM_BASE_URL={_LITELLM_BASE_URL}\n"
-)
-
-ENV_TEXTS: Final[tuple[EnvText, ...]] = (
-    EnvText("as-the-writer-writes", _ENV_FILE),
-    EnvText("empty", ""),
-    EnvText("line-with-no-sign", _ENV_FILE + "not an assignment\n"),
-    EnvText("comment-line", "# AGENT_SANDBOX=chat-s1\n" + _ENV_FILE),
-    EnvText("last-line-wins", _ENV_FILE + "AGENT_SANDBOX=chat-s4\n"),
-    EnvText("space-is-kept", " AGENT_SANDBOX = chat-s3 \n"),
-    EnvText("value-with-a-sign", "A=b=c\n"),
-    EnvText("empty-name-and-empty-value", "=x\nA=\n=\n"),
-    EnvText("quotes-are-kept", 'A="chat-s3"\n'),
-    EnvText("crlf", _ENV_FILE.replace("\n", "\r\n")),
-    EnvText("no-final-newline", _ENV_FILE.rstrip("\n")),
-    EnvText("line-breaks-of-python", "A=1\x0bB=2\x85C=3\u2028D=4\x1cE=5\x1fF=6"),
-    EnvText("missing-variables", "AGENT_CRED_DIR=\nAGENT_SANDBOX=chat-s3\n"),
-)
-
-
-def _env_read_vector(env: EnvText, scratch: Path) -> Vector:
-    given = text_input(env.text)
-    target = scratch / "read" / env.id / "supervisor.env"
-    target.parent.mkdir(parents=True)
-    target.write_bytes(env.text.encode("utf-8"))
-    outcome = attempt(lambda: playpen_env.read_playpen_env(target))
-    if isinstance(outcome, Raised):
-        return raised(env.id, given, outcome.exc)
-
-    return accepted(env.id, given, {"variables": outcome})
-
-
-def _playpen_env_surfaces(scratch: Path) -> tuple[Surface, ...]:
-    return (
-        Surface(
-            name="config.playpen_env.write",
-            path="config/playpen_env.write.json",
-            entry="caregiver.playpen_env.write_playpen_env",
-            contract=PLAYPEN_ENV_CONTRACT,
-            notes=(
-                "The input is the named arguments of the entry point, as args. "
-                "state_root is a path. pep_url and litellm_base_url are the URLs of the "
-                "two planes. index_root is a path, and an input with no index_root gives "
-                "None.",
-                "output is the exact bytes of the file that the entry point writes.",
-                "The entry point checks no argument.",
-            ),
-            vectors=tuple(_env_write_vector(write, scratch) for write in ENV_WRITES),
-        ),
-        Surface(
-            name="config.playpen_env.read",
-            path="config/playpen_env.read.json",
-            entry="caregiver.playpen_env.read_playpen_env",
-            contract=PLAYPEN_ENV_CONTRACT,
-            notes=(
-                "The input is the text of an env file.",
-                "value.variables maps each name to its value. The entry point accepts each "
-                "text: it is a helper for a test and for an operator. sbx parses the file on "
-                "a host.",
-            ),
-            vectors=tuple(_env_read_vector(env, scratch) for env in ENV_TEXTS),
-        ),
-    )
-
-
 # --- the environment of two services --------------------------------------
 
 LAN: Final = "192.0.2.10"
@@ -1046,6 +901,5 @@ def surfaces() -> tuple[Surface, ...]:
             _site_surface(scratch / "site"),
             _runtime_surface(scratch / "runtime"),
             *_creds_surfaces(scratch / "creds"),
-            *_playpen_env_surfaces(scratch / "playpen-env"),
             *_env_surfaces(),
         )

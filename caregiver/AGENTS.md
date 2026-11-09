@@ -6,9 +6,13 @@ family it:
 
 - mints the LiteLLM key and the chaperone token,
 - writes the table of the family in `policy.toml` and the family config
-  mount,
-- creates and replaces the sandbox,
-- generates the timers an autonomous family asks for.
+  directory,
+- writes `egress.json` and `repos.json`, which the vmm reads,
+- generates the timers an autonomous family asks for,
+- asks the vmm to drop the sessions of a deleted family.
+
+It starts and stops no VM. The vmm starts one VM per session at its first
+prompt and stops it itself (decisions CH1, CH21-1).
 
 It is a reconciler, not a command the operator runs. `caregiver serve`
 watches the registry and converges every family to its file. Families
@@ -20,17 +24,15 @@ host where something has gone wrong.
 | Module | Owns |
 |---|---|
 | `paths.py`, `clock.py`, `atomic.py` | every host path, the one timestamp, the atomic write and the JSON read |
-| `lan.py`, `images.py`, `released.py` | the LAN address from the site file, the image a flavor maps to, and the images a `playpen` release installed |
-| `driver.py` | `SandboxDriver`: `SbxDriver` (real) and `FakeDriver` |
-| `litellm_keys.py`, `credentials.py`, `config_mount.py` | the key, the token, the config mount |
-| `reach_files.py` | `egress.json` and `repos.json` beside the config mount (contract 01 §6.1.1) |
-| `playpen_env.py` | the env file `sbx exec --env-file` carries |
+| `lan.py` | the LAN address from the site file |
+| `litellm_keys.py`, `credentials.py`, `config_mount.py` | the key, the token, the config directory |
+| `reach_files.py` | `egress.json` and `repos.json` beside the config directory (contract 01 §6.1.1) |
+| `vmm.py` | the one call this service makes to the vmm: the drop of a family (decisions CH20, CH21-10, CH25) |
 | `policy_file.py` | the types and the text of `policy.toml`, and `build_app` |
 | `policy_fleet.py` | one fragment per family, and the checked assembly of the one `policy.toml` |
 | `faults.py`, `chaperone_watch.py`, `status.py` | the fault files, the one chaperone probe, the status document |
 | `webhook_tokens.py`, `timers.py` | one bearer per webhook, and the generated timer units |
-| `switch.py` | the one call this service makes to `attendance` |
-| `applied.py`, `steps.py`, `reconcile.py`, `sandboxes.py` | the live snapshot, one function per step, one pass, the one create path |
+| `applied.py`, `steps.py`, `reconcile.py` | the live snapshot, one function per step, one pass |
 | `rotate.py`, `loop.py`, `apply.py`, `delete.py` | rotate, serve, the one-shot apply, the teardown |
 | `live_manifest.py` | the ledger of root, read |
 | `cli.py` | `serve`, `reconcile-once`, `rotate`, `apply-once`, `status`, `delete` |
@@ -39,12 +41,12 @@ host where something has gone wrong.
 ## Rules
 
 - **Layers talk to the layer below, never sideways.** `apply.py`,
-  `reconcile.py`, `rotate.py`, `sandboxes.py`, `loop.py` and `delete.py`
-  call more than one sibling. `policy_fleet.py` calls
+  `reconcile.py`, `rotate.py`, `loop.py` and `delete.py` call more than one
+  sibling. `policy_fleet.py` calls
   `policy_file.py`. Every other module talks only to `paths.py`,
   `clock.py` and `atomic.py`.
-- Every external dependency sits behind a Protocol with a fake. Add a third
-  the same way.
+- Every external dependency sits behind a Protocol. The fake of `VmmClient`
+  lives in `tests/caregiver_helpers.py`, never in the package.
 - `atomic.py` is the only place that writes a file another process reads.
 - `atomic.read_json` reads a JSON file. It answers `None` for content that
   it cannot read. It does not raise on content.
@@ -52,23 +54,39 @@ host where something has gone wrong.
   refuses an integer past the digit limit and nesting past the limit of
   the parser. Each one refuses bytes that are not UTF-8.
 - A client maps each failure of its transport and of its answer to its own
-  error: `DriverError`, `LiteLLMError`, `SwitchError`. A step names that
-  error in its handler, with two exceptions.
-- The destroy step of a replacement and `delete_family` have no handler.
-  In `serve`, their error ends in a handler of the loop. In each other
-  verb it ends in `cli.main`: one line, and exit code 1.
-- Credentials die before processes. `delete.py` removes the LiteLLM key, then
-  the fragment of `policy.toml` and its table, then
-  `creds.json`, `egress.json` and `repos.json`, then the sandboxes
-  (decision CH69 rule 23). `test_delete.py` checks the order from inside the fake driver.
-- Each pass and `apply-once` write `egress.json` of the family, before the
-  sandbox step (decision CH69 rule 6). It is `FamilyEgress` of
+  error: `LiteLLMError`, `VmmError`. A step names that error in its
+  handler, with one exception.
+- `delete_family` has no handler. In `serve`, its error ends in a handler
+  of the loop. In the `delete` verb it ends in `cli.main`: one line, and
+  exit code 1.
+- Credentials die before processes. `delete.py` removes the LiteLLM key,
+  then the fragment of `policy.toml` and its table, then `creds.json`,
+  `egress.json`, `repos.json`, `config/` and the webhook bearers, then
+  asks the vmm to drop every session of the family, then removes the
+  state directory (contract 05 §4.4, decisions CH21-10, CH33 rule 3, CH69
+  rule 23). `test_delete.py` checks the order from inside the fake vmm.
+- A drop that fails keeps the state directory, so the next look runs the
+  delete again. The vmm answers `Dropped` for a family with no rows.
+- `vmm.py` sends the header `creche-host-api-protocol` on each request and
+  reads each reply with `creche_wire.read` under `HOST_API_BODY_CAP`. A
+  mismatch reply is sent again 2 s later, 3 requests in all, the numbers
+  of attendance (decision CH33 rule 10). The last mismatch is `VmmError`
+  with the code `vmm_protocol_mismatch` (decisions CH25 rule 1, CH82 rule
+  5). ENOENT, ECONNREFUSED and EOF are `unreachable`, a transient fault
+  (decision CH20).
+- `serve` and `delete` read the socket of the vmm from
+  `CAREGIVER_VMM_SOCKET`. The unit sets it to `%t/vmm/vmm.sock`, the path
+  of decision CH20. With no value, the verb writes one line that names the
+  key when it would act, and its exit code is 78.
+- Each pass and `apply-once` write `egress.json` of the family (decision
+  CH69 rule 6). It is `FamilyEgress` of
   `creche-wire`: hosts in lower case, an explicit port (a bare host is
   443), no entry twice, sorted by host and then by port (decision CH69
   rule 5, CH70 rule 4). A family with no `egress` gets `{"hosts": []}`.
   The planes never enter it (decision CH6-2). The file sits beside
   `config/`, mode 0640, and bytes equal to the file on disk write nothing.
-  The sbx egress step stays until the cut.
+  A write of either reach file is the step `set_egress` (contract 05
+  §3.4).
 - A revision whose `egress.json` would pass `EGRESS_CAP` of
   `reach_files.py`, the 64 KiB cap of the vmm (decision CH70 rule 1), is
   refused (decision CH71). The pass and `apply-once` render the file
@@ -112,8 +130,6 @@ host where something has gone wrong.
   `POLICY_FILE_MAX_BYTES`, 1 MiB. The Rust chaperone holds the same number
   as `POLICY_FILE_CAP`. `test_the_cap_is_the_rust_policy_file_cap` fails
   when the two numbers differ.
-- `apply_once` creates a sandbox once. `classify()` decides whether a change
-  needs a new one.
 - The applied snapshot moves at the end of a successful pass. An interrupted
   pass leaves the old one.
 - The applied copy of a family file is `applied/family.toml`. The name
@@ -127,34 +143,17 @@ host where something has gone wrong.
   `applied/family.yaml`.
 - Narrowing runs before widening, everywhere. Egress removals before allows.
   Timer removals before timer writes.
-- A refused switch keeps both sandboxes.
 - Every pass converges a timer's enabled state, not only its file.
 - `Actors` has no defaults.
-- A failed create burns an id and earns a backoff, 5 s doubling to 300 s. A
-  registry edit clears the backoff.
-- A slow step still publishes. A pass writes `reconciling` and the step
-  in flight before each slow step: `sbx create`, the switch call and the
-  destroy of a replacement. `loop._keep_fresh` restamps a document nothing
-  is about to publish for.
+- A pass that raises earns a backoff, 5 s doubling to 300 s. A registry
+  edit clears the backoff.
+- `loop._keep_fresh` restamps a document nothing is about to publish for.
 - `restamp_status` rewrites only a document that this process published. A
   document from before a restart is the verdict of another process.
 - A family that waits for a slot after a restart gets one look.
-  `loop._look_at` runs the pass of that family with the stop already set.
-  Each cheap step runs. The pass stops before the first slow step, and it
+  `loop._look_at` runs the pass of that family beyond the bound, and it
   publishes the document of this process.
-- A pass that stops before a slow step publishes `reconciling`, never
-  `in_sync`. The loop records no revision for it, so the family takes the
-  next free slot.
-- A stop is checked between steps, never inside one.
-- A `planned` sandbox row is a create a kill cut short. `fail_planned`
-  retires it at the top of every pass.
-- A sandbox row that does not read stays in the ledger file. A rewrite
-  removes it only when the JSON encoder cannot write it again.
-- `paths.playpen_env_path` is the one source for the path of an env file.
-  The ledger reader computes the path of a row from the state root, the
-  family and the id of that row.
-- The ledger writer keeps the field `supervisor_env` in each row. Another
-  release of this package reads the path from that field.
+- A pass that is `reconciling` and ran no step names the step `validate`.
 - An empty registry deletes no family.
 - A directory under `families/` with no `family.toml` gets no pass and no
   delete. `reconcile.has_family_file` is the test for it. `apply.apply_once`
@@ -184,31 +183,6 @@ host where something has gone wrong.
 - A cron line with no `OnCalendar` spelling gets no unit.
 - A fault's `blocks_turns` comes from `faults.BLOCKS_TURNS_BY_CODE`, never
   from the file.
-- A flavor with no image creates nothing. The fault does not block turns.
-  `coding` never has an sbx image (`images.SBX_FLAVORS`, decisions CH53
-  rule 1, CH79 rule 1).
-- The images of a `playpen` release win over `--image` and `--image-python`.
-  `released.py` reads `/opt/components/playpen/images.env` once per pass.
-- A released file that is absent or does not read keeps the last good
-  answer. Only a process that never read one uses the flags.
-- A released reference is a digest. A file that holds a tag, a flavor
-  outside `SBX_FLAVORS` or no `base` line is refused whole.
-- A run with a `--state-root` of its own reads no released file, unless
-  `--released-images` names one.
-- Never name a fixed in-VM path. `sbx create` mounts a host directory at the
-  same path inside the VM. `playpen_env.py` writes the three host paths into
-  the env file, per sandbox, beside `control/` and never inside it.
-- The env file of a sandbox has seven lines: the sessions directory, three
-  host paths, the sandbox id and the URL of each plane. The two plane
-  variables are `AGENT_PEP_URL` and `AGENT_LITELLM_BASE_URL`.
-- The sessions directory is `paths.session_dir`, under the sessions root of
-  the host. A family file that mounts `/srv/agents/state/index` read-only
-  gets an eighth line, `AGENT_INDEX_ROOT`. `paths.index_root` decides it.
-- Each caller of `write_playpen_env` gives the two URLs, from `lan.url`.
-  `playpen_env.py` holds no address and no port.
-- A sandbox keeps the env file of its create. `caregiver` writes the file
-  again in two cases only: a pass finds the replacement that an earlier pass
-  left, or the operator runs `apply-once`.
 - `config_rev` and `applied_rev` are the same value: the registry revision.
 - `runtime.json` holds `sandbox_tools` as the list of the family file, in
   file order. The names are Flue's six: `read`, `write`, `edit`, `bash`,
@@ -224,10 +198,10 @@ host where something has gone wrong.
 | poll | 2 s | a content hash of the registry |
 | heartbeat | 20 s | a document older than 90 s reads `unknown` |
 | spend | 60 s | spend moves with turns, not ticks |
-| create backoff | 5 s, doubling to 300 s | a failed create burns an id |
+| backoff | 5 s, doubling to 300 s | a pass that raised, or a delete that did not end |
 
 `SIGHUP` means "look now". The wait ends, and each family takes a pass at
-the next look. A family in a create backoff keeps its wait. `SIGTERM` stops
+the next look. A family in a backoff keeps its wait. `SIGTERM` stops
 the loop after the look in flight.
 
 Each step of a look ends in a handler of the loop: a dispatch, a pass, a
@@ -235,7 +209,7 @@ delete. The handler writes the first error with its
 traceback. It counts each repeat. The loop continues, and each other
 family gets its pass.
 
-A delete that fails gets the backoff of a failed create. The loop starts
+A delete that fails gets the backoff of a pass that raised. The loop starts
 the delete again when the backoff ends or the registry changes.
 
 ## `policy_file.py`
@@ -356,8 +330,8 @@ chaperone by hand (`handover/AGENTS.md`, "An `mcp-servers` release").
 ## Use
 
 ```bash
-caregiver serve <registry> --image sha256:... --write
-caregiver reconcile-once <registry> chat --image sha256:... --write
+caregiver serve <registry> --write
+caregiver reconcile-once <registry> chat --write
 caregiver rotate <registry> chat --reason suspicion --write
 caregiver status chat
 caregiver delete chat --write
@@ -365,7 +339,8 @@ caregiver delete chat --write
 
 Every mutating verb prints its plan. `--write` turns the plan into action.
 Exit codes: 0 ok, 1 degraded or refused, 2 a usage mistake, 78 the fences
-of the host do not read.
+of the host do not read, or `serve` or `delete` acts with no
+`CAREGIVER_VMM_SOCKET`.
 
 ## Tests
 
@@ -374,7 +349,7 @@ uv run pytest caregiver/tests
 ```
 
 `caregiver_helpers.py` is not a `conftest.py`. It holds `write_registry`.
-Nothing here touches a real sandbox or LiteLLM.
+Nothing here touches a real vmm or LiteLLM.
 
 ## Known gaps
 
@@ -390,11 +365,6 @@ Nothing here touches a real sandbox or LiteLLM.
 - `apply-once` publishes no chaperone fault (`apply.py`).
 - `settle` and `rotate_serving` write token digests while a family file is
   invalid. Contract 05 §3.1 and §6.3 do not agree on this (`loop.py`).
-- A look runs `fail_planned`, which destroys the virtual machine of a
-  `planned` row. That is one `sbx` call outside the bound (`loop.py`).
-- A restart during a fleet replacement still ends each create in flight.
-  The next process retires the `planned` row and burns one id
-  (`sandboxes.py`).
 - A pass publishes the step name `write_timers`. Contract 05 §3.4 lists
   eight step names, and that name is not one of them (`reconcile.py`).
 - A pass that raises publishes no fault. Contract 05 §3.3 has no code for
@@ -403,8 +373,6 @@ Nothing here touches a real sandbox or LiteLLM.
 - `read_creds` converts a field with `int` and `str`. It reads `true` as
   epoch 1. Contract 03 §12 gives no rule for a field of another type
   (`credentials.py`).
-- The ledger reader converts a field with `int` and `str`. No contract
-  defines the ledger file (`sandboxes.py`).
 - A pass lands the digests that `creds.json` gave at the start of the
   pass. A rotation of another process can write new digests between that
   read and the landing. The pass then writes the old digests, and the new
@@ -412,17 +380,6 @@ Nothing here touches a real sandbox or LiteLLM.
 - `CONTRACT-QUESTION` in `steps.py`, `WHOLE_FILE`. Contract 01 §7 gives
   `loc` as a field path. No one field owns a refusal of the app table, so
   that error has the place `<document>`.
-- No pass manages a sandbox whose ledger row does not read. The row stays
-  in the file, and the log names the family at each rewrite
-  (`sandboxes.py`).
-- The ledger reader takes a file that is present and gives no list of rows
-  as an absent file. The next rewrite replaces the file and writes one error
-  line. No pass then destroys a sandbox that the old file named
-  (`sandboxes.py`).
-- A destroy that fails after a failed create, or for a `planned` row,
-  leaves the virtual machine. The row reads `failed`, and the log holds one
-  error line. No later pass destroys that virtual machine. Contract 05 §4.2
-  rule 5 has no rule for a destroy that fails (`sandboxes.py`).
 - `CONTRACT-QUESTION` in `reconcile.py`, `_text`. Contract 01 §6.1 has no
   rule for an instructions file or a skill file that is not UTF-8. A pass
   reads it as an empty file and writes an empty file into the config
@@ -435,7 +392,7 @@ Nothing here touches a real sandbox or LiteLLM.
   stale. The loop writes one warning that names the family. A stale
   document fails the `heartbeat` check of `caregiver-verify`, so a release
   of `caregiver` fails while the directory stays as it is. The other
-  reading deletes its key and its sandboxes.
+  reading deletes its key and drops its sessions.
 - Two fragments that each pass the check alone and fail together, such as
   two apps with one token digest, are left out together when the check
   names them. Their last good tables are not kept, as the chaperone
@@ -448,3 +405,16 @@ Nothing here touches a real sandbox or LiteLLM.
   absent file. It mints a new key and a new token, writes epoch 1 and
   writes one error line. Contract 03 §12 rule 3 says that the epoch
   increases on every write (`steps.py`).
+- `CONTRACT-QUESTION` in `vmm.py`, `VmmError`. Contract 05 §3.3.1 says
+  that caregiver raises `vmm_protocol_mismatch` for its own vmm call. The
+  one call is the drop of a deleted family, whose status document goes
+  with the family. The reading here: the code is the `code` of the
+  `VmmError`, the log line of the delete names it, and no status document
+  carries it. To publish it, contract 05 must name a document for a fault
+  of a family that is being deleted.
+- `CONTRACT-QUESTION` in `vmm.py`, `VMM_SOCKET_ENV`. Decision CH20 fixes
+  the path `/run/user/<uid>/vmm/vmm.sock` and names no env key. The env
+  catalog cannot spell a uid, so `default.env` holds no key for it. The
+  reading here: the unit sets `CAREGIVER_VMM_SOCKET` from `%t`, outside the
+  catalog. To make it a catalog key, the catalog grammar needs a form for
+  the runtime dir of an account.

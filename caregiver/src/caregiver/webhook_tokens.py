@@ -90,8 +90,8 @@ def rotate_webhooks(family: FamilyFile, state_root: Path) -> tuple[WebhookToken,
 
 
 def forget_webhooks(state_root: Path, family_name: str) -> None:
-    """Every bearer of a deleted family, gone before its sandboxes are
-    (invariant 13: credentials die before processes)."""
+    """Every bearer of a deleted family, gone before the vmm drops its
+    sessions (invariant 13: credentials die before processes)."""
     shutil.rmtree(paths.webhooks_family_dir(state_root, family_name), ignore_errors=True)
 
 

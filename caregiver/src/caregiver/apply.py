@@ -1,12 +1,11 @@
-"""apply-once: bring one family up from its registry file: create the
-sandbox, the family key and the family token from the file.
+"""apply-once: bring one family up from its registry file: the family key,
+the family token, the table of `policy.toml`, the config directory and the
+reach files.
 
-It does not keep a family converged, switch a sandbox or rotate its
-credentials: `loop.py`, `switch.py` and `rotate.py` do. Re-running
-`apply_once` is safe: it mints
-credentials only once and reuses them after, and it creates a sandbox only
-when the family has none yet -- deciding whether a *changed* file needs a
-new one is the reconciler's classify()-based job, not this one's."""
+It does not keep a family converged or rotate its credentials: `loop.py`
+and `rotate.py` do. It starts no VM: the vmm starts one VM per session at
+its first prompt (decision CH1). Re-running `apply_once` is safe: it mints
+credentials only once and reuses them after."""
 
 from __future__ import annotations
 
@@ -26,19 +25,13 @@ from agent_family import (
     load_registry,
 )
 
-from . import paths, reach_files, sandboxes, steps
+from . import paths, reach_files, steps
 from .atomic import read_json
 from .credentials import read_creds
-from .driver import SandboxDriver
-from .egress import EgressConfig
 from .faults import FaultEntry
-from .images import SandboxImages
-from .lan import Port, url
 from .litellm_keys import LiteLLMKeys
-from .playpen_env import write_playpen_env
 from .policy_file import PolicyShapeError
 from .policy_fleet import FleetPolicy, LeftOut
-from .sandboxes import SandboxRecord
 from .status import (
     CredentialsBlock,
     LimitsBlock,
@@ -50,7 +43,6 @@ from .status import (
     write_status,
     write_validation_report,
 )
-from .switch import SwitchClient
 from .webhook_tokens import ensure_webhooks
 
 
@@ -72,29 +64,16 @@ def apply_once(
     family_name: str,
     *,
     state_root: Path,
-    # Contract 05 §4.1: the approved sandbox image digest is contract
-    # 06's answer, so it is taken as a parameter rather than resolved here.
-    image: str,
-    # The second flavor of contract 01 §3.9, same channel as the first.
-    # Empty means this host was given none, and a family that asks for it
-    # gets `image_flavor_unconfigured` rather than a base sandbox.
-    python_image: str = "",
     # The fences of the host (`agent_family.fences`). Required: an apply
     # with no fences would apply a family that the fences refuse.
     fences: Fences,
-    driver: SandboxDriver,
     litellm: LiteLLMKeys,
     policy: FleetPolicy,
     host: HostFacts | None = None,
-    egress: EgressConfig | None = None,
-    # Contract 05 §4.3 steps 6 and 7. Optional, because `up` runs this verb
-    # before `attendance` is listening: with no client the sandbox stays
-    # `creating`, which is what §4.2 rule 4 requires when no handshake ran.
-    switch: SwitchClient | None = None,
 ) -> ApplyResult:
     """Validate, then -- only if the file is valid -- mint or refresh
-    credentials, write the table of `policy.toml` and the config mount,
-    create the sandbox if none exists yet, and publish the status document.
+    credentials, write the table of `policy.toml`, the config directory
+    and the reach files, and publish the status document.
 
     A table that `chaperone check` refuses, for its shape or in the
     assembly, stops the apply as an invalid file does. Its one error line
@@ -102,8 +81,8 @@ def apply_once(
 
     On an invalid file: write the validation report, write a status
     document reporting `invalid`, and stop (invariant 19). Nothing this
-    family already had (its table of `policy.toml`, its config mount, its
-    credentials, its sandbox) is touched, so the last good definition
+    family already had (its table of `policy.toml`, its config directory,
+    its reach files, its credentials) is touched, so the last good definition
     keeps serving."""
     registry = load_registry(registry_root, host, fences)
     report = registry.reports.get(family_name)
@@ -111,7 +90,7 @@ def apply_once(
         raise FamilyNotFoundError(family_name)
 
     write_validation_report(paths.validation_path(state_root, family_name), report)
-    faults = steps.read_faults(state_root, family_name, _live_ids(state_root, family_name))
+    faults = steps.read_faults(state_root, family_name)
     never_applied_before = read_creds(paths.creds_path(state_root, family_name)) is None
 
     if not report.ok:
@@ -135,24 +114,10 @@ def apply_once(
         },
         index=index,
         state_root=state_root,
-        images=SandboxImages(base=image, python=python_image),
-        driver=driver,
         litellm=litellm,
         policy=policy,
         faults=faults,
-        egress=egress if egress is not None else EgressConfig(),
-        switch=switch,
         never_applied_before=never_applied_before,
-    )
-
-
-def _live_ids(state_root: Path, family_name: str) -> tuple[str, ...]:
-    """The family's live fleet, which decides `blocks_turns` for the one code
-    contract 05 §3.3 states fleet-wide (`faults.rescope_by_fleet`)."""
-    return tuple(
-        one.id
-        for one in sandboxes.read_ledger(state_root, family_name)
-        if one.state in sandboxes.LIVE_STATES
     )
 
 
@@ -213,13 +178,9 @@ def _apply_valid(
     skills: dict[str, str],
     index: Index,
     state_root: Path,
-    images: SandboxImages,
-    driver: SandboxDriver,
     litellm: LiteLLMKeys,
     policy: FleetPolicy,
     faults: tuple[FaultEntry, ...],
-    egress: EgressConfig,
-    switch: SwitchClient | None,
     never_applied_before: bool,
 ) -> ApplyResult:
     def refuse(reason: str) -> ApplyResult:
@@ -245,7 +206,7 @@ def _apply_valid(
     creds, credentials_block, key_faults = steps.ensure_credentials(family, state_root, litellm)
     all_faults = (*faults, *key_faults)
     if creds is None:
-        # invariant 13 orders a DELETE (credentials before the sandbox). A
+        # invariant 13 orders a DELETE (credentials before the VMs). A
         # failed MINT is the opposite case: nothing downstream depends on
         # a key that does not exist, so there is nothing more to do.
         return _degraded(
@@ -258,22 +219,13 @@ def _apply_valid(
 
     steps.write_config(family, state_root, instructions, skills)
     # Contract 01 §6.1.1, decision CH69 rule 6: the egress allowlist and the
-    # clone list of the vmm, before the sandbox step, as a pass writes them.
+    # clone list of the vmm, as a pass writes them.
     reach_files.write_egress_file(egress_file, state_root)
     reach_files.write_repos_file(family, state_root)
     # Contract 05 §6.4, invariant 16: a declared webhook opens a live route
-    # with no second, hand-made act. Beside the other credentials, before
-    # any sandbox exists (invariant 13).
+    # with no second, hand-made act. Beside the other credentials
+    # (invariant 13).
     webhooks = ensure_webhooks(family, state_root)
-
-    record, sandbox_faults = _ensure_sandbox(family, state_root, images, driver, egress)
-    # Both fault files are read AGAIN, after the sandbox step, so the
-    # document holds the faults of the fleet as it stands now.
-    all_faults = (
-        *steps.read_faults(state_root, family.name, _live_ids(state_root, family.name)),
-        *key_faults,
-        *sandbox_faults,
-    )
 
     state = FamilyState.DEGRADED if all_faults else FamilyState.IN_SYNC
     validation = ValidationBlock(
@@ -286,101 +238,22 @@ def _apply_valid(
         report_path=str(paths.validation_path(state_root, family.name)),
         first_error=None,
     )
-
-    def publish(one: SandboxRecord | None) -> ApplyResult:
-        doc = StatusDocument(
-            family=family.name,
-            kind=str(family.kind),
-            state=state,
-            written_at=now_rfc3339(),
-            registry_rev=registry_revision,
-            applied_rev=registry_revision,
-            config_rev=registry_revision,
-            validation=validation,
-            sandboxes=(sandboxes.status_of(one),) if one is not None else (),
-            credentials=credentials_block,
-            limits=steps.limits_for(family),
-            triggers=TriggersBlock(webhooks, enqueue=accepts_dispatch(family)),
-            faults=all_faults,
-        )
-        write_status(paths.status_path(state_root, family.name), doc)
-
-        return ApplyResult(ok=not all_faults, status=doc)
-
-    if record is None or switch is None:
-        return publish(record)
-
-    # Contract 05 §4.3 step 5b then steps 6 and 7. The document is published
-    # FIRST because it is the only thing that crosses to `attendance` (§1), so
-    # a sandbox it does not name is one §5.3 rule 8 refuses.
-    publish(record)
-    promoted, _step = sandboxes.promote_sandbox(state_root, family.name, record, switch)
-
-    return publish(promoted)
-
-
-def _ensure_sandbox(
-    family: FamilyFile,
-    state_root: Path,
-    images: SandboxImages,
-    driver: SandboxDriver,
-    egress: EgressConfig,
-) -> tuple[SandboxRecord | None, tuple[FaultEntry, ...]]:
-    """A family that already has a live sandbox keeps it. One that does
-    not gets one, through `sandboxes.create_sandbox` — the one creation
-    path, so no caller can skip §4.3's egress proof.
-
-    Whether a *changed* file needs a new sandbox is `classify()`'s answer
-    and the reconciler's decision, never this verb's.
-
-    A `planned` row goes first, for the same reason the reconciler retires
-    one: it is a create a kill cut short, and the VM it may have built
-    never had its canaries probed. "The VM exists" is not the test — `up`
-    runs this verb right after a restart, which is exactly when a leftover
-    is there to find."""
-    sandboxes.fail_planned(state_root, family.name, driver)
-    live = sandboxes.live_record(state_root, family.name)
-    if live is not None and live.id in driver.list_names():
-        # Republished, not only written at create: a family whose
-        # `supervisor.env` went missing would fail every turn, and an apply
-        # is the one thing that can put it back.
-        _write_playpen_env(state_root, family, live.id)
-        return live, ()
-
-    # Contract 01 §3.9: a flavor this host has no image for creates
-    # nothing. A fall-back to `base` would run the family on a filesystem
-    # its file does not ask for, and say nothing.
-    image = images.resolve(family.sandbox.image)
-    if image is None:
-        return None, (sandboxes.unconfigured_image_fault(family, images),)
-
-    outcome = sandboxes.create_sandbox(
-        family,
-        state_root=state_root,
-        image=image,
-        driver=driver,
-        egress=egress,
-    )
-    if outcome.record is None:
-        return None, (outcome.fault,) if outcome.fault is not None else ()
-
-    return outcome.record, ()
-
-
-def _write_playpen_env(state_root: Path, family: FamilyFile, sandbox: str) -> None:
-    """Contract 03 section 7.1: `sbx exec` forwards no host environment, so
-    `--env-file` is the only way the three mount paths reach the
-    playpen. sbx mounts each directory at its own HOST path, so the file
-    names those paths and rewrites nothing."""
-    write_playpen_env(
-        paths.playpen_env_path(state_root, family.name, sandbox),
-        state_root=state_root,
+    doc = StatusDocument(
         family=family.name,
-        sandbox=sandbox,
-        pep_url=url(Port.PEP),
-        litellm_base_url=url(Port.LITELLM),
-        index_root=paths.index_root(family),
+        kind=str(family.kind),
+        state=state,
+        written_at=now_rfc3339(),
+        registry_rev=registry_revision,
+        applied_rev=registry_revision,
+        config_rev=registry_revision,
+        validation=validation,
+        credentials=credentials_block,
+        limits=steps.limits_for(family),
+        triggers=TriggersBlock(webhooks, enqueue=accepts_dispatch(family)),
+        faults=all_faults,
     )
+    write_status(paths.status_path(state_root, family.name), doc)
+    return ApplyResult(ok=not all_faults, status=doc)
 
 
 def _degraded(

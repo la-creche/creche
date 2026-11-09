@@ -301,8 +301,8 @@ def restamp_status(path: Path, *, older_than_s: float) -> bool:
 
     Contract 05 section 2 rule 4 asks for a rewrite at least every 30
     seconds, and section 2 rule 5 makes a reader call a family older than
-    90 seconds `unknown`. One step of a pass -- `sbx create` -- takes
-    longer than both and publishes nothing of its own while it runs. The
+    90 seconds `unknown`. A family that waits for a slot or out a backoff
+    publishes nothing of its own while it waits. The
     content is carried over unchanged on purpose: the family IS still
     where the document says it is, and the only stale field is the time.
 

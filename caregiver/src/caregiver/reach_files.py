@@ -3,9 +3,9 @@
 
 `egress.json` is the egress allowlist of the vmm proxy, the wire type
 `FamilyEgress` of `creche-wire` (decisions CH6-4, CH69 rules 3 and 5). It
-sits in the family dir beside `config/`, never inside it, so no sbx mount
-sees a swap (decision CH69 rule 6, CH45 rule 2). caregiver is its only
-writer (CH5b). Until the cut, no process on the live host reads it.
+sits in the family dir beside `config/`, never inside it, so a swap of
+`config/` never moves it (decision CH69 rule 6, CH45 rule 2). caregiver is
+its only writer (CH5b), and the vmm reads it.
 
 The file holds the canonical form of the `egress` list of the family file
 (decision CH69 rule 5, CH70 rule 4):
@@ -17,8 +17,8 @@ The file holds the canonical form of the `egress` list of the family file
 4. Sorted by host, then by port as a number.
 
 The two plane endpoints never enter the file (decision CH6-2, contract 01
-§3.7 rule 4). They are `EgressConfig`'s, and this module reads only the
-family file. A family with no `egress` gets `{"hosts": []}` (decision CH69
+§3.7 rule 4). The vmm splices them with no allowlist lookup, and this
+module reads only the family file. A family with no `egress` gets `{"hosts": []}` (decision CH69
 rule 3).
 
 A list whose file would pass `EGRESS_CAP`, the cap of the vmm (decision
@@ -94,21 +94,23 @@ def render_egress_file(family: FamilyFile) -> EgressFile:
     return EgressFile(family.name, body)
 
 
-def write_egress_file(egress: EgressFile, state_root: Path) -> None:
-    """Write `egress.json` of one family when its bytes change.
+def write_egress_file(egress: EgressFile, state_root: Path) -> bool:
+    """Write `egress.json` of one family when its bytes change. Answers
+    whether it wrote.
 
     One `rename` lands the removals and the additions at once (invariant
     9). Bytes equal to the file on disk write nothing, so a pass that moves
     nothing touches no file."""
-    _write_when_changed(paths.egress_path(state_root, egress.family), egress.body)
+    return _write_when_changed(paths.egress_path(state_root, egress.family), egress.body)
 
 
-def write_repos_file(family: FamilyFile, state_root: Path) -> None:
+def write_repos_file(family: FamilyFile, state_root: Path) -> bool:
     """Write `repos.json` of `family` when its bytes change, as
-    `write_egress_file` writes `egress.json` (decision CH69 rule 6)."""
+    `write_egress_file` writes `egress.json` (decision CH69 rule 6).
+    Answers whether it wrote."""
     names = [RepoName(name) for name in sorted(family.repos)]
     body = _json_text(FamilyRepos(repos=RepoList(names)))
-    _write_when_changed(paths.repos_path(state_root, family.name), body)
+    return _write_when_changed(paths.repos_path(state_root, family.name), body)
 
 
 def _egress_text(entries: list[str]) -> bytes:
@@ -131,11 +133,12 @@ def _host_port(entry: str) -> tuple[str, int]:
     return host.lower(), int(port) if colon else BARE_HOST_PORT
 
 
-def _write_when_changed(path: Path, body: bytes) -> None:
+def _write_when_changed(path: Path, body: bytes) -> bool:
     if _bytes_of(path) == body:
-        return
+        return False
 
     atomic_write(path, body, mode=REACH_FILE_MODE)
+    return True
 
 
 def _bytes_of(path: Path) -> bytes | None:
