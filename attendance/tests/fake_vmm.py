@@ -41,6 +41,9 @@ class FakeVmm:
     close_gate: asyncio.Event | None = None
     #: An open of a session with a gate here waits for the gate.
     open_gates: dict[str, asyncio.Event] = field(default_factory=dict[str, asyncio.Event])
+    #: Set: each open waits for this gate, for a session id that a test
+    #: cannot know before the job mints it.
+    gate_every_open: asyncio.Event | None = None
     #: A list of a family with a gate here waits for the gate.
     list_gates: dict[str, asyncio.Event] = field(default_factory=dict[str, asyncio.Event])
     #: The sessions whose stream has no facade on its far side: nothing
@@ -100,7 +103,7 @@ class FakeVmm:
 
     async def open_acp(self, family: str, session: str, max_line_bytes: int) -> FakeChannel:
         self.opened.append(session)
-        gate = self.open_gates.get(session)
+        gate = self.open_gates.get(session, self.gate_every_open)
 
         if gate is not None:
             await gate.wait()

@@ -344,6 +344,13 @@ is marked `slow`.
   inside its `job.timeout`, and no row names the pause between two tries.
   A job pauses `HOST_FULL_PAUSE_S` (1 s), the tick of the dispatch queue
   pump, and starts a try only before its deadline (`acp_jobs.py`).
+- CONTRACT-QUESTION: no row bounds the start of a dispatch or a trigger
+  job, and decision CH50 rule 1 gives a VM start no outer bound. The start
+  of each job, its stream and its handshake, ends within the job's
+  deadline from the job's start, or the job ends `timeout`. A delegate
+  prompt gets what is left of that deadline (contract 04 §7.5). Any other
+  prompt gets its whole deadline from the prompt, as before the vmm
+  (`acp_jobs.py`).
 - Contract 02 minor 15 adds `host_full` to the delegate door, and this
   package still provides session-api 0.14. Plan PR CR11 claims minor 15
   with `session/delete`.
