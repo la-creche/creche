@@ -21,7 +21,6 @@ full suite does not run it. CI runs it in the `proc` job of `gate.yml` and of
 ## Run it
 
 ```bash
-cd facade && pnpm install --frozen-lockfile && pnpm run build && cd ..   # once, and after any agent or facade change
 uv run pytest integration/proc -m slow -n 4
 ```
 
@@ -36,10 +35,9 @@ Each test has 180 seconds for its setup, its call and its teardown (rule 22).
 Each run prints the command of each service before its result line. Each
 line ends with the origin of the command: `default` or `override`.
 
-A test that needs the build of `facade/`, which the exit topology starts,
-skips itself when the build is missing. A silent pass would be worse than
-a skip. The suite needs `node` and `git` on `PATH`. Every test is marked `slow` in
-`conftest.py`.
+No topology starts the facade since the Cloud Hypervisor cut (plan PR CR1):
+the vmm starts it in a VM. The suite needs `node` and `git` on `PATH`.
+Every test is marked `slow` in `conftest.py`.
 
 The scenarios of the Rust chaperone need `cargo` on `PATH` too, for the
 first build of the pinned commit. Each one skips itself when `cargo` or
@@ -61,7 +59,7 @@ the variable.
 |---|---|
 | service | A program of this repository that the suite starts: one row of the service table. |
 | root | The temporary directory of one test. Every file and every Unix socket of the test is in it. |
-| stand-in | A program that takes the place of a program the suite cannot run: `sbx`, `systemctl`, the LiteLLM key API, TEI, a model, and an upstream and the approval channel of the Rust chaperone. |
+| stand-in | A program that takes the place of a program the suite cannot run: `sbx`, `systemctl`, the LiteLLM key API, TEI, the vmm host API, and an upstream and the approval channel of the Rust chaperone. |
 | ACP | The Agent Client Protocol, version 1. A client and an agent send JSON-RPC 2.0 messages. |
 | TEI | The embedding service that the index builder dials. It gives one vector for each text. |
 | topology | The services that one fixture starts together. |
@@ -78,7 +76,6 @@ command and the name of one environment variable.
 |---|---|---|
 | `attendance` | `python -m attendance` | `CRECHE_PROC_ATTENDANCE` |
 | `door-trigger` | `agent-trigger` | `CRECHE_PROC_DOOR_TRIGGER` |
-| `door-acp` | `agent-door-acp` | `CRECHE_PROC_DOOR_ACP` |
 | `caregiver` | `caregiver` | `CRECHE_PROC_CAREGIVER` |
 | `noticeboard` | `noticeboard` | `CRECHE_PROC_NOTICEBOARD` |
 | `noticeboard-verify` | `noticeboard-verify` | `CRECHE_PROC_NOTICEBOARD_VERIFY` |
@@ -208,20 +205,17 @@ sbx exec --env-file <env file> <sandbox> -- creche-facade
              the sbx stand-in, found through PATH
 ```
 
-The third topology starts `caregiver` alone. No `attendance` answers the
-switch call, so each sandbox stays `creating`.
+The third topology starts `caregiver` alone. It starts no VM: the vmm
+starts one VM per session (decisions CH1, CH9).
 
 ```
 a test (edits one file of the registry)
   v
-caregiver ---- sbx create, policy, rm ---> the sbx stand-in, with state
+caregiver ---- POST /drop, vmm.sock -----> the vmm stand-in, at a family delete
   |       ---- systemctl --user ---------> the systemctl stand-in
   |       ---- HTTP, loopback port ------> the LiteLLM stand-in
-  | writes the status document, the credential file, the config mount,
-  | the env file of each sandbox and `policy.toml`
-  | POST /internal/switch-sandbox, over the Unix socket
-  v
-no `attendance`: each sandbox stays `creating`
+  | writes the status document, the credential file, the config
+  | directory, `egress.json`, `repos.json` and `policy.toml`
 ```
 
 The table gives the fourth and the fifth topology. Each one
@@ -286,35 +280,23 @@ test checks `install.toml`, then checks the fleet policy of
 `test_proc_policy_check.py` on top of the draft.
 
 The ninth topology, `proc_exit.py`, is the exit test. It starts the Rust
-chaperone with the plugin `attendance`, the model stand-in, the LiteLLM
-stand-in, `attendance`, door-acp and `caregiver serve`. `attendance` starts
-the facade of each family through the `sbx` stand-in with verbs.
+chaperone with the plugin `attendance`, the LiteLLM stand-in, the vmm
+stand-in and `caregiver serve`. No scenario calls the plugin `attendance`,
+so no `attendance` runs.
 
 ```
-a test (plays Panda, a browser client of ACP)
-  | WebSocket, loopback port, the door bearer
-  v
-door-acp ---- WebSocket over the Unix socket, the token door-acp
-  v
-attendance ---- sbx exec creche-facade, one for each sandbox
-  |        ---- sbx exec acp-relay, one for each door connection
-  v
-creche-facade of chat and of vault-oracle     the built facade/dist
-  | chat completions ----------------------> the model stand-in
-  | MCP over streamable HTTP, the token ---> chaperone-rs
+a test (plays the agent module of one family)
+  | MCP over streamable HTTP, the token of the family
   v
 chaperone-rs ---- the upstream and the approval stand-in
-  |          ---- chaperone-attendance ----> POST /delegate on the socket
-  v                                          of attendance
+  v
 chaperone-rs/audit.jsonl
 
 caregiver serve ---- reads the registry: two family files, the server file standin
   |             ---- runs chaperone check of chaperone-rs on each new policy text
-  | writes creds.json, the env file of each sandbox and
-  | chaperone-rs/config/policy.toml
-  | POST /internal/switch-sandbox, over the Unix socket of attendance
+  | writes creds.json and chaperone-rs/config/policy.toml
   v
-attendance
+the chaperone reloads policy.toml at its next call
 ```
 
 The test writes the registry, `install.toml`, the plugin tree and the
@@ -326,21 +308,19 @@ configuration directory, as `/etc/chaperone/plugins` on the host, because
 
 The start follows the order of the files:
 
-1. The model and LiteLLM stand-ins, `attendance` and door-acp start.
-2. `caregiver serve` starts. The `sbx` stand-in holds each `exec` with the
-   tuning `hold-exec`.
+1. The LiteLLM and vmm stand-ins start.
+2. `caregiver serve` starts.
 3. When `policy.toml` holds both families, the chaperone starts. It refuses
    to start with no policy file.
-4. The model takes the key of each `creds.json`. The test writes the view
-   of the `sbx` stand-in, and takes the tuning away.
 
-The env file that `caregiver` writes names the LAN address of the site and
-the session store under `/srv/agents/sessions`. The view of the `sbx`
-stand-in (`standin_sbx.py`, rule 5) gives the facade the loopback port of
-each plane and the session store of the root. The switch of each family
-starts its facade (contract 05 §5.3 rule 8). The `sbx` stand-in gives each
-sandbox a `TMPDIR` of its own, as each VM has its own `/tmp`: the facade
-listens on a socket under `TMPDIR`.
+The six scenarios of phase 2 row 30 left the exit test at the Cloud
+Hypervisor cut (plan PR CR1). Each one ran a turn of the built facade
+through door-acp, `attendance` and `sbx exec`. After the cut the vmm starts
+the facade in a VM, one per session (decisions CH1, CH9), and the facade
+reads the fixed guest paths of the VM (decisions CH80, CH81). No process of
+this suite can start that VM. The kvm job runs a turn of the real facade in
+a VM (`rust/crates/vmm/tests/kvm_facade.rs`). door-acp, the model stand-in
+and the ACP client of a test left with them.
 
 Two files of the seventh topology run two more programs. A test starts
 each one, and each one runs to its end.
@@ -353,7 +333,7 @@ each one, and each one runs to its end.
 | File | Topology | What the scenarios check |
 |---|---|---|
 | `test_proc_switch.py` | `attendance` alone | the refusals of the switch call of contract 05 §5. The handshake runs over ACP since phase 2 row 20 |
-| `test_proc_caregiver_start.py` | `caregiver` alone | a start, a refused start, a signal, a kill, and the verbs that run to an end |
+| `test_proc_caregiver_start.py` | `caregiver` alone | a start, a refused start, a signal, and the verbs that run to an end |
 | `test_proc_caregiver_files.py` | `caregiver` alone | each file that `caregiver` publishes, read as the next program reads it, and the seams of `integration/tests_manager` that assert on a file |
 | `test_proc_override.py` | `attendance` alone, and the last four topologies | a service starts through its variable: one that serves, one that runs to its end |
 | `test_proc_trigger_fire.py` | trigger door and `attendance` | the timer command: a refused family, `attendance` down, `--check`, a refused start. The jobs ran over the session API and left in phase 2 row 21 |
@@ -373,12 +353,11 @@ each one, and each one runs to its end.
 | `test_proc_chaperone_rs.py` | the Rust chaperone and its two effect stand-ins | the tools of the stand-in upstream, and the audit records of one allowed call |
 | `test_proc_install_draft.py` | `chaperone check` of the Rust chaperone | the install draft of the fixture registry passes, and caregiver's fleet policy passes on top of it |
 | `test_proc_policy_check.py` | `chaperone check` of the Rust chaperone | caregiver's policy file of every fixture family passes. A digest of two apps, a grant of an upstream that is not installed, and a delegate whose target delegates each fail with the error line of the chaperone |
-| `test_proc_exit.py` | the exit topology | the six scenarios of phase 2 row 30: a turn, an allowed call, a gated call, a cancel, a reconnect with `session/load`, and a delegate call from one family to another. Three scenarios of `caregiver`: the `policy.toml` that it writes passes `chaperone check` and the chaperone serves it, a registry edit reaches the chaperone at the next pass, and a graceful rotation serves two digests until it settles. Each scenario ends within 60 seconds |
+| `test_proc_exit.py` | the exit topology | three scenarios of `caregiver`: the `policy.toml` that it writes passes `chaperone check` and the chaperone serves it, a registry edit reaches the chaperone at the next pass, and a graceful rotation serves two digests until it settles. Each scenario ends within 60 seconds |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
 | `test_proc_standin_programs.py` | none | each rule of a stand-in program that a scenario relies on |
-| `test_proc_standin_model.py`, `test_proc_standin_effects.py` | none | the model stand-in over its port, and the two effect stand-ins over stdio |
-| `test_proc_standin_acp.py` | none | the ACP client, against a scripted agent in the test process |
+| `test_proc_standin_effects.py` | none | the two effect stand-ins over stdio |
 | `test_proc_html.py`, `test_proc_ids.py` | none | the HTML reader, and the ids a test mints |
 | `test_proc_registry.py` | none | the `git` of the registry module: no repository above the root, and no config file of a person |
 
@@ -470,7 +449,7 @@ that changes the registry first.
 
 1. A test changes the registry and nothing else. `caregiver` publishes each
    family from it. Do not write a status document, a policy file, a
-   credential file or an env file in this topology.
+   credential file or a reach file in this topology.
 2. An edit to one registry file is the one action of a scenario. Do not send
    a signal to make `caregiver` look, unless the signal is the scenario.
 3. Change the registry with a function of `proc_tree.py`:
@@ -484,8 +463,8 @@ that changes the registry first.
    - the status document
    - `policy.toml` and the fragment of each family
    - the credential file
-   - the config mount
-   - an env file
+   - the config directory
+   - `egress.json` and `repos.json`
    - a fault file
    - the record of a stand-in
    - the state of a stand-in
@@ -493,9 +472,8 @@ that changes the registry first.
 
    Do not read `sandboxes.json` or the `applied` directory. Each one is the
    private state of `caregiver`.
-6. Start `attendance` before `caregiver`. `caregiver` asks for the first
-   handshake in its first pass. When no `attendance` answers, the next
-   attempt comes 20 seconds later.
+6. Start the vmm stand-in before `caregiver`. `serve` and `delete` refuse
+   to start with no `CAREGIVER_VMM_SOCKET` (decision CH20).
 
 The start command is the `ExecStart` of `creche-caregiver.service`.
 `test_proc_table.py` holds each flag against the unit. The suite adds two
@@ -515,7 +493,7 @@ that needs a second pass with no edit takes 20 seconds or more.
 `proc_library.py` holds the topology. The fixture `library` starts the TEI
 stand-in. The fixture `library_prepared` starts nothing. A test runs the
 program itself: `run_index` runs it to its end, and `start_index` returns
-while it runs. Neither fixture needs the facade build.
+while it runs.
 
 1. Give the program `PATH` and one address variable. The program needs no
    other variable of the image of an index sandbox. The default command
@@ -619,16 +597,15 @@ now. `test_proc_standins.py` holds both.
 
 ### The stand-in programs of this directory
 
-Seven programs are in this directory. The docstring of each one lists its
+Six programs are in this directory. The docstring of each one lists its
 verbs, its files and its tunings.
 
 | Program | Takes the place of | How a service finds it |
 |---|---|---|
-| `standin_sbx.py` | `sbx`, with each verb that `caregiver` runs. `set_sbx_view` gives `exec` the env file as a VM sees the host | by name, through `PATH` |
+| `standin_vmm.py` | the vmm host API on `vmm.sock`: the drop route, with the wire types of `creche_wire` | by the path in `CAREGIVER_VMM_SOCKET` |
 | `standin_systemctl.py` | `systemctl --user` | by name, through `PATH` |
 | `standin_litellm.py` | the key API of LiteLLM | by an address in an argument |
 | `standin_tei.py` | TEI, with the two routes that the index builder asks | by an address in a variable |
-| `standin_model.py` | a model behind LiteLLM: chat completions as an SSE stream, from a script that the test writes | by an address |
 | `standin_upstream.py` | an upstream of the Rust chaperone, with the tools `echo` and `gated_echo` | by the absolute path in the `command` of its manifest |
 | `standin_approval.py` | the approval channel of the Rust chaperone. A file that the test writes answers each gate | by the absolute path in the `command` of its manifest |
 
@@ -644,8 +621,8 @@ only to make a fault that the real program can have.
 A stand-in fails closed. It refuses a verb that it does not know, so a
 service that runs a new command fails here and gets no silent success.
 `test_proc_standin_programs.py` has one test for each rule of a stand-in
-that a scenario relies on. Add a test there when you add a rule. The model
-and the two effect stand-ins have a test file of their own.
+that a scenario relies on. Add a test there when you add a rule. The two
+effect stand-ins have a test file of their own.
 
 The TEI stand-in gives each text a vector that depends on the text alone.
 `vector_blob` of `proc_library.py` gives the blob that a store must hold for
@@ -660,15 +637,6 @@ each one.
 | `fail-info` | `GET /info` answers 503. |
 | `fail-embed` | The tuning holds a text. A call whose inputs hold that text answers 500. |
 | `hold-embed` | The tuning holds a text. A call whose inputs hold that text waits until the file is gone. |
-
-The model stand-in answers each route with and without `/v1`, as LiteLLM
-does. The agent module appends `/chat/completions` to a base URL with no
-path. The model stand-in has one tuning, `delay_ms`: the milliseconds
-between two chunks of a stream. A scenario that acts while a turn runs sets it first.
-A test writes the turns with `script_model`. A completion past the last
-turn gets 500. The stand-in takes each bearer of its `key` file, one on each
-line. `set_model_keys` writes them: the exit topology gives it the key of
-each `creds.json`.
 
 A test answers a gate of the approval stand-in with `answer_gate`. The name
 of the answer file is the gate ID or the exposed name of the tool. The
@@ -717,8 +685,9 @@ path, the stdout and the stderr of each process, each sandbox log and each
 status document. A test that fails in its teardown carries the same output in
 the text of the failure. Work down this list.
 
-1. Every exit test skips: the facade build is missing. Build it. With
-   `CRECHE_PROC_NO_SKIP=1`, each of these tests fails with the same text.
+1. Each test of the row `chaperone-rs` skips: `git` or `cargo` is missing.
+   With `CRECHE_PROC_NO_SKIP=1`, each of these tests fails with the same
+   text.
 2. `exited N before it was ready`: the service refused to start. Read its
    stderr in the same message.
 3. `was not ready in 30.0 s`: the service runs and does not answer HTTP at
@@ -754,13 +723,6 @@ the text of the failure. Work down this list.
   ends with code 1 there, and the suite accepts each code that is not 0. A
   change costs one assertion in each scenario of
   `test_proc_caregiver_start.py`.
-- **No flag for the session store in `caregiver`.** `SESSIONS_ROOT` in
-  `caregiver/src/caregiver/paths.py` is a constant. The first mount of each
-  `sbx create` is `/srv/agents/sessions/<family>`, and `attendance` of a
-  test reads another directory. The env file names the same path. In the
-  exit topology the view of the `sbx` stand-in gives the facade the store
-  of `attendance` in place of that path. No scenario proves that the two
-  services name one session store on the host.
 - **No flag for three intervals of the loop.** `HEARTBEAT_S`,
   `SPEND_INTERVAL_S` and `BACKOFF_FIRST_S` in
   `caregiver/src/caregiver/loop.py` are constants: 20, 60 and 5 seconds. A
@@ -774,54 +736,25 @@ the text of the failure. Work down this list.
   `end_token_overlap`. Then it sends `caregiver serve` a `SIGHUP`, as the
   `ExecReload` of the unit does, until a pass settles the rotation.
 - **The stand-ins copy facts that no test of this suite can check.** The
-  `sbx` stand-in follows the facts that `caregiver/src/caregiver/driver.py`
-  records about the real program. The `systemctl` stand-in refuses a
+  `systemctl` stand-in refuses a
   `disable` of a unit with no file. That rule follows
   `caregiver/src/caregiver/timers.py`. No run of the real program checked
   it for this suite.
-- **CONTRACT-QUESTION, `sbx create` with a name that exists.** Contract 05
-  §10 row 7 leaves it open. The `sbx` stand-in fails that create. A change
-  costs one check in `standin_sbx.py` and its test.
 - **CONTRACT-QUESTION, a second key for one alias.** Contract 05 §6.3 has
   two keys for one alias during a rotation. Contract 05 §10 row 5 says that
   no probe of LiteLLM shows that it takes the second one. The LiteLLM
   stand-in refuses it. A `caregiver` that mints the new key under the same
   alias before it deletes the old key fails the rotation scenario. A change
   costs one check in `standin_litellm.py` and its test.
-- **CONTRACT-QUESTION, a failed create and its id.** Contract 05 §4.3, last
-  paragraph, and §10 row 7 leave the choice to the reconciler. The suite
-  holds the choice of `caregiver/AGENTS.md`: a failed create burns its id. A
-  change costs one id in `test_a_failed_create_burns_its_id`.
 - **CONTRACT-QUESTION, the value of `config_rev`.** Contract 01 §6.1 gives
   the config mount a revision counter of its own. No contract says which
   value the counter holds. The suite holds that `config_rev` equals
   `applied_rev` in the first document of a family. A change costs one term
   of one assertion in `test_proc_caregiver_files.py`.
-- **CONTRACT-QUESTION, a stop inside a step.** No contract says what a stop
-  inside `sbx create` leaves. The suite holds what the unit file and
-  `caregiver/AGENTS.md` say:
-  - the step ends whole
-  - the exit code is 0
-  - the document stays `reconciling`, and the sandbox stays `creating`
-  - the next start keeps that sandbox
-
-  A change costs the assertions after the signal in one scenario of
-  `test_proc_caregiver_start.py`.
-- **CONTRACT-QUESTION, `blocks_turns` of `sandbox_start_failed`.** The table
-  of contract 05 §3.3 fixes `yes` for that code. Contract 05 §5.3 rule 8
-  says that the family keeps serving after a refused switch. The suite holds
-  `false` for the fault of an incoming sandbox while another sandbox serves.
-  No scenario holds it since phase 2 row 20: the switch handshake runs
-  over ACP, and no topology with `caregiver` has a facade.
 - **CONTRACT-QUESTION, a registry with no family.** No contract says what
   it means. The suite holds the rule of `caregiver/AGENTS.md`: an empty
   registry deletes no family. A change costs one scenario in
   `test_proc_caregiver_files.py`.
-- **The document between a switch and the end of a destroy.** Contract 05
-  §3.4 publishes the block before each step, and §4.3 step 7 sets `ready`
-  after the handshake. `caregiver` publishes that document before the
-  destroy. No scenario holds the document at that moment since phase 2
-  row 20.
 - **No scenario for `apply-once`.** It is a verb of `caregiver` with no
   scenario here.
 - **The epoch after `rotate`.** Contract 05 §6.3 step 3 publishes the new
@@ -842,26 +775,8 @@ the text of the failure. Work down this list.
   gets 413. A body that is not JSON gets 400.
 - **No scenario for the `enqueue` verb.** A family calls `enqueue` at the
   chaperone (contract 04 §4.1), and the chaperone calls `POST /dispatch` of
-  `attendance` (contract 02 §13.4). The job runs over ACP. The exit
-  topology has a facade, and its policy grants no `enqueue`.
-- **CONTRACT-QUESTION, the two plane URLs of a facade.** Contract 03 §7
-  gives the URLs of the chaperone and of LiteLLM as values of the image.
-  The agent module reads each one from its environment, and refuses to
-  start without it. `caregiver` writes both into the env file of each
-  sandbox, on the LAN address of the site, because the env file is the one
-  way a value reaches a sandbox (contract 03 §7.1). The exit topology reads
-  them through the view of the `sbx` stand-in. A change costs the view in
-  `proc_exit.py`.
-- **One stand-in of the model for two families.** The exit topology gives
-  both families one model stand-in, and the stand-in takes its turns in
-  arrival order. A scenario that runs two turns at one time cannot say
-  which family gets which turn. Each scenario of `test_proc_exit.py` runs
-  one turn at a time.
-- **The exit test does not judge a real model.** The model stand-in repeats
-  the identical call after an approval because its script says so. Phase 2
-  plan risk 3: a real model may not repeat the call, and Panda shows the
-  "Awaiting permission" text as a tool error. Phase 3 needs one check by
-  hand with a real model.
+  `attendance` (contract 02 §13.4). The job runs over ACP in a VM, and no
+  topology of this suite starts one.
 - **The trigger door has no scenario that runs work.** It calls
   `/v1/sessions*`, which left `attendance` in phase 2 row 21. Each scenario
   of the door that created a session, ran a turn, held a lease or read a
@@ -1323,10 +1238,9 @@ the text of the failure. Work down this list.
 | `proc_ids.py` | the ids that a door mints |
 | `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the wrapper of each stand-in, the record each one leaves, and the readers of its state |
-| `standin_sbx.py`, `standin_systemctl.py`, `standin_litellm.py`, `standin_tei.py`, `standin_model.py`, `standin_upstream.py`, `standin_approval.py` | the seven stand-in programs of this directory |
+| `standin_vmm.py`, `standin_systemctl.py`, `standin_litellm.py`, `standin_tei.py`, `standin_upstream.py`, `standin_approval.py` | the six stand-in programs of this directory |
 | `standin_mcp.py` | the MCP server over stdio of the two effect stand-ins |
 | `proc_strict.py` | the strict reader of one JSON text |
-| `acp_client.py` | the ACP client of a test: a WebSocket, as the web build of Panda opens it |
 | `reader_store.mjs` | the Node program that reads one index store with the statements of the bridge |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
 | `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_library.py`, `proc_chaperone_rs.py`, `proc_exit.py` | one topology each |
