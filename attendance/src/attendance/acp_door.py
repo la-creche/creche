@@ -11,6 +11,11 @@ and notification by its `sessionId`, over one vmm ACP stream per session
     session/list  -> vmm list -> {"sessions", "nextCursor"}
     each other    -> the vmm ACP stream of its sessionId -> the facade of that VM
 
+A message whose `params._meta` holds a key that starts with `creche/`
+gets `invalidParams` (-32602) and reaches no stream (contract 02 §5.1 rule
+5, decision CH21-4). The typed origin of the row carries what those keys
+carried, so a door client sets none of them.
+
 An id that is not a session id, such as an sbx-era id, gets ACP
 `resourceNotFound` (-32002) before attendance calls the vmm (decision
 CH10-9). An id with no row of the family gets it from the vmm `not_found`,
@@ -108,6 +113,10 @@ RELAY_ENDED = "the relay ended"
 
 METHOD_NEW = "session/new"
 METHOD_LIST = "session/list"
+
+#: The prefix of a creche key of `_meta`. A door client sends none
+#: (decision CH21-4).
+CRECHE_META_PREFIX: Final = "creche/"
 
 #: The methods that attendance answers itself (decision CH21-7).
 _ANSWERED: Final = frozenset({METHOD_INITIALIZE, METHOD_NEW, METHOD_LIST})
@@ -344,6 +353,7 @@ class _Door:
         """The result attendance answers, or None for a routed line. A
         notification of a method that attendance answers does nothing."""
         params = as_object(record.get("params"))
+        _check_meta(params)
 
         if method in _ANSWERED and "id" not in record:
             return None
@@ -588,6 +598,17 @@ async def _close_client(websocket: WebSocket, why: Close) -> None:
     # The client can leave in the same moment. A second close is no error.
     with contextlib.suppress(RuntimeError, OSError):
         await websocket.close(code=why, reason=reason)
+
+
+def _check_meta(params: dict[str, Any] | None) -> None:
+    """Contract 02 §5.1 rule 5: a door client sets no creche key of
+    `_meta`. Such a key named a job or its trigger in minor 13. The origin
+    of the row names them now, and a door client names neither (decision
+    CH21-4). A `_meta` that is no object holds no key."""
+    meta = as_object(params.get("_meta")) if params is not None else None
+
+    if meta is not None and any(key.startswith(CRECHE_META_PREFIX) for key in meta):
+        raise _Refusal(RPC_INVALID_PARAMS, "a door client sets no creche key of _meta")
 
 
 def _list_cursor(value: object) -> ListCursor | None:

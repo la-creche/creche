@@ -31,7 +31,10 @@ inside the VM, which carries Node.
    of its family. attendance answers `initialize`, `session/new` and
    `session/list` itself, from the host list, with no boot (decision
    CH21-7). It routes each other request and notification by its
-   `sessionId`, over one vmm stream per session. An id that is not a
+   `sessionId`, over one vmm stream per session. A message whose
+   `params._meta` holds a key that starts with `creche/` gets
+   `invalidParams` (-32602) and reaches no stream (contract 02 §5.1 rule
+   5, decision CH21-4). An id that is not a
    session id gets `resourceNotFound` (-32002) before attendance calls the
    vmm, and an id with no row gets it from the vmm with no boot (decisions
    CH10-9, CH21-9). Each other vmm refusal is `internalError` (-32603) with
@@ -45,6 +48,10 @@ inside the VM, which carries Node.
    it in place of the session API.
 9. Serves the trigger door for `door-trigger`. Each firing is one job in
    an autonomous family's `JobQueue`, beside the dispatched jobs.
+10. Drops each job row at start, before it binds a socket
+    (`SessionService.drop_job_rows`). No job outlives a restart, so each
+    row whose origin is `delegate` or `auto` drops, and each `door` row
+    stays (contract 02 §6 rule 5, decision CH83 rule 5).
 
 ## The trigger door
 
@@ -66,9 +73,9 @@ an autonomous family only. The ACP door takes an attended family only.
 4. Each firing is a fresh `auto-<ulid>` job. The family's
    `max_running_turns` and the queue cap hold for a trigger as for a
    dispatch.
-5. The prompt's `_meta` carries `creche/trigger`: the kind, the name and
-   the time the job was enqueued. The outcome record names the same
-   trigger.
+5. The `auto` origin of the row carries the kind and the name, with no
+   time (decision CH21-4a). The outcome record names the same trigger,
+   with the time the job was enqueued.
 6. The trigger ledger is `<state root>/trigger-jobs/<family>/`, apart from
    the dispatch ledger.
 
@@ -300,9 +307,12 @@ is marked `slow`.
   CH19 (6)).
 - The outcome record's `sandbox` is the empty text: a job runs in a VM of
   its own session, which no sandbox id names (decision CH83 rule 3).
-- A job whose vmm drop fails leaves its row. The log names it, and nothing
-  tries the drop again. Contract 02 §6 rule 5 drops each job row at the
-  start of attendance. No plan PR builds that rule yet.
+- A job whose vmm drop fails leaves its row. The log names it. The next
+  start of attendance drops it (contract 02 §6 rule 5).
+- CONTRACT-QUESTION: decision CH83 rule 5 drops each job row at start and
+  names no step for a vmm that does not answer then. A list or a drop that
+  the vmm refuses leaves the rows, and the log names the family. The next
+  start tries again (`service.py`).
 - `caregiver` reads only the codes of minor 17 from the fault file of this
   service, so it drops `vmm_protocol_mismatch` until plan PR CR10 adds the
   code to its table.

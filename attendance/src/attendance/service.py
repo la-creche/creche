@@ -28,8 +28,11 @@ from creche_wire import (
     Dispatch,
     DispatchChain,
     DispatchTrigger,
+    DoorOrigin,
     FamilyName,
     JobId,
+    ListCursor,
+    ListSessions,
     SessionOrigin,
     Timer,
     TimerTrigger,
@@ -42,7 +45,7 @@ from starlette.websockets import WebSocket
 
 from . import acp_door, acp_view, dispatch, jobs, outcomes
 from .acp_door import DoorPrompts
-from .acp_jobs import CANCEL_WAIT_S, JobEnd, JobPlan, run_job
+from .acp_jobs import CANCEL_WAIT_S, JobEnd, JobPlan, drop_job_session, run_job
 from .atomic import read_json
 from .auth import Access, Principal, check_access, check_family_kind
 from .clock import now
@@ -57,7 +60,7 @@ from .paths import outcome_file, sandbox_sessions_mount
 from .queueing import MAX_QUEUED_TURNS, JobQueue
 from .requests import DelegateRequest, DispatchRequest, JobQuery, TriggerRequest
 from .tasks import report_failure
-from .vmm import Vmm
+from .vmm import Vmm, VmmRefused
 
 _LOG = logging.getLogger("attendance")
 
@@ -107,6 +110,50 @@ class SessionService:
         """
         for family in self._status.families():
             self._faults.clear_all(family)
+
+    async def drop_job_rows(self) -> None:
+        """Drop each job row of each family, before the first request
+        (contract 02 §6 rule 5, decision CH83 rule 5).
+
+        No job outlives a restart (§13.3), so a row whose origin is
+        `delegate` or `auto` names a job that is over. Its drop also leaves
+        no transcript of a thin job on a session disk (§12 rule 6). A `door`
+        row stays. The drops run at once, so the stops of their VMs overlap.
+
+        CONTRACT-QUESTION: decision CH83 rule 5 says "at start" and names
+        no step for a vmm that does not answer then. The reading here: a
+        list or a drop that the vmm refuses leaves the rows, and the log
+        names the family. The next start tries again.
+        """
+        found: list[tuple[str, str]] = []
+
+        for family in self._status.families():
+            try:
+                found.extend((family, session) for session in await self._job_rows(family))
+            except VmmRefused as error:
+                _LOG.warning("family=%s the job rows stay: %s", family, error)
+
+        await asyncio.gather(
+            *(drop_job_session(self._vmm, family, session) for family, session in found)
+        )
+
+    async def _job_rows(self, family: str) -> list[str]:
+        """The id of each row of the family whose origin is not `door`. It
+        reads every page before a drop, so no drop moves a cursor."""
+        rows: list[str] = []
+        cursor: ListCursor | None = None
+
+        while True:
+            query = ListSessions(cursor=cursor, cwd=None, family=FamilyName(family))
+            page = await self._vmm.list_page(query)
+            rows.extend(
+                row.id.root for row in page.rows if not isinstance(row.origin.root, DoorOrigin)
+            )
+
+            if page.next is None:
+                return rows
+
+            cursor = page.next
 
     def start_upkeep(self) -> None:
         """Begin the queue pump. Call it inside the event loop: it owns a task."""
