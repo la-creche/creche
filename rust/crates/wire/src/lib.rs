@@ -852,9 +852,8 @@ object_only!(SessionRow);
 /// 3. `asleep`: the newest snapshot generation holds no consumed mark, so
 ///    the next start can resume it (decision CH19 (5)).
 /// 4. `running`: a Cloud Hypervisor process of the session runs.
-// CONTRACT-QUESTION: CH79 rule 4 names the four values, and no row says how
-// the vmm reads them. `vm_state` of the vmm list handler holds the reading,
-// and the vmm `AGENTS.md` Known gaps names it.
+// Decision CH84 rule 13 gives how the vmm reads the four values of CH79
+// rule 4. `vm_state` of the vmm list handler holds the reading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(test, derive(schemars::JsonSchema))]

@@ -109,8 +109,8 @@ async def test_each_job_row_drops_and_each_door_row_stays(tmp_path: Path) -> Non
 
 @pytest.mark.parametrize("route", ["list", "drop"])
 async def test_a_vmm_refusal_leaves_the_rows(tmp_path: Path, route: str) -> None:
-    """The CONTRACT-QUESTION of `drop_job_rows`: the log names the family,
-    and the next start tries again."""
+    """Decision CH84 rule 6: the rows stay, the log names the family, and
+    the next start tries again."""
     vmm = FakeVmm()
     job = await add_row(vmm, THIN, delegate())
     vmm.refuse[route] = UNREACHABLE

@@ -290,8 +290,8 @@ table plan, and it is required (decision CH34 rule 4). The request is
    (a disk and no snapshot that can resume), `asleep` (a snapshot can
    resume) or `running` (a Cloud Hypervisor process runs). The vmm reads
    it at each list and stores none, so the row file and the create reply
-   stay a `SessionRow`. How the vmm reads each value is a
-   CONTRACT-QUESTION of the vmm `AGENTS.md` Known gaps.
+   stay a `SessionRow`. Decision CH84 rule 13 gives how the vmm reads each
+   value.
 
 ### The drop route
 

@@ -70,7 +70,7 @@ PUMP_INTERVAL_S = 1.0
 
 #: The most that the drop of the job rows at a start may take, in seconds.
 #: Past it the start goes on, and the rows that are left stay for the next
-#: start (see the CONTRACT-QUESTION of `drop_job_rows`). It is the timeout
+#: start (decision CH84 rule 6, see `drop_job_rows`). It is the timeout
 #: of one vmm call, so a vmm that hangs keeps the sockets of attendance
 #: unbound for one call at most, whatever the count of families.
 JOB_ROWS_BOUND_S: Final = DROP_CLIENT_TIMEOUT_S
@@ -128,13 +128,12 @@ class SessionService:
         no transcript of a thin job on a session disk (§12 rule 6). A `door`
         row stays. The drops run at once, so the stops of their VMs overlap.
 
-        CONTRACT-QUESTION: decision CH83 rule 5 says "at start" and names
-        no step for a vmm that does not answer then. The reading here: a
-        list or a drop that the vmm refuses leaves the rows, and the log
-        names the family. The families run at once, and the whole step
-        ends within `JOB_ROWS_BOUND_S`. Past it the rows that are left
-        stay, and the log names each family whose step did not end. The
-        next start tries again.
+        A vmm that does not answer at this start drop leaves the rows
+        (decision CH84 rule 6). A list or a drop that the vmm refuses leaves
+        the rows, and the log names the family. The families run at once,
+        and the whole step ends within `JOB_ROWS_BOUND_S`. Past it the rows
+        that are left stay, and the log names each family whose step did
+        not end. The next start tries again.
         """
         families = self._status.families()
         pending = set(families)

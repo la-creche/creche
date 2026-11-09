@@ -62,6 +62,9 @@ any use. A value that fails answers 404.
     noticeboard sends no ACP method and reads no file of the facade. The
     VM state of a session is the `vm` of its view row (contract 02 §7 rule
     2, decisions CH21-1, CH33 rule 9). The status document names no VM.
+13. A view row whose `vm` is unknown or missing reads as `unreadable`, and
+    the row stays, as `Health` reads an unknown `state` (decision CH84
+    rule 14, `sessions.py`).
 
 ## The form
 
@@ -173,10 +176,6 @@ prefixed `test_noticeboard_`.
   (`registrywrite.py`).
 - The family page reads whatever `report_path` the status document names
   (`pages.py`).
-- CONTRACT-QUESTION: contract 02 §7 rule 2 names the four values of `vm`
-  and no answer for a row that holds another value or none. The reader
-  reads such a `vm` as `unreadable` and keeps the row, as `Health` reads
-  an unknown `state` (`sessions.py`).
 - No contract gives a range for a count. `jsonfiles.integer` has no range
   of its own. Each reader reads strict JSON, so the function gets an integer
   of 64 bits at most.

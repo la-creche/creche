@@ -400,7 +400,7 @@ async def test_a_delete_notification_drops_nothing(door: Door) -> None:
 @pytest.mark.slow
 @pytest.mark.parametrize("door", [PromptMode.HOLD], indirect=True)
 async def test_a_delete_under_a_held_prompt_closes_the_connection(door: Door) -> None:
-    """The CONTRACT-QUESTION of `_delete_session`: the vmm stops the stream
+    """Decision CH84 rule 9: the vmm stops the stream
     (decision CH26 rule 5), and a stream that ends with a request in flight
     closes the connection (decision CH19 (6)). The row is gone."""
     async with door.door_acp() as connection:

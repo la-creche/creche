@@ -191,6 +191,31 @@ conversation and the one-writer rule (Flue's queue).
    ECONNREFUSED and EOF give the code `unreachable`, and the next request
    tries again. The unit orders `After=creche-vmm.service` and has no
    `Requires=`.
+10. The unit sets `ATTENDANCE_VMM_SOCKET` from `%t`, outside `default.env`
+    (decision CH84 rule 1). Decision CH20 fixes the path
+    `/run/user/<uid>/vmm/vmm.sock`, and the env catalog cannot spell a uid
+    (`vmm.py`). caregiver does the same.
+11. A facade whose handshake answer is not usable after 101 gets
+    `internalError` with `data.code` `protocol_violation` (decision CH84
+    rule 3, `acp_door.py`).
+12. `AcpStream.close` ends the write half, reads to the vmm's end and waits
+    at most `CLOSE_WAIT_S` (5 s). Then it releases the socket, also on a
+    cancel (decision CH84 rule 4, `vmm.py`). So the next Upgrade of the
+    holder meets no claim of its own (decision CH83 rule 4).
+13. Each session has its own frame lane of `LANE_DEPTH` (64) frames. Past
+    it, the read of the next frame waits (decision CH84 rule 5,
+    `acp_door.py`).
+14. A vmm that does not answer at the start drop leaves the rows (decision
+    CH84 rule 6). A list or a drop that the vmm refuses leaves the rows,
+    and the log names the family. The families run at once, and the step
+    ends within `JOB_ROWS_BOUND_S`. Past it the rows that are left stay,
+    and the log names each family. The next start tries again
+    (`service.py`).
+15. A `session/delete` with a request in flight on that session's stream
+    of the same connection closes the connection with 1001 (decision CH84
+    rule 9). The vmm stops the stream (decision CH26 rule 5), so the answer
+    of the delete is lost. The vmm runs the drop to its end after the
+    hang-up (`acp_door.py`).
 
 ## Autonomous and dispatch rules
 
@@ -212,6 +237,14 @@ conversation and the one-writer rule (Flue's queue).
    and drops its row. It frees its slot and goes back to its family's
    queue, in front of each job that arrived after it. The upkeep loop
    tries it again (contract 02 §6 rule 4, decision CH21-3).
+10. A job pauses `HOST_FULL_PAUSE_S` (1 s), the tick of the dispatch queue
+    pump, between two `host_full` tries. It starts a try only before its
+    deadline (decision CH84 rule 7, `acp_jobs.py`).
+11. The start of a dispatch or a trigger job, its stream and its handshake,
+    ends within the job's deadline from the job's start, or the job ends
+    `timeout` (decision CH84 rule 8). A delegate prompt gets what is left
+    of that deadline (contract 04 §7.5). Any other prompt gets its whole
+    deadline from the prompt, as before the vmm (`acp_jobs.py`).
 
 ## Mount rules
 
@@ -316,14 +349,6 @@ is marked `slow`.
 - Contract 02 §3 rule 2 says never `0.0.0.0` and gives the LAN address no
   grammar. `from_env` refuses each spelling of the address of each interface.
   It takes each other text as the address (`config.py`).
-- CONTRACT-QUESTION: decision CH20 fixes `/run/user/<uid>/vmm/vmm.sock` and
-  names no env key. The env catalog cannot spell a uid, so the unit sets
-  `ATTENDANCE_VMM_SOCKET` from `%t`, outside the catalog (`vmm.py`). The
-  reading of caregiver is the same.
-- CONTRACT-QUESTION: decision CH83 rule 1 names the JSON-RPC error of a
-  vmm refusal on the ACP door, and no row names the error of a facade whose
-  handshake answer is not usable after 101. The door answers
-  `internalError` with `data.code` `protocol_violation` (`acp_door.py`).
 - The ACP door opens the stream of a session in the read loop of its
   connection. A boot of one session therefore delays the next frame of
   each session of that connection. A `session/delete` waits in the same loop
@@ -331,38 +356,10 @@ is marked `slow`.
 - A vmm stream that ends with a request in flight closes the door
   connection, as a relay that ended did. The client opens the session again
   with `session/load` (decision CH19 (6)).
-- CONTRACT-QUESTION: decision CH83 rule 4 gives a session one holder, and
-  no row says how a holder ends its stream so that its next Upgrade meets
-  no claim of its own. `AcpStream.close` ends the write half, reads to the
-  vmm's end and waits at most `CLOSE_WAIT_S` (5 s). Then it releases the
-  socket (`vmm.py`).
 - The outcome record's `sandbox` is the empty text: a job runs in a VM of
   its own session, which no sandbox id names (decision CH83 rule 3).
 - A job whose vmm drop fails leaves its row. The log names it. The next
   start of attendance drops it (contract 02 §6 rule 5).
-- CONTRACT-QUESTION: decision CH83 rule 5 drops each job row at start and
-  names no step for a vmm that does not answer then. A list or a drop that
-  the vmm refuses leaves the rows, and the log names the family. The
-  families run at once, and the step ends within `JOB_ROWS_BOUND_S`. Past
-  it the rows that are left stay, and the log names each family. The next
-  start tries again (`service.py`).
-- CONTRACT-QUESTION: decision CH21-3 gives a delegate job a retry loop
-  inside its `job.timeout`, and no row names the pause between two tries.
-  A job pauses `HOST_FULL_PAUSE_S` (1 s), the tick of the dispatch queue
-  pump, and starts a try only before its deadline (`acp_jobs.py`).
-- CONTRACT-QUESTION: contract 02 §5.6 does not say what a
-  `session/delete` does to a request in flight on that session's stream of
-  the same connection. The vmm stops the stream (decision CH26 rule 5),
-  and a stream that ends with a request in flight closes the connection
-  with 1001, so the answer of the delete is lost. The vmm runs the drop to
-  its end after the hang-up (`acp_door.py`).
-- CONTRACT-QUESTION: no row bounds the start of a dispatch or a trigger
-  job, and decision CH50 rule 1 gives a VM start no outer bound. The start
-  of each job, its stream and its handshake, ends within the job's
-  deadline from the job's start, or the job ends `timeout`. A delegate
-  prompt gets what is left of that deadline (contract 04 §7.5). Any other
-  prompt gets its whole deadline from the prompt, as before the vmm
-  (`acp_jobs.py`).
 - `caregiver` reads only the codes of minor 17 from the fault file of this
   service, so it drops `vmm_protocol_mismatch` until plan PR CR10 adds the
   code to its table.

@@ -64,7 +64,7 @@ export interface Peer {
 
 /**
  * The session methods of the one session (`src/sessions.ts`). Null on sbx,
- * which serves no session (the CONTRACT-QUESTION of `serveFamily` in
+ * which serves no session (decision CH84 rule 10, `serveFamily` in
  * `src/family.ts`). attendance answers `session/new` and `session/list` from the host
  * list (decision CH21-7), so no link of the facade serves them, and the SDK
  * answers each with method not found.
@@ -109,11 +109,11 @@ const INTERNAL_ERROR = -32603;
  * no client file system and opens no client terminal, so it needs neither
  * capability.
  *
- * CONTRACT-QUESTION: the answer still lists `sessionCapabilities.list`,
- * and the facade serves no `session/list` (decision CH21-7). attendance's
- * handshake refuses a facade that does not list it (`read_agent` in
+ * The answer keeps `sessionCapabilities.list`, and the facade serves no
+ * `session/list` (decision CH84 rule 11). attendance's handshake refuses a
+ * facade that does not list it (`read_agent` in
  * `attendance/src/attendance/acp_link.py`), and attendance answers
- * `session/list` itself. No row says which side drops the claim.
+ * `session/list` itself (decision CH21-7).
  */
 export const INITIALIZE_RESPONSE: InitializeResponse = {
   protocolVersion: PROTOCOL_VERSION,

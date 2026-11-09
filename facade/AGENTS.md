@@ -66,8 +66,8 @@ each variable. Flue keeps its store in `$AGENT_SESSIONS_DIR/flue.db`, and
 it starts only after the facade holds the lock. On sbx the facade serves
 no session after the cut: it answers `initialize`, `_creche/beat` and
 `_creche/shutdown`, and the SDK answers each session method with method
-not found. Known gaps holds the `CONTRACT-QUESTION`. playpen stays at its
-pre-cut tag for the 7 days of a rollback (decision CH79 rule 3).
+not found (decision CH84 rule 10). playpen stays at its pre-cut tag for
+the 7 days of a rollback (decision CH79 rule 3).
 
 Under CH the facade reads no `AGENT_*` variable (decisions CH5e, CH80).
 A set one has no effect and gives no stderr line (decision CH81 rule 5).
@@ -202,6 +202,20 @@ position follow it.
    client-side kill of `sbx exec` does not reach the VM. The beat deadline
    ends the process. Under CH stdin is `/dev/null`, and the local link
    ends the process.
+11. On sbx the facade serves no session (decision CH84 rule 10,
+   `serveFamily` in `src/family.ts`). Decision CH81 rule 7 keeps the sbx
+   path until phase 11 item 7, and plan PR CR9 removes `session-index.ts`,
+   the one session table of sbx.
+12. The `initialize` answer keeps `sessionCapabilities.list`, and the
+   facade serves no `session/list` (decision CH84 rule 11, `src/acp.ts`).
+   attendance's handshake refuses a facade that does not list it
+   (`read_agent` in `attendance/src/attendance/acp_link.py`), and
+   attendance answers `session/list` itself (decision CH21-7).
+13. The facade sends no delegation to the chaperone, and the chaperone
+   applies no run-time one-hop bound from the delegation id (decision CH84
+   rule 12, `src/sessions.ts`). The delegation rides in the origin of the
+   host row (decision CH21-4). Flue's MCP adapter sends no `_meta` on
+   `tools/call`, and a connection has no per-call header.
 
 ## The local link
 
@@ -264,23 +278,5 @@ facade.
 
 ## Known gaps
 
-- The facade does not send the delegation to the chaperone. The delegation
-  rides in the origin of the host row (decision CH21-4), and nothing gives
-  it to the facade. Flue's MCP adapter also sends no `_meta` on
-  `tools/call`, and a connection has no per-call header. So the chaperone
-  cannot use the delegation ID for a one-hop bound at run time.
-  `src/sessions.ts` holds the `CONTRACT-QUESTION`.
-- CONTRACT-QUESTION: the `initialize` answer lists
-  `sessionCapabilities.list`, and the facade serves no `session/list`.
-  attendance's handshake refuses a facade that does not list it
-  (`read_agent` in `attendance/src/attendance/acp_link.py`), and attendance
-  answers `session/list` itself (decision CH21-7). No row says which side
-  drops the claim. `src/acp.ts` holds it.
-- CONTRACT-QUESTION: no row says what the sbx path serves after the cut.
-  Decision CH21-4 drops `creche_sessions` in CH mode only, and decision
-  CH81 rule 7 keeps the sbx path until phase 11 item 7. The file list of
-  plan PR CR9 removes `session-index.ts`, the one session table of sbx.
-  The reading: on sbx the facade starts and serves no session.
-  `serveFamily` in `src/family.ts` holds it.
 - The workspace is one directory for every session. The playpen gave
   `coding-sandbox` one directory per chat (Phase 2 plan, risk 6).

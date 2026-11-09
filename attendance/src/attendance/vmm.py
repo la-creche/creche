@@ -77,12 +77,11 @@ MISMATCH_FAULT: Final = FaultCode.VMM_PROTOCOL_MISMATCH
 
 #: The env key that names `vmm.sock` (decision CH20).
 #:
-#: CONTRACT-QUESTION: decision CH20 fixes the path
-#: `/run/user/<uid>/vmm/vmm.sock` and names no env key. The env catalog
-#: cannot spell a uid, so `default.env` holds no key for it. The reading
-#: here, the reading of caregiver too: the unit sets this key from `%t`,
-#: outside the catalog. To make it a catalog key, the catalog grammar needs
-#: a form for the runtime dir of an account.
+#: Decision CH20 fixes the path `/run/user/<uid>/vmm/vmm.sock`. The env
+#: catalog cannot spell a uid, so `default.env` holds no key for it. The
+#: unit sets this key from `%t`, outside the catalog, as caregiver does
+#: (decision CH84 rule 1). To make it a catalog key, the catalog grammar
+#: needs a form for the runtime dir of an account.
 VMM_SOCKET_ENV: Final = "ATTENDANCE_VMM_SOCKET"
 
 #: Decision CH33 rule 10: after a mismatch, attendance tries 3 times 2 s
@@ -120,10 +119,10 @@ READ_CHUNK_BYTES: Final = 65_536
 #: How long a close of an ACP stream waits for the vmm to end the stream.
 #: The vmm ends it when the facade closes its side, one guest round trip.
 #:
-#: CONTRACT-QUESTION: decision CH83 rule 4 gives a session one holder, and
-#: no row says how a holder ends its stream so that its next Upgrade meets
-#: no claim of its own. The reading here: end the write half, read to the
-#: end, and wait at most this long. Past it the close releases the socket.
+#: A holder ends its stream so that its next Upgrade meets no claim of its
+#: own (decision CH83 rule 4). The close ends the write half, reads to the
+#: end and waits at most this long. Past it, and also on a cancel, the close
+#: releases the socket (decision CH84 rule 4).
 CLOSE_WAIT_S: Final = 5.0
 
 #: The `acp` route answers 101 after the start of the VM, and the start has

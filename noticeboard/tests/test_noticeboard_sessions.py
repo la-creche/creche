@@ -86,8 +86,8 @@ def test_each_vm_state_of_the_contract_reads_as_it_is(tmp_path: Path, sent: str)
 
 @pytest.mark.parametrize("sent", ["sleeping", "RUNNING", "", None, 1, True, ["running"]])
 def test_a_vm_outside_the_contract_reads_unreadable(tmp_path: Path, sent: object) -> None:
-    """CONTRACT-QUESTION (noticeboard Known gaps): the row stays, and its
-    `vm` reads `unreadable`."""
+    """Decision CH84 rule 14: the row stays, and its `vm` reads
+    `unreadable`."""
     fake = FakeAttendance()
     fake.answer(LIST_PATH, {"sessions": [view_row(vm=sent)], "next_cursor": None})
 
