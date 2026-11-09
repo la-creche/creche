@@ -35,7 +35,9 @@ inside the VM, which carries Node.
    of its family. attendance answers `initialize`, `session/new` and
    `session/list` itself, from the host list, with no boot (decision
    CH21-7). It routes each other request and notification by its
-   `sessionId`, over one vmm stream per session. A message whose
+   `sessionId`, over one vmm stream per session. A notification for a
+   session with no open stream does nothing: no request is in flight
+   there (decision CH21-8). A message whose
    `params._meta` holds a key that starts with `creche/` gets
    `invalidParams` (-32602) and reaches no stream (contract 02 §5.1 rule
    5, decision CH21-4). An id that is not a
@@ -148,6 +150,10 @@ conversation and the one-writer rule (Flue's queue).
    break closes the connection. It keys a prompt id as the JavaScript
    facade reads it: a number by its double, a string apart from a number.
    It closes on a prompt whose number id is past the double range.
+10. The ACP door holds no session behind another. The read of the frames
+    awaits no vmm call and no stream open. It puts each frame in the lane
+    of its session, and each lane keeps its frames in order. A stream that
+    opens is closed on each way out of its handshake, a cancel included.
 
 ## Security rules
 
@@ -332,12 +338,21 @@ is marked `slow`.
   start of attendance drops it (contract 02 §6 rule 5).
 - CONTRACT-QUESTION: decision CH83 rule 5 drops each job row at start and
   names no step for a vmm that does not answer then. A list or a drop that
-  the vmm refuses leaves the rows, and the log names the family. The next
+  the vmm refuses leaves the rows, and the log names the family. The
+  families run at once, and the step ends within `JOB_ROWS_BOUND_S`. Past
+  it the rows that are left stay, and the log names each family. The next
   start tries again (`service.py`).
 - CONTRACT-QUESTION: decision CH21-3 gives a delegate job a retry loop
   inside its `job.timeout`, and no row names the pause between two tries.
   A job pauses `HOST_FULL_PAUSE_S` (1 s), the tick of the dispatch queue
   pump, and starts a try only before its deadline (`acp_jobs.py`).
+- CONTRACT-QUESTION: no row bounds the start of a dispatch or a trigger
+  job, and decision CH50 rule 1 gives a VM start no outer bound. The start
+  of each job, its stream and its handshake, ends within the job's
+  deadline from the job's start, or the job ends `timeout`. A delegate
+  prompt gets what is left of that deadline (contract 04 §7.5). Any other
+  prompt gets its whole deadline from the prompt, as before the vmm
+  (`acp_jobs.py`).
 - Contract 02 minor 15 adds `host_full` to the delegate door, and this
   package still provides session-api 0.14. Plan PR CR11 claims minor 15
   with `session/delete`.

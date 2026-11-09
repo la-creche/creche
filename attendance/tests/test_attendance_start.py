@@ -7,6 +7,8 @@ request. A `door` row stays.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -36,9 +38,14 @@ from creche_wire import (
 )
 from fake_vmm import PAGE_ROWS, FakeVmm
 
+from attendance import service as service_module
+
 THIN = "home-assistant-worker"
 CWD = "/srv/agents/sessions/chat"
 CREATED_MS = 1_794_153_600_000
+
+#: A bound of the start drop that a test can wait out.
+BOUND_S = 0.2
 
 
 def door() -> SessionOrigin:
@@ -112,3 +119,24 @@ async def test_a_vmm_refusal_leaves_the_rows(tmp_path: Path, route: str) -> None
     await service.drop_job_rows()
 
     assert list(vmm.rows) == [job]
+
+
+async def test_a_family_whose_list_hangs_holds_the_start_one_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The families run at once, and the whole step ends within
+    `JOB_ROWS_BOUND_S`. The rows of the hung family stay for the next start."""
+    monkeypatch.setattr(service_module, "JOB_ROWS_BOUND_S", BOUND_S)
+    vmm = FakeVmm()
+    vmm.list_gates[FAMILY] = asyncio.Event()
+    stays = await add_row(vmm, FAMILY, auto())
+    drops = await add_row(vmm, THIN, delegate())
+    service = service_of(tmp_path, vmm)
+    started = time.monotonic()
+
+    async with asyncio.timeout(BOUND_S * 10):
+        await service.drop_job_rows()
+
+    assert time.monotonic() - started < BOUND_S * 4
+    assert list(vmm.rows) == [stays]
+    assert [session for _, session in vmm.drops] == [drops]
