@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Final, Protocol
 
@@ -66,6 +68,11 @@ from pydantic import BaseModel
 from .channel import Channel, ChannelClosed
 from .faults import FaultCode, FaultReporter
 from .lines import LineSplitter, RawLine
+
+_LOG = logging.getLogger("attendance")
+
+#: The fault of a vmm that answered the mismatch reply on each try.
+MISMATCH_FAULT: Final = FaultCode.VMM_PROTOCOL_MISMATCH
 
 #: The env key that names `vmm.sock` (decision CH20).
 #:
@@ -203,10 +210,11 @@ class Vmm(Protocol):
 class HttpVmm:
     """The vmm on `vmm.sock`. One `httpx.AsyncClient` serves every call.
 
-    A reply with no mismatch clears the faults of attendance for the family
-    of the call (contract 05 §3.3.1 rule 8, decision CH82 rule 4). The last
-    mismatch raises `vmm_protocol_mismatch`, which blocks no turn (decision
-    CH82 rule 3)."""
+    A reply with no mismatch clears the fault `vmm_protocol_mismatch` of
+    the family of the call (contract 05 §3.3.1 rule 8, decision CH82 rule
+    4). The last mismatch raises it, and it blocks no turn (decision CH82
+    rule 3). A fault file that cannot be written changes no result of a
+    call: the log names it."""
 
     def __init__(self, client: httpx.AsyncClient, faults: FaultReporter) -> None:
         self._client = client
@@ -296,7 +304,7 @@ class HttpVmm:
             f"the vmm speaks host API protocol {answer.protocol}, "
             f"and attendance speaks {HOST_API_PROTOCOL}"
         )
-        self._faults.raise_fault(family, FaultCode.VMM_PROTOCOL_MISMATCH, message)
+        self._publish(family, lambda: self._faults.raise_fault(family, MISMATCH_FAULT, message))
         raise VmmRefused(VMM_PROTOCOL_MISMATCH, message)
 
     async def _answered(
@@ -308,16 +316,25 @@ class HttpVmm:
         timeout: httpx.Timeout | None,
     ) -> httpx.Response | ProtocolMismatch:
         """One request: its response, or the mismatch reply it got. A
-        response with no mismatch clears the faults of the family."""
+        response with no mismatch clears the mismatch fault of the family.
+        `FaultReporter.clear` keeps the fault in memory when the file write
+        fails, so the next reply writes the file again."""
         response = await self._send(path, body, more, timeout)
 
         if response.status_code == MISMATCH_STATUS:
             return _read(ProtocolMismatch, response)
 
-        if self._faults.open_faults(family):
-            self._faults.clear_all(family)
-
+        self._publish(family, lambda: self._faults.clear(family, MISMATCH_FAULT))
         return response
+
+    def _publish(self, family: str, write: Callable[[], None]) -> None:
+        """One write of the fault file. A failed write changes no result of a
+        vmm call: the call raises `VmmRefused` or returns, as its reply says,
+        and the log names the fault file. A 101 keeps its stream."""
+        try:
+            write()
+        except OSError as error:
+            _LOG.warning("family=%s the fault file was not written: %s", family, error)
 
     async def _send(
         self,

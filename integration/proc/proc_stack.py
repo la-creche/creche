@@ -1,12 +1,9 @@
-"""What every topology of this suite shares: `attendance` and the stand-ins.
+"""What every topology of this suite shares: `attendance` and the vmm stand-in.
 
     attendance     one process, started through `Service.ATTENDANCE`
-      | stdio, ACP v1
+      | POST /create, /list, /drop, /acp over vmm.sock
       v
-    sbx exec --env-file <env file> <sandbox> -- creche-facade
-      |                 the `sbx` stand-in program, found through PATH
-      v
-    the command of the sandbox
+    the vmm stand-in    `standin_vmm.py`, which boots no VM
 
 A topology adds the service in front: the trigger door in `proc_trigger.py`.
 A test reaches each service through a socket and through the files under the
@@ -17,7 +14,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Final
 
 import httpx
@@ -29,19 +26,10 @@ from proc_harness import (
     Supervisor,
     TcpAddress,
     UnixAddress,
-    kill_pid,
     port_is_free,
-    session_id_of,
 )
 from proc_services import Service, command_of, env_of
-from proc_standins import (
-    LOCK_POLL_S,
-    LOCK_STALE_S,
-    SBX,
-    Call,
-    calls_of,
-    install_sbx,
-)
+from proc_standins import start_vmm
 from proc_tree import LAN_ADDRESS, Tree, build_tree, token_of
 
 #: A Unix socket has no host. An HTTP client still needs one for the request
@@ -63,8 +51,9 @@ _PASSED_THROUGH: Final = ("LANG", "TMPDIR")
 def base_env(tree: Tree) -> dict[str, str]:
     """The environment every service starts from.
 
-    The root's `bin` is first on PATH, so a service that runs `sbx` finds the
-    stand-in. No variable of a service and no variable of a stand-in is here.
+    The root's `bin` is first on PATH, so a service that runs a program finds
+    its stand-in. No variable of a service and no variable of a stand-in is
+    here.
     """
     env = {
         "PATH": f"{tree.bin_dir}{os.pathsep}{os.environ.get('PATH', os.defpath)}",
@@ -80,33 +69,35 @@ def base_env(tree: Tree) -> dict[str, str]:
 
 
 def attendance_env(tree: Tree) -> dict[str, str]:
-    """The variables `creche-attendance.service` reads from its two files."""
+    """The variables `creche-attendance.service` reads from its two files,
+    and the one that it sets itself.
+
+    The unit sets `ATTENDANCE_VMM_SOCKET` from `%t` (decision CH20). Here
+    it names the socket of the vmm stand-in.
+    """
     return {
         "AGENT_LAN_ADDRESS": LAN_ADDRESS,
         "ATTENDANCE_SESSIONS_ROOT": str(tree.sessions_root),
         "ATTENDANCE_STATE_ROOT": str(tree.state_root),
         "ATTENDANCE_SOCKET": str(tree.attendance_socket),
-        "ATTENDANCE_LOG_DIR": str(tree.log_dir),
-        "ATTENDANCE_LOCK_STALE_S": str(LOCK_STALE_S),
-        "ATTENDANCE_LOCK_POLL_S": str(LOCK_POLL_S),
+        "ATTENDANCE_VMM_SOCKET": str(tree.vmm_socket),
     }
 
 
 @dataclass(slots=True)
 class Stack:
-    """`attendance`, the stand-ins, and what a test may touch of them."""
+    """`attendance`, the vmm stand-in, and what a test may touch of them."""
 
     tree: Tree
     supervisor: Supervisor
     attendance: Child | None = None
-    _killed: set[int] = field(default_factory=set[int])
+    vmm: Child | None = None
 
     # ------------------------------------------------------------------ start
 
     def prepare(self) -> None:
-        """Write the tree and the `sbx` stand-in. Start nothing."""
+        """Write the tree. Start nothing."""
         build_tree(self.tree)
-        install_sbx(self.tree)
 
     def spawn(self, service: Service, env: dict[str, str], *args: str) -> Child:
         """Start one service with the base environment under its own."""
@@ -123,7 +114,11 @@ class Stack:
         return self.supervisor.run(service.value, [*command.words, *args], whole, self.tree.root)
 
     def spawn_attendance(self) -> Child:
-        """Start `attendance`. `await_attendance` waits for it."""
+        """Start `attendance`, after the vmm stand-in on the first start.
+        `await_attendance` waits for `attendance`."""
+        if self.vmm is None:
+            self.vmm = start_vmm(self.tree, self.supervisor, base_env(self.tree))
+
         self.attendance = self.spawn(Service.ATTENDANCE, attendance_env(self.tree))
 
         return self.attendance
@@ -178,30 +173,3 @@ class Stack:
             headers={"Authorization": f"Bearer {token_of(principal)}"},
             timeout=CLIENT_TIMEOUT,
         )
-
-    # -------------------------------------------------- what crossed a boundary
-
-    def sbx_calls(self) -> list[Call]:
-        """One entry per `sbx` command a service ran."""
-        return calls_of(self.tree, SBX)
-
-    def kill_playpens(self) -> list[int]:
-        """SIGKILL every playpen that runs now. Returns the pids.
-
-        `sbx exec` becomes the playpen, so the pid the stand-in recorded is
-        the pid of the playpen. A playpen keeps the session of `attendance`.
-        A recorded pid in another session names another program now, because
-        the playpen ended earlier. It gets no signal.
-        """
-        if self.attendance is None:
-            return []
-
-        session = self.attendance.pgid
-        recorded = [call.pid for call in self.sbx_calls() if call.pid not in self._killed]
-        pids = [pid for pid in recorded if session_id_of(pid) == session]
-
-        for pid in pids:
-            kill_pid(pid)
-            self._killed.add(pid)
-
-        return pids

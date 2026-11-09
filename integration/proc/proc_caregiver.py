@@ -3,16 +3,16 @@
     a test (edits a file of the registry)
       v
     caregiver      one process, started through `Service.CAREGIVER`
-      | sbx create, sbx policy, sbx rm      the `sbx` stand-in, found through PATH
+      | POST /drop over vmm.sock            the vmm stand-in, at a family delete
       | systemctl --user                    the `systemctl` stand-in, found through PATH
       | HTTP, loopback port                 the LiteLLM stand-in
-      | writes the status document, the credential file,
-      | the config mount and the env file of each sandbox
+      | writes the status document, the credential file, the config
+      | directory, `egress.json` and `repos.json` of each family
       | runs the stand-in of `chaperone check`, then writes `policy.toml`
-      | POST /internal/switch-sandbox over the Unix socket of `attendance`
 
-`caregiver` runs with its three stand-ins. No `attendance` answers the
-switch call, so each sandbox stays `creating` (contract 05 §4.2 rule 4).
+`caregiver` runs with its four stand-ins. It starts no VM: the vmm starts
+one VM per session (decisions CH1, CH9). The one call of `caregiver` to the
+vmm is the drop of a deleted family (decision CH21-10, contract 05 §4.4).
 
 No file of a family comes from this suite. A test writes the registry, and
 `caregiver` publishes each family from it.
@@ -45,24 +45,19 @@ from proc_standins import (
     MASTER_KEY,
     chaperone_check_program,
     install_chaperone_check,
-    install_sbx_verbs,
     install_systemctl,
     start_litellm,
+    start_vmm,
+    vmm_calls,
 )
 from proc_tree import (
     FAMILY,
-    IMAGE,
     LAN_ADDRESS,
     Tree,
     build_bare_tree,
     family_body,
-    first_sandbox,
     publish_family,
 )
-
-#: The reference of the second image flavor (contract 01 §3.9). An obvious
-#: fixture, as `IMAGE` is.
-PYTHON_IMAGE: Final = "sha256:" + "0" * 63 + "2"
 
 #: The value of `--pep-url` that turns the watch off (contract 05 §2.2 rule 1).
 WATCH_OFF: Final = ""
@@ -73,35 +68,19 @@ POLL_INTERVAL_S: Final = "0.2"
 #: Every verb that changes something prints its plan. This flag makes it act.
 WRITE_FLAG: Final = "--write"
 
-#: The two endpoints that `caregiver` allows for each sandbox (contract 05
-#: §4.3 step 3): LiteLLM and the chaperone, on the LAN address of the site.
-PLANE_ENDPOINTS: Final = (f"{LAN_ADDRESS}:4000", f"{LAN_ADDRESS}:8300")
-
-#: The two plane variables of the env file of a sandbox, each with its URL:
-#: the endpoint of the plane behind `http://`.
-PLANE_URLS: Final = {
-    "AGENT_PEP_URL": f"http://{PLANE_ENDPOINTS[1]}",
-    "AGENT_LITELLM_BASE_URL": f"http://{PLANE_ENDPOINTS[0]}",
-}
-
-#: The three hosts that each sandbox must not reach (contract 05 §4.3 step 2).
-CANARIES: Final = ("example.com:443", "openrouter.ai", f"{LAN_ADDRESS}:8181")
-
-# The family states of contract 05 §3, and the sandbox states of §4.2.
+# The family states of contract 05 §3.
 IN_SYNC: Final = "in_sync"
 RECONCILING: Final = "reconciling"
 INVALID: Final = "invalid"
 DEGRADED: Final = "degraded"
-CREATING: Final = "creating"
-READY: Final = "ready"
 
 #: The exit codes that `caregiver/AGENTS.md` gives each verb.
 EXIT_OK: Final = 0
 EXIT_PROBLEM: Final = 1
 EXIT_USAGE: Final = 2
 
-#: How long a first pass may take: one start of the service, about ten `sbx`
-#: commands and one handshake.
+#: How long a first pass may take: one start of the service, the LiteLLM
+#: calls and one `chaperone check`.
 CONVERGE_DEADLINE_S: Final = 60.0
 
 _POLL_S: Final = 0.02
@@ -119,20 +98,23 @@ FIXTURE_MOUNT_ROOTS: Final = ",".join(
 FIXTURE_PLATFORM_FAMILIES: Final = "code"
 
 
-def caregiver_env() -> dict[str, str]:
-    """The variables `creche-caregiver.service` reads from its two files.
+def caregiver_env(tree: Tree) -> dict[str, str]:
+    """The variables `creche-caregiver.service` reads from its two files,
+    and the one that it sets itself.
 
-    The unit also puts `AGENT_SANDBOX_IMAGE`, `AGENT_SANDBOX_PYTHON_IMAGE`
-    and `AGENT_PEP_URL` into its command line. systemd does that, so here
-    each value is an argument of `serve_words`. The two fences come from the
-    site file, as on the host: the roots and the platform family that the
-    fixture registries use.
+    The unit also puts `AGENT_PEP_URL` into its command line. systemd does
+    that, so here the value is an argument of `serve_words`. The two fences
+    come from the site file, as on the host: the roots and the platform
+    family that the fixture registries use. The unit sets
+    `CAREGIVER_VMM_SOCKET` from `%t` (decision CH20). Here it names the
+    socket of the vmm stand-in.
     """
     return {
         "AGENT_LAN_ADDRESS": LAN_ADDRESS,
         "LITELLM_MASTER_KEY": MASTER_KEY,
         "AGENT_MOUNT_ROOTS": FIXTURE_MOUNT_ROOTS,
         "AGENT_PLATFORM_FAMILIES": FIXTURE_PLATFORM_FAMILIES,
+        "CAREGIVER_VMM_SOCKET": str(tree.vmm_socket),
     }
 
 
@@ -142,14 +124,8 @@ def watch_flags(tree: Tree, litellm_port: int, chaperone: list[str] | None = Non
     `chaperone` replaces the flags of `chaperone_flags`.
     """
     return [
-        "--image",
-        IMAGE,
-        "--image-python",
-        PYTHON_IMAGE,
         "--state-root",
         str(tree.state_root),
-        "--attendance-socket",
-        str(tree.attendance_socket),
         "--litellm-base-url",
         litellm_url(litellm_port),
         *(chaperone_flags(tree) if chaperone is None else chaperone),
@@ -213,7 +189,6 @@ class CaregiverStack(Stack):
         """
         build_bare_tree(self.tree)
         publish_family(self.tree, family_body())
-        install_sbx_verbs(self.tree)
         install_systemctl(self.tree)
         install_chaperone_check(self.tree)
 
@@ -223,36 +198,33 @@ class CaregiverStack(Stack):
             self.tree, self.supervisor, base_env(self.tree)
         )
 
+    def start_vmm(self) -> None:
+        """Start the vmm stand-in on `vmm.sock` of the root, and wait for it."""
+        self.vmm = start_vmm(self.tree, self.supervisor, base_env(self.tree))
+
     def spawn_caregiver(self, *more: str) -> Child:
         """Start `caregiver serve`, with the watch off.
 
         `more` adds arguments after those of the unit.
         """
         words = [*serve_words(self.tree, self.litellm_port, WATCH_OFF), *more]
-        self.caregiver = self.spawn(Service.CAREGIVER, caregiver_env(), *words)
+        self.caregiver = self.spawn(Service.CAREGIVER, caregiver_env(self.tree), *words)
 
         return self.caregiver
 
     def run_caregiver(self, *words: str, env: dict[str, str] | None = None) -> Finished:
         """Run one verb of `caregiver` to its end."""
-        return self.run(Service.CAREGIVER, caregiver_env() if env is None else env, *words)
+        return self.run(Service.CAREGIVER, caregiver_env(self.tree) if env is None else env, *words)
 
     def await_published(self, family: str = FAMILY) -> None:
-        """Wait until `caregiver` alone ends its first pass for one family.
-
-        The family is `in_sync` and its sandbox is `creating`: no `attendance`
-        ran the handshake.
-        """
-        box = first_sandbox(family)
-        wait_until(
-            lambda: self.state(family) == IN_SYNC and self.sandboxes(family) == [(box, CREATING)],
-            f"{family} to be {IN_SYNC} with {box} {CREATING}",
-        )
+        """Wait until `caregiver` alone ends its first pass for one family:
+        the family is `in_sync`."""
+        wait_until(lambda: self.state(family) == IN_SYNC, f"{family} to be {IN_SYNC}")
 
     # -------------------------------------------------- what crossed a boundary
 
     def credentials(self, family: str = FAMILY) -> dict[str, Any]:
-        """The credential file of one family, as its sandbox reads it."""
+        """The credential file of one family, as the vmm reads it."""
         document: dict[str, Any] = _read_json(self.tree.creds_file(family))
 
         return document
@@ -268,41 +240,28 @@ class CaregiverStack(Stack):
 
         return apps
 
-    def sandboxes(self, family: str = FAMILY) -> list[tuple[str, str]]:
-        """Each sandbox of the status document, as its id and its state."""
-        document = self.tree.status(family)
-
-        if document is None:
-            return []
-
-        return [(str(row["id"]), str(row["state"])) for row in document["sandboxes"]]
-
     def state(self, family: str = FAMILY) -> str | None:
         """The state of one family in its status document, or None with no document."""
         document = self.tree.status(family)
 
         return None if document is None else str(document["state"])
 
-    def sbx_commands(self) -> list[tuple[str, ...]]:
-        """The arguments of each `sbx` command that is not `exec`, in call order.
-
-        `caregiver` runs each of these. `attendance` runs `exec`.
-        """
-        return [call.argv for call in self.sbx_calls() if call.argv[:1] != ("exec",)]
-
-    def dialled(self) -> list[str]:
-        """The sandbox of each `sbx exec`, in call order."""
+    def dropped(self) -> list[str]:
+        """The family of each drop that the vmm stand-in got, in call order."""
         return [
-            call.value_after("--sandbox") for call in self.sbx_calls() if call.argv[:1] == ("exec",)
+            str(call["body"]["family"]["family"])
+            for call in vmm_calls(self.tree)
+            if call["route"] == "drop"
         ]
 
 
 def text_of(path: Path) -> str | None:
-    """The text of one file of a mount, or None while the file is not there.
+    """The text of one file of the config directory, or None while the file
+    is not there.
 
-    `caregiver` puts a new config mount in place with two renames. Between
-    the two, the path of the mount does not exist. So a test that reads a
-    file of the mount in a wait must accept that no file is there.
+    `caregiver` puts a new config directory in place with two renames.
+    Between the two, the path of the directory does not exist. So a test
+    that reads a file of it in a wait must accept that no file is there.
     """
     try:
         return path.read_text(encoding="utf-8")
