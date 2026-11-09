@@ -91,13 +91,12 @@ impl<V: RunningVms> Serve<ListRoute> for Lists<V> {
 /// # Errors
 ///
 /// A failed read of the session dir other than an absent entry.
-// CONTRACT-QUESTION: CH79 rule 4 names the four values, and no row says how
-// the vmm reads them. Three readings are taken here. (a) `asleep` runs no
-// key check, so a start can still drop the snapshot and cold-boot (decision
-// CH44 rule 5). (b) A VM in a stop or an eviction is `running`, and a start
-// before its CH launch reads as its disk. (c) A failed read of a session
-// dir fails the whole page with `internal`, because the enum has no
-// unknown state. The vmm `AGENTS.md` Known gaps names it.
+// Decision CH84 rule 13 gives how the vmm reads the four values of CH79
+// rule 4. (a) `asleep` runs no key check, so a start can still drop the
+// snapshot and cold-boot (decision CH44 rule 5). (b) A VM in a stop or an
+// eviction is `running`, and a start before its CH launch reads as its
+// disk. (c) A failed read of a session dir fails the whole page with
+// `internal`, because the enum has no unknown state.
 fn vm_state(
     state: &StateRoot,
     running: &HashSet<SessionId>,

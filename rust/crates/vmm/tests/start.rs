@@ -710,8 +710,8 @@ fn a_cold_boot_launches_the_checked_files_and_clears_the_fault() {
 }
 
 /// A start before its CH launch holds no CH yet, so the list reads its VM
-/// by its disk state and not as `running` (decision CH79 rule 4, the
-/// CONTRACT-QUESTION reading (b) of plan PR CR13). Once the launch ends,
+/// by its disk state and not as `running` (decisions CH79 rule 4, CH84 rule
+/// 13 (b)). Once the launch ends,
 /// the set holds the session.
 #[test]
 fn a_start_inside_its_launch_is_not_running() {

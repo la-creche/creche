@@ -17,16 +17,14 @@
 // session's cwd, title, times and origin, so the facade keeps no table of
 // its own and reads no creche key of `_meta` (decision CH21-4).
 //
-// CONTRACT-QUESTION: the owner asked to forward the delegation to the
-// chaperone as `_meta["creche.delegation"]` on each `tools/call` of the
-// session, so that the chaperone can bound a delegation to one hop at run
-// time. The delegation now rides in the origin of the host row (decision
+// The facade sends no delegation to the chaperone, and the chaperone
+// applies no run-time one-hop bound from the delegation id (decision CH84
+// rule 12). The delegation rides in the origin of the host row (decision
 // CH21-4), and nothing gives it to the facade. Flue 2.3.0 also gives no way
 // to send it: its MCP adapter calls `client.callTool({name, arguments},
 // requestOptions)` with no `_meta` (`createMcpTools` in
 // `@flue/runtime/dist/mcp-*.mjs`), and `McpConnectionDefinition` has no
-// per-call hook. The chaperone reads no such key. The facade sends nothing
-// until a decision gives the path.
+// per-call hook. The chaperone reads no such key.
 
 import { isAbsolute } from "node:path";
 

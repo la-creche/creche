@@ -26,11 +26,11 @@ whole job (contract 02 §12 rules 3 and 4, contract 04 §7.5). Any other
 job ends in `HostFull` at once, and its door queues it (contract 02 §6
 rule 4). Its prompt gets its whole deadline, counted from the prompt.
 
-CONTRACT-QUESTION: no row bounds the start of a dispatch or a trigger job,
-and decision CH50 rule 1 gives the start of a VM no outer bound. The
-reading here: the start ends within the deadline of the job, so a hung
-start frees its queue slot, and the prompt keeps the deadline that it had
-before the vmm.
+The start of a dispatch or a trigger job, its stream open and its
+handshake, ends within the deadline of the job (decision CH84 rule 8). So a
+hung start frees its queue slot, and the prompt keeps the deadline that it
+had before the vmm. Decision CH50 rule 1 gives the start of a VM no outer
+bound of its own.
 
 Nothing here raises past the caller. A refusal, a lost link and a deadline
 each end in a `JobEnd` or a `HostFull`.
@@ -71,9 +71,9 @@ CANCEL_WAIT_S = 5.0
 
 #: How long a job that waits for room pauses after a `host_full`.
 #:
-#: CONTRACT-QUESTION: decision CH21-3 gives a delegate job a retry loop
-#: inside its `job.timeout`, and no row names the pause between two tries.
-#: The reading here: one second, the tick of the dispatch queue pump.
+#: The pause between two tries is one second, the tick of the dispatch
+#: queue pump, and a try starts only before the job deadline (decision CH84
+#: rule 7). Decision CH21-3 gives the retry loop.
 HOST_FULL_PAUSE_S = 1.0
 
 

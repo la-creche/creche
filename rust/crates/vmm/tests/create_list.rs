@@ -404,8 +404,8 @@ fn the_vm_state_follows_the_session_dir_and_the_vm_table() {
 }
 
 /// A session dir that does not read fails the page with `internal` 500,
-/// because the four states hold no unknown one (CONTRACT-QUESTION of
-/// `vm_state`). A root user reads any dir, so the test skips.
+/// because the four states hold no unknown one (decision CH84 rule 13). A
+/// root user reads any dir, so the test skips.
 #[test]
 fn a_session_dir_that_does_not_read_gets_internal() {
     use std::os::unix::fs::PermissionsExt;

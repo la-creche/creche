@@ -634,11 +634,11 @@ under the 1 MiB cap with a `next` (decision CH33 rule 2). Each row is a
 gives), then the session dir of each row: its disk, its newest snapshot
 generation and the consumed mark of that generation. The dir reads run
 in `spawn_blocking` under the lock of the rows (decision CH36 G21).
-Known gap 35 names the readings. `tests/create_list.rs` proves a repeat
-create, a conflict, an unknown family, a repeat after the family went,
-`internal` for a failed family read or row write, a page of
-4096-character cwds that ends early, each `vm` value, and `internal` for
-a session dir that does not read.
+Decision CH84 rule 13 gives the reading of each value (Known gap 35).
+`tests/create_list.rs` proves a repeat create, a conflict, an unknown
+family, a repeat after the family went, `internal` for a failed family
+read or row write, a page of 4096-character cwds that ends early, each
+`vm` value, and `internal` for a session dir that does not read.
 
 ## The check route
 
@@ -1710,17 +1710,16 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
     Landlock or AppArmor rule (gap Q71-7 option A). Decision CH82 rules
     1, 2 and 6 name the code `serial_log_full` and give every vmm code
     `blocks_turns` false.
-35. CONTRACT-QUESTION (plan PR CR13): decision CH79 rule 4 names the four
-    `vm` values of a list row (`none`, `off`, `asleep`, `running`), and no
-    row says how the vmm reads them. `vm_state` of
-    `src/handlers/list.rs` takes three readings. (a) `asleep` means the
-    newest snapshot generation holds no consumed mark. It runs no key
-    check, so a start can still drop that snapshot and cold-boot
-    (decision CH44 rule 5). (b) A VM in a stop or an eviction is
-    `running`, because its CH runs until the stop ends. A start before
-    its launch reads as its disk. (c) A session dir that does not read
-    fails the whole page with `internal` 500, because the enum has no
-    unknown state.
+35. Closed by decision CH84 rule 13 (plan PR CR13): decision CH79 rule 4
+    names the four `vm` values of a list row (`none`, `off`, `asleep`,
+    `running`), and `vm_state` of `src/handlers/list.rs` reads them by
+    three rules. (a) `asleep` means the newest snapshot generation holds no
+    consumed mark. It runs no key check, so a start can still drop that
+    snapshot and cold-boot (decision CH44 rule 5). (b) A VM in a stop or an
+    eviction is `running`, because its CH runs until the stop ends. A
+    start before its launch reads as its disk. (c) A session dir that does
+    not read fails the whole page with `internal` 500, because the enum
+    has no unknown state.
 
 ## Caller duties
 

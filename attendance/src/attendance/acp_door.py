@@ -169,17 +169,17 @@ RPC_NOT_FOUND = -32002
 
 #: The `data.code` of a stream whose handshake failed.
 #:
-#: CONTRACT-QUESTION: decision CH83 rule 1 names the JSON-RPC error of a
-#: vmm refusal, and no row names the error of a facade that answers the
-#: handshake with nothing usable after 101. The reading here: the same
-#: `internalError`, with this code of contract 02 §14 table 2 as `data.code`.
-#: Another reading changes this one word.
+#: A facade that answers the handshake with nothing usable after 101 gets
+#: `internalError`, the error of a vmm refusal (decision CH83 rule 1), with
+#: this code of contract 02 §14 table 2 as `data.code` (decision CH84 rule
+#: 3).
 HANDSHAKE_FAILED = "protocol_violation"
 
 #: How many frames one lane holds before the door reads no more frames.
 #: A lane works its frames as fast as its stream takes them, so only a lane
 #: that waits for a VM start fills. Past the cap, the read of the next frame
-#: waits, as each frame waited before the door had lanes.
+#: waits, as each frame waited before the door had lanes. Each session has
+#: its own lane (decision CH84 rule 5).
 LANE_DEPTH: Final = 64
 
 #: The lane of each frame that names no session: `initialize`,
@@ -581,14 +581,13 @@ class _Door:
         before the vmm call, and an id with no row of the family gets it
         from the vmm (§5.6 rule 4).
 
-        CONTRACT-QUESTION: contract 02 §5.6 does not say what a delete does
-        to a request in flight on the session's stream of this same
-        connection. The reading here: nothing new. The vmm stops that
-        stream, and a stream that ends with a request in flight closes the
-        connection with `Close.RELAY_GONE` (decision CH19 (6)). The answer
-        of the delete is then lost. The vmm runs the drop to its end after
-        the hang-up, and the client sees the row gone at its next
-        `session/list`."""
+        A delete with a request in flight on the session's stream of this
+        same connection closes the connection (decision CH84 rule 9). The
+        vmm stops that stream, and a stream that ends with a request in
+        flight closes the connection with `Close.RELAY_GONE` (decision CH19
+        (6)). The answer of the delete is then lost. The vmm runs the drop
+        to its end after the hang-up, and the client sees the row gone at
+        its next `session/list`."""
         session = params.get("sessionId") if params is not None else None
 
         if not isinstance(session, str):

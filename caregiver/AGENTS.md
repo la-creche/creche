@@ -215,6 +215,12 @@ host where something has gone wrong.
   `codemode` is not in the list. The agent mounts it for every family.
 - A webhook's bearer is never logged and never published. The status document
   carries `token_path` alone.
+- The unit sets `CAREGIVER_VMM_SOCKET` from `%t`, outside `default.env`
+  (decision CH84 rule 1, `vmm.py`). Decision CH20 fixes the path
+  `/run/user/<uid>/vmm/vmm.sock`, and the env catalog cannot spell a uid.
+- `vmm_protocol_mismatch` of the one vmm call, the drop of a deleted
+  family, is the `code` of the `VmmError`. The log line of the delete names
+  it, and no status document carries it (decision CH84 rule 2, `vmm.py`).
 
 ## The loop
 
@@ -428,16 +434,3 @@ Nothing here touches a real vmm or LiteLLM.
   absent file. It mints a new key and a new token, writes epoch 1 and
   writes one error line. Contract 03 §12 rule 3 says that the epoch
   increases on every write (`steps.py`).
-- `CONTRACT-QUESTION` in `vmm.py`, `VmmError`. Contract 05 §3.3.1 says
-  that caregiver raises `vmm_protocol_mismatch` for its own vmm call. The
-  one call is the drop of a deleted family, whose status document goes
-  with the family. The reading here: the code is the `code` of the
-  `VmmError`, the log line of the delete names it, and no status document
-  carries it. To publish it, contract 05 must name a document for a fault
-  of a family that is being deleted.
-- `CONTRACT-QUESTION` in `vmm.py`, `VMM_SOCKET_ENV`. Decision CH20 fixes
-  the path `/run/user/<uid>/vmm/vmm.sock` and names no env key. The env
-  catalog cannot spell a uid, so `default.env` holds no key for it. The
-  reading here: the unit sets `CAREGIVER_VMM_SOCKET` from `%t`, outside the
-  catalog. To make it a catalog key, the catalog grammar needs a form for
-  the runtime dir of an account.

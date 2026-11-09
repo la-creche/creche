@@ -343,8 +343,7 @@ def _session(family: str, body: Json) -> SessionRow:
 
 def _vm(body: Json) -> VmState:
     """The `vm` of a row. A value that is no text, or a text outside the
-    contract's four, reads `unreadable` (CONTRACT-QUESTION, noticeboard
-    Known gaps)."""
+    contract's four, reads `unreadable` (decision CH84 rule 14)."""
     value = body.get("vm")
 
     if not isinstance(value, str):

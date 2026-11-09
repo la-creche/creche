@@ -46,24 +46,22 @@ from creche_wire.routes import (
 
 #: The env key that names `vmm.sock` (decision CH20).
 #:
-#: CONTRACT-QUESTION: decision CH20 fixes the path
-#: `/run/user/<uid>/vmm/vmm.sock` and names no env key. The env catalog
-#: cannot spell a uid, so `default.env` holds no key for it. The reading
-#: here: the unit sets this key from `%t`, outside the catalog. To make it a
-#: catalog key, the catalog grammar needs a form for the runtime dir of an
-#: account.
+#: Decision CH20 fixes the path `/run/user/<uid>/vmm/vmm.sock`. The env
+#: catalog cannot spell a uid, so `default.env` holds no key for it. The
+#: unit sets this key from `%t`, outside the catalog (decision CH84 rule
+#: 1). To make it a catalog key, the catalog grammar needs a form for the
+#: runtime dir of an account.
 VMM_SOCKET_ENV: Final = "CAREGIVER_VMM_SOCKET"
 
 #: Contract 05 §3.3: a client of the vmm got the mismatch reply on each of
 #: its tries. caregiver raises the same code as attendance (decision CH82
 #: rule 5).
 #:
-#: CONTRACT-QUESTION: contract 05 §3.3.1 says that caregiver raises this
-#: code for its own vmm call. The one call is the drop of a deleted family,
-#: whose status document goes with the family. The reading here: the code
-#: is the `code` of the `VmmError`, the log line of the delete names it,
-#: and no status document carries it. To publish it, contract 05 must name
-#: a document for a fault of a family that is being deleted.
+#: Contract 05 §3.3.1 says that caregiver raises this code for its own vmm
+#: call. The one call is the drop of a deleted family, whose status
+#: document goes with the family. The code is the `code` of the
+#: `VmmError`, the log line of the delete names it, and no status document
+#: carries it (decision CH84 rule 2).
 VMM_PROTOCOL_MISMATCH: Final = "vmm_protocol_mismatch"
 
 #: Decision CH25 rule 1: after a mismatch, retry a few times, then report
