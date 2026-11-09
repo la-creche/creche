@@ -189,25 +189,31 @@ class AcpStream:
         release it. The vmm holds the claim of the session until both
         directions end (decision CH83 rule 4). So after this close the next
         Upgrade of the same holder meets no claim of its own. The bytes of
-        the wait are dropped. `CLOSE_WAIT_S` bounds it."""
+        the wait are dropped. `CLOSE_WAIT_S` bounds it.
+
+        The release runs on each way out of the wait, a cancel included. A
+        cancel marks the stream closed first, so a release that did not run
+        would keep the socket and the claim until the object goes."""
         if self._closed:
             return
 
         self._closed = True
-        raw = self._stream.get_extra_info("socket")
 
-        if isinstance(raw, socket.socket):
-            with contextlib.suppress(httpcore.NetworkError, OSError, TimeoutError):
-                async with asyncio.timeout(CLOSE_WAIT_S):
-                    raw.shutdown(socket.SHUT_WR)
+        try:
+            raw = self._stream.get_extra_info("socket")
 
-                    while not self._eof and await self._stream.read(READ_CHUNK_BYTES):
-                        pass
+            if isinstance(raw, socket.socket):
+                with contextlib.suppress(httpcore.NetworkError, OSError, TimeoutError):
+                    async with asyncio.timeout(CLOSE_WAIT_S):
+                        raw.shutdown(socket.SHUT_WR)
 
-        with contextlib.suppress(httpcore.NetworkError, OSError):
-            await self._stream.aclose()
+                        while not self._eof and await self._stream.read(READ_CHUNK_BYTES):
+                            pass
+        finally:
+            with contextlib.suppress(httpcore.NetworkError, OSError):
+                await self._stream.aclose()
 
-        await self._response.aclose()
+            await self._response.aclose()
 
 
 class Vmm(Protocol):
