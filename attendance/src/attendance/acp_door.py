@@ -82,11 +82,11 @@ from creche_wire import (
     DoorOrigin,
     FamilyName,
     ListCursor,
+    ListRow,
     ListSessions,
     SessionCwd,
     SessionId,
     SessionOrigin,
-    SessionRow,
     UnixMillis,
 )
 from starlette.websockets import WebSocket
@@ -754,7 +754,7 @@ def _list_cursor(value: object) -> ListCursor | None:
     return ListCursor(int(value))
 
 
-def _session_info(row: SessionRow) -> dict[str, Any]:
+def _session_info(row: ListRow) -> dict[str, Any]:
     """Contract 02 §5.4 rule 4: one ACP session of one host row."""
     return {
         "sessionId": row.id.root,

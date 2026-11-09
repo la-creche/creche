@@ -1587,6 +1587,35 @@ class ListError(
     ]
 
 
+class ListRow(BaseModel):
+    """
+    One row of a list page: the keys of a `SessionRow` and the state of its
+    VM (decisions CH33 rule 9, CH79 rule 4). The row file and the create
+    reply stay a `SessionRow`, because the vmm reads `vm` at each list and
+    stores none.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    created_at: Annotated[UnixMillis, Field(description="When attendance created the session.")]
+    cwd: Annotated[SessionCwd, Field(description="The `cwd` that attendance sent in the create.")]
+    family: Annotated[FamilyName, Field(description="The family that serves the session.")]
+    id: Annotated[
+        SessionId, Field(description="The id that attendance chose (decision CH25 rule 2).")
+    ]
+    origin: Annotated[SessionOrigin, Field(description="Who made the session.")]
+    title: Annotated[SessionTitle | None, Field(description="The `title` of the `SessionRow`.")]
+    updated_at: Annotated[UnixMillis, Field(description="The `updated_at` of the `SessionRow`.")]
+    vm: Annotated[
+        VmState,
+        Field(
+            description="The state of the VM of the session when the vmm read the page.",
+            title="VmState",
+        ),
+    ]
+
+
 class ListSessions(BaseModel):
     """
     What a client sends to the vmm for one page of the host session list
@@ -1826,7 +1855,12 @@ class SessionPage(BaseModel):
         ListCursor | None,
         Field(description="The cursor of the next page, or `null` when no row follows."),
     ]
-    rows: Annotated[list[SessionRow], Field(description="The rows of this page.")]
+    rows: Annotated[
+        list[ListRow],
+        Field(
+            description="The rows of this page, each with the state of its VM (decision CH79\nrule 4)."
+        ),
+    ]
 
 
 class SessionRow(BaseModel):
@@ -2086,6 +2120,17 @@ class UnixMillis(RootModel[StrictInt]):
             le=9007199254740991,
         ),
     ]
+
+
+class VmState(StrEnum):
+    """
+    The state of the VM of the session when the vmm read the page.
+    """
+
+    NONE = "none"
+    OFF = "off"
+    ASLEEP = "asleep"
+    RUNNING = "running"
 
 
 class Webhook(BaseModel):

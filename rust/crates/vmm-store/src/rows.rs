@@ -21,8 +21,8 @@ use std::ops::Bound;
 use std::path::{Path, PathBuf};
 
 use creche_wire::{
-    CreateSession, HOST_API_BODY_CAP, ListCursor, ListSessions, SessionId, SessionPage, SessionRow,
-    TurnEnd,
+    CreateSession, HOST_API_BODY_CAP, ListCursor, ListRow, ListSessions, SessionId, SessionPage,
+    SessionRow, TurnEnd, VmState,
 };
 use serde::{Deserialize, Serialize};
 
@@ -305,8 +305,19 @@ impl Rows {
     /// `HOST_API_BODY_CAP` (decisions CH33 rule 2, CH34 rule 3). It counts
     /// the bytes of the compact JSON that `serde_json::to_vec` writes, so
     /// the route sends the page in that form.
-    #[must_use]
-    pub fn page(&self, request: &ListSessions) -> SessionPage {
+    ///
+    /// `vm` gives the VM state of a row (decision CH79 rule 4). The store
+    /// keeps none, so the caller reads it. The page calls it once for each
+    /// row that it weighs, in page order.
+    ///
+    /// # Errors
+    ///
+    /// The first error of `vm`. The page then holds no row.
+    pub fn page<E>(
+        &self,
+        request: &ListSessions,
+        mut vm: impl FnMut(&SessionRow) -> Result<VmState, E>,
+    ) -> Result<SessionPage, E> {
         let ListSessions {
             cursor,
             cwd,
@@ -332,7 +343,8 @@ impl Rows {
         let mut bytes = json_bytes(&empty).saturating_sub(NULL.len());
         while let Some((order, row)) = matching.next() {
             let follows = matching.peek().is_some();
-            let row_bytes = json_bytes(row).saturating_add(usize::from(!rows.is_empty()));
+            let row = ListRow::new(row.clone(), vm(row)?);
+            let row_bytes = json_bytes(&row).saturating_add(usize::from(!rows.is_empty()));
             let next_bytes = if follows {
                 order.get().to_string().len()
             } else {
@@ -347,13 +359,13 @@ impl Rows {
                 break;
             }
             bytes = bytes.saturating_add(row_bytes);
-            rows.push(row.clone());
+            rows.push(row);
             next = follows.then_some(*order);
             if rows.len() == PAGE_ROWS {
                 break;
             }
         }
-        SessionPage { next, rows }
+        Ok(SessionPage { next, rows })
     }
 
     /// Applies the end of a turn to the row of `id`. It sets `updated_at`

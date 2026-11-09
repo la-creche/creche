@@ -26,6 +26,7 @@ use creche_vmm::egress::log::Log;
 use creche_vmm::egress::watch::POLL;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
+use creche_vmm::handlers::list::RunningVms;
 use creche_vmm::mirror::{DENIED, Mirror};
 use creche_vmm::planes::Upstreams;
 use creche_vmm::relay::{AcpLink, Door, Relays};
@@ -678,11 +679,15 @@ fn a_cold_boot_launches_the_checked_files_and_clears_the_fault() {
     assert_eq!(test.start(0), Err(StartFault::SandboxStartFailed));
     assert_eq!(test.fault_codes(), ["sandbox_start_failed"]);
     assert_eq!(test.launches(), 0);
+    assert_eq!(test.hook.running_sessions(), HashSet::new());
 
     fs::write(&shape, SHAPE).unwrap();
     assert_eq!(test.start(0), Ok(()));
     assert!(test.fault_codes().is_empty());
     assert!(test.hook.running(&test.rows[0].id));
+    // Decision CH79 rule 4: the list reads the VM of a start as running.
+    let running = HashSet::from([test.rows[0].id.clone()]);
+    assert_eq!(test.hook.running_sessions(), running);
     let id = &test.rows[0].id;
     assert!(test.control.lock().unwrap().facade(id).is_some());
 

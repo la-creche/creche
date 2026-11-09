@@ -22,11 +22,11 @@ use super::{
     FacadeExited, FacadeNotStarted, FacadeRunning, FacadeStarting, FacadeState, FamilyConfig,
     FamilyCpus, FamilyCreds, FamilyEgress, FamilyMemoryMib, FamilyName, FamilyRepos, FamilyShape,
     FamilySkills, FamilyState, FamilyStatePull, FamilyStateReply, GuestEvent, HostName, IpAddress,
-    JobId, ListCursor, ListError, ListSessions, LitellmKey, MISMATCH_STATUS, ModelAlias, OpenAcp,
-    PepToken, ProtocolMismatch, RepoList, RepoName, RouteError, SHARED_CODES, SandboxGrant,
-    SessionCwd, SessionId, SessionOrigin, SessionPage, SessionRow, SessionTitle, SkillName,
-    StartCount, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd, TurnEvent, TurnStart,
-    UnixMillis, Webhook, WebhookName, routes::TableRoute,
+    JobId, ListCursor, ListError, ListRow, ListSessions, LitellmKey, MISMATCH_STATUS, ModelAlias,
+    OpenAcp, PepToken, ProtocolMismatch, RepoList, RepoName, RouteError, SHARED_CODES,
+    SandboxGrant, SessionCwd, SessionId, SessionOrigin, SessionPage, SessionRow, SessionTitle,
+    SkillName, StartCount, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd, TurnEvent,
+    TurnStart, UnixMillis, Webhook, WebhookName, routes::TableRoute,
 };
 
 /// The file, relative to the crate.
@@ -117,6 +117,7 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "JobId" => round_trip::<JobId>(json),
         "ListCursor" => round_trip::<ListCursor>(json),
         "ListError" => round_trip::<ListError>(json),
+        "ListRow" => round_trip::<ListRow>(json),
         "ListSessions" => round_trip::<ListSessions>(json),
         "LitellmKey" => round_trip::<LitellmKey>(json),
         "ModelAlias" => round_trip::<ModelAlias>(json),

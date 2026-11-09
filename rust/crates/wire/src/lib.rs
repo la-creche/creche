@@ -841,6 +841,88 @@ pub struct SessionRow {
 
 object_only!(SessionRow);
 
+/// The state of the VM of a session, as the vmm reads it for a list page
+/// (decisions CH33 rule 9, CH79 rule 4). The vmm stores no state: it reads
+/// it at each list, so a vmm restart never lists a stale one.
+///
+/// 1. `none`: the session has no session disk yet. Its first boot makes
+///    one (decision CH21-4).
+/// 2. `off`: a session disk and no snapshot that can resume. The next
+///    start cold-boots.
+/// 3. `asleep`: the newest snapshot generation holds no consumed mark, so
+///    the next start can resume it (decision CH19 (5)).
+/// 4. `running`: a Cloud Hypervisor process of the session runs.
+// CONTRACT-QUESTION: CH79 rule 4 names the four values, and no row says how
+// the vmm reads them. `vm_state` of the vmm list handler holds the reading,
+// and the vmm `AGENTS.md` Known gaps names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(inline, title = "VmState"))]
+pub enum VmState {
+    None,
+    Off,
+    Asleep,
+    Running,
+}
+
+/// One row of a list page: the keys of a `SessionRow` and the state of its
+/// VM (decisions CH33 rule 9, CH79 rule 4). The row file and the create
+/// reply stay a `SessionRow`, because the vmm reads `vm` at each list and
+/// stores none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(transform = schema::require_each_key))]
+pub struct ListRow {
+    /// When attendance created the session.
+    pub created_at: UnixMillis,
+    /// The `cwd` that attendance sent in the create.
+    pub cwd: SessionCwd,
+    /// The family that serves the session.
+    pub family: FamilyName,
+    /// The id that attendance chose (decision CH25 rule 2).
+    pub id: SessionId,
+    /// Who made the session.
+    pub origin: SessionOrigin,
+    /// The `title` of the `SessionRow`.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub title: Option<SessionTitle>,
+    /// The `updated_at` of the `SessionRow`.
+    pub updated_at: UnixMillis,
+    /// The state of the VM of the session when the vmm read the page.
+    pub vm: VmState,
+}
+
+object_only!(ListRow);
+
+impl ListRow {
+    /// The list row of `row` with the VM state `vm`. It names each field of
+    /// the row, so a new field of `SessionRow` fails the build here.
+    #[must_use]
+    pub fn new(row: SessionRow, vm: VmState) -> Self {
+        let SessionRow {
+            created_at,
+            cwd,
+            family,
+            id,
+            origin,
+            title,
+            updated_at,
+        } = row;
+        Self {
+            created_at,
+            cwd,
+            family,
+            id,
+            origin,
+            title,
+            updated_at,
+            vm,
+        }
+    }
+}
+
 /// A place on the stored order of the host session list (decision CH21-5).
 /// The vmm gives it as `next` of a `SessionPage`, and the client sends it
 /// back as `cursor` of the next `ListSessions`. It is opaque: a client never
@@ -936,8 +1018,9 @@ pub struct SessionPage {
     /// The cursor of the next page, or `null` when no row follows.
     #[serde(deserialize_with = "Option::deserialize")]
     pub next: Option<ListCursor>,
-    /// The rows of this page.
-    pub rows: Vec<SessionRow>,
+    /// The rows of this page, each with the state of its VM (decision CH79
+    /// rule 4).
+    pub rows: Vec<ListRow>,
 }
 
 object_only!(SessionPage);
@@ -2353,6 +2436,7 @@ mod tests {
             "origin": {"auto": {"job": "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK", "trigger": trigger}},
             "title": "\u{1}".repeat(256),
             "updated_at": JS_INTEGER_MAX,
+            "vm": "running",
         });
         let page = SessionPage {
             next: Some(ListCursor::try_from(JS_INTEGER_MAX).unwrap()),

@@ -13,7 +13,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from attendance.vmm import NOT_FOUND, VmmRefused
-from creche_wire import CreateSession, ListCursor, ListSessions, SessionPage, SessionRow
+from creche_wire import (
+    CreateSession,
+    ListCursor,
+    ListRow,
+    ListSessions,
+    SessionPage,
+    SessionRow,
+    VmState,
+)
 from fake_channel import FakeChannel
 from fake_facade import FakeFacade, PromptMode, serve
 
@@ -72,7 +80,7 @@ class FakeVmm:
             if row.family == query.family and (query.cwd is None or row.cwd == query.cwd)
         ]
         start = query.cursor.root if query.cursor is not None else 0
-        page = rows[start : start + PAGE_ROWS]
+        page = [_listed(row) for row in rows[start : start + PAGE_ROWS]]
         more = start + PAGE_ROWS < len(rows)
         return SessionPage(next=ListCursor(start + PAGE_ROWS) if more else None, rows=page)
 
@@ -139,3 +147,18 @@ class FakeVmm:
 
         if code is not None:
             raise VmmRefused(code, f"the stand-in refuses {route}")
+
+
+def _listed(row: SessionRow) -> ListRow:
+    """The list row of `row` (decision CH79 rule 4). The stand-in boots no
+    VM and makes no disk, so each VM is `none`."""
+    return ListRow(
+        created_at=row.created_at,
+        cwd=row.cwd,
+        family=row.family,
+        id=row.id,
+        origin=row.origin,
+        title=row.title,
+        updated_at=row.updated_at,
+        vm=VmState.NONE,
+    )

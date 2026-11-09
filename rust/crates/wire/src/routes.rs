@@ -31,7 +31,9 @@ use super::{
 /// differs from the file of this number, and it never writes over that
 /// file. Raise the number by one, and the test writes a new file.
 // Protocol 2 adds the route `check` (decisions CH69 rule 1, CH34 rule 8).
-pub const HOST_API_PROTOCOL: u32 = 2;
+// Protocol 3 gives each row of a list page its `vm` (decisions CH33 rule
+// 9, CH79 rule 4).
+pub const HOST_API_PROTOCOL: u32 = 3;
 
 /// The name of the request header that carries `HOST_API_PROTOCOL`, as
 /// decimal text. It is lowercase, the form of an HTTP/1.1 header name that

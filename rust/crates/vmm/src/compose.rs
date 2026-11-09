@@ -37,6 +37,7 @@
 //! A fault before the bind refuses the start, and `main.rs` exits 78
 //! (owner item 86).
 
+use std::collections::HashSet;
 use std::fmt;
 use std::future::{Future, poll_fn};
 use std::io;
@@ -76,7 +77,7 @@ use crate::handlers::acp::{Acp, StartFault, StartVm};
 use crate::handlers::check::Checks;
 use crate::handlers::create::Creates;
 use crate::handlers::drop::{Drops, StopVm, VmStopFailed};
-use crate::handlers::list::Lists;
+use crate::handlers::list::{Lists, RunningVms};
 use crate::image_root::follow::Follow;
 use crate::image_root::{self, DigestsError, ImageImportError};
 use crate::mirror::{self, Mirror};
@@ -178,11 +179,17 @@ impl StopVm for Shared {
     }
 }
 
+impl RunningVms for Shared {
+    fn running_sessions(&self) -> HashSet<SessionId> {
+        self.0.running_sessions()
+    }
+}
+
 /// The handler set of the vmm: one handler for each route of the table.
 #[derive(Debug)]
 struct Handlers {
     creates: Creates,
-    lists: Lists,
+    lists: Lists<Shared>,
     acp: Acp<Shared>,
     drops: Drops<Shared>,
     checks: Checks,
@@ -344,6 +351,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
     if let Err(error) = &vmm_unit {
         eprintln!("vmm: {error}, so every VM launch refuses");
     }
+    let state = config.state.clone();
     let start = StartConfig {
         images,
         disks: SessionDisks::new(&config.state, config.mke2fs.path().to_owned()),
@@ -378,7 +386,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
     )));
     let handlers = Handlers {
         creates: Creates::new(Arc::clone(&rows), config.families.clone()),
-        lists: Lists::new(Arc::clone(&rows)),
+        lists: Lists::new(Arc::clone(&rows), state, hook.clone()),
         acp: Acp::new(Arc::clone(&rows), relays.clone(), hook.clone()),
         drops: Drops::new(rows, relays, hook.clone()),
         checks: Checks::new(config.families),

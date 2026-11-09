@@ -29,8 +29,8 @@ from creche_wire import (
     DelegateOrigin,
     FamilyName,
     ListCursor,
+    ListRow,
     ListSessions,
-    SessionRow,
     TimerTrigger,
     WebhookTrigger,
 )
@@ -263,7 +263,7 @@ def _unavailable(family: str, why: str) -> ApiError:
 # ------------------------------------------------------------ the host list
 
 
-def _view_row(row: SessionRow) -> dict[str, Any]:
+def _view_row(row: ListRow) -> dict[str, Any]:
     """Contract 02 §7 rule 2: one view row of one host row."""
     origin = row.origin.root
     job: str | None = None
