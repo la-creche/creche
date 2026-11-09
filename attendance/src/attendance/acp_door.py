@@ -41,15 +41,25 @@ it, so the vmm can snapshot an idle VM (contract 02 §5.5 rule 5, decisions
 CH21-8, CH19 (6)). A request is in flight in either direction: a client
 request routed to the stream until the stream answers it, and a facade
 request until the client answers it. A `session/load` counts like a
-`session/prompt`. A notification opens no call, so a stream that only
-carried one closes right after it. The door connection stays open, and the
-next request of the session opens a new stream with a new handshake. That
-open waits until the old stream has closed, so the vmm meets one holder
-only (decision CH83 rule 4).
+`session/prompt`. A notification opens no call. It reaches an open
+stream, and it opens no stream: with no stream no request is in flight, so
+it has nothing to act on, and an open would boot or restore the VM. The
+door connection stays open, and the next request of the session opens a
+new stream with a new handshake. That open waits until the old stream has
+closed, so the vmm meets one holder only (decision CH83 rule 4).
 
 A stream that ends with a request in flight closes the connection with
 `Close.RELAY_GONE`, and the client opens the session again with
 `session/load` (decision CH19 (6)).
+
+The frames of one session keep their order, and no session waits for
+another. The door reads each frame and puts it in the lane of its session:
+the `sessionId` of a request or a notification, or the session whose facade
+asked, for a client answer. Each other frame goes to the one lane of the
+connection. Each lane works its frames one at a time. So a VM start of one
+session, which has no outer bound (decision CH50 rule 1), holds only the
+frames of that session. A `session/cancel` of another session and a client
+answer to another facade go through.
 
 The door counts the `session/prompt` requests in flight on each
 connection, for `GET /busy`. A client request of that method opens one,
@@ -165,6 +175,16 @@ RPC_NOT_FOUND = -32002
 #: `internalError`, with this code of contract 02 §14 table 2 as `data.code`.
 #: Another reading changes this one word.
 HANDSHAKE_FAILED = "protocol_violation"
+
+#: How many frames one lane holds before the door reads no more frames.
+#: A lane works its frames as fast as its stream takes them, so only a lane
+#: that waits for a VM start fills. Past the cap, the read of the next frame
+#: waits, as each frame waited before the door had lanes.
+LANE_DEPTH: Final = 64
+
+#: The lane of each frame that names no session: `initialize`,
+#: `session/new`, `session/list`, and a client answer to no facade.
+_DOOR_LANE: Final = ""
 
 #: ACP's string cursor of `session/list`: the decimal text of the vmm's
 #: `ListCursor`, 1 to 2^53 - 1 (contract 02 §5.4).
@@ -344,6 +364,9 @@ class _Door:
         #: The stream of each session that closes now. The next open of the
         #: session waits for the event.
         self._closing: dict[str, asyncio.Event] = {}
+        #: The frames of each lane, and the task that works them.
+        self._lanes: dict[str, asyncio.Queue[str]] = {}
+        self._workers: list[asyncio.Task[None]] = []
         self.ended: asyncio.Future[Close] = asyncio.get_running_loop().create_future()
 
     async def from_client(self) -> Close:
@@ -360,11 +383,58 @@ class _Door:
             line = strip_line_end(text)
             refused = check_frame(line)
 
-            if refused is None:
-                refused = await self._route(line)
-
             if refused is not None:
                 return refused
+
+            await self._lane(self._lane_of(line)).put(line)
+
+    def _lane_of(self, line: str) -> str:
+        """The session whose frames keep their order with this one."""
+        record = as_object(loads_strict(line)) or {}
+
+        if "method" not in record:
+            key = _rpc_id_key(record.get("id"))
+            asked = (session for session, one in self._held.items() if key in one.facade_calls)
+            return next(asked, _DOOR_LANE) if key is not None else _DOOR_LANE
+
+        params = as_object(record.get("params"))
+        session = params.get("sessionId") if params is not None else None
+        return session if isinstance(session, str) and session else _DOOR_LANE
+
+    def _lane(self, key: str) -> asyncio.Queue[str]:
+        """The frames of one lane. The first frame starts its worker."""
+        lane = self._lanes.get(key)
+
+        if lane is None:
+            lane = asyncio.Queue[str](LANE_DEPTH)
+            self._lanes[key] = lane
+            worker = asyncio.create_task(self._work(lane), name="acp door lane")
+            worker.add_done_callback(report_failure)
+            self._workers.append(worker)
+
+        return lane
+
+    async def _work(self, lane: asyncio.Queue[str]) -> None:
+        """Route each frame of one lane in turn. A frame that closes the
+        connection ends the lane and the connection."""
+        while True:
+            line = await lane.get()
+
+            try:
+                refused = await self._route(line)
+            except Exception:
+                # A fault of the door ends the connection, as it did when
+                # the read of the frames routed each one itself.
+                if not self.ended.done():
+                    self.ended.set_result(Close.RELAY_GONE)
+
+                raise
+
+            if refused is not None:
+                if not self.ended.done():
+                    self.ended.set_result(refused)
+
+                return
 
     async def _route(self, line: str) -> Close | None:
         record = as_object(loads_strict(line)) or {}
@@ -417,6 +487,14 @@ class _Door:
 
         if not isinstance(session, str):
             raise _Refusal(RPC_METHOD_NOT_FOUND, f"{method} names no session")
+
+        if "id" not in record and session not in self._held:
+            # A notification, in practice `session/cancel`, for a session
+            # with no open stream. The stream closes when no request is in
+            # flight (decision CH21-8), so the notification has nothing to
+            # act on. An open would boot or restore the VM for nothing, and
+            # a `host_full` there has no answer to carry it.
+            return None
 
         held = await self._stream(session)
         key = _rpc_id_key(record["id"]) if "id" in record else None
@@ -550,6 +628,12 @@ class _Door:
         except (AcpHandshakeError, ChannelClosed) as error:
             await stream.close()
             raise _Refusal(RPC_INTERNAL_ERROR, str(error), HANDSHAKE_FAILED) from error
+        except BaseException:
+            # A close of the connection cancels the lane here. The stream is
+            # in no table yet, so `close` cannot reach it, and an open
+            # stream keeps the claim of the session on the vmm.
+            await stream.close()
+            raise
 
         held = _Held(stream)
         self._held[session] = held
@@ -672,11 +756,12 @@ class _Door:
         held = list(self._held.values())
         self._held.clear()
         readers = [one.reader for one in held if one.reader is not None]
+        tasks: list[asyncio.Task[object]] = [*self._workers, *readers]
 
-        for reader in readers:
-            reader.cancel()
+        for task in tasks:
+            task.cancel()
 
-        await asyncio.gather(*readers, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
         for one in held:
             await one.channel.close()

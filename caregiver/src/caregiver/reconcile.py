@@ -48,7 +48,7 @@ from agent_family.registry import FAMILY_FILE
 from . import paths, reach_files, steps
 from .applied import AppliedState, read_applied, write_applied
 from .chaperone_watch import PepReport, unwatched
-from .clock import now_rfc3339
+from .clock import now_ms, now_rfc3339
 from .credentials import Credentials
 from .faults import FaultEntry
 from .litellm_keys import SPEND_WINDOW, LiteLLMError, LiteLLMKeys, Spend
@@ -464,7 +464,7 @@ def _publish(
     ran: tuple[ReconcileStep, ...],
     note: str,
     spend_block: dict[str, Any] | None,
-    settled: str | None = None,
+    settled: int | None = None,
     applied_now: bool = False,
     webhooks: tuple[WebhookToken, ...] = (),
     chaperone: PepReport,
@@ -508,7 +508,7 @@ def _state_of(
     faults: tuple[FaultEntry, ...],
     applied_rev: str,
     revision: str,
-    settled: str | None,
+    settled: int | None,
 ) -> FamilyState:
     if faults:
         return FamilyState.DEGRADED
@@ -518,7 +518,7 @@ def _state_of(
 
     # Contract 05 §7 rule 6: a model change is not live until LiteLLM's
     # worker cache has turned over, so `in_sync` may not be claimed yet.
-    if settled is not None and now_rfc3339() < settled:
+    if settled is not None and now_ms() < settled:
         return FamilyState.RECONCILING
 
     return FamilyState.IN_SYNC

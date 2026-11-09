@@ -14,10 +14,8 @@ topology with one writes only the registry and the token files, and
       sessions/<family>/                 contract 02 §9, the session store
       state/families/<family>/status.json          contract 05 §2
       state/families/<family>/validation.json      contract 05 §3.2
-      state/families/<family>/supervisor-<id>.env  contract 03 §7.1
       state/families/<family>/creds/creds.json     contract 03 §12
       state/families/<family>/config/              contract 01 §6.1
-      state/families/<family>/control/<id>/        contract 03 §7.1
       state/tokens/<principal>.token     contract 02 §3 rule 5
       state/grants/<family>.toml         the app table of `caregiver` for `policy.toml`
       state/faults/<writer>/<family>.json          contract 05 §3.3.1
@@ -46,7 +44,6 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 FAMILY: Final = "chat"
-SANDBOX: Final = "chat-s1"
 MODEL: Final = f"agent:{FAMILY}"
 
 #: The three family kinds of contract 02 §2 that a fixture publishes.
@@ -92,10 +89,6 @@ _BLOCKS_TURNS: Final = {Fault.IMAGE_BEHIND: False, Fault.SPEND_UNKNOWN: False}
 MODEL_ALIAS: Final = "agent-router"
 CONFIG_REV: Final = "reg-c1-proc"
 CRED_EPOCH: Final = 7
-
-#: An obvious fixture, never resolved. A digest and never a tag
-#: (contract 05 §4.1).
-IMAGE: Final = "sha256:" + "0" * 63 + "1"
 
 #: Obvious fixtures, never credentials.
 FIXTURE_LITELLM_KEY: Final = "FIXTURE-LITELLM-KEY"
@@ -146,7 +139,6 @@ GROUP_READ_PRINCIPALS: Final = frozenset({"chaperone-delegate", "chaperone-dispa
 
 SECRET_MODE: Final = 0o600
 GROUP_READ_MODE: Final = 0o640
-PLAYPEN_ENV_MODE: Final = 0o640
 STATUS_MODE: Final = 0o644
 
 #: The site value a unit reads from the site file. TEST-NET-1: no host holds
@@ -158,6 +150,7 @@ MAX_SOCKET_PATH: Final = 100
 
 _ROOT_PREFIX: Final = "cp"
 _SOCKET_NAME: Final = "attendance.sock"
+_VMM_SOCKET_NAME: Final = "vmm.sock"
 
 
 def repo_root() -> Path:
@@ -167,12 +160,12 @@ def repo_root() -> Path:
 
 @dataclass(frozen=True, slots=True)
 class Mounts:
-    """The four directories of contract 03 §7.1, for one sandbox."""
+    """The session store of a family, and the two directories of the family
+    that the vmm reads (contract 03 §12, contract 01 §6.1)."""
 
     sessions: Path
     creds: Path
     config: Path
-    control: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +244,11 @@ class Tree:
         return self.root / "sock" / _SOCKET_NAME
 
     @property
+    def vmm_socket(self) -> Path:
+        """Where the vmm stand-in listens: `vmm.sock` of decision CH20."""
+        return self.root / "sock" / _VMM_SOCKET_NAME
+
+    @property
     def audit_file(self) -> Path:
         """The audit file of the Rust chaperone. The noticeboard reads it."""
         return self.root / "chaperone" / "audit.jsonl"
@@ -323,6 +321,14 @@ class Tree:
         """The credential file of contract 03 §12."""
         return self.mounts(family).creds / "creds.json"
 
+    def egress_file(self, family: str = FAMILY) -> Path:
+        """The egress allowlist of the vmm proxy (contract 01 §6.1.1)."""
+        return self.family_dir(family) / "egress.json"
+
+    def repos_file(self, family: str = FAMILY) -> Path:
+        """The clone list of the vmm mirror (contract 01 §6.1.1)."""
+        return self.family_dir(family) / "repos.json"
+
     def fault_file(self, writer: str, family: str = FAMILY) -> Path:
         """The open faults that one service reports for one family (contract 05 §3.3.1)."""
         return self.state_root / "faults" / writer / f"{family}.json"
@@ -341,15 +347,11 @@ class Tree:
         """The `instructions.md` of one family in the registry (contract 01 §1)."""
         return self.registry_family_dir(family) / "instructions.md"
 
-    def playpen_env(self, family: str = FAMILY, sandbox: str | None = None) -> Path:
-        return self.family_dir(family) / f"supervisor-{sandbox or first_sandbox(family)}.env"
-
-    def mounts(self, family: str = FAMILY, sandbox: str | None = None) -> Mounts:
+    def mounts(self, family: str = FAMILY) -> Mounts:
         return Mounts(
             sessions=self.sessions_root / family,
             creds=self.family_dir(family) / "creds",
             config=self.family_dir(family) / "config",
-            control=self.family_dir(family) / "control" / (sandbox or first_sandbox(family)),
         )
 
     def policy_fragment(self, family: str = FAMILY) -> Path:
@@ -398,11 +400,6 @@ def remove_root(root: Path) -> None:
 def socket_path_fits(tree: Tree) -> bool:
     """Whether this platform can bind the socket path of the tree."""
     return len(os.fsencode(tree.attendance_socket)) <= MAX_SOCKET_PATH
-
-
-def first_sandbox(family: str) -> str:
-    """The id of the one sandbox a fixture family has (contract 02 §2)."""
-    return f"{family}-s1"
 
 
 def pep_token_of(family: str) -> str:
@@ -543,7 +540,7 @@ def write_registry_file(tree: Tree, path: Path, text: str) -> None:
 
 
 def add_family(tree: Tree, family: str, kind: str, *, webhooks: tuple[str, ...] = ()) -> None:
-    """Publish one family with one ready sandbox, as `caregiver` does.
+    """Publish one family, as `caregiver` does.
 
     A thin family gets the default job limit of contract 01 §3.12. An
     autonomous family gets the default turn limit of §3.14, and one bearer
@@ -551,10 +548,9 @@ def add_family(tree: Tree, family: str, kind: str, *, webhooks: tuple[str, ...] 
     """
     mounts = tree.mounts(family)
 
-    for directory in (mounts.sessions, mounts.creds, mounts.config, mounts.control):
+    for directory in (mounts.sessions, mounts.creds, mounts.config):
         directory.mkdir(parents=True, exist_ok=True)
 
-    write_playpen_env(tree, family)
     write_creds(tree, family)
     write_runtime(tree, family)
     write_instructions(tree, family)
@@ -578,7 +574,6 @@ def write_status(
     kind: str = ATTENDED,
     *,
     job_timeout_s: int | None = None,
-    sandboxes: tuple[tuple[str, str], ...] | None = None,
     config_rev: str = CONFIG_REV,
     validity: Validity = Validity.VALID,
     max_running_turns: int | None = None,
@@ -588,7 +583,8 @@ def write_status(
     reconcile: dict[str, Any] | None = None,
     spend: dict[str, Any] | None = None,
 ) -> None:
-    """One whole status document (contract 05 §2.1, §4.1, §9).
+    """One whole status document (contract 05 §2.1, §9), at minor 20: no
+    `sandboxes` list and no `needs_switch` (plan PR CR10, decision CH21-1).
 
     Every field of §2.1 is present, so a reader that refuses a document with
     a field missing still accepts this one. `pep.watch` is `off`: nothing in
@@ -596,9 +592,7 @@ def write_status(
     (§2.2 rule 1).
 
     `job_timeout_s` is the one limit a scenario moves. Only a thin family
-    has one (§9). `sandboxes` is every row as an id and a state of §4.2, for
-    a scenario that plays `caregiver` during a replacement. The default is
-    the one ready sandbox of the family. `config_rev` moves when the config
+    has one (§9). `config_rev` moves when the config
     mount changes (contract 01 §6.1). `validity` sets `state` and the
     validation block together (§3.1, §3.2).
 
@@ -614,7 +608,6 @@ def write_status(
     `spend` takes the place of the spend block of §7, from `status_spend`.
     """
     now = _rfc3339()
-    rows = sandboxes if sandboxes is not None else ((first_sandbox(family), "ready"),)
     valid = validity is Validity.VALID
     document: dict[str, Any] = {
         "family": family,
@@ -636,7 +629,6 @@ def write_status(
         },
         "faults": [],
         "reconcile": None,
-        "sandboxes": [_sandbox_row(tree, family, box, state, now) for box, state in rows],
         "credentials": {
             "epoch": CRED_EPOCH,
             "key_id": f"fixture-key-{CRED_EPOCH}",
@@ -687,8 +679,8 @@ def status_fault(code: Fault) -> dict[str, Any]:
 def status_reconcile(step: str) -> dict[str, Any]:
     """The reconcile block of a pass that is inside one step (contract 05 §3.4).
 
-    The two revisions are equal. That is the document of a pass that a
-    new sandbox image started: no registry revision moved (§3.4).
+    The two revisions are equal. That is the document of a pass that no
+    registry revision moved (§3.4). Minor 20 has no `needs_switch`.
     """
     return {
         "since": _rfc3339(),
@@ -696,7 +688,6 @@ def status_reconcile(step: str) -> dict[str, Any]:
         "to_rev": CONFIG_REV,
         "step": step,
         "attempts": 1,
-        "needs_switch": True,
     }
 
 
@@ -738,25 +729,6 @@ def remove_families_dir(tree: Tree) -> None:
     moved = tree.state_root / ".removed-families"
     tree.families_dir.rename(moved)
     shutil.rmtree(moved)
-
-
-def write_playpen_env(tree: Tree, family: str = FAMILY, sandbox: str | None = None) -> None:
-    """The file `sbx exec --env-file` reads (contract 03 §7.1), for one sandbox.
-
-    Four lines, each a host path or an identifier, and no secret. The control
-    directory of the sandbox is made too, as a create leaves it: empty.
-    """
-    box = sandbox or first_sandbox(family)
-    mounts = tree.mounts(family, box)
-    mounts.control.mkdir(parents=True, exist_ok=True)
-    lines = [
-        f"AGENT_CRED_DIR={mounts.creds}",
-        f"AGENT_FAMILY_CONFIG_DIR={mounts.config}",
-        f"AGENT_CONTROL_DIR={mounts.control}",
-        f"AGENT_SANDBOX={box}",
-    ]
-
-    _atomic_write(tree.playpen_env(family, box), "\n".join(lines) + "\n", PLAYPEN_ENV_MODE)
 
 
 def write_creds(tree: Tree, family: str = FAMILY) -> None:
@@ -936,22 +908,6 @@ def replace_secret(path: Path, content: str | None) -> None:
         return
 
     _atomic_write(path, content, SECRET_MODE)
-
-
-def _sandbox_row(tree: Tree, family: str, sandbox: str, state: str, now: str) -> dict[str, Any]:
-    return {
-        "id": sandbox,
-        "state": state,
-        "power": "running",
-        "image": IMAGE,
-        "spec_hash": "00000001",
-        "cpus": 2,
-        "memory": "4g",
-        "created_at": now,
-        "ready_at": now if state == "ready" else None,
-        "channel": "closed",
-        "supervisor_env": str(tree.playpen_env(family, sandbox)),
-    }
 
 
 def _moved_blocks(

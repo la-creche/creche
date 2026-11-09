@@ -709,6 +709,37 @@ fn a_cold_boot_launches_the_checked_files_and_clears_the_fault() {
     assert_eq!(args[at + 1], format!("file={}", serial.display()));
 }
 
+/// A start before its CH launch holds no CH yet, so the list reads its VM
+/// by its disk state and not as `running` (decision CH79 rule 4, the
+/// CONTRACT-QUESTION reading (b) of plan PR CR13). Once the launch ends,
+/// the set holds the session.
+#[test]
+fn a_start_inside_its_launch_is_not_running() {
+    let test = Test::new("starting", |_| {});
+    let row = test.rows[0].clone();
+    let id = row.id.clone();
+    let hook = Arc::clone(&test.hook);
+    test.fake.hold.store(true, Ordering::SeqCst);
+    let start = test
+        .runtime
+        .spawn(async move { hook.start(&row).await.map(|_link| ()) });
+    test.runtime.block_on(async {
+        while !test.hook.sessions().contains(&id) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    });
+    let during = (test.hook.running_sessions(), test.hook.running(&id));
+    // The launch goes on before the asserts, so a failed assert ends the
+    // test and leaves no launch held.
+    test.fake.hold.store(false, Ordering::SeqCst);
+    let started = test.runtime.block_on(start).unwrap();
+
+    assert_eq!(during, (HashSet::new(), false));
+    assert_eq!(started, Ok(()));
+    assert_eq!(test.hook.running_sessions(), HashSet::from([id]));
+}
+
 /// The serial log of a session is in the state root, so a restart of the
 /// vmm keeps it until the next start of the session (gap G23, decision
 /// CH59 rule 2). The test stops the VM, then removes the run root, as

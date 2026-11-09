@@ -197,7 +197,9 @@ host where something has gone wrong.
 - `runtime.json` holds `model_live_at` next to `model_alias`, its one home
   (decision CH23-1). A first write leaves the key out (decision CH45 rule
   1). A write with a new alias sets it `MODEL_CACHE_S` (10 s) ahead, in the
-  same swap. A write with the same alias carries the old value. The sync
+  same swap, as integer milliseconds since 1970 in UTC (contract 01 §6.1
+  rule 5, decisions CH22-1, CH31). It is the one time of this package that
+  is not RFC 3339, because the vmm reads it. A write with the same alias carries the old value. The sync
   check of a pass reads it from there, and `applied.json` holds `rev` and
   `applied_at` alone.
 - `config/shape.json` is `FamilyShape` of `creche-wire`: `cpus`, `flavor`
@@ -433,13 +435,6 @@ Nothing here touches a real vmm or LiteLLM.
   `VmmError`, the log line of the delete names it, and no status document
   carries it. To publish it, contract 05 must name a document for a fault
   of a family that is being deleted.
-- `CONTRACT-QUESTION` in `config_mount.py`, `RuntimeConfig.model_live_at`.
-  Contract 01 §6.1 rule 5 gives `model_live_at` as integer milliseconds.
-  No row fixes the form. The root `AGENTS.md` (Time) gives RFC 3339 for a
-  time in a file, and `live_at` of `rust/crates/vmm-confine/src/family.rs`
-  reads only the form of `clock.py`. The reading here: that form, to the
-  second. Milliseconds need this writer, that reader and its fixture to
-  change in one PR.
 - `CONTRACT-QUESTION` in `vmm.py`, `VMM_SOCKET_ENV`. Decision CH20 fixes
   the path `/run/user/<uid>/vmm/vmm.sock` and names no env key. The env
   catalog cannot spell a uid, so `default.env` holds no key for it. The

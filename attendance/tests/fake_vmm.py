@@ -47,6 +47,16 @@ class FakeVmm:
     )
     #: Each close of a stream waits for this event, when it is set.
     close_gate: asyncio.Event | None = None
+    #: An open of a session with a gate here waits for the gate.
+    open_gates: dict[str, asyncio.Event] = field(default_factory=dict[str, asyncio.Event])
+    #: Set: each open waits for this gate, for a session id that a test
+    #: cannot know before the job mints it.
+    gate_every_open: asyncio.Event | None = None
+    #: A list of a family with a gate here waits for the gate.
+    list_gates: dict[str, asyncio.Event] = field(default_factory=dict[str, asyncio.Event])
+    #: The sessions whose stream has no facade on its far side: nothing
+    #: answers, the handshake included.
+    mute: set[str] = field(default_factory=set[str])
     rows: dict[str, SessionRow] = field(default_factory=dict[str, SessionRow])
     #: The VM state that a list gives each session, by session id. A
     #: session with no entry lists as `none` (decision CH79 rule 4).
@@ -76,6 +86,11 @@ class FakeVmm:
 
     async def list_page(self, query: ListSessions) -> SessionPage:
         self.lists.append(query)
+        gate = self.list_gates.get(query.family.root)
+
+        if gate is not None:
+            await gate.wait()
+
         self._refused("list")
         rows = [
             row
@@ -108,6 +123,11 @@ class FakeVmm:
 
     async def open_acp(self, family: str, session: str, max_line_bytes: int) -> FakeChannel:
         self.opened.append(session)
+        gate = self.open_gates.get(session, self.gate_every_open)
+
+        if gate is not None:
+            await gate.wait()
+
         self._refused("acp")
         row = self.rows.get(session)
 
@@ -127,7 +147,10 @@ class FakeVmm:
         )
         self.channels[session] = channel
         self.facades[session] = facade
-        self._tasks.append(asyncio.create_task(serve(channel, facade)))
+
+        if session not in self.mute:
+            self._tasks.append(asyncio.create_task(serve(channel, facade)))
+
         return channel
 
     def only_session(self) -> str:
