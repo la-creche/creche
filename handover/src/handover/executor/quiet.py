@@ -1,7 +1,7 @@
 """§2.8's quiet window: do not drop every model call on the host.
 
-Recreating `creche-litellm` drops every in-flight model call: sandboxes, Open
-WebUI and the TUI alike. `creche-postgres` and `creche-redis` drag it along,
+Recreating `creche-litellm` drops every in-flight model call: sandboxes and
+the TUI alike. `creche-postgres` and `creche-redis` drag it along,
 because it depends on them. So when step 8's compose dry run lists any of
 those three, step 9 waits for five consecutive quiet minutes **before it
 switches `infra`, and not before**.
@@ -26,8 +26,8 @@ never moves, "never moved for five minutes" is always true, and the window
 opens at once while turns are running. That is fail OPEN, the one direction
 this window exists to prevent. A traffic counter is the wrong instrument even
 with the right hooks: `caregiver` reads LiteLLM for spend and keys on every
-pass, which would hold a correct counter moving for ever, and Open WebUI
-talks to LiteLLM inside the Docker network, where no host hook sees it.
+pass, which would hold a correct counter moving for ever, and traffic inside
+the Docker network passes no host hook.
 
 **How root asks without becoming a confused deputy.** Root is the caller and
 both the socket and the token file are the operator's. If root opened
