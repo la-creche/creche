@@ -1,6 +1,7 @@
 """Test doubles for the quiet gate's three readers and its store, plus a
 family file that carries `quiet:`. Named `trigger_quiet_fakes.py` because a
-test helper's basename must be unique repo-wide (`door-owui/AGENTS.md`)."""
+test helper's basename must be unique repo-wide
+(`bin/tests/test_unique_test_basenames.py`)."""
 
 from __future__ import annotations
 
