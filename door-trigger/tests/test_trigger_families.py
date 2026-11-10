@@ -33,8 +33,8 @@ def test_an_autonomous_validated_family_is_servable(tmp_path: Path) -> None:
 
 
 def test_a_restarting_family_stays_servable(tmp_path: Path) -> None:
-    # Not health-gated on the live restart states, the same reasoning
-    # door-owui's picker uses: reconciling/degraded/invalid-with-a-last-
+    # Not health-gated on the live restart states, the same reasoning the
+    # family picker uses: reconciling/degraded/invalid-with-a-last-
     # good-definition all still have SOMETHING valid behind them.
     _write_status(tmp_path, "reconciling-family", state="reconciling")
     _write_status(tmp_path, "degraded-family", state="degraded", faults=[{"code": "spend_unknown"}])
