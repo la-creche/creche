@@ -181,8 +181,6 @@ a shell builtin, so the value reaches no argv. It never prints the value.
 | `creche-door-trigger.service` | the `attendance` tree | yes |
 | `creche-door-trigger@.service` | the `attendance` tree | no, it is a template |
 
-`creche-door-owui.service` is not in the list. The ACP door replaces it.
-
 `creche-vmm.service` is not in the list. The operator installs it by hand
 (design section 6.2 step 3). `up` writes only its env file, `vmm.env`
 (decision CH59 rule 1).
