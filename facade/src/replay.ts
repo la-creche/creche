@@ -11,7 +11,7 @@ import type { ConversationStreamChunk } from "@flue/runtime";
 
 import type { SessionUpdate } from "./acp.js";
 import type { Position } from "./live.js";
-import { chunkToUpdates, forward, forwardJson, MAX_NAME_BYTES } from "./mapper.js";
+import { chunkToUpdates, forward, forwardJson, MAX_NAME_BYTES, MAX_TEXT_BYTES } from "./mapper.js";
 
 type Snapshot = Extract<ConversationStreamChunk, { type: "conversation-reset" }>["snapshot"];
 type Message = Snapshot["messages"][number];
@@ -21,6 +21,67 @@ export interface Replay {
   readonly updates: readonly SessionUpdate[];
   /** The position of the last chunk read, or null for no chunk. */
   readonly last: Position | null;
+}
+
+type ReplayTextUpdate = SessionUpdate & {
+  readonly sessionUpdate: "agent_message_chunk" | "agent_thought_chunk";
+  readonly content: { readonly type: "text"; readonly text: string };
+};
+
+interface PendingText {
+  readonly first: ReplayTextUpdate;
+  readonly parts: string[];
+  bytes: number;
+}
+
+function isReplayText(update: SessionUpdate): update is ReplayTextUpdate {
+  return (
+    (update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk") &&
+    update.content.type === "text"
+  );
+}
+
+/** Join adjacent text updates without crossing an update or byte boundary. */
+function joinText(updates: readonly SessionUpdate[]): SessionUpdate[] {
+  const joined: SessionUpdate[] = [];
+  let pending: PendingText | null = null;
+
+  const flush = (): void => {
+    if (pending === null) {
+      return;
+    }
+
+    joined.push({
+      ...pending.first,
+      content: { ...pending.first.content, text: pending.parts.join("") },
+    });
+    pending = null;
+  };
+
+  for (const update of updates) {
+    if (!isReplayText(update)) {
+      flush();
+      joined.push(update);
+      continue;
+    }
+
+    const bytes = Buffer.byteLength(update.content.text);
+    if (
+      pending !== null &&
+      pending.first.sessionUpdate === update.sessionUpdate &&
+      pending.bytes + bytes <= MAX_TEXT_BYTES
+    ) {
+      pending.parts.push(update.content.text);
+      pending.bytes += bytes;
+      continue;
+    }
+
+    flush();
+    pending = { first: update, parts: [update.content.text], bytes };
+  }
+
+  flush();
+  return joined;
 }
 
 function textOf(output: unknown): string {
@@ -92,17 +153,38 @@ export function messageUpdates(message: Message): SessionUpdate[] {
 export function replay(chunks: readonly ConversationStreamChunk[]): Replay {
   let updates: SessionUpdate[] = [];
   let last: Position | null = null;
+  let pendingDeltas: SessionUpdate[] = [];
+  let pendingMessageId: string | null = null;
+
+  const flushDeltas = (): void => {
+    updates.push(...joinText(pendingDeltas));
+    pendingDeltas = [];
+    pendingMessageId = null;
+  };
 
   for (const chunk of chunks) {
     last = chunk.position;
     if (chunk.type === "conversation-reset") {
-      updates = chunk.snapshot.messages.flatMap(messageUpdates);
+      pendingDeltas = [];
+      pendingMessageId = null;
+      updates = chunk.snapshot.messages.flatMap((message) => joinText(messageUpdates(message)));
     } else if (chunk.type === "message-appended") {
-      updates.push(...messageUpdates(chunk.message));
+      flushDeltas();
+      updates.push(...joinText(messageUpdates(chunk.message)));
+    } else if (chunk.type === "message-delta") {
+      if (pendingMessageId !== null && pendingMessageId !== chunk.messageId) {
+        flushDeltas();
+      }
+
+      pendingMessageId = chunk.messageId;
+      pendingDeltas.push(...chunkToUpdates(chunk));
     } else {
+      flushDeltas();
       updates.push(...chunkToUpdates(chunk));
     }
   }
+
+  flushDeltas();
 
   return { updates, last };
 }
