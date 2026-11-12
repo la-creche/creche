@@ -104,6 +104,15 @@ impl<L: Launcher, A: ChApi> Sleeper for ColdBoot<L, A> {
             }
             Err(error) => eprintln!("vmm: the sweep failed: {error}"),
         }
+        match self.collect_images().await {
+            Ok(Some(collected)) => Self::log_image_collection(collected),
+            Ok(None) => {}
+            Err(error) => eprintln!(
+                "vmm: image collection failed at {}: {}",
+                error.path.display(),
+                error.source
+            ),
+        }
     }
 }
 

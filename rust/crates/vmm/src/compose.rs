@@ -78,6 +78,7 @@ use crate::handlers::check::Checks;
 use crate::handlers::create::Creates;
 use crate::handlers::drop::{Drops, StopVm, VmStopFailed};
 use crate::handlers::list::{Lists, RunningVms};
+use crate::image_lifecycle::ImageLifecycle;
 use crate::image_root::follow::Follow;
 use crate::image_root::{self, DigestsError, ImageImportError};
 use crate::mirror::{self, Mirror};
@@ -279,6 +280,7 @@ struct Checked {
     images: ImageStore,
     digests: watch::Receiver<Digests>,
     follow: Follow,
+    image_lifecycle: ImageLifecycle,
     /// The guest init initramfs of this vmm start (CH62 rule 18).
     initramfs: ImageDigest,
 }
@@ -299,12 +301,14 @@ fn check(config: &Config) -> Result<Checked, StartError> {
     let ch_version =
         check_cloud_hypervisor(config.ch.path(), VERSION_WAIT).map_err(StartError::ChVersion)?;
     let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
+    let image_lifecycle = ImageLifecycle::default();
     // Decision CH57 rule 1 refuses the start for a bad `digests.json`, and
     // decision CH58 rule 5 for an entry that does not import: a missing
     // disk, a digest mismatch or a failed `zstd -d`. The follow of the
     // file then swaps the set of new starts (decision CH76 rule 8).
     let set = image_root::read(&config.image_root).map_err(StartError::Digests)?;
-    let (follow, digests) = Follow::start(set, images.clone()).map_err(StartError::Import)?;
+    let (follow, digests) =
+        Follow::start(set, images.clone(), image_lifecycle.clone()).map_err(StartError::Import)?;
     // Decision CH62 rule 18: one initramfs per vmm start. A program that
     // root does not own, or that others may write, refuses the start
     // (CH62 rule 17).
@@ -316,6 +320,7 @@ fn check(config: &Config) -> Result<Checked, StartError> {
         images,
         digests,
         follow,
+        image_lifecycle,
         initramfs,
     })
 }
@@ -328,6 +333,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         images,
         digests,
         follow,
+        image_lifecycle,
         initramfs,
     } = checked;
     let faults = FaultDir::open(&config.faults_root)
@@ -375,15 +381,18 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
     };
     let relays = Relays::default();
     let control = Arc::new(Mutex::new(ControlState::default()));
-    let hook = Shared(Arc::new(ColdBoot::new(
-        start,
-        Arc::new(spawner),
-        Arc::new(api),
-        relays.clone(),
-        Arc::clone(&rows),
-        control,
-        Arc::clone(&faults),
-    )));
+    let hook = Shared(Arc::new(
+        ColdBoot::new(
+            start,
+            Arc::new(spawner),
+            Arc::new(api),
+            relays.clone(),
+            Arc::clone(&rows),
+            control,
+            Arc::clone(&faults),
+        )
+        .image_gate(image_lifecycle),
+    ));
     let handlers = Handlers {
         creates: Creates::new(Arc::clone(&rows), config.families.clone()),
         lists: Lists::new(Arc::clone(&rows), state, hook.clone()),

@@ -33,11 +33,12 @@
 //! (a missing file, a failed owner check, a file past the cap) is such a
 //! reading. The start of a wait logs one line too.
 //!
-//! A running VM keeps its store copies: no step removes a store file. A
-//! snapshot holds the key of its start, which holds the root disk digest
-//! (decisions CH7-6, CH62 rule 24). After a swap, the key of a new start
-//! differs from that key, so the snapshot drops at the next start and
-//! the VM cold-boots on the new disk.
+//! The follow uses the image write gate for each import and swap. A start
+//! uses the read gate through its launch. Image collection uses the write
+//! gate and runs only with an empty VM table. Thus, a running VM keeps
+//! each store copy that it uses. A snapshot key also keeps its images.
+//! After a swap, the key of a new start differs from the old key. The next
+//! start drops the old snapshot and cold-boots on the new disk.
 //!
 //! The follow is the only import after the vmm start, so the store still
 //! runs one import at a time. The handover swap of the disks tree has a
@@ -69,6 +70,7 @@ use tokio::time::sleep;
 use super::{
     DIGESTS_FILE, DigestsError, ImageImportError, ImageSet, KERNEL_KEY, parse, read_bytes,
 };
+use crate::image_lifecycle::ImageLifecycle;
 use crate::start::Digests;
 
 /// The pause between two reads of `digests.json` (decision CH76 rule 8).
@@ -131,6 +133,7 @@ struct Fault {
 pub struct Follow {
     root: PathBuf,
     images: ImageStore,
+    lifecycle: ImageLifecycle,
     /// The bytes of the set of new starts.
     applied: Vec<u8>,
     /// The new bytes that wait, or `None` when no new bytes wait.
@@ -150,15 +153,20 @@ impl Follow {
     ///
     /// The first import that failed. It refuses the start of the vmm
     /// (decision CH58 rule 5).
-    pub fn start(
+    pub(crate) fn start(
         set: ImageSet,
         images: ImageStore,
+        lifecycle: ImageLifecycle,
     ) -> Result<(Self, watch::Receiver<Digests>), ImageImportError> {
-        let digests = set.import(&images)?;
+        let digests = {
+            let _gate = lifecycle.write();
+            set.import(&images)?
+        };
         let (current, receiver) = watch::channel(digests);
         let follow = Self {
             root: set.root,
             images,
+            lifecycle,
             applied: set.bytes,
             pending: None,
             fault: None,
@@ -266,6 +274,7 @@ impl Follow {
     /// Parses `bytes`, imports each entry, and only then swaps the set of
     /// new starts. Blocks.
     fn switch(&self, bytes: Vec<u8>) -> Result<String, String> {
+        let _gate = self.lifecycle.write();
         let set = parse(&self.root, bytes).map_err(|fault| fault.to_string())?;
         let digests = set
             .import(&self.images)

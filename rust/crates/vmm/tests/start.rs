@@ -176,6 +176,8 @@ struct Fake {
     fail: AtomicBool,
     /// Holds each launch until the test clears it.
     hold: AtomicBool,
+    /// True while `launch` runs, including while `hold` keeps it there.
+    launching: AtomicBool,
     /// The `stop` lines that guest init read on each control link.
     stop_lines: Arc<AtomicUsize>,
     /// The `sync` lines that guest init read on each control link.
@@ -197,9 +199,11 @@ impl Launcher for Fake {
         if self.fail.load(Ordering::SeqCst) {
             return Err(SpawnError::Stopped);
         }
+        self.launching.store(true, Ordering::SeqCst);
         while self.hold.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(1));
         }
+        self.launching.store(false, Ordering::SeqCst);
         Ok(self.record(launch))
     }
 
@@ -499,6 +503,7 @@ impl Test {
             listening: Mutex::default(),
             fail: AtomicBool::new(false),
             hold: AtomicBool::new(false),
+            launching: AtomicBool::new(false),
             stop_lines: Arc::default(),
             sync_lines: Arc::default(),
             links: Arc::default(),
@@ -1368,6 +1373,65 @@ fn the_sweep_drops_past_the_config_budget() {
     let reasons: Vec<Reason> = swept.dropped.iter().map(|each| each.reason).collect();
     assert_eq!(reasons, [Reason::Budget]);
     assert!(!dir.exists());
+}
+
+/// The image collector takes the write gate. A start holds the read gate
+/// from its image selection through its launch, so collection waits for
+/// that launch. The nonempty VM table then makes collection skip.
+#[test]
+fn image_collection_waits_for_a_launch_and_skips_it() {
+    let test = Test::new("image-launch-gate", |_| {});
+    test.fake.hold.store(true, Ordering::SeqCst);
+    let row = test.rows[0].clone();
+    let hook = Arc::clone(&test.hook);
+    let start = test
+        .runtime
+        .spawn(async move { hook.start(&row).await.map(|_link| ()) });
+    test.runtime.block_on(async {
+        while !test.fake.launching.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+
+        let hook = Arc::clone(&test.hook);
+        let mut collection = tokio::spawn(async move { hook.sweep_tick().await });
+        let outcome = tokio::time::timeout(Duration::from_millis(50), &mut collection).await;
+        let waited = outcome.is_err();
+
+        start.abort();
+        test.fake.hold.store(false, Ordering::SeqCst);
+        let _ = start.await;
+        if waited {
+            collection.await.unwrap();
+        }
+        assert!(waited);
+    });
+}
+
+/// The hourly sweep keeps every current image while a VM runs. Once the
+/// VM table is empty, it removes a checked pair that no snapshot names.
+#[test]
+fn image_collection_runs_only_with_an_empty_vm_table() {
+    let test = Test::new("image-idle-only", |_| {});
+    let images = ImageStore::new(&test.state, PathBuf::from("/usr/bin/zstd"));
+    let source = test.dir.join("unused-image");
+    fs::write(&source, "hello world").unwrap();
+    let unused: ImageDigest = HELLO.parse().unwrap();
+    images.import(&source, unused).unwrap();
+    let current: ImageDigest = EMPTY.parse().unwrap();
+
+    assert_eq!(test.start(0), Ok(()));
+    test.runtime.block_on(test.hook.sweep_tick());
+    assert!(images.check(unused).is_ok());
+
+    assert!(
+        test.runtime
+            .block_on(test.hook.stop(&test.rows[0].id))
+            .is_ok()
+    );
+    test.runtime.block_on(test.hook.sweep_tick());
+    assert!(!images.path(&unused).exists());
+    assert!(!images.identity_path(&unused).exists());
+    assert!(images.check(current).is_ok());
 }
 
 /// A start that is dropped during its launch leaves no CH outside the
