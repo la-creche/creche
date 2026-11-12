@@ -56,7 +56,7 @@ use creche_wire::{FamilyShape, GUEST_INIT_PROTOCOL};
 use serde::{Deserialize, Serialize};
 
 use crate::ch_remote::output_until;
-use crate::images::CheckedImage;
+use crate::images::{CheckedImage, ImageDigest};
 use crate::layout::{KEY_FILE, SessionDir, SnapshotGeneration};
 use crate::snapshot::generations;
 
@@ -369,6 +369,35 @@ pub fn check_newest(session: &SessionDir, current: &SnapshotKey) -> Result<KeyCh
 /// failure, such as `EMFILE` or `EIO`, may pass, so it is an error and
 /// drops nothing.
 fn read_key(path: &Path) -> Result<Option<KeyFile>, KeyError> {
+    let Some(text) = read_key_text(path)? else {
+        return Ok(None);
+    };
+    Ok(serde_json::from_slice(&text).ok())
+}
+
+/// Reads the three image digests of one strict snapshot key. Image
+/// retention calls it before it removes any store copy.
+pub(crate) fn stored_image_digests(path: &Path) -> Result<[ImageDigest; 3], KeyError> {
+    let Some(text) = read_key_text(path)? else {
+        return Err(invalid_key(path, "the snapshot has no regular key file"));
+    };
+    let key: KeyFile = serde_json::from_slice(&text)
+        .map_err(|error| invalid_key(path, &format!("the snapshot key is malformed: {error}")))?;
+    let parse = |digest: String| {
+        digest.parse().map_err(|error| {
+            invalid_key(path, &format!("the snapshot digest is malformed: {error}"))
+        })
+    };
+    Ok([
+        parse(key.kernel)?,
+        parse(key.initramfs)?,
+        parse(key.root_disk)?,
+    ])
+}
+
+/// Reads the bounded bytes of a regular key file. `None` is a key that
+/// `check_newest` treats as unreadable and removes.
+fn read_key_text(path: &Path) -> Result<Option<Vec<u8>>, KeyError> {
     let absent = |error: &io::Error| error.kind() == io::ErrorKind::NotFound;
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
@@ -390,7 +419,15 @@ fn read_key(path: &Path) -> Result<Option<KeyFile>, KeyError> {
     if u64::try_from(text.len()).map_or(true, |len| len > KEY_MAX) {
         return Ok(None);
     }
-    Ok(serde_json::from_slice(&text).ok())
+    Ok(Some(text))
+}
+
+/// One invalid key as an I/O-shaped key error.
+fn invalid_key(path: &Path, message: &str) -> KeyError {
+    io_at(path)(io::Error::new(
+        io::ErrorKind::InvalidData,
+        message.to_owned(),
+    ))
 }
 
 /// Removes the key file first, so a crash during the remove leaves a dir
