@@ -28,6 +28,11 @@ The second file has the table of the three vmm crates.
   a source as `ImageStore::import` reads it, through `zstd -d` for a
   `.zst` file, and gives the SHA-256 of the bytes with no file written.
   `vmm check-images` compares it with each entry of `digests.json`.
+- `image_retention.rs` marks the current image set and each strict snapshot
+  key before it removes a store pair. A failed mark removes nothing. The
+  sweep checks an exact digest file and its identity. It removes the
+  identity first, syncs the store, removes the image and syncs the store.
+  Unknown names and incomplete or bad pairs stay.
 - Decision CH44 rule 3 (PR D8, `ch_remote.rs`): the timeout of a
   `ch-remote` call comes from its caller. This crate names no value. A
   pause takes about 4 ms (fact 72) and a 16 GiB snapshot about 12 s
@@ -139,6 +144,12 @@ The second file has the table of the three vmm crates.
   of the CH in it.
 
 ## Known gaps
+
+- CONTRACT-QUESTION: CH39 rule 3 and CH76 rule 8 do not specify when the
+  vmm can remove an unused store copy. The collector requires a complete
+  strict snapshot scan. Its caller must also keep the current image set
+  stable and start no VM. A less conservative rule needs live image
+  reference tracking and a store layout migration.
 
 - Host program (PR D9, `snapshot.rs`): the vmm execs the host
   `fallocate` (decision CH29). The exec needs no Landlock rule. Item 42

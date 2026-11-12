@@ -8,6 +8,7 @@
 
 pub mod ch_remote;
 pub mod claim;
+pub mod image_retention;
 pub mod images;
 pub mod initramfs;
 pub mod key;

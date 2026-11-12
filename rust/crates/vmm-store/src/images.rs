@@ -55,7 +55,7 @@ const CHUNK: usize = 1 << 20;
 static IDENTITY_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// The SHA-256 of a file, written as 64 lowercase hex characters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ImageDigest([u8; 32]);
 
 /// The text is not 64 lowercase hex characters.
@@ -413,6 +413,12 @@ impl ImageStore {
     #[must_use]
     pub fn identity_path(&self, digest: &ImageDigest) -> PathBuf {
         self.dir.join(format!("{digest}.identity"))
+    }
+
+    /// The store directory, for image retention inside this crate.
+    #[must_use]
+    pub(crate) fn dir(&self) -> &Path {
+        &self.dir
     }
 
     /// Copies `source` into the store as `expected`. A source whose name
