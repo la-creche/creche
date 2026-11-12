@@ -2,10 +2,9 @@
 `POST /trigger`. Not a wire-level fake: `test_trigger_fire.py`'s own
 HTTP-transport tests cover `HttpAttendance`.
 
-Named `trigger_fake_attendance.py`, not `fake_attendance.py`: that basename is
-already `door-owui/tests/fake_attendance.py`, and this workspace's rootless
-pytest import mode needs a unique module basename repo-wide
-(`door-owui/AGENTS.md`).
+Named `trigger_fake_attendance.py`, not `fake_attendance.py`: this
+workspace's rootless pytest import mode needs a unique module basename
+repo-wide (`bin/tests/test_unique_test_basenames.py`).
 """
 
 from __future__ import annotations

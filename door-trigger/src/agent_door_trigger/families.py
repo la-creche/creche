@@ -31,7 +31,7 @@ _STATUS_FILE = "status.json"
 _STATE_INVALID = "invalid"
 
 #: A status document is small (contract 05 §2). A larger file is a fault,
-#: not a document — the same reasoning door-owui's picker uses for its own
+#: not a document — the same reasoning the family picker uses for its own
 #: `_MAX_STATUS_BYTES`.
 _MAX_STATUS_BYTES = 256 * 1024
 

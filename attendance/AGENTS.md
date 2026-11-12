@@ -124,7 +124,7 @@ JSON-RPC and a read past 30 s each answer 503 `sandbox_unavailable`.
    any count is above 0.
 
 The session API (`/v1/sessions*`), the journal, the event streams, the
-writer lease, the Open WebUI copy and the playpen channel left in the phase
+writer lease and the playpen channel left in the phase
 2 plan, rows 21 to 25. Session files, journals and streams of an earlier
 release are not read. Nothing migrates them. The sessions of sbx are not
 imported: an old id is not found (decision CH10-9). The facade owns each

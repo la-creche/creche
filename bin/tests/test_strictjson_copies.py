@@ -66,7 +66,7 @@ def test_two_copies_that_differ_in_one_byte_fail(tmp_path: Path, name: str) -> N
 
 @pytest.mark.parametrize("name", COPIED)
 def test_a_copy_with_one_byte_more_fails(tmp_path: Path, name: str) -> None:
-    _write(tmp_path, "door-owui", name, b"RULE = 64\n")
+    _write(tmp_path, "door-acp", name, b"RULE = 64\n")
     _write(tmp_path, "noticeboard", name, b"RULE = 64\n\n")
 
     assert differing(tmp_path, name) == [f"noticeboard/src/noticeboard/{name}"]
@@ -74,7 +74,7 @@ def test_a_copy_with_one_byte_more_fails(tmp_path: Path, name: str) -> None:
 
 @pytest.mark.parametrize("name", COPIED)
 def test_copies_with_the_same_bytes_pass(tmp_path: Path, name: str) -> None:
-    for package in ("attendance", "door-owui", "noticeboard"):
+    for package in ("attendance", "door-acp", "noticeboard"):
         _write(tmp_path, package, name, b"RULE = 64\n")
 
     assert len(copies(tmp_path, name)) == 3
