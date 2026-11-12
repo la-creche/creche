@@ -10,8 +10,10 @@
 //! with gap G8). The import copies the source into a temp file, hashes the
 //! bytes while it copies, refuses a mismatch with the expected digest, sets
 //! mode 0444 and renames the temp file into place. Then it records the
-//! identity of the copy beside it. Each VM start compares that identity and
-//! hashes nothing (`ImageStore::check`). This is the reading of CH8-8.
+//! identity of the copy beside it. Each VM start compares that identity
+//! (`ImageStore::check`). A device-only change causes one hash and records
+//! the current identity when the digest matches. This is the reading of
+//! CH8-8.
 //!
 //! Root installs the signed `.zst` files unchanged, and the vmm
 //! decompresses them (decision CH35 rule 4). The import runs `zstd -d` as a
@@ -36,6 +38,7 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -47,6 +50,9 @@ pub const STORE_MODE: u32 = 0o444;
 
 /// The bytes of one read and one write of a copy.
 const CHUNK: usize = 1 << 20;
+
+/// Makes an identity temp name unique inside one vmm process.
+static IDENTITY_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// The SHA-256 of a file, written as 64 lowercase hex characters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -133,6 +139,15 @@ impl FileIdentity {
             ctime: (metadata.ctime(), metadata.ctime_nsec()),
             mode: metadata.mode(),
         }
+    }
+
+    /// Whether only the filesystem device number differs.
+    fn differs_only_by_device(self, other: Self) -> bool {
+        self.device != other.device
+            && Self {
+                device: other.device,
+                ..self
+            } == other
     }
 }
 
@@ -485,18 +500,21 @@ impl ImageStore {
         self.check(digest).map_err(MadeError::Check)
     }
 
-    /// Checks the store copy of `digest` at a VM start and hashes no byte
-    /// (decision CH36 with gap G8, the reading of CH8-8). The check reads
-    /// the identity that the import recorded. It refuses a store path that
-    /// holds no regular file with mode 0444, so a link, a dir or a FIFO is
-    /// never opened. Then it opens the copy read-only and compares device,
-    /// inode, size, mtime, ctime and mode with the record. For a `.zst`
-    /// source, `digest` is the SHA-256 of the decompressed bytes
+    /// Checks the store copy of `digest` at a VM start (decision CH36 with
+    /// gap G8, the reading of CH8-8). The check reads the identity that the
+    /// import recorded. It refuses a store path that holds no regular file
+    /// with mode 0444, so a link, a dir or a FIFO is never opened. Then it
+    /// opens the copy read-only and compares device, inode, size, mtime,
+    /// ctime and mode with the record. The equal-identity path hashes no
+    /// byte. When only the device differs, the check hashes the open copy
+    /// and records its current identity only when the digest matches. For a
+    /// `.zst` source, `digest` is the SHA-256 of the decompressed bytes
     /// (decision CH41 rule 1).
     ///
     /// Decision CH44 rule 2: a copy that fails the check fails the start.
-    /// The check removes and repairs nothing. `import` returns the recorded
-    /// entry and does not copy again.
+    /// A device-only difference can follow a remount, so a matching full
+    /// digest repairs that identity. Every other difference fails.
+    /// `import` returns the recorded entry and does not copy again.
     ///
     /// # Errors
     ///
@@ -518,7 +536,7 @@ impl ImageStore {
         if mode != STORE_FILE_MODE {
             return Err(CheckError::BadMode { path, mode });
         }
-        let file = File::open(&path).map_err(check_io_at(&path))?;
+        let mut file = File::open(&path).map_err(check_io_at(&path))?;
         let found = FileIdentity::of(&file.metadata().map_err(check_io_at(&path))?);
         if found.mode != STORE_FILE_MODE {
             return Err(CheckError::BadMode {
@@ -527,6 +545,13 @@ impl ImageStore {
             });
         }
         if found != recorded {
+            if found.differs_only_by_device(recorded)
+                && hash_checked_copy(&mut file, &path)? == digest
+            {
+                self.write_identity(&digest, &found)
+                    .map_err(|StepError { path, source }| CheckError::Io { path, source })?;
+                return Ok(CheckedImage { digest, path });
+            }
             return Err(CheckError::Changed {
                 path,
                 recorded: Box::new(recorded),
@@ -573,17 +598,47 @@ impl ImageStore {
     /// file, through a temp file, a sync and a rename.
     fn record_identity(&self, digest: &ImageDigest) -> Result<FileIdentity, StepError> {
         let path = self.path(digest);
-        let identity_path = self.identity_path(digest);
         let identity = FileIdentity::of(&fs::metadata(&path).map_err(step_at(&path))?);
+        self.write_identity(digest, &identity)?;
+        Ok(identity)
+    }
+
+    /// Writes one identity through a synced temporary file and a rename.
+    fn write_identity(
+        &self,
+        digest: &ImageDigest,
+        identity: &FileIdentity,
+    ) -> Result<(), StepError> {
+        let identity_path = self.identity_path(digest);
         let text = serde_json::to_vec(&identity)
             .map_err(io::Error::from)
             .map_err(step_at(&identity_path))?;
-        let identity_temp = self.dir.join(format!("{digest}.identity.tmp"));
+        let sequence = IDENTITY_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let identity_temp = self.dir.join(format!(
+            ".{digest}.identity.{}.{sequence}.tmp",
+            std::process::id()
+        ));
         write_synced(&identity_temp, &text).map_err(step_at(&identity_temp))?;
         fs::rename(&identity_temp, &identity_path).map_err(step_at(&identity_path))?;
         sync_dir(&self.dir).map_err(step_at(&self.dir))?;
-        Ok(identity)
+        Ok(())
     }
+}
+
+/// Hashes one open store copy during device-only revalidation.
+fn hash_checked_copy(file: &mut File, path: &Path) -> Result<ImageDigest, CheckError> {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; CHUNK];
+    loop {
+        let read = match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(check_io_at(path)(error)),
+        };
+        hasher.update(buffer.get(..read).unwrap_or_default());
+    }
+    Ok(ImageDigest(hasher.finalize().into()))
 }
 
 /// Hashes the bytes of `source` as `ImageStore::import` reads them and

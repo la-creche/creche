@@ -254,7 +254,7 @@ fn put_made_keeps_an_equal_copy() {
 /// A crash between the rename and the identity write leaves a copy with
 /// no identity. The next `put_made` writes the copy again and records its
 /// identity, so the next check passes. A copy with no identity never fails
-/// every later start (decision CH44 rule 2 repairs nothing).
+/// every later start (decision CH44 rule 2).
 #[test]
 fn put_made_writes_again_a_copy_with_no_identity() {
     let temp = Temp::new("made-no-identity");

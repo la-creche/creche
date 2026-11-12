@@ -10,9 +10,10 @@ The second file has the table of the three vmm crates.
   `serde_json` and `sha2`. The crate uses no async runtime.
 - The crate never calls `creche-vmm-confine` or `creche-vmm`.
 - Decision CH44 rule 2 (PR D6, `images.rs`): a store copy that fails
-  the identity check at VM start fails the start. `ImageStore::check`
-  removes and repairs nothing. Item 42 Q42-2 adds that an operator step
-  or a later re-import fixes the copy.
+  the identity check at VM start fails the start. A mount can change the
+  device number of an unchanged copy. For a device-only change,
+  `ImageStore::check` hashes the copy. A matching digest records the new
+  identity. A different digest or another identity change fails the start.
 - Decisions CH7-6, CH60 rule 2 and CH62 rule 18 (plan PR V4,
   `initramfs.rs`, `images.rs`): `initramfs::pack` writes the guest init
   initramfs as a newc archive with uid 0, gid 0, mtime 0 and inode
@@ -22,7 +23,7 @@ The second file has the table of the three vmm crates.
   earlier entry. `ImageStore::put_made` puts the bytes at
   `store/<sha256>` with an identity file, as an import does. When an
   identity for the digest exists, it writes no byte and returns the check
-  of that copy, so a changed copy fails (CH44 rule 2).
+  of that copy. A changed copy fails (CH44 rule 2).
 - Decision CH76 rule 6 (plan PR V0, `images.rs`): `hash_source` reads
   a source as `ImageStore::import` reads it, through `zstd -d` for a
   `.zst` file, and gives the SHA-256 of the bytes with no file written.
