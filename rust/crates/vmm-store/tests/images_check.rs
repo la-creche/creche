@@ -1,6 +1,6 @@
 //! The check at VM start passes an imported copy and refuses an edited
-//! copy, a replaced inode and a mode change (decision CH8-8 as read by
-//! CH36 with gap G8).
+//! copy, a replaced inode and a mode change. It revalidates a device-only
+//! change (decision CH8-8 as read by CH36 with gap G8).
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -67,6 +67,43 @@ fn an_imported_copy_passes() {
     let checked = temp.check().expect("the check");
     assert_eq!(checked.digest(), temp.stored.digest);
     assert_eq!(checked.path(), temp.stored.path);
+}
+
+#[test]
+fn a_device_change_rehashes_and_repairs_the_record() {
+    let temp = Temp::new("device");
+    let identity_path = temp.store.identity_path(&temp.stored.digest);
+    let mut stale = temp.stored.identity;
+    stale.device ^= 1;
+    let text = serde_json::to_vec(&stale).expect("json");
+    fs::write(&identity_path, text).expect("the stale record");
+
+    let checked = temp.check().expect("the revalidated check");
+    assert_eq!(checked.digest(), temp.stored.digest);
+    let repaired: FileIdentity =
+        serde_json::from_slice(&fs::read(identity_path).expect("the repaired record"))
+            .expect("the identity");
+    assert_eq!(repaired, temp.stored.identity);
+}
+
+#[test]
+fn a_device_change_does_not_accept_wrong_bytes() {
+    let temp = Temp::new("device-wrong-bytes");
+    temp.set_mode(0o644);
+    fs::write(&temp.stored.path, b"other bytes").expect("the edit");
+    temp.set_mode(0o444);
+    let mut stale = FileIdentity::of(&fs::metadata(&temp.stored.path).expect("the copy"));
+    stale.device ^= 1;
+    let identity_path = temp.store.identity_path(&temp.stored.digest);
+    let text = serde_json::to_vec(&stale).expect("json");
+    fs::write(&identity_path, text).expect("the stale record");
+
+    let error = temp.check().expect_err("a refusal");
+    assert!(matches!(error, CheckError::Changed { .. }), "{error}");
+    let unchanged: FileIdentity =
+        serde_json::from_slice(&fs::read(identity_path).expect("the stale record"))
+            .expect("the identity");
+    assert_eq!(unchanged, stale);
 }
 
 #[test]
