@@ -14,6 +14,7 @@ use creche_vmm_store::layout::StateRoot;
 use creche_wire::{PerFlavor, SandboxFlavor};
 
 use super::{Follow, HOOK_TIMEOUT, POLL, RETRY_POLLS, SETTLE_POLLS};
+use crate::image_lifecycle::ImageLifecycle;
 use crate::image_root::{DigestsError, KERNEL_KEY, parse};
 use crate::start::Digests;
 
@@ -64,7 +65,7 @@ impl Root {
     /// The follow of the start set `start`, and the set of new starts.
     fn follow(&self, start: &[u8]) -> (Follow, tokio::sync::watch::Receiver<Digests>) {
         let set = parse(&self.images(), start.to_vec()).unwrap();
-        Follow::start(set, self.store()).unwrap()
+        Follow::start(set, self.store(), ImageLifecycle::default()).unwrap()
     }
 }
 
@@ -131,6 +132,40 @@ fn a_new_digests_file_switches_new_boots_after_every_import() {
         "{line}"
     );
     assert!(line.contains(&format!("base {HELLO}")), "{line}");
+    assert_eq!(*current.borrow(), set(EMPTY, HELLO));
+    root.store().check(digest(HELLO)).unwrap();
+}
+
+/// The digests follow takes the image write gate before it imports and
+/// swaps a set. A start that holds the read gate keeps the old set and
+/// store until it releases the gate.
+#[test]
+fn a_switch_waits_for_an_image_reader() {
+    let root = Root::new("gated-switch");
+    let start = digests(("vmlinux", EMPTY), ("abc.ext4", ABC));
+    let next = digests(("vmlinux", EMPTY), ("hello.ext4", HELLO));
+    let lifecycle = ImageLifecycle::default();
+    let image_set = parse(&root.images(), start).unwrap();
+    let (mut follow, current) = Follow::start(image_set, root.store(), lifecycle.clone()).unwrap();
+    let reader = lifecycle.read();
+
+    std::thread::scope(|scope| {
+        let switch = scope.spawn(move || settle(&mut follow, &next));
+        for _ in 0..100 {
+            if switch.is_finished() {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(!switch.is_finished());
+        assert_eq!(*current.borrow(), set(EMPTY, ABC));
+        assert!(root.store().check(digest(HELLO)).is_err());
+
+        drop(reader);
+        let line = switch.join().unwrap().unwrap();
+        assert!(line.starts_with("new starts use the new "), "{line}");
+    });
+
     assert_eq!(*current.borrow(), set(EMPTY, HELLO));
     root.store().check(digest(HELLO)).unwrap();
 }

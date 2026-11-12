@@ -13,6 +13,7 @@ pub mod env_file;
 pub mod family_state;
 pub mod guest_init;
 pub mod handlers;
+mod image_lifecycle;
 pub mod image_root;
 mod links;
 pub mod mirror;

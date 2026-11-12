@@ -40,6 +40,7 @@ use super::{Checked, StartError, VERSION_WAIT, Vmm, build, parts};
 use crate::ServeError;
 use crate::config::{CH, CH_REMOTE, Config, GIT, GUEST_INIT as GUEST_INIT_KEY};
 use crate::guest_init::GuestInitError;
+use crate::image_lifecycle::ImageLifecycle;
 use crate::image_root::follow::Follow;
 use crate::image_root::{DIGESTS_FILE, DigestsError, parse};
 use crate::root_owned::{OwnerError, ProgramError};
@@ -223,13 +224,16 @@ impl Scratch {
         let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
         let bytes = fs::read(config.image_root.join(DIGESTS_FILE)).unwrap();
         let set = parse(&config.image_root, bytes).unwrap();
-        let (follow, digests) = Follow::start(set, images.clone()).unwrap();
+        let image_lifecycle = ImageLifecycle::default();
+        let (follow, digests) =
+            Follow::start(set, images.clone(), image_lifecycle.clone()).unwrap();
         let initramfs = images.put_made(b"initramfs").unwrap().digest();
         let checked = Checked {
             ch_version,
             images,
             digests,
             follow,
+            image_lifecycle,
             initramfs,
         };
         parts(config, checked).unwrap()

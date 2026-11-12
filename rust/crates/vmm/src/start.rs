@@ -88,6 +88,7 @@ use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
 use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::ChRemoteError;
 use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
+use creche_vmm_store::image_retention::{self, Collected, Failure as ImageFailure, ScanError};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot as PoolSlot, StateRoot, VmRunDir};
@@ -113,6 +114,7 @@ use crate::family_state::{self, Server};
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
 use crate::handlers::list::RunningVms;
+use crate::image_lifecycle::ImageLifecycle;
 use crate::mirror::{self, Mirror};
 use crate::planes::{Bound, Planes, Upstreams, bind};
 use crate::relay::{AcpLink, Door, Relays};
@@ -733,6 +735,7 @@ fn forget_link(control: &Mutex<ControlState>, id: &SessionId) {
 #[derive(Debug)]
 pub struct ColdBoot<L: Launcher, A: ChApi> {
     config: Arc<StartConfig>,
+    image_lifecycle: ImageLifecycle,
     launcher: Arc<L>,
     api: Arc<A>,
     table: Table<L::Process>,
@@ -778,6 +781,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     ) -> Self {
         Self {
             config: Arc::new(config),
+            image_lifecycle: ImageLifecycle::default(),
             launcher,
             api,
             table: Arc::default(),
@@ -790,6 +794,12 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             faults,
             refusing: AtomicBool::new(false),
         }
+    }
+
+    /// Uses the image gate of the digests follow.
+    pub(crate) fn image_gate(mut self, image_lifecycle: ImageLifecycle) -> Self {
+        self.image_lifecycle = image_lifecycle;
+        self
     }
 
     /// The config and the API of the hook, for the wiring test of the
@@ -1047,6 +1057,61 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         })
         .await
         .unwrap_or_else(|_| Err(io::Error::other("the sweep panicked")))
+    }
+
+    /// Removes checked store pairs that no current image set or snapshot
+    /// key names. The image write gate comes before the table check. Thus,
+    /// a start that has a table entry makes this pass skip, and a later
+    /// start waits until this pass ends.
+    pub(crate) async fn collect_images(&self) -> Result<Option<Collected>, ScanError> {
+        // CONTRACT-QUESTION: CH39 rule 3 and CH76 rule 8 do not specify
+        // unused store removal. The complete strict mark scan, shared
+        // image gate and empty table are the conservative rule. A less
+        // conservative rule needs live image reference tracking.
+        let lifecycle = self.image_lifecycle.clone();
+        let table = Arc::clone(&self.table);
+        let config = Arc::clone(&self.config);
+        let panic_path = self.config.state.path().to_owned();
+        spawn_blocking(move || {
+            let _gate = lifecycle.write();
+            if !lock(&table).is_empty() {
+                return Ok(None);
+            }
+            let digests = config.digests.borrow().clone();
+            let mut current = HashSet::from([digests.kernel, config.initramfs]);
+            current.extend(digests.roots.iter().map(|(_, digest)| *digest));
+            image_retention::collect(&config.images, &config.state, &current).map(Some)
+        })
+        .await
+        .unwrap_or_else(|_| {
+            Err(ScanError {
+                path: panic_path,
+                source: io::Error::other("the image collection panicked"),
+            })
+        })
+    }
+
+    /// Writes the result of one image collection to stderr.
+    pub(crate) fn log_image_collection(collected: Collected) {
+        for removed in collected.removed {
+            eprintln!(
+                "vmm: image collection removed {} and reclaimed {} allocated bytes",
+                removed.digest, removed.allocated_bytes
+            );
+        }
+        for failure in collected.failures {
+            match failure {
+                ImageFailure::Check { digest, source } => {
+                    eprintln!("vmm: image collection kept {digest}: {source}");
+                }
+                ImageFailure::Io { path, source } => {
+                    eprintln!(
+                        "vmm: image collection failed at {}: {source}",
+                        path.display()
+                    );
+                }
+            }
+        }
     }
 
     /// Stops each VM whose serial log passed `SERIAL_CAP`, with the
@@ -1893,8 +1958,9 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             return Err(StartFault::HostFull);
         }
 
-        let (config, launcher, claims, in_use, session, name) = (
+        let (config, lifecycle, launcher, claims, in_use, session, name) = (
             Arc::clone(&self.config),
+            self.image_lifecycle.clone(),
             Arc::clone(&self.launcher),
             Arc::clone(&self.claims),
             Arc::clone(&self.in_use),
@@ -1909,6 +1975,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // CH50 rule 4).
         let slot = pending.slot;
         let launched = blocking(move || {
+            let _gate = lifecycle.read();
             let locks = (&*claims, &*in_use);
             let booted = launch::<L>(&config, &*launcher, locks, (&session, slot), (&name, shape))?;
             let cmdline = launcher.cmdline(&booted.process);

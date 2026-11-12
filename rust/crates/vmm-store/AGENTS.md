@@ -147,9 +147,10 @@ The second file has the table of the three vmm crates.
 
 - CONTRACT-QUESTION: CH39 rule 3 and CH76 rule 8 do not specify when the
   vmm can remove an unused store copy. The collector requires a complete
-  strict snapshot scan. Its caller must also keep the current image set
-  stable and start no VM. A less conservative rule needs live image
-  reference tracking and a store layout migration.
+  strict snapshot scan. The vmm caller uses one image gate for starts,
+  imports and collection. It collects only with an empty VM table. A less
+  conservative rule needs live image reference tracking and a store layout
+  migration.
 
 - Host program (PR D9, `snapshot.rs`): the vmm execs the host
   `fallocate` (decision CH29). The exec needs no Landlock rule. Item 42

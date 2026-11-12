@@ -101,8 +101,9 @@ component of this repository") holds its rules. In short:
 5. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`,
    `Checks`) binds `vmm.sock` in the run root. `sleep::run` runs beside it (caller
    duty 5), and so does `FaultBook::refresh` every `faults::REFRESH`,
-   and so does the digests follow (see "The digests follow"). SIGTERM
-   aborts the follow.
+   and so does the digests follow (see "The digests follow"). The
+   snapshot sweep also collects unused store images when the VM table is
+   empty. SIGTERM aborts the follow.
 6. At SIGTERM the sleep loop gets its stop, and `shutdown::shutdown`
    runs with the end of `sleep::run` as its `sleep` future. `src/main.rs`
    then ends the runtime with `shutdown_timeout(RUNTIME_END)`, 4 s of
@@ -326,9 +327,11 @@ Each fault logs one line (decision CH77 rule 3). A fault logs again only
 when its reading or its text changes, and a read that takes no bytes is
 such a reading.
 
-A running VM keeps its store copies, since no step removes a store file.
-Its snapshot holds the key of its start, which holds the root disk
-digest (decisions CH7-6, CH62 rule 24). So after a swap the next start
+A start holds the image read gate from its image selection through its
+launch. The follow holds the image write gate for its import and swap.
+Image collection holds the write gate and runs only with an empty VM
+table. Thus, a running VM keeps each store copy that it uses. Its
+snapshot key keeps its image digests too. After a swap, the next start
 of an idle session drops that snapshot and cold-boots on the new disk.
 The follow is the only import after the vmm start, so the store still
 runs one import at a time. An import that runs at SIGTERM ends with the
@@ -1371,6 +1374,12 @@ the passes on paused time.
    so no runtime worker waits behind the sweep (decision CH36 G21). The
    write lock of the takes keeps each take out of the sweep, as
    `retention::sweep` asks. The blocking step owns both locks.
+3. The same sweep tick runs image collection after the snapshot sweep.
+   Collection takes the image write gate before it checks the VM table.
+   A nonempty table skips collection. A later start waits for collection
+   before it selects, checks and launches its images. The mark phase keeps
+   the current image set, the guest init initramfs and all snapshot keys.
+   A failed mark removes nothing.
 
 The last use of a VM is the latest of its start, its last door close
 and its last turn event (decision CH50 rule 5). `ControlState::turn`
@@ -1546,6 +1555,11 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
   row (decision CH36, gap G24 of the phase 2 plan).
 
 ## Known gaps
+
+- CONTRACT-QUESTION: CH39 rule 3 and CH76 rule 8 do not specify unused
+  store removal. The vmm uses a complete strict snapshot scan, a shared
+  image gate and an empty VM table. A less conservative rule needs live
+  image reference tracking.
 
 1. Closed by decision CH54 rule 1: a drop waits for a start that its
    mark overlapped, with no bound (`src/handlers/drop.rs`). So a drop
