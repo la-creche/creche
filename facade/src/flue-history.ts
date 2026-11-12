@@ -6,7 +6,7 @@
 //
 //   agentStreamPath(agentName, instanceId) ──► "agents/<name>/<id>"
 //   handleAgentConversationRead({ store, path, request })
-//       ──► the Response of Flue's `GET /:id?view=updates&offset=…`
+//       ──► the Response of Flue's `GET /:id?view=history`
 //
 // The store comes from the public adapter contract: `tapStores` wraps the
 // adapter given to `start()` and keeps what its `connect()` returns. The
@@ -14,20 +14,13 @@
 
 import type { ConversationStreamChunk } from "@flue/runtime";
 import type { ConversationStreamStore, PersistenceAdapter, PersistenceStores } from "@flue/runtime/adapter";
+import type { AgentConversationSnapshot } from "@flue/runtime/internal";
 import { agentStreamPath, handleAgentConversationRead } from "@flue/runtime/internal";
-
-/** The offset before the first batch: a read from it replays the stream. */
-const FROM_START = "-1";
 
 /** Any origin: the handler reads only the query of the request. */
 const ORIGIN = "http://facade.invalid/";
 
-const NEXT_OFFSET = "Stream-Next-Offset";
-const UP_TO_DATE = "Stream-Up-To-Date";
 const NOT_FOUND = 404;
-
-/** Most pages one history read takes. Flue serves 100 batches a page. */
-const MAX_PAGES = 10_000;
 
 export interface TappedAdapter {
   /** Give this adapter to `start()`. */
@@ -55,8 +48,9 @@ export type HistoryRead =
   | { readonly ok: false; readonly detail: string };
 
 /**
- * Every chunk of one instance's conversation, from its start to the head
- * at the time of the read. An instance that no send has created yet has no
+ * One snapshot of an instance's conversation at the durable head. The
+ * snapshot is a reset chunk, so replay can send its messages without a scan
+ * from the stream origin. An instance that no send has created yet has no
  * stream, and its history is empty.
  */
 export async function readHistory(
@@ -65,35 +59,22 @@ export async function readHistory(
   instanceId: string,
 ): Promise<HistoryRead> {
   const path = agentStreamPath(agentName, instanceId);
-  const chunks: ConversationStreamChunk[] = [];
-  let offset = FROM_START;
-
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const url = `${ORIGIN}?view=updates&offset=${encodeURIComponent(offset)}`;
-    const response = await handleAgentConversationRead({ store, path, request: new Request(url) });
-    if (response.status === NOT_FOUND && offset === FROM_START) {
-      return { ok: true, chunks };
-    }
-
-    if (!response.ok) {
-      return { ok: false, detail: `Flue answered the history read with ${response.status}` };
-    }
-
-    const body = (await response.json()) as readonly { readonly type: string }[];
-    for (const chunk of body) {
-      // A wire-only marker of the HTTP view. It is not conversation content.
-      if (chunk.type !== "stream-checkpoint") {
-        chunks.push(chunk as ConversationStreamChunk);
-      }
-    }
-
-    const next = response.headers.get(NEXT_OFFSET);
-    if (response.headers.get(UP_TO_DATE) === "true" || next === null || next === offset) {
-      return { ok: true, chunks };
-    }
-
-    offset = next;
+  const response = await handleAgentConversationRead({ store, path, request: new Request(`${ORIGIN}?view=history`) });
+  if (response.status === NOT_FOUND) {
+    return { ok: true, chunks: [] };
   }
 
-  return { ok: false, detail: "the history read did not reach the head" };
+  if (!response.ok) {
+    return { ok: false, detail: `Flue answered the history read with ${response.status}` };
+  }
+
+  const snapshot = (await response.json()) as AgentConversationSnapshot;
+  const reset: ConversationStreamChunk = {
+    type: "conversation-reset",
+    conversationId: snapshot.conversationId,
+    snapshot,
+    position: { batch: Number(snapshot.offset), index: Number.MAX_SAFE_INTEGER },
+  };
+
+  return { ok: true, chunks: [reset] };
 }
