@@ -118,3 +118,60 @@ index 28be2fc98bba07dfc9628da831dbbe6a029ba970..0da740d0311ef75bad52c9ed93ea93ec
  	async checkCompaction(assistantMessage) {
  		if (assistantMessage.stopReason === "aborted" || assistantMessage.stopReason === "error") return;
  		const model = this.agentLoop.state.model;
+diff --git a/dist/dispatch-t-UmrrMW.mjs b/dist/dispatch-t-UmrrMW.mjs
+index 7274a8ed..00b5803b 100644
+--- a/dist/dispatch-t-UmrrMW.mjs
++++ b/dist/dispatch-t-UmrrMW.mjs
+@@ -1408,16 +1408,20 @@
+-function writeFoldCheckpoint(store, path, state, incarnation) {
+-	if (!store.putFoldCheckpoint) return;
+-	try {
+-		const checkpoint = {
+-			offset: state.recordsThroughOffset,
+-			incarnation,
+-			formatVersion: 3,
+-			data: encodeReducedInstanceState(state)
+-		};
+-		store.putFoldCheckpoint(path, checkpoint).catch((error) => {
+-			warnFoldCheckpoint(path, `could not be written (${error instanceof Error ? error.message : String(error)})`);
+-		});
+-	} catch (error) {
+-		warnFoldCheckpoint(path, `could not be encoded (${error instanceof Error ? error.message : String(error)})`);
+-	}
+-}
++async function writeFoldCheckpoint(store, path, state, incarnation) {
++	if (!store.putFoldCheckpoint) return;
++	let checkpoint;
++	try {
++		checkpoint = {
++			offset: state.recordsThroughOffset,
++			incarnation,
++			formatVersion: 3,
++			data: encodeReducedInstanceState(state)
++		};
++	} catch (error) {
++		warnFoldCheckpoint(path, `could not be encoded (${error instanceof Error ? error.message : String(error)})`);
++		return;
++	}
++	try {
++		await store.putFoldCheckpoint(path, checkpoint);
++	} catch (error) {
++		warnFoldCheckpoint(path, `could not be written (${error instanceof Error ? error.message : String(error)})`);
++	}
++}
+@@ -1549,7 +1553,8 @@
+-		if (!this.state) {
+-			this.state = await loadReducedConversationState({
+-				store: this.store,
+-				path: this.path
+-			});
+-			return this.state;
+-		}
++		if (!this.state) {
++			this.state = await loadReducedConversationState({
++				store: this.store,
++				path: this.path
++			});
++			await writeFoldCheckpoint(this.store, this.path, this.state, meta.incarnation);
++			return this.state;
++		}
