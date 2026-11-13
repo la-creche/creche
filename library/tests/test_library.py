@@ -134,8 +134,8 @@ def emb_rows(conn: sqlite3.Connection) -> dict[int, tuple[float, ...]]:
 
 
 def test_plain_vectors_mirror_every_chunk(tmp_path: Path) -> None:
-    # The sandbox reads vectors with node:sqlite, which cannot load sqlite-vec,
-    # so every chunk's vector is also a plain float32 blob (library/README.md).
+    # A reader that cannot load sqlite-vec reads the plain blob, so every
+    # chunk's vector is also a plain float32 blob (library/AGENTS.md rule 6).
     scope = tmp_path / "notes"
     seed(scope)
     embedder = FakeEmbedder()

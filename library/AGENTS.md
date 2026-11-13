@@ -17,7 +17,9 @@ a throwaway sandbox whose only egress hole is the embedder (TEI).
 5. Publication is atomic. The store is updated on `store.work.db` and
    published with `os.replace`.
 6. Every vector is written twice: to `chunks_vec` and to `chunks_emb` as
-   plain little-endian float32. The sandbox reads `chunks_emb` only.
+   plain little-endian float32. No production program reads the index
+   since the agent's index reader left with the sbx path (phase 11, plan PR
+   RT-1). Plan PR RT-4 decides whether the index stays.
 
 An index whose recorded `embed_model` differs from the live one is rebuilt
 from scratch.
@@ -44,7 +46,7 @@ chunks_vec  = vec0(embedding[768])   rowid = chunk id
 chunks_emb(id, embedding)            768 float32, little-endian
 ```
 
-This schema is the contract for every reader. `DIMS = 768` matches the
+This schema is the contract of the store. `DIMS = 768` matches the
 pinned embedding model. A change of model forces a full rebuild of every
 corpus.
 
