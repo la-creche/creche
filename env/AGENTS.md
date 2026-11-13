@@ -147,9 +147,8 @@ command prints `<file>: cannot be read: <reason>` and exits with status 78.
   2. `config::site` of `creche-contracts`: `SITE_FILE`, `MAX_SITE_BYTES`,
      `ROOT_UID`, `OTHERS_WRITE` and `check_trust`. The packets
      `envfile-reader-rust` and `handover-site-keys` remove them.
-  3. The path of the site file in `bin/provision-library.sh` and
-     `bin/fleet-up`, and in creche-release's `bin/creche-watchdog.sh` and
-     `bin/sbx-drift-check.sh`.
+  3. The path of the site file in `bin/fleet-up`, and in creche-release's
+     `bin/creche-watchdog.sh` and `bin/sbx-drift-check.sh`.
      The packet `bin-site-keys` removes it.
   4. The path of the site file in `playpen/bin/playpen-build`. The packet
      `playpen-site-keys` removes it.

@@ -35,8 +35,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=playpen/bin/lib/registry.sh
 . "$ROOT/playpen/bin/lib/registry.sh"
 
-# The host's own registry, on loopback. `bin/provision-library.sh` pushes to
-# the same one.
+# The host's own registry, on loopback.
 REGISTRY="${PLAYPEN_REGISTRY:-127.0.0.1:5000}"
 # The host is amd64 and so is every microVM on it.
 PLATFORM=linux/amd64

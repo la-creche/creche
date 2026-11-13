@@ -101,8 +101,8 @@ SECRET_BYTES=48
 
 # Each user unit, in the order `up` installs and starts it. attendance comes
 # first: each door and the caregiver dial it. The host's own units (the
-# watchdog, the syncs, the drift check, `library@` and follow) are no unit of
-# this list: a `host` release of creche-release links them.
+# watchdog, the syncs, the drift check and follow) are no unit of this
+# list: a `host` release of creche-release links them.
 UNITS="creche-attendance.service creche-caregiver.service creche-noticeboard.service \
 creche-door-acp.service creche-door-trigger.service creche-door-trigger@.service"
 # The units `up` enables with `--now`. A template is installed only.

@@ -150,7 +150,6 @@ WORKDIR /src
 # member's pyproject carries its dependencies. The source stays out: a
 # test imports the code from the clone under test, never from the image.
 COPY pyproject.toml uv.lock ./
-COPY library/pyproject.toml library/
 COPY family/pyproject.toml family/
 COPY caregiver/pyproject.toml caregiver/
 COPY attendance/pyproject.toml attendance/
@@ -173,7 +172,6 @@ RUN UV_PROJECT_ENVIRONMENT=/opt/test uv sync --locked --no-build --no-default-gr
 # code of the tree under test. A host run finds the same names in its own
 # `.venv`, which `uv sync` fills the same way.
 RUN printf '%s\n' \
-    'index-scope=library.__main__:main' \
     'agent-family=agent_family.cli:main' \
     'caregiver=caregiver.cli:main' \
     'caregiver-verify=caregiver.verify:main' \

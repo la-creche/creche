@@ -92,9 +92,8 @@ echo "deployed $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
 # cleaned. This one venv is what every unit runs from and what `uv sync`
 # fills below.
 #
-# HERE, and never after the two steps below: `uv sync --compile-bytecode` and
-# `compileall` write the __pycache__ trees this would otherwise delete in the
-# same run.
+# HERE, and never after the step below: `uv sync --compile-bytecode` writes
+# the __pycache__ trees this would otherwise delete in the same run.
 #
 # Not fatal: a deploy that stops on housekeeping is worse than an untidy tree.
 git clean -fdX -e '!/.venv/' \
@@ -130,18 +129,11 @@ deploy_site "$PRODUCT" "$SITE" \
 # 0.55s with the cache warm.
 # Writing the .pyc here, as root, is the only place it can happen.
 /usr/local/bin/uv sync --frozen --no-dev --compile-bytecode
-# uv compiles what it installs, which leaves out the workspace's own packages:
-# they are installed editable, so their sources live in this checkout rather
-# than site-packages. Best effort — a failure here costs the cache, not the
-# deploy, and a stale .pyc cannot be served (Python checks mtime and size).
-WORKSPACE_SRC=(/opt/creche/library/src)
-/opt/creche/.venv/bin/python -m compileall -q "${WORKSPACE_SRC[@]}" \
-  || echo "WARNING: bytecode pre-compile failed; imports fall back to source" >&2
 # venv must be world-executable so the operator can run from it;
 # the __pycache__ dirs just written need the same, and hold only code. This
 # tree is root-owned end to end (/opt/creche), never writable by a service, so
 # a recursive chmod here carries no TOCTOU risk.
-chmod -R a+rX /opt/creche/.venv "${WORKSPACE_SRC[@]}"
+chmod -R a+rX /opt/creche/.venv
 
 # No MCP server is installed here. Every server the PEP runs is
 # `mcp/<name>/server.yaml` in agent-registry, built into /opt/mcp/<name> by

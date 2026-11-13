@@ -203,7 +203,6 @@ def test_the_test_venv_dependencies_hold_the_security_fixes() -> None:
     }
 
     assert tuple(map(int, packages["certifi"].split("."))) >= (2026, 10, 18)
-    assert tuple(map(int, packages["pypdf"].split("."))) >= (6, 21, 4)
 
 
 def test_the_image_ships_no_installer() -> None:

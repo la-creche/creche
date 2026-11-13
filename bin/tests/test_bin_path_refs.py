@@ -58,10 +58,10 @@ REFERENCE = re.compile(
     r"([A-Za-z0-9._@/+-]*(?:\{[A-Za-z0-9._,+-]+\}[A-Za-z0-9._@/+-]*)?)"
 )
 
-#: One shell brace list, `{a,b}`, in a referenced path. The deploy names
-#: `/opt/creche/{chaperone,library}/src` this way. A list that still names
-#: a deleted directory stops the deploy on the host at `chmod`, and a scan
-#: that does not expand the list cannot see it.
+#: One shell brace list, `{a,b}`, in a referenced path, as in
+#: `/opt/creche/{a,b}/src`. A list that still names a deleted directory
+#: stops a root script on the host, and a scan that does not expand the
+#: list cannot see it.
 BRACES = re.compile(r"\{([A-Za-z0-9._,+-]+)\}")
 
 
