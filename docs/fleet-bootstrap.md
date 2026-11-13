@@ -186,8 +186,8 @@ a shell builtin, so the value reaches no argv. It never prints the value.
 (decision CH59 rule 1).
 
 The host's own units are not in the list either: the watchdog, the registry
-sync, the corpus sync, the drift check and follow. They are files of
-creche-release, and a `host` release links each one into
+sync, the corpus sync and follow. They are files of creche-release, and a
+`host` release links each one into
 `~/.config/systemd/user`. `down` keeps a recorded unit file that is now such
 a link.
 

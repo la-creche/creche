@@ -55,7 +55,7 @@ the variable.
 |---|---|
 | service | A program of this repository that the suite starts: one row of the service table. |
 | root | The temporary directory of one test. Every file and every Unix socket of the test is in it. |
-| stand-in | A program that takes the place of a program the suite cannot run: `systemctl`, the LiteLLM key API, the vmm host API, and an upstream and the approval channel of the Rust chaperone. |
+| stand-in | A program that takes the place of a program the suite cannot run: `systemctl`, `chaperone check`, the LiteLLM key API, the vmm host API, and an upstream and the approval channel of the Rust chaperone. |
 | ACP | The Agent Client Protocol, version 1. A client and an agent send JSON-RPC 2.0 messages. |
 | topology | The services that one fixture starts together. |
 | listener | A service that listens for HTTP requests: `attendance`, the noticeboard, and the `serve` command of the trigger door. |
@@ -310,7 +310,8 @@ and the ACP client of a test left with them.
    or in `proc_registry.py` makes it from a contract, never from a module of
    a service. The policy file of `test_proc_policy_check.py` is one
    exception. It joins the golden files of `caregiver`, because the
-   scenario judges that rendering. The test reads the files as text and imports no `caregiver`.
+   scenario judges that rendering. The test reads the files as text and
+   imports no `caregiver`.
    The install draft of `test_proc_install_draft.py` is the second. It is
    the golden print of `bin/chaperone-install-draft.py`, read as text.
    `end_token_overlap` changes one value of a credential file that
@@ -432,13 +433,14 @@ that the suite cannot run. Add one only when a scenario needs it.
 
 ### The stand-in programs of this directory
 
-Five programs are in this directory. The docstring of each one lists its
+Six programs are in this directory. The docstring of each one lists its
 verbs, its files and its tunings.
 
 | Program | Takes the place of | How a service finds it |
 |---|---|---|
 | `standin_vmm.py` | the vmm host API on `vmm.sock`: the create, list, drop and `acp` routes, with the wire types of `creche_wire`. It boots no VM | by the path in `ATTENDANCE_VMM_SOCKET` and `CAREGIVER_VMM_SOCKET` |
 | `standin_systemctl.py` | `systemctl --user` | by name, through `PATH` |
+| `standin_chaperone.py` | `chaperone check`, the one verb of the Rust chaperone that `caregiver` runs. It checks less than the real one | by the path in the `--chaperone-bin` flag of `caregiver` |
 | `standin_litellm.py` | the key API of LiteLLM | by an address in an argument |
 | `standin_upstream.py` | an upstream of the Rust chaperone, with the tools `echo` and `gated_echo` | by the absolute path in the `command` of its manifest |
 | `standin_approval.py` | the approval channel of the Rust chaperone. A file that the test writes answers each gate | by the absolute path in the `command` of its manifest |
@@ -912,7 +914,7 @@ the text of the failure. Work down this list.
 | `proc_ids.py` | the ids that a door mints |
 | `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the wrapper of each stand-in, the record each one leaves, and the readers of its state |
-| `standin_vmm.py`, `standin_systemctl.py`, `standin_litellm.py`, `standin_upstream.py`, `standin_approval.py` | the five stand-in programs of this directory |
+| `standin_vmm.py`, `standin_systemctl.py`, `standin_chaperone.py`, `standin_litellm.py`, `standin_upstream.py`, `standin_approval.py` | the six stand-in programs of this directory |
 | `standin_mcp.py` | the MCP server over stdio of the two effect stand-ins |
 | `proc_strict.py` | the strict reader of one JSON text |
 | `proc_stack.py` | `attendance`, its environment, the vmm stand-in, and the start of a service on a free port |

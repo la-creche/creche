@@ -13,9 +13,8 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-door-trigger@.service` | user, templated | the cutover script, only when the host has none |
 | `creche-vmm.service` | user | no script yet. The operator installs it by hand once (design section 6.2 step 3). No agent installs it |
 The host's own units are not here: the watchdog, the registry sync, the
-corpus sync, the drift check and follow. They are files of creche-release
-(`units/user/`), and a `host` release links each one into the operator's
-unit directory.
+corpus sync and follow. They are files of creche-release (`units/user/`),
+and a `host` release links each one into the operator's unit directory.
 
 Installing a unit stays an installer's job. A release refreshes an already
 installed unit file in place and never runs an installer.
