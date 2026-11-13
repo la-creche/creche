@@ -18,6 +18,7 @@ from typing import cast
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO_ROOT / "playpen" / "Dockerfile"
 CI = REPO_ROOT / "playpen" / "bin" / "playpen-ci"
+ROOTFS = REPO_ROOT / "playpen" / "bin" / "playpen-rootfs"
 DISK = REPO_ROOT / "playpen" / "bin" / "playpen-disk"
 GUEST_INIT_BOOT = REPO_ROOT / "rust" / "crates" / "guest-init" / "src" / "boot.rs"
 GUEST_VECTORS = REPO_ROOT / "rust" / "crates" / "wire" / "vectors" / "guest.json"
@@ -104,9 +105,13 @@ def test_ripgrep_is_in_the_base_stage() -> None:
 
 
 def test_the_image_fixes_no_address() -> None:
-    """The two planes are fixed on guest loopback (agent/src/guest-start.ts)."""
+    """The two planes are fixed on guest loopback (agent/src/guest-start.ts).
+    The build of each root disk passes the build time and nothing else."""
     assert "AGENT_LAN_ADDRESS" not in _text()
     assert "--build-arg" not in CI.read_text(encoding="utf-8")
+    assert re.findall(r"--build-arg\s+\"?(\w+)=", ROOTFS.read_text(encoding="utf-8")) == [
+        "SOURCE_DATE_EPOCH"
+    ]
 
 
 def test_the_test_venv_installs_the_locked_dependencies() -> None:
@@ -224,8 +229,8 @@ def test_the_image_ships_no_installer() -> None:
 
 
 def test_no_flavor_sets_a_cmd() -> None:
-    """Fact 59: sbx gives each sandbox its own command, and a root disk
-    carries no image config, so a CMD line would only mislead."""
+    """Fact 59: a root disk carries no image config, so a CMD line would
+    only mislead."""
     assert re.search(r"^CMD ", _text(), re.MULTILINE) is None
 
 
