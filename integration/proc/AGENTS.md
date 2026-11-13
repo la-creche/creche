@@ -36,16 +36,12 @@ Each run prints the command of each service before its result line. Each
 line ends with the origin of the command: `default` or `override`.
 
 No topology starts the facade since the Cloud Hypervisor cut (plan PR CR1):
-the vmm starts it in a VM. The suite needs `node` and `git` on `PATH`.
+the vmm starts it in a VM. The suite needs `git` on `PATH`.
 Every test is marked `slow` in `conftest.py`.
 
 The scenarios of the Rust chaperone need `cargo` on `PATH` too, for the
 first build of the pinned commit. Each one skips itself when `cargo` or
 `git` is missing and no variable names a binary.
-
-Two scenarios of `test_proc_library_reader.py` run a Node program that
-imports `node:sqlite`. Each one skips itself when the `node` on `PATH` has
-no such module.
 
 Set `CRECHE_PROC_KEEP=1` to keep the root of each test on disk after the run.
 
@@ -169,9 +165,8 @@ With no variable set, the judged command is the reference. A scenario then
 compares one program with itself. That run judges no binary. It proves that
 the comparison gives one result for one corpus.
 
-1. Only the scenarios of `test_proc_library_cross.py` and of
-   `test_proc_library_reader.py` run the reference. `test_proc_table.py`
-   has a test for this rule.
+1. Only the scenarios of `test_proc_library_cross.py` run the reference.
+   `test_proc_table.py` has a test for this rule.
 2. A scenario that runs the reference has both commands in its name. The
    name says `the reference` beside `the program`, or it says
    `the two writers`, `the two programs` or `both writers`.
@@ -322,13 +317,12 @@ this suite can start that VM. The kvm job runs a turn of the real facade in
 a VM (`rust/crates/vmm/tests/kvm_facade.rs`). door-acp, the model stand-in
 and the ACP client of a test left with them.
 
-Two files of the seventh topology run two more programs. A test starts
-each one, and each one runs to its end.
+One file of the seventh topology runs one more program. A test starts
+it, and it runs to its end.
 
 | Program | A test starts it through | What it does |
 |---|---|---|
 | the reference | `run_reference` | It writes or updates a store, as the program does. |
-| `reader_store.mjs` | `read_as_bridge` | It reads one store with the statements of the bridge of the agent module, through `node:sqlite`. |
 
 | File | Topology | What the scenarios check |
 |---|---|---|
@@ -347,7 +341,6 @@ each one, and each one runs to its end.
 | `test_proc_library_build.py` | library and the TEI stand-in | a build, an update, the hash rule, a removed file, a new model, the two profiles, the store schema, the columns of a row of `files`, the order of the files, how a text file is read, the publish of the store |
 | `test_proc_library_start.py` | library and the TEI stand-in | a refused command line, the address of TEI, the preflight, `SIGTERM`, `SIGKILL`, a store that the program cannot read |
 | `test_proc_library_cross.py` | library, the reference and the TEI stand-in | one store under two writers: equal content after a build, after an update by the other writer, after three runs in turns, after a backfill of `chunks_emb`, after a killed run and after a new model. Equal embed calls. An equal first line of the report. The reference with the variable of the row set. The comparison itself: one changed copy of a store for each part, the tolerance of a rank, a store that the comparison refuses |
-| `test_proc_library_reader.py` | library, the reference, the TEI stand-in and the reader program | a store as the bridge reads it, with the SQLite of Node: the model, the count of values, the rows of an FTS5 query, the vectors. Equal rows for both writers. A store that is not alone in its directory. The statements of the reader program and the limit of a query, held against the text of the bridge |
 | `test_proc_edges.py` | `attendance` alone, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a body that is not JSON, `HEAD`, the socket file of a killed process, `SIGINT`, `SIGHUP` |
 | `test_proc_chaperone_rs.py` | the Rust chaperone and its two effect stand-ins | the tools of the stand-in upstream, and the audit records of one allowed call |
 | `test_proc_install_draft.py` | `chaperone check` of the Rust chaperone | the install draft of the fixture registry passes, and caregiver's fleet policy passes on top of it |
@@ -375,9 +368,8 @@ each one, and each one runs to its end.
    - the git repository of the registry, through `git`
    - what a command wrote on its stdout or its stderr
 
-   Two tests of `test_proc_library_reader.py` start no program. Each one
-   reads files of the bridge as text. `test_proc_table.py` reads the unit
-   files in the same way.
+   `test_proc_table.py` starts no program. It reads the unit files as
+   text.
 4. Nothing under test may be faked. The stand-ins are not under test.
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
@@ -468,8 +460,8 @@ that changes the registry first.
    - the state of a stand-in
    - an exit code
 
-   Do not read `sandboxes.json` or the `applied` directory. Each one is the
-   private state of `caregiver`.
+   Do not read the `applied` directory. It is the private state of
+   `caregiver`.
 6. Start the vmm stand-in before `caregiver`. `serve` and `delete` refuse
    to start with no `CAREGIVER_VMM_SOCKET` (decision CH20).
 
@@ -539,29 +531,13 @@ while it runs.
 14. Write no PDF with text into a corpus of two writers. Rule 9 gives the
     reason. `write_mixed` writes one PDF that no program can read, so each
     writer reports it.
-15. Read a store as the bridge reads it with `read_as_bridge`. Call it
-    before any other reader opens the store. It refuses a store that is
-    not alone in its directory. The reader program then runs with no write
-    permission for the store and for its directory, as on the mount of a
-    sandbox.
+15. Retired with the index reader of the agent module (phase 11, plan PR
+    RT-1). The number stays, so that other documents keep their
+    references.
 16. Change a store only through `copy_store` and `change_store`. The first
     one makes a copy in a new index directory, and the second one changes
     that copy. One function is the exception: `drop_plain_vectors` changes
     the store of a run.
-
-`reader_store.mjs` is not a stand-in. No service starts it or dials it. It
-holds the five statements that `agent/src/index-store.ts` runs on a
-store. Change the two files together.
-`test_the_reader_statements_are_those_of_the_bridge` compares four things
-of the two files:
-
-- each SQL string literal in double quotes or in template marks that
-  starts with `SELECT`, `FROM` or `WHERE`
-- the line that gives `VECTOR_TABLE` its value
-- the count of `.prepare(` calls. Neither file can hold an `.exec(` call.
-- the options of the connection
-
-The test does not compare a whole statement.
 
 The index unit gives the command. `test_proc_table.py` holds the words of
 `index_words` against the shell text of the unit. No scenario runs
@@ -1167,11 +1143,10 @@ the text of the failure. Work down this list.
   long.
 - **The reference is the Python program.** Each scenario of
   `test_proc_library_cross.py` needs the default command of the `library`
-  row. One scenario of `test_proc_library_reader.py` needs it too. The pull
-  request that removes the Python package `library` removes that command.
-  That pull request first records what the reference gives in each of
-  those scenarios, as data in this directory. Each scenario then compares
-  the program with the recorded data.
+  row. The pull request that removes the Python package `library` removes
+  that command. That pull request first records what the reference gives
+  in each of those scenarios, as data in this directory. Each scenario
+  then compares the program with the recorded data.
 - **CONTRACT-QUESTION, a store under two writers.** `library/AGENTS.md`
   gives the schema and six rules for one writer. No contract names a second
   writer of one store. The suite holds the strict reading. For one corpus,
@@ -1203,20 +1178,6 @@ the text of the failure. Work down this list.
   view that a writer adds. No scenario compares the mode of `store.db`. The
   report scenario compares the first line of stdout. It reads a later line
   only when that line names a file with an error.
-- **The reader program is not the bridge.** `reader_store.mjs` holds the
-  statements of the bridge, and one test holds them against the text of
-  the bridge. The reader program runs no code of the bridge: not the
-  ranking, not the check of a row, not the search for the nearest vectors.
-  `agent/test/index-search.test.ts` holds that code, with stores that the
-  test builds itself.
-- **The reader program runs on the Node of the test machine.** The bridge
-  runs on the Node of the sandbox image. The two can have different
-  versions of SQLite.
-  No scenario runs the reader program on the image.
-- **A directory with no write permission takes the place of a mount.** The
-  reader program runs while the store and its directory have no write bit.
-  A run as root can write both. Such a run does not prove that the reader
-  needs no file beside the store.
 
 ## Layout
 
@@ -1232,7 +1193,6 @@ the text of the failure. Work down this list.
 | `standin_vmm.py`, `standin_systemctl.py`, `standin_litellm.py`, `standin_tei.py`, `standin_upstream.py`, `standin_approval.py` | the six stand-in programs of this directory |
 | `standin_mcp.py` | the MCP server over stdio of the two effect stand-ins |
 | `proc_strict.py` | the strict reader of one JSON text |
-| `reader_store.mjs` | the Node program that reads one index store with the statements of the bridge |
 | `proc_stack.py` | `attendance`, its environment, the vmm stand-in, and the start of a service on a free port |
 | `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_library.py`, `proc_chaperone_rs.py`, `proc_exit.py` | one topology each |
 | `proc_chaperone_pin.py`, `chaperone.pin` | the commit of the Rust chaperone, its build and its cache |

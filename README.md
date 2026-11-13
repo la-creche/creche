@@ -94,7 +94,7 @@ The other directories:
 | Change when a new tag files a request | `handover/src/handover/follow/`, and creche-release's `host.toml` and `units/user/creche-follow.service` |
 | Change what a deploy does | `bin/creche-deploy` |
 | Change the quality gate or the docs rule | `bin/quality-gate.sh`, `bin/lib/docsrule.sh` |
-| Change the index schema | `library/src/library/library.py` and `agent/src/index-store.ts`, together |
+| Change the index schema | `library/src/library/library.py` |
 
 ## 5. Develop
 

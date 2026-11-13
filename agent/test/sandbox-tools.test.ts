@@ -1,9 +1,8 @@
-// The grant of Flue's built-in sandbox tools. `runtime.json`'s
-// `sandbox_tools` is read at the edge into a list of Flue's six names, and
-// the factory around `local({cwd})` gives the model only those. An empty
-// grant gives no built-in tool.
+// The grant of Flue's built-in sandbox tools. The factory around
+// `local({cwd})` gives the model only the granted names of Flue's six. An
+// empty grant gives no built-in tool.
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,8 +10,7 @@ import { init, useModel, useSandbox } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { litellmModel } from "../src/litellm.js";
-import { readRuntimeConfig } from "../src/runtime-config.js";
+import { FALLBACK_LIMITS, LiveModel, specOf } from "../src/litellm.js";
 import type { SandboxToolName } from "../src/runtime-config.js";
 import { grantedSandbox } from "../src/sandbox-tools.js";
 import { readToolEnv } from "../src/tool-env.js";
@@ -20,21 +18,7 @@ import { FakeModel } from "./fake-model.js";
 import { familyConfig } from "./family.js";
 
 const GRANT: readonly SandboxToolName[] = ["read", "grep"];
-
-function configDir(runtime: string | null): string {
-  const dir = mkdtempSync(join(tmpdir(), "agent-runtime-"));
-  if (runtime !== null) {
-    writeFileSync(join(dir, "runtime.json"), runtime);
-  }
-
-  return dir;
-}
-
-function grantOf(runtime: string | null): readonly string[] | string {
-  const read = readRuntimeConfig(configDir(runtime));
-
-  return read.ok ? read.config.sandboxTools : read.field;
-}
+const ALIAS = "chat";
 
 async function toolNames(grant: readonly SandboxToolName[]): Promise<string[]> {
   const factory = grantedSandbox(grant, mkdtempSync(join(tmpdir(), "agent-cwd-")), {});
@@ -45,23 +29,18 @@ async function toolNames(grant: readonly SandboxToolName[]): Promise<string[]> {
 
 const cwd = mkdtempSync(join(tmpdir(), "agent-cwd-"));
 const fake = new FakeModel([{ text: "done" }]);
-const config = await familyConfig({ litellmUrl: await fake.start(), runtime: { model_alias: "chat" } });
-const read = litellmModel(config);
-if (!read.ok) {
-  throw new Error(read.reason);
-}
-
-const { model } = read;
+const config = familyConfig({ litellmUrl: await fake.start() });
+const model = new LiveModel(config.planes, ALIAS, FALLBACK_LIMITS, () => config.creds);
 
 function Empty(): string {
-  useModel(model.spec);
+  useModel(specOf(ALIAS));
   useSandbox(grantedSandbox([], cwd, {}));
 
   return "Answer.";
 }
 
 function Granted(): string {
-  useModel(model.spec);
+  useModel(specOf(ALIAS));
   useSandbox(grantedSandbox(GRANT, cwd, {}));
 
   return "Answer.";
@@ -80,28 +59,6 @@ async function toolsSeen(agent: typeof Empty): Promise<readonly string[]> {
 
   return fake.seen[before]?.tools ?? [];
 }
-
-describe("sandbox_tools in runtime.json", () => {
-  it("grants nothing when the field or the file is absent", () => {
-    expect(grantOf("{}")).toEqual([]);
-    expect(grantOf(null)).toEqual([]);
-    expect(grantOf("not json")).toEqual([]);
-  });
-
-  it("keeps the granted names in order, each one time", () => {
-    expect(grantOf('{"sandbox_tools": ["grep", "read", "grep", "bash"]}')).toEqual(["grep", "read", "bash"]);
-  });
-
-  it("refuses a name that is not one of Flue's six", () => {
-    expect(grantOf('{"sandbox_tools": ["read", "ls"]}')).toBe("sandbox_tools");
-    expect(grantOf('{"sandbox_tools": ["codemode"]}')).toBe("sandbox_tools");
-    expect(grantOf('{"sandbox_tools": "read"}')).toBe("sandbox_tools");
-  });
-
-  it("refuses the family config as runtime_not_valid", async () => {
-    await expect(familyConfig({ runtime: { sandbox_tools: ["find"] } })).rejects.toThrow("runtime_not_valid");
-  });
-});
 
 describe("grantedSandbox", () => {
   it("gives no built-in tool for an empty grant", async () => {

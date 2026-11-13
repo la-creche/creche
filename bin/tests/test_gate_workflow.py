@@ -786,12 +786,6 @@ BROKEN_REPORT = "broken"
 #: The steps that give a job node and pnpm, by the start of `uses`.
 NODE_ACTIONS = ("pnpm/action-setup@", "actions/setup-node@")
 
-#: The one node step of the `proc` job. Its store reader
-#: (integration/proc/reader_store.mjs) imports `node:sqlite` and no
-#: package, so the job needs node and no pnpm, no cache of pnpm and no
-#: build.
-SETUP_NODE = NODE_ACTIONS[1]
-
 #: The local action that gives a job uv and the venv.
 UV_SYNC = "./.github/actions/uv-sync"
 
@@ -1794,37 +1788,23 @@ def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_proc_job_sets_up_node_then_runs_the_process_suite(
+def test_the_proc_job_runs_the_process_suite_on_the_venv(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
-    """The checkout comes first, then node, then the venv, then the suite.
-    The suite is the one run step of the job: no build runs before it. The
-    suite is one command, with no path of one test and no `-k`."""
+    """The checkout comes first, then the venv, then the suite. The suite
+    is the one run step of the job: no build runs before it. The suite is
+    one command, with no path of one test and no `-k`. No test of the
+    suite starts node, so the job has no node and no pnpm."""
     proc = jobs["proc"]
     (suite,) = [step for step in proc["steps"] if "run" in step]
     order = [step.get("uses") or step["run"] for step in proc["steps"]]
-    (node,) = [one for one in order if one.startswith(SETUP_NODE)]
 
     assert proc["needs"] == "scope"
     assert proc["if"] == ONLY_CODE
     assert suite["run"] == PROC_RUN
     assert order[0].startswith(CHECKOUT_ACTION)
-    assert order.index(node) < order.index(UV_SYNC) < order.index(PROC_RUN)
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_proc_job_has_node_alone_at_the_facade_jobs_version(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """The job has setup-node and no pnpm. Its setup-node has no cache of
-    pnpm, which needs pnpm. The node version is the one of the `facade`
-    job, so the reader runs on the node of the facade suite."""
-    (step,) = _node_steps(jobs["proc"])
-    facade = [one for one in _node_steps(jobs[FACADE_JOB]) if one["uses"].startswith(SETUP_NODE)]
-    (facade_node,) = facade
-
-    assert step["uses"] == facade_node["uses"]
-    assert step["with"] == {"node-version": facade_node["with"]["node-version"]}
+    assert order.index(UV_SYNC) < order.index(PROC_RUN)
+    assert _node_steps(proc) == []
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -2022,8 +2002,8 @@ def test_the_suites_job_has_the_checkout_and_the_venv_of_the_proc_job(
 ) -> None:
     """Each step before the first suite is a step of the `proc` job, in the
     same order: the checkout, then the venv. No suite of this job starts
-    node, so the job has no node. The `proc` job has those steps, its node
-    step and the cache of the chaperone."""
+    node, so the job has no node. The `proc` job has those steps and the
+    cache of the chaperone."""
     suites = jobs[SUITES_JOB]
     setup = _setup_of(suites, next(iter(SUITE_RUNS.values())))
 
@@ -2032,8 +2012,7 @@ def test_the_suites_job_has_the_checkout_and_the_venv_of_the_proc_job(
     assert suites["if"] == ONLY_CODE
     assert suites["runs-on"] == jobs["proc"]["runs-on"]
     proc_setup = _setup_of(jobs["proc"], PROC_RUN)
-    node = _node_steps(jobs["proc"])
-    shared = [step for step in proc_setup if not _is_cache(step) and step not in node]
+    shared = [step for step in proc_setup if not _is_cache(step)]
 
     assert setup == shared
     assert _node_steps(suites) == []

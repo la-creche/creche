@@ -1,17 +1,10 @@
 // The start of the agent under CH (decisions CH5a, CH5e, CH62 rules 5 and
-// 13, CH80). The facade reads no `AGENT_*` variable in CH mode, and a set
-// one has no effect (decision CH81 rule 5). Each one gets a source of the
-// guest:
-//
-//   AGENT_SESSIONS_DIR      ──► FLUE_DB and WORKSPACE, on the session disk
-//   AGENT_CRED_DIR          ──► the start pull on the family-state socket
-//   AGENT_FAMILY_CONFIG_DIR ──► the start pull on the family-state socket
-//   AGENT_PEP_URL           ──► http://127.0.0.1:8300, spliced to the host
-//   AGENT_LITELLM_BASE_URL  ──► http://127.0.0.1:4000, spliced to the host
-//   AGENT_CONTROL_DIR       ──► none: no lock under CH (decisions CH5d, CH19)
-//   AGENT_SANDBOX           ──► none: the lock alone named the sandbox. The
-//                               session id is `CRECHE_SESSION_ID`
-//   AGENT_INDEX_ROOT        ──► none: no VM reads the index (decision CH4d)
+// 13, CH80). The facade reads no `AGENT_*` variable (decision CH81 rule
+// 5). The store and the workspace are the fixed guest paths `FLUE_DB` and
+// `WORKSPACE` on the session disk. The planes are guest loopback, which
+// guest init splices to the host. The creds and the config come from the
+// start pull on the family-state socket. No VM reads the index (decision
+// CH4d).
 //
 // The start pulls until the vmm gives a state. A typed fault and a link
 // with no reply each write one stderr line, then the start pulls again
@@ -67,7 +60,7 @@ export async function readGuestStart(
       const kept = new Set(state.config.skills.map((skill) => skill.name));
       const skippedSkills = Object.keys(pulled.state.config.skills).filter((name) => !kept.has(name));
 
-      return { store: FLUE_DB, workspace: WORKSPACE, planes: GUEST_PLANES, indexRoot: null, toolEnv: readToolEnv(env), state, skippedSkills };
+      return { store: FLUE_DB, workspace: WORKSPACE, planes: GUEST_PLANES, toolEnv: readToolEnv(env), state, skippedSkills };
     }
 
     say(`the start pull of the family state failed (${pulled.fault}); the next pull is in ${String(pause)} ms`);

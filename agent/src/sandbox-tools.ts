@@ -1,12 +1,12 @@
 // The family's grant of Flue's built-in sandbox tools. `local()` from
 // `@flue/runtime/node` gives every agent six tools on the host: `read`,
 // `write`, `edit`, `bash`, `grep`, `glob`. This factory wraps `local()`
-// and its `tools()` returns only the tools that `runtime.json`'s
-// `sandbox_tools` grants. Flue replaces its built-in set with that list, so
-// an empty grant gives the model no built-in tool.
+// and its `tools()` returns only the tools that the pulled `sandbox_tools`
+// grants. Flue replaces its built-in set with that list, so an empty grant
+// gives the model no built-in tool.
 //
-//   runtime.json sandbox_tools ──► SandboxToolName[] (src/runtime-config.ts)
-//                              ──► tools(sandbox) = the granted subset
+//   the pulled sandbox_tools ──► SandboxToolName[] (src/family-state.ts)
+//                            ──► tools(sandbox) = the granted subset
 //
 // `env` holds the names that the agent adds to Flue's 14
 // (`src/tool-env.ts`, decision CH49).

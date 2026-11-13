@@ -302,7 +302,7 @@ struct CredsFile {
 /// `shell` must be a bool, and the reply does not carry it (`FamilyConfig`).
 // Decision CH67 rule 6: this reader refuses an unknown key and a missing
 // `shell` or `sandbox_tools`, as it refuses an unknown key of
-// `creds.json`. The facade's file backend ignores or defaults each.
+// `creds.json`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeFile {

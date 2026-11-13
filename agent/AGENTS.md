@@ -11,13 +11,13 @@ Flue is the agent runtime `@flue/runtime`. pi is the model layer under it,
 
 ```bash
 pnpm install
-pnpm test          # no sbx, no VM, no model call
+pnpm test          # no VM, no model call
 pnpm run typecheck
 pnpm run build     # src/ to dist/ with declarations, for the facade
 ```
 
-The facade imports `agent/agent`, `agent/config` and `agent/strict-json`
-from `dist/` (`package.json` `exports`). Its `build` and `typecheck` run
+The facade imports `agent/agent` and `agent/strict-json` from `dist/`
+(`package.json` `exports`). Its `build` and `typecheck` run
 this build first. `agent/wire` and `agent/wire-read` are exported too,
 for the facade's later reads. `playpen/bin/playpen-env-check` imports
 `agent/tool-env` in each built flavor.
@@ -60,33 +60,30 @@ The tests use `sqlite()` with no path, an in-memory store, and pi's
 1. Pin each runtime dependency to one exact version. Do not use a range.
    A patch of Flue or pi can change a record that the facade reads.
 2. Do not put a credential in `useInitialData`. Flue writes that value one
-   time into `flue.db`, on a mount that the agent can write, and never
-   rotates it. Read the credentials from the mounts at process start.
-   The file backend of `src/family-state.ts` reads them again for each
-   prompt.
+   time into `flue.db`, on a disk that the agent can write, and never
+   rotates it. The start pull gives the credentials, and the vmm backend
+   of `src/family-state.ts` pulls them again for each prompt.
 3. Give the model only the tools of the grant. This rule applies also to
    the built-in tools of Flue's `local()`.
-4. Do not write prose to stdout. The facade owns stdout for ACP. Free text
-   goes to stderr.
-5. Parse each input at the edge, one time. The environment, the mounts and
-   each file there become typed values before other code reads them. A
-   refusal is a typed value, not an exception.
+4. Do not write prose to stdout. Free text goes to stderr.
+5. Parse each input at the edge, one time. The environment and each pull
+   reply become typed values before other code reads them. A refusal is a
+   typed value, not an exception.
 6. Never log the value of a credential. Never put a real one in a fixture.
 
 ## Use
 
 The facade reads the edge, composes the agent and starts Flue at process
 start. Then it pulls the family state before each `session/prompt`
-(decision CH5a). On sbx the start is the mounts:
+(decisions CH5a, CH5e, CH62 rule 13, CH80):
 
 ```ts
-const read = await readFamilyConfig(process.env);       // src/config.ts
-const started = startOf(read.config);                   // src/agent.ts
-const { planes, state } = started.start;
+const begun = await readGuestStart(process.env, say);  // src/guest-start.ts
+const { planes, state } = begun;
 const limits = await readModelLimits(planes, state.config.modelAlias, state.creds.litellmKey);  // src/litellm.ts
-const composed = composeAgent(started.start, limits.limits);  // src/agent.ts
+const composed = composeAgent(begun, limits.limits);  // src/agent.ts
 await start({ agents: [composed.agent], db: composed.db, providers: composed.providers });
-const backend = fileBackend(read.config.mounts, composed.state.config);  // src/family-state.ts
+const backend = vmmBackend(FAMILY_STATE_SOCKET, composed.state.config, say);  // src/family-state.ts
 
 // Before each prompt of the session `sessionId`:
 const pulled = await backend.pull();
@@ -96,23 +93,19 @@ if (pulled.ok) {
 }
 ```
 
-Under CH the start is `readGuestStart(process.env, say)` of
-`src/guest-start.ts`, and the backend is `vmmBackend(FAMILY_STATE_SOCKET,
-composed.state.config, say)` of `src/family-state.ts` (decisions CH5a,
-CH5e, CH62 rule 13, CH80). The start pulls until the vmm gives a state.
-After each fault it writes one stderr line and waits, 250 ms first, then
-twice as long each time up to 5 s (decision CH81 rule 4). It never exits
-on a fault (decision CH23 rule 2). The guest planes are constants: a port
-that gives no plane URL throws when the module loads. A skill of the CH
-start has no supporting files. Each pull:
+The start pulls until the vmm gives a state. After each fault it writes
+one stderr line and waits, 250 ms first, then twice as long each time up
+to 5 s (decision CH81 rule 4). It never exits on a fault (decision CH23
+rule 2). The guest planes are constants: a port that gives no plane URL
+throws when the module loads. A skill has no supporting files: the pull
+carries only the text of each `SKILL.md`. Each pull:
 
 1. Each pull dials the family-state socket of guest init, sends one
    `FamilyStatePull` line and reads one `FamilyStateReply` line with
    `read` and the cap `STATE_REPLY_CAP` (256 KiB). Nothing retries
    (decision CH62 rule 14).
-2. A typed fault reply fails the prompt with the fault word of the file
-   backend: `creds_missing`, `config_missing`, `not_valid` or
-   `too_large`. The backend keeps no last good config (decision CH23
+2. A typed fault reply fails the prompt with its fault word:
+   `creds_missing`, `config_missing`, `not_valid` or `too_large`. The backend keeps no last good config (decision CH23
    rule 2).
 3. A reply line over the cap is `too_large`, and the backend closes the
    link before the rest. A reply that is not a `FamilyStateReply`, or
@@ -127,18 +120,16 @@ to `rust/crates/wire/vectors/guest.json`.
 
 Each LiteLLM request and each `ch` request reads the creds of the latest
 pull. Each render of a session reads the config of that session's last
-pull. A creds fault fails the prompt. A config fault keeps the last good
-config, and `pulled.stale` names the fault at the first pull that fails.
+pull.
 
 `model.follow` switches the model when the pulled alias differs
 (decisions CH5c, CH5c-2). It reads the new alias's limits with the key of
 the same pull, and replaces the `litellm` provider in Flue with
 `setProvider`. The provider keeps each alias it has served. Flue resolves
 the model when a submission starts, so a turn that runs keeps its model,
-and the next prompt of each session gets the new one. Under CH the vmm holds the
+and the next prompt of each session gets the new one. The vmm holds the
 `state` reply until `model_live_at` (decision CH31 rule 1), so the agent
-waits for nothing. On sbx a config edit never reaches a running sandbox
-(decision CH52 rule 1), so the alias stays the alias of the start.
+waits for nothing.
 
 `readModelLimits` reads the alias's `max_input_tokens` and
 `max_output_tokens` from LiteLLM's `GET /v1/model/info`, with the family
@@ -150,27 +141,23 @@ and the facade writes the fault to stderr. A router alias has no window of
 its own: the LiteLLM config sets it in the alias's `model_info`.
 
 Each step gives a typed refusal, not an exception. The store of
-`start()` is `<AGENT_SESSIONS_DIR>/flue.db` on sbx and `FLUE_DB` under
-CH. The facade writes the names in `composed.skippedSkills` to stderr.
+`start()` is `FLUE_DB`. The facade writes the names in
+`composed.skippedSkills` to stderr.
 
 ## Environment the agent expects
 
-On sbx `src/config.ts` reads each variable one time, at process start,
-into one `FamilyConfig`. A fault gives one refusal. The refusal names the
-variable or the field, never the value. Under CH the agent reads none of
-them, and a set one has no effect (`src/guest-start.ts`, decisions CH80,
-CH81 rule 5):
+The agent reads no `AGENT_*` variable, and a set one has no effect
+(`src/guest-start.ts`, decisions CH80, CH81 rule 5). The env gives only
+the tool env. The store, the workspace and the planes are fixed values
+of the guest:
 
-| Variable | Meaning | Absent | Under CH |
-|---|---|---|---|
-| `AGENT_SESSIONS_DIR` | the sessions directory, for `flue.db` | `mount_dir_unset` | `FLUE_DB` and `WORKSPACE` on the session disk |
-| `AGENT_CRED_DIR` | the credential directory, for `creds.json` | `mount_dir_unset` | the start pull |
-| `AGENT_FAMILY_CONFIG_DIR` | the family config directory | `mount_dir_unset` | the start pull |
-| `AGENT_CONTROL_DIR` | the control directory | `mount_dir_unset` | none: no lock (decisions CH5d, CH19) |
-| `AGENT_INDEX_ROOT` | the `library/` index store | no index | none: no VM reads the index (decision CH4d) |
-| `AGENT_SANDBOX` | the sandbox id | `sandbox_unset` | none: the session id is `CRECHE_SESSION_ID` |
-| `AGENT_PEP_URL` | the URL of the chaperone | `plane_unset` | `http://127.0.0.1:8300` |
-| `AGENT_LITELLM_BASE_URL` | the base URL of LiteLLM | `plane_unset` | `http://127.0.0.1:4000` |
+| Value | Source |
+|---|---|
+| the store | `FLUE_DB`, on the session disk |
+| the workspace | `WORKSPACE`, on the session disk |
+| the creds and the config | the start pull on the family-state socket |
+| the chaperone | `http://127.0.0.1:8300`, which guest init splices to the host |
+| LiteLLM | `http://127.0.0.1:4000`, which guest init splices to the host |
 
 A credential is a `Secret` (`src/secret.ts`). Only the `auth` of the `ch`
 connection and the `auth` of the LiteLLM provider unwrap it.
@@ -193,24 +180,13 @@ file's line count. A new name fails CI until someone picks a list.
 
 ## Known gaps
 
-- The file backend fails a prompt only for `creds.json`. For `config/`
-  it keeps the last good config and logs one stderr line (decision CH53
-  rule 2). On sbx a config edit leaves the mount of `config/` dead until
-  the sandbox is made again (decision CH52 rule 1), so a config edit
-  never reaches a running sandbox. Under CH the vmm reply has no such
-  fallback (`src/family-state.ts`).
-- On sbx a skill gets its supporting files at start. The family state
-  carries only the text of each `SKILL.md`. A skill whose text changes
-  after the start has no supporting files until the facade starts again.
-  Under CH the start is a pull too, so no skill has supporting files.
-  caregiver writes no supporting file today (`src/skills.ts`).
+- The family state carries only the text of each `SKILL.md`, so no
+  skill has supporting files. caregiver writes no supporting file today
+  (`src/skills.ts`).
 - After a model alias change, a failed limits read falls back to the
   128000-token window and stays cached until the next alias change, as
   at start. A short LiteLLM fault at the change pins the fallback for
   that alias until a restart or another edit (`src/litellm.ts`).
-- Contract 03 §7 gives the two plane URLs as fixed values. The playpen
-  takes the URL of its build for a plane variable that is absent or not
-  valid. The agent has no build URL, so it refuses (`src/config.ts`).
 - The plane grammar has no vector. `test/planes.test.ts` holds a copy of
   the tables of the tests of the Rust type `PlaneUrl`, and no check
   compares the two copies.
@@ -223,18 +199,14 @@ file's line count. A new name fails CI until someone picks a list.
   chaperone's text.
 - Flue gives the output of a `useTool` tool to the model as JSON text. A
   string output arrives in quotes, with each line break as `\n`. The
-  untrusted frame of `index_search` arrives in that form too. An MCP
-  result arrives as plain text.
-- No contract names the embedding endpoint of `index_search`. Q38 drops
-  `embed` from the chaperone. The agent takes no endpoint, so the vector
-  half refuses with one note and the words half serves
-  (`src/query-embed.ts`).
+  untrusted frame of `codemode` arrives in that form too. An MCP result
+  arrives as plain text.
 - Contract 01 §3.8 names other `sandbox_tools` (`find`, `ls`,
   `codemode`), a default of `read`, `grep`, `find`, `ls`, and `shell` as
   the only door to `bash`. The owner's decision for row 6: Flue's six
-  names, an empty default, and a refusal for any other name
-  (`runtime_not_valid`). `shell` is read and grants nothing
-  (`src/runtime-config.ts`).
+  names, an empty default, and a refusal for any other name. The vmm
+  refuses such a `runtime.json` as `not_valid`. The pull carries no
+  `shell`, so `shell` grants nothing (`src/runtime-config.ts`).
 - With a granted sandbox tool, Flue attaches `local()` at the workspace.
   Flue then puts the workspace's `AGENTS.md` and a directory listing in
   the prompt, and offers each skill under `<workspace>/.agents/skills/`.
@@ -244,6 +216,6 @@ file's line count. A new name fails CI until someone picks a list.
   internal to Flue. So each script opens its own MCP client on the `ch`
   definition (`src/codemode.ts`), with Flue's client package at Flue's
   pin. The script gets the chaperone's names, `tools.<upstream>__<tool>`.
-- The facade chooses the workspace of the granted sandbox tools:
-  `$AGENT_SESSIONS_DIR/workspace`. The playpen gave `coding-sandbox` one
-  directory for each chat. The agent has no chat id (plan risk 6).
+- The workspace of the granted sandbox tools is `WORKSPACE`, one for the
+  VM. The playpen gave `coding-sandbox` one directory for each chat. The
+  agent has no chat id (plan risk 6).

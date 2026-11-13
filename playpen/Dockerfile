@@ -1,7 +1,7 @@
 # agent-sandbox: the image every family's microVM runs.
 #
 # It holds Node, ripgrep and the ACP facade with the agent module it
-# imports: `creche-facade` and `acp-relay` on PATH. Nothing else. There is no
+# imports: `creche-facade` on PATH. Nothing else. There is no
 # ingress into a sandbox, so whatever is not in this image and not reachable
 # through the chaperone or the family's egress allowlist does not exist for
 # the agent.
@@ -70,13 +70,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ripgrep ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# The facade. Each shim is a program that the host names in `sbx exec`.
+# The facade. guest init runs the shim at `FACADE_PROGRAM`
+# (rust/crates/wire/src/guest.rs).
 COPY --from=build /opt/creche-facade /opt/creche-facade
-RUN for name in creche-facade acp-relay; do \
-      printf '#!/bin/sh\nexec node /opt/creche-facade/dist/src/bin/%s.js "$@"\n' "$name" \
-        > "/usr/local/bin/$name" \
-      && chmod 0755 "/usr/local/bin/$name"; \
-    done
+RUN printf '#!/bin/sh\nexec node /opt/creche-facade/dist/src/bin/creche-facade.js "$@"\n' \
+      > /usr/local/bin/creche-facade \
+    && chmod 0755 /usr/local/bin/creche-facade
 
 # The mount points guest init needs on the read-only root disk (CH62
 # rules 4 and 5). It mounts the session disk at /var/lib/creche/session
@@ -98,21 +97,16 @@ ENV NODE_ENV=production
 ENV HOME=/root
 ENV TMPDIR=/tmp
 
-# Fail the BUILD, not the first switch, when a program cannot start. The four
-# mount variables name directories that do not exist, and AGENT_SANDBOX is
-# absent: the facade then exits 2 and writes exactly one stderr line,
-# `creche-facade: sandbox_unset`, before it opens anything. The build fails
-# on any other status or any other stderr text, an empty one included.
-# That proves the tree loads under this Node.
-RUN err="$(AGENT_SESSIONS_DIR=/nonexistent/sessions AGENT_CRED_DIR=/nonexistent/creds \
-      AGENT_FAMILY_CONFIG_DIR=/nonexistent/config AGENT_CONTROL_DIR=/nonexistent/control \
-      creche-facade </dev/null 2>&1 >/dev/null)"; \
+# Fail the BUILD, not the first start, when the facade cannot start. With no
+# CRECHE_SESSION_ID the facade exits 17 and writes exactly one stderr line,
+# `creche-facade: CRECHE_SESSION_ID is not set`, before it opens anything.
+# The build fails on any other status or any other stderr text, an empty
+# one included. That proves the tree loads under this Node.
+RUN err="$(creche-facade </dev/null 2>&1 >/dev/null)"; \
     status=$?; \
-    if [ "$status" -ne 2 ] || [ "$err" != "creche-facade: sandbox_unset" ]; then \
+    if [ "$status" -ne 17 ] || [ "$err" != "creche-facade: CRECHE_SESSION_ID is not set" ]; then \
       printf 'creche-facade: exit %s, stderr:\n%s\n' "$status" "$err" >&2; exit 1; \
     fi
-# No facade listens in a build, so the relay exits 1.
-RUN acp-relay </dev/null; [ "$?" = "1" ]
 
 # The image env for guest init, because a root disk carries no image config
 # (CH7-7, CH49): playpen/bin/creche-env-write. The list names every variable

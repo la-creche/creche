@@ -7,8 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { FakeCh } from "../../agent/test/fake-ch.js";
 import { FakeModel } from "../../agent/test/fake-model.js";
-import { FIXTURE_TOKEN, swapConfig } from "../../agent/test/family.js";
-import { facadeEnv } from "./facade-process.js";
+import { BARE_CONFIG, FIXTURE_TOKEN, stateLine } from "../../agent/test/fake-vmm.js";
 import { servedFamily } from "./served-family.js";
 
 const NEW_ALIAS = "code-router";
@@ -18,12 +17,10 @@ const FALLBACK_LINE = "model other limits not read (alias_absent); window 128000
 const ch = new FakeCh(FIXTURE_TOKEN);
 const model = new FakeModel([{ text: "Done." }]);
 model.modelInfo = { data: [{ model_name: NEW_ALIAS, model_info: { max_input_tokens: 64000, max_output_tokens: 4096 } }] };
-const env = facadeEnv({ pepUrl: await ch.start(), litellmUrl: await model.start() });
-const configDir = String(env["AGENT_FAMILY_CONFIG_DIR"]);
-const served = await servedFamily(env);
+const served = await servedFamily({ pepUrl: await ch.start(), litellmUrl: await model.start() });
 
 afterAll(async () => {
-  await served.runtime?.stop();
+  await served.stop();
   await model.stop();
   await ch.stop();
 });
@@ -40,7 +37,7 @@ describe("the model at the next prompt", () => {
   it("calls the new alias with its limits after a model_alias edit", async () => {
     expect(await prompt()).toEqual({ stopReason: "end_turn" });
 
-    swapConfig(configDir, { "runtime.json": JSON.stringify({ model_alias: NEW_ALIAS }) });
+    served.reply = stateLine({ ...BARE_CONFIG, model_alias: NEW_ALIAS });
     expect(await prompt()).toEqual({ stopReason: "end_turn" });
 
     expect(model.seen.map((seen) => [seen.model, seen.maxTokens])).toEqual([
@@ -51,7 +48,7 @@ describe("the model at the next prompt", () => {
   });
 
   it("falls back to the 128000-token window when the limits do not read, with one stderr line", async () => {
-    swapConfig(configDir, { "runtime.json": JSON.stringify({ model_alias: "other" }) });
+    served.reply = stateLine({ ...BARE_CONFIG, model_alias: "other" });
     const answers = [await prompt(), await prompt()];
 
     expect(answers).toEqual([{ stopReason: "end_turn" }, { stopReason: "end_turn" }]);

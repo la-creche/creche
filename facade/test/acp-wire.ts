@@ -1,6 +1,6 @@
 // One in-process ACP link: the facade's app on a stream that the test
 // writes, read back line by line. Every line passes the facade's own strict
-// writer, as on stdio.
+// writer, as on each connection of the relay socket.
 
 import { PassThrough } from "node:stream";
 

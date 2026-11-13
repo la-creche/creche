@@ -32,30 +32,23 @@ which is the default command of the row. A run of the first one must leave
 a store that the second one updates, and the reverse. `run_reference` runs
 the reference, and `store_content` gives what one store holds, so a test
 compares the stores of two index directories for one corpus.
-
-A third program reads a store: the bridge of the agent module
-(`agent/src/index-store.ts`), with the SQLite of Node. `read_as_bridge`
-runs `reader_store.mjs`, which holds the statements of the bridge.
 """
 
 from __future__ import annotations
 
 import contextlib
-import json
 import math
 import os
 import re
 import shutil
 import sqlite3
-import stat
 import struct
-import subprocess
 import unicodedata
 from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Final, cast
 from urllib.parse import quote
 
 import sqlite_vec
@@ -164,17 +157,6 @@ REFERENCE: Final = "library-reference"
 #: updates it.
 BY_REFERENCE: Final = "reference"
 JUDGED: Final = "judged"
-
-#: The program that reads a store as the bridge reads it, and its name in
-#: the report of a failed test.
-READER_SCRIPT: Final = "reader_store.mjs"
-READER: Final = "store-reader"
-
-#: How long the question to `node` about its SQLite module may take.
-_NODE_PROBE_S: Final = 30.0
-
-#: The mode bits that let a program write a file, or make a file in a directory.
-_WRITE_BITS: Final = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
 
 #: The tables whose statement `store_content` holds. `chunks_vec` is not one
 #: of them: contract 03 §7.3 rule 6 forbids a reader to use that table, so
@@ -389,28 +371,6 @@ def _reader(path: Path, vec: Vec = Vec.ABSENT) -> Generator[sqlite3.Connection]:
         yield conn
     finally:
         conn.close()
-
-
-@contextlib.contextmanager
-def _read_only(store: Path) -> Generator[None]:
-    """Take the write permission from one store and from its directory, for one reader.
-
-    The bridge reads an index over a mount that it cannot write. SQLite can
-    then make no file beside the store. A store that needs such a file
-    reads well in a directory of a test and fails on a host. A store in
-    WAL mode is one: its reader makes two files. The permission comes back
-    when the reader ends, so the teardown can remove the root.
-    """
-    modes = [(path, stat.S_IMODE(path.stat().st_mode)) for path in (store, store.parent)]
-
-    try:
-        for path, mode in modes:
-            path.chmod(mode & ~_WRITE_BITS)
-
-        yield
-    finally:
-        for path, mode in modes:
-            path.chmod(mode)
 
 
 @dataclass(frozen=True, slots=True)
@@ -755,39 +715,6 @@ class LibraryStack:
         """Let the stand-in answer the call that it holds."""
         untune(self.tree, TEI, TEI_HOLD_EMBED)
 
-    def read_as_bridge(self, store: Path, match: str, limit: int) -> dict[str, Any]:
-        """What the statements of the bridge give for one store, through the SQLite of Node.
-
-        `match` is an FTS5 query, and `limit` is the most rows that the
-        query gives. The docstring of `reader_store.mjs` has the keys of the
-        answer. The reader runs on a store that no program can write, in a
-        directory that no program can write: `_read_only` says why.
-
-        The store must be alone in its directory. A reader before this one
-        can leave a file there, and the reader of the bridge then finds a
-        file that a mount of a sandbox does not have. So another file is an
-        error, before the reader runs.
-        """
-        beside = sorted(name for name in os.listdir(store.parent) if name != STORE_FILE)
-
-        if beside:
-            raise ProcError(
-                f"{store.parent} also holds {beside}. Another reader opened the store first, "
-                "or the store needs a file beside it"
-            )
-
-        words = ["node", str(reader_script()), str(store), match, str(limit)]
-
-        with _read_only(store):
-            done = self.supervisor.run(READER, words, _path_env(), self.tree.root, INDEX_DEADLINE_S)
-
-        if done.exit_code != 0:
-            raise ProcError(f"the reader of {store} exited {done.exit_code}\n{done.stderr}")
-
-        answer: dict[str, Any] = json.loads(done.stdout)
-
-        return answer
-
     def _command(
         self, command: StartCommand, args: Sequence[str], env: Mapping[str, str] | None
     ) -> tuple[list[str], dict[str, str]]:
@@ -828,30 +755,6 @@ def _inputs_of(body: object) -> list[str]:
             return cast("list[str]", inputs)
 
     raise ProcError(f"an embed call of {TEI} has the body {body!r}")
-
-
-def reader_script() -> Path:
-    """The program that reads a store with the statements of the bridge."""
-    return Path(__file__).resolve().parent / READER_SCRIPT
-
-
-def node_has_sqlite() -> bool:
-    """Whether the `node` of the run has the module `node:sqlite`. The reader needs it."""
-    words = ["node", "--eval", "require('node:sqlite')"]
-
-    try:
-        probe = subprocess.run(
-            words,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            env=_path_env(),
-            timeout=_NODE_PROBE_S,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-
-    return probe.returncode == 0
 
 
 def copy_store(store: Path, index_dir: Path) -> Path:

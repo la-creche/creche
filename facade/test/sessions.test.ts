@@ -16,7 +16,6 @@ import { faux, Probe, startFlue } from "./faux-flue.js";
 const INVALID_PARAMS = -32602;
 const METHOD_NOT_FOUND = -32601;
 const RESOURCE_NOT_FOUND = -32002;
-const NO_HOOKS = { onBeat: () => undefined, onShutdown: () => undefined };
 
 const flue = await startFlue();
 afterAll(() => flue.stop());
@@ -28,7 +27,7 @@ let wire: Wire;
 beforeEach(() => {
   id = randomUUID();
   session = new OneSession(Probe, id);
-  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store })));
+  wire = new Wire(facadeApp(sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store })));
 });
 
 function load(sessionId: string, cwd = "/work"): ReturnType<Wire["request"]> {

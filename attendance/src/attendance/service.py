@@ -57,7 +57,7 @@ from .family_status import FamilyStatus, StatusReader, check_may_serve, served_k
 from .faults import FaultReporter
 from .ids import SESSION_CWD_MAX, SessionPrefix, is_session_cwd, is_session_id, new_ulid
 from .models import DEFAULT_DEADLINE_S, TriggerKind
-from .paths import outcome_file, sandbox_sessions_mount
+from .paths import outcome_file, session_cwd
 from .queueing import MAX_QUEUED_TURNS, JobQueue
 from .requests import DelegateRequest, DispatchRequest, JobQuery, TriggerRequest
 from .tasks import report_failure
@@ -338,7 +338,7 @@ class SessionService:
             self._job_prompts -= 1
 
     def _session_cwd(self, family: str) -> str:
-        """The `cwd` of one session: the family's sessions mount.
+        """The `cwd` of one session: the family's sessions directory.
 
         `attendance` chooses it (contract 02 §6 rule 1). The row keeps it as
         a display value, never a guest path (decision CH21-4). Contract 01
@@ -347,7 +347,7 @@ class SessionService:
         config makes the cwd, so a cwd that the wire refuses (decision CH21)
         is an internal fault.
         """
-        cwd = sandbox_sessions_mount(self._config.sessions_root, family)
+        cwd = session_cwd(self._config.sessions_root, family)
 
         if not is_session_cwd(cwd):
             raise ApiError(

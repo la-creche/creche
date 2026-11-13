@@ -11,6 +11,7 @@ import { read } from "agent/wire-read";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import { facadeApp } from "../src/acp.js";
+import type { SessionService } from "../src/acp.js";
 
 import { CONTROL_LINE_CAP, FACADE_STOP_WAIT_MS, LOCAL_LINK_SOCKET } from "../src/guest.js";
 import { FLUE_STOP_MS, guestLink, LocalLink, turnLine } from "../src/local-link.js";
@@ -26,8 +27,8 @@ import type { GuestInit } from "./guest-init.js";
 
 const STOP = '{"stop":{}}\n';
 
-/** A beat deadline that a CH supervisor must not keep. */
-const SHORT_DEADLINE_MS = 30;
+/** How long a test watches a supervisor that serves. */
+const SERVE_WATCH_MS = 150;
 
 const flue = await startFlue();
 afterAll(() => flue.stop());
@@ -36,6 +37,11 @@ afterEach(closeGuestInits);
 
 function link(path: string, said: string[], stopMs = FLUE_STOP_MS): LocalLink {
   return new LocalLink(path, stopMs, (text) => said.push(text));
+}
+
+/** The one session of a supervisor on `facade`. No supervisor test prompts it. */
+function sessionsOn(facade: LocalLink): SessionService {
+  return sessionService({ agent: Probe, agentName: "Probe", sessionId: randomUUID(), link: facade, store: flue.store });
 }
 
 /** Handlers that count the stop lines. */
@@ -101,7 +107,7 @@ describe("a prompt", () => {
     facade.open(NO_HANDLERS);
     const id = randomUUID();
     const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: facade, store: flue.store });
-    const wire = new Wire(facadeApp({ onBeat: () => undefined, onShutdown: () => undefined }, service));
+    const wire = new Wire(facadeApp(service));
     // The start goes up while Flue runs the turn, not after: the vmm must
     // see a running turn (decisions CH19 rule 6, CH32 rule 6).
     let duringTurn = "";
@@ -252,10 +258,9 @@ describe("the supervisor", () => {
     const facade = link(guest.path, []);
     const served = new Promise<LocalLink | null>((resolve) => {
       void runSupervisor({
-        supervision: { kind: "ch", link: facade },
-        stdout: { writeLine: () => undefined, exit: () => undefined },
+        link: facade,
+        exit: () => undefined,
         say: () => undefined,
-        deadlineMs: 60_000,
         serve: async (given) => {
           resolve(given);
           return { ok: false, detail: "FIXTURE-NO-FLUE" };
@@ -283,17 +288,13 @@ async function supervise(
   const facade = link(path ?? guest.path, said, stopMs);
   const exited = new Promise<number>((resolve) => {
     void runSupervisor({
-      supervision: { kind: "ch", link: facade },
-      stdout: {
-        writeLine: () => undefined,
-        exit: (code) => {
-          events.push(`exit ${code}`);
-          resolve(code);
-        },
+      link: facade,
+      exit: (code) => {
+        events.push(`exit ${code}`);
+        resolve(code);
       },
       say: (text) => said.push(text),
-      deadlineMs: 60_000,
-      serve: async () => ({ ok: true, serving: { runtime, sessions: null } }),
+      serve: async () => ({ ok: true, serving: { runtime, sessions: sessionsOn(facade) } }),
       socketPath: null,
     });
   });
@@ -301,31 +302,28 @@ async function supervise(
   return { guest, facade, events, said, exited };
 }
 
-// Decisions CH5d, CH19, CH80: under CH no beat deadline runs and no stdio
-// serves, so only the stop line and a lost link end the facade.
-describe("the CH supervisor", () => {
-  it("keeps serving past the beat deadline, then exits 0 at the stop line", async () => {
+// Decisions CH5d, CH19, CH80: no beat deadline runs and no stdio serves,
+// so only the stop line and a lost link end the facade.
+describe("the supervisor that serves", () => {
+  it("keeps serving until the stop line, then exits 0", async () => {
     const guest = await guestInit();
     const said: string[] = [];
     const events: string[] = [];
+    const facade = link(guest.path, said);
     const exited = new Promise<number>((resolve) => {
       void runSupervisor({
-        supervision: { kind: "ch", link: link(guest.path, said) },
-        stdout: {
-          writeLine: (line) => events.push(`stdout ${line}`),
-          exit: (code) => {
-            events.push(`exit ${code}`);
-            resolve(code);
-          },
+        link: facade,
+        exit: (code) => {
+          events.push(`exit ${code}`);
+          resolve(code);
         },
         say: (text) => said.push(text),
-        deadlineMs: SHORT_DEADLINE_MS,
-        serve: async () => ({ ok: true, serving: { runtime: null, sessions: null } }),
+        serve: async () => ({ ok: true, serving: { runtime: null, sessions: sessionsOn(facade) } }),
         socketPath: null,
       });
     });
     const peer = await guest.peer();
-    await new Promise((resolve) => setTimeout(resolve, SHORT_DEADLINE_MS * 5));
+    await new Promise((resolve) => setTimeout(resolve, SERVE_WATCH_MS));
 
     expect(events).toEqual([]);
     peer.write(STOP);

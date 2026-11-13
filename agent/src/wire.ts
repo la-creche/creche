@@ -1100,10 +1100,10 @@ export const wire = {
     },
     "FamilyConfig": {
       "additionalProperties": false,
-      "description": "The family's part of `config/` that the guest reads: what caregiver writes\nin `write_config` (`steps.py:229-249`). Instructions, skills, sandbox\ntools and the model change at the next prompt of a running session\n(decision CH5c).\n\n`shell` of `runtime.json` is not here: the agent reads it and grants\nnothing with it (`agent/src/runtime-config.ts:18`).\n\n`model_live_at` of `runtime.json` is not here either. The vmm holds the\nreply on it (`FamilyStateReply`).",
+      "description": "The family's part of `config/` that the guest reads: what caregiver writes\nin `write_config` (`steps.py:229-249`). Instructions, skills, sandbox\ntools and the model change at the next prompt of a running session\n(decision CH5c).\n\n`shell` of `runtime.json` is not here. The vmm refuses a `runtime.json`\nwith no `shell`, and the pull carries none, so `shell` grants nothing.\n\n`model_live_at` of `runtime.json` is not here either. The vmm holds the\nreply on it (`FamilyStateReply`).",
       "properties": {
         "instructions": {
-          "description": "The text of `config/instructions.md`. The agent trims it, and an empty\ntext gives no instructions, as today (`agent/src/agent.ts:72-85`).",
+          "description": "The text of `config/instructions.md`. The agent trims it, and an empty\ntext gives no instructions (`agent/src/family-state.ts` `liveConfig`).",
           "type": "string"
         },
         "model_alias": {

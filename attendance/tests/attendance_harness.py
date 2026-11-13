@@ -87,10 +87,10 @@ def write_status(
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def make_config(tmp_path: Path) -> Config:
-    """A config rooted entirely inside one temporary directory."""
+def make_config(tmp_path: Path, sessions_root: Path | None = None) -> Config:
+    """A config rooted inside one temporary directory, or with `sessions_root` when given."""
     return Config(
-        sessions_root=tmp_path / "sessions",
+        sessions_root=tmp_path / "sessions" if sessions_root is None else sessions_root,
         state_root=tmp_path / "state",
         socket_path=tmp_path / "attendance.sock",
         bind=Bind.SOCKET_ONLY,

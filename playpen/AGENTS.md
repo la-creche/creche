@@ -7,18 +7,17 @@ here too.
 
 `Dockerfile` builds the image of every family's microVM. It holds Node 24,
 ripgrep and the ACP facade (`facade/AGENTS.md`) with the agent module it
-imports (`agent/AGENTS.md`). Two shims put the facade's two bins on `PATH`:
+imports (`agent/AGENTS.md`). One shim puts the facade's one bin on `PATH`:
 
 | Program | Runs | The build proves |
 |---|---|---|
-| `creche-facade` | `node /opt/creche-facade/dist/src/bin/creche-facade.js` | exit 2 and one stderr line with no `AGENT_SANDBOX` |
-| `acp-relay` | `node /opt/creche-facade/dist/src/bin/acp-relay.js` | exit 1 with no facade |
+| `creche-facade` | `node /opt/creche-facade/dist/src/bin/creche-facade.js` | exit 17 and one stderr line with no `CRECHE_SESSION_ID` |
 
 The build stage installs `facade/` and `agent/` from the facade's frozen
 lockfile, builds both and runs `pnpm deploy --prod` to `/opt/creche-facade`.
 The Flue pin is the one in `facade/pnpm-lock.yaml`. The image fixes no
-address: a sandbox reads the two plane URLs from the env file that
-`caregiver` writes. The `python` flavor adds pandas, numpy and matplotlib.
+host address: the facade reaches the two planes on guest loopback, which
+guest init splices to the host. The `python` flavor adds pandas, numpy and matplotlib.
 
 The `python` flavor also adds a second venv, `/opt/test`. It has CPython
 3.12, `pytest`, and the locked test dependencies of the Python workspace.

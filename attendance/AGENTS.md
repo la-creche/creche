@@ -246,16 +246,16 @@ conversation and the one-writer rule (Flue's queue).
     of that deadline (contract 04 §7.5). Any other prompt gets its whole
     deadline from the prompt, as before the vmm (`acp_jobs.py`).
 
-## Mount rules
+## The session cwd
 
-Each session's `cwd` is the sessions mount of its family. Contract 01
+Each session's `cwd` is the sessions directory of its family
+(`session_cwd` in `src/attendance/paths.py`). Contract 01
 minor 18 drops `job.caller_root` (decision CH10-10). A job runs in a VM of
 its own, dropped at job end (decisions CH1, CH21-2), so no chat gets a
 directory. No family name is in this code.
 
 1. Never name a fixed in-VM path. The `cwd` of a row is a display value,
-   never a guest path (decision CH21-4). `ATTENDANCE_SANDBOX_SESSIONS_MOUNT`
-   is the one override, and only the integration harness sets it.
+   never a guest path (decision CH21-4). Nothing rewrites it.
 
 ## Run it
 
@@ -266,7 +266,7 @@ uv run python -m attendance           # serve
 
 | Variable | Meaning |
 |---|---|
-| `ATTENDANCE_SESSIONS_ROOT` | the root of each family's sessions mount, the cwd of a job |
+| `ATTENDANCE_SESSIONS_ROOT` | the root of each family's sessions directory, the cwd of a job |
 | `ATTENDANCE_STATE_ROOT` | tokens, faults, family status, outcome records, the dispatch ledger |
 | `ATTENDANCE_SOCKET` | the Unix socket |
 | `ATTENDANCE_BIND_LAN`, `ATTENDANCE_LAN_ADDRESS`, `ATTENDANCE_LAN_PORT` | the optional TCP listener, port 8350 |

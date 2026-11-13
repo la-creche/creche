@@ -6,12 +6,12 @@ Four rules, each a silent failure if wrong:
 3. `review-inbox/` and dotted dirs are never indexed (approve-by-moving).
 4. One bad file never kills the scope: per-file errors collect, the walk
    continues.
-And a fifth: readers see the index only through an ATOMIC rename —
-the store is updated on a work copy and published with os.replace, so a
-reader in a sandbox (via virtiofs) never observes a half-written database.
-And one for the reader: every vector is written twice, to `chunks_vec`
-(sqlite-vec) and to `chunks_emb` as a plain little-endian float32 blob. The
-sandbox's `index_search` reads with node:sqlite, which cannot load sqlite-vec.
+And a fifth: the store is updated on a work copy and published with
+os.replace, an ATOMIC rename, so a reader never observes a half-written
+database.
+And a sixth: every vector is written twice, to `chunks_vec` (sqlite-vec) and
+to `chunks_emb` as a plain little-endian float32 blob. A reader that cannot
+load sqlite-vec reads the blob.
 """
 
 from __future__ import annotations

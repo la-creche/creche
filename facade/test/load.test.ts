@@ -13,8 +13,6 @@ import { sessionService } from "../src/service.js";
 import { Wire } from "./acp-wire.js";
 import { FAUX_MODEL, faux, startFlue } from "./faux-flue.js";
 
-const NO_HOOKS = { onBeat: () => undefined, onShutdown: () => undefined };
-
 const echo = defineTool({ name: "echo", description: "Answers echoed.", run: () => "echoed" });
 
 function Echoer(): string {
@@ -37,7 +35,7 @@ beforeEach(() => {
 });
 
 function link(): Wire {
-  return new Wire(facadeApp(NO_HOOKS, service));
+  return new Wire(facadeApp(service));
 }
 
 function load(wire: Wire, sessionId: string): ReturnType<Wire["request"]> {

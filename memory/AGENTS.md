@@ -201,8 +201,7 @@ PDFs of the same folders, as a second `remember` after the notes.
    process: `python -I`, an empty env, 120 seconds, and on Linux 512 MiB of
    address space and 60 CPU seconds. A PDF over 64 MiB is not read.
 3. The store takes the first 200,000 characters of each PDF (David,
-   2026-11-03). The sync prints how many PDFs it cut. `index_search` still
-   finds the rest of a long PDF.
+   2026-11-03). The sync prints how many PDFs it cut.
 4. A PDF with no text, such as a scan that the OCR job has not processed, is
    not a document. A PDF that cannot be read keeps what the store holds. A
    removed PDF is forgotten.

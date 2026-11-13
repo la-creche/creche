@@ -12,8 +12,8 @@
 # Every default this process needs (the attendance token file, the LAN
 # bind, the registry root, the webhook token directory) is a real path
 # already established elsewhere in this repo, so this unit sets no
-# environment beyond what sbx itself needs. See door-trigger/README.md's
-# configuration table to override any of them.
+# environment beyond the two lines of every user unit. See
+# door-trigger/README.md's configuration table to override any of them.
 #
 # Reload means "look now": SIGHUP refreshes the route table without
 # waiting for the next poll, best-effort (door-trigger/AGENTS.md — signal
@@ -37,9 +37,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=/opt/creche
-# sbx panics without both, and this door's own dependency tree shells out
-# to it nowhere directly — every user unit in this repo carries them
-# regardless (systemd/AGENTS.md).
+# Every user unit in this repo carries both (systemd/AGENTS.md).
 Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
 # The site's AGENT_LAN_ADDRESS: the webhook listener's bind.

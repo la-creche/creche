@@ -1,19 +1,16 @@
 #!/usr/bin/env node
-// `creche-facade`, the ACP agent of one family sandbox. On sbx attendance
-// starts it with `sbx exec` and speaks ACP v1 over its stdio. Under CH
-// guest init starts it, and ACP comes on the relay socket alone.
+// `creche-facade`, the ACP agent of one family VM. guest init starts it,
+// and ACP comes on the relay socket alone.
 //
 // This file is the composition root and nothing else.
 
 import { limitsLine, readFamily, serveFamily } from "../family.js";
 import { RELAY_SOCKET } from "../guest.js";
-import { relaySocketPath } from "../relay.js";
 import { claimStdout, say } from "../stdio.js";
 import { runSupervisor } from "../supervisor.js";
-import { BEAT_DEADLINE_MS } from "../vectors.js";
 
-const stdout = claimStdout();
-const read = await readFamily(process.env, process.stdin);
+const exit = claimStdout();
+const read = await readFamily(process.env);
 
 if (read.ok) {
   const { family } = read;
@@ -24,14 +21,13 @@ if (read.ok) {
   say(limitsLine(family.limits));
 
   void runSupervisor({
-    supervision: family.supervision,
-    stdout,
+    link: family.link,
+    exit,
     say,
-    deadlineMs: BEAT_DEADLINE_MS,
     serve: (link) => serveFamily(family, link),
-    socketPath: family.mode.kind === "ch" ? RELAY_SOCKET : relaySocketPath(),
+    socketPath: RELAY_SOCKET,
   });
 } else {
   say(read.detail);
-  stdout.exit(read.exitCode);
+  exit(read.exitCode);
 }

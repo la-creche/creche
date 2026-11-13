@@ -34,7 +34,7 @@ from proc_chaperone_pin import BuildError, NoToolchain, build_pinned
 from proc_chaperone_rs import ChaperoneRsStack
 from proc_exit import ExitStack
 from proc_harness import TEST_LIMIT_S, Supervisor, end_leaked_groups, time_limit
-from proc_library import LibraryStack, node_has_sqlite
+from proc_library import LibraryStack
 from proc_report import describe, end_processes
 from proc_services import (
     KEEP_ROOTS_ENV,
@@ -347,18 +347,6 @@ def exit_stack(tree: Tree, supervisor: Supervisor, chaperone_rs_binary: None) ->
     stack.start()
 
     return stack
-
-
-@pytest.fixture(scope="session")
-def node_sqlite() -> None:
-    """The `node` of the run can read a store. A test that needs it and has none skips.
-
-    The reader of a store is a Node program that imports `node:sqlite`, as
-    the index reader of the agent module does. A Node with no such module cannot run
-    it.
-    """
-    if not node_has_sqlite():
-        _skip("the `node` on PATH has no `node:sqlite` module, and the reader of a store needs it")
 
 
 def _skip(reason: str) -> NoReturn:

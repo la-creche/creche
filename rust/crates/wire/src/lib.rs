@@ -1571,9 +1571,10 @@ object_only!(SandboxGrant);
 /// refused, as `creche_wire.read` refuses it. The order is kept, as the
 /// generated Python model keeps it.
 ///
-/// The vmm writes the skills in ascending name order, the order the agent
-/// loads them in today (`agent/src/skills.ts:122`). A reader compares two
-/// sets of skills by name, not by order, as `==` here and a Python `dict` do.
+/// The vmm writes the skills in ascending name order. The agent loads them
+/// in the order of the wire (`agent/src/family-state.ts` `liveConfig`). A
+/// reader compares two sets of skills by name, not by order, as `==` here
+/// and a Python `dict` do.
 #[derive(Debug, Clone)]
 pub struct FamilySkills(Vec<(SkillName, String)>);
 
@@ -1647,8 +1648,8 @@ impl schemars::JsonSchema for FamilySkills {
 /// tools and the model change at the next prompt of a running session
 /// (decision CH5c).
 ///
-/// `shell` of `runtime.json` is not here: the agent reads it and grants
-/// nothing with it (`agent/src/runtime-config.ts:18`).
+/// `shell` of `runtime.json` is not here. The vmm refuses a `runtime.json`
+/// with no `shell`, and the pull carries none, so `shell` grants nothing.
 ///
 /// `model_live_at` of `runtime.json` is not here either. The vmm holds the
 /// reply on it (`FamilyStateReply`).
@@ -1657,7 +1658,7 @@ impl schemars::JsonSchema for FamilySkills {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct FamilyConfig {
     /// The text of `config/instructions.md`. The agent trims it, and an empty
-    /// text gives no instructions, as today (`agent/src/agent.ts:72-85`).
+    /// text gives no instructions (`agent/src/family-state.ts` `liveConfig`).
     pub instructions: String,
     /// The alias of the model.
     pub model_alias: ModelAlias,

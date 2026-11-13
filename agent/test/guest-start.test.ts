@@ -12,7 +12,7 @@ import { readGuestStart } from "../src/guest-start.js";
 import { FLUE_DB, WORKSPACE } from "../src/guest.js";
 import { revealSecret } from "../src/secret.js";
 import { closeFakeVmms, CONFIG, fakeVmm, replying, sayer, SKILL, socketPath, stateLine } from "./fake-vmm.js";
-import { familyEnv, FIXTURE_KEY, FIXTURE_TOKEN } from "./family.js";
+import { FIXTURE_KEY, FIXTURE_TOKEN } from "./family.js";
 
 const QUICK = { firstMs: 1, capMs: 4 };
 
@@ -26,7 +26,6 @@ describe("readGuestStart", () => {
     expect(start.store).toBe(FLUE_DB);
     expect(start.workspace).toBe(WORKSPACE);
     expect([start.planes.litellm.text, start.planes.pep.text]).toEqual(["http://127.0.0.1:4000", "http://127.0.0.1:8300"]);
-    expect(start.indexRoot).toBeNull();
     expect(start.toolEnv).toEqual({ MPLBACKEND: "Agg" });
     expect(start.state.config.modelAlias).toBe("chat");
     expect(start.state.config.skills.map((skill) => skill.name)).toEqual(["weather-report"]);
@@ -38,12 +37,12 @@ describe("readGuestStart", () => {
 
   it("reads no AGENT_* variable", async () => {
     const vmm = await replying(stateLine());
-    const env = { ...familyEnv({ pepUrl: "http://192.0.2.1:1", litellmUrl: "http://192.0.2.2:2" }), AGENT_INDEX_ROOT: "/nonexistent" };
+    const env = { AGENT_SESSIONS_DIR: "/nonexistent/sessions", AGENT_PEP_URL: "http://192.0.2.1:1", AGENT_LITELLM_BASE_URL: "http://192.0.2.2:2" };
     const start = await readGuestStart(env, sayer().say, vmm.path, QUICK);
 
     expect(start.store).toBe(FLUE_DB);
     expect(start.planes.pep.text).toBe("http://127.0.0.1:8300");
-    expect(start.indexRoot).toBeNull();
+    expect(start.planes.litellm.text).toBe("http://127.0.0.1:4000");
     expect(start.toolEnv).toEqual({});
   });
 

@@ -13,7 +13,6 @@ import { Wire } from "./acp-wire.js";
 import { FAUX_MODEL, faux } from "./faux-flue.js";
 import { startFlue } from "./faux-flue.js";
 
-const NO_HOOKS = { onBeat: () => undefined, onShutdown: () => undefined };
 const INVALID_PARAMS = -32602;
 const INVALID_REQUEST = -32600;
 const INTERNAL_ERROR = -32603;
@@ -38,7 +37,7 @@ let wire: Wire;
 // Each test gets a session of its own: one VM's id, on the one Flue of the file.
 beforeEach(() => {
   id = randomUUID();
-  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Echoer, agentName: "Echoer", sessionId: id, link: null, store: flue.store })));
+  wire = new Wire(facadeApp(sessionService({ agent: Echoer, agentName: "Echoer", sessionId: id, link: null, store: flue.store })));
 });
 
 function prompt(sessionId: string, text: string): ReturnType<Wire["request"]> {

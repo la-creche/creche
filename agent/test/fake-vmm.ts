@@ -7,7 +7,9 @@ import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 import { join } from "node:path";
 
-import { FIXTURE_KEY, FIXTURE_TOKEN } from "./family.js";
+/** Fixture values in the forms of the wire types `LitellmKey` and `PepToken`. */
+export const FIXTURE_KEY = "sk-FIXTURE-LITELLM-KEY";
+export const FIXTURE_TOKEN = "feedface".repeat(8);
 
 /** A valid `SKILL.md` text. */
 export const SKILL = "---\nname: weather-report\ndescription: Write a short weather report.\n---\nSearch first.\n";
@@ -21,11 +23,20 @@ export const CONFIG = {
   system_prompt: "replace",
 };
 
+/** A wire `FamilyConfig` that grants nothing: the alias `chat`, and no instructions, tool or skill. */
+export const BARE_CONFIG = {
+  instructions: "",
+  model_alias: "chat",
+  sandbox_tools: { bash: false, edit: false, glob: false, grep: false, read: false, write: false },
+  skills: {},
+  system_prompt: "append",
+};
+
 export const CREDS = { litellm_key: FIXTURE_KEY, pep_token: FIXTURE_TOKEN };
 
 /** The compact text of a `state` reply, as the vmm writes it. */
-export function stateLine(config: Readonly<Record<string, unknown>> = CONFIG): string {
-  return JSON.stringify({ state: { config, creds: CREDS } });
+export function stateLine(config: Readonly<Record<string, unknown>> = CONFIG, creds: Readonly<Record<string, unknown>> = CREDS): string {
+  return JSON.stringify({ state: { config, creds } });
 }
 
 /** The vmm end: the lines of each link, and the reply that the test gives each pull. */

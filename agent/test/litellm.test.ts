@@ -7,7 +7,7 @@ import type { ConversationStreamChunk } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { litellmModel } from "../src/litellm.js";
+import { bareAlias, FALLBACK_LIMITS, LiveModel, specOf } from "../src/litellm.js";
 import { FakeModel } from "./fake-model.js";
 import { familyConfig, FIXTURE_KEY } from "./family.js";
 
@@ -15,16 +15,11 @@ const ALIAS = "chat-default";
 const REPLY = "settled";
 
 const fake = new FakeModel([{ text: REPLY }]);
-const config = await familyConfig({ litellmUrl: await fake.start(), runtime: { model_alias: ALIAS } });
-const read = litellmModel(config);
-if (!read.ok) {
-  throw new Error(read.reason);
-}
-
-const { model } = read;
+const config = familyConfig({ litellmUrl: await fake.start() });
+const model = new LiveModel(config.planes, ALIAS, FALLBACK_LIMITS, () => config.creds);
 
 function Probe(): string {
-  useModel(model.spec);
+  useModel(specOf(ALIAS));
 
   return "Answer in one word.";
 }
@@ -35,19 +30,10 @@ afterAll(async () => {
   await fake.stop();
 });
 
-describe("litellmModel", () => {
-  it("names the model litellm/<alias>, with or without the prefix in the alias", async () => {
-    const prefixed = await familyConfig({ runtime: { model_alias: `litellm/${ALIAS}` } });
-    const second = litellmModel(prefixed);
-
-    expect(model.spec).toBe(`litellm/${ALIAS}`);
-    expect(second.ok && second.model.spec).toBe(`litellm/${ALIAS}`);
-  });
-
-  it("refuses a family with no model_alias", async () => {
-    const read = litellmModel(await familyConfig({ runtime: {} }));
-
-    expect(read).toEqual({ ok: false, reason: "model_alias_unset" });
+describe("LiveModel", () => {
+  it("names the model litellm/<alias>, with or without the prefix in the alias", () => {
+    expect(specOf(bareAlias(ALIAS))).toBe(`litellm/${ALIAS}`);
+    expect(specOf(bareAlias(`litellm/${ALIAS}`))).toBe(`litellm/${ALIAS}`);
   });
 
   it("settles one streamed answer from the fake endpoint", async () => {

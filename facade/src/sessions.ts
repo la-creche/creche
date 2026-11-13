@@ -1,5 +1,5 @@
 // The one session of the facade. A VM serves one session, and its id is the
-// host's: guest init passes it as `CRECHE_SESSION_ID` (`src/mode.ts`,
+// host's: guest init passes it as `CRECHE_SESSION_ID` (`src/session-id.ts`,
 // decisions CH1, CH25 rule 2). The session is one Flue agent instance, and
 // its ACP session id is the instance id.
 //
