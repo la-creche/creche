@@ -36,7 +36,7 @@ Each run prints the command of each service before its result line. Each
 line ends with the origin of the command: `default` or `override`.
 
 No topology starts the facade since the Cloud Hypervisor cut (plan PR CR1):
-the vmm starts it in a VM. The suite needs `node` and `git` on `PATH`.
+the vmm starts it in a VM. The suite needs `git` on `PATH`.
 Every test is marked `slow` in `conftest.py`.
 
 The scenarios of the Rust chaperone need `cargo` on `PATH` too, for the
@@ -460,8 +460,8 @@ that changes the registry first.
    - the state of a stand-in
    - an exit code
 
-   Do not read `sandboxes.json` or the `applied` directory. Each one is the
-   private state of `caregiver`.
+   Do not read the `applied` directory. It is the private state of
+   `caregiver`.
 6. Start the vmm stand-in before `caregiver`. `serve` and `delete` refuse
    to start with no `CAREGIVER_VMM_SOCKET` (decision CH20).
 
