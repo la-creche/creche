@@ -33,7 +33,7 @@ const MCP_PATH = "/mcp";
  * request. `creds` gives the current creds. The default is the start creds.
  */
 export function chaperoneConnection(
-  config: Pick<FamilyConfig, "planes" | "creds">,
+  config: FamilyConfig,
   creds: () => LiveCreds = () => config.creds,
 ): McpConnectionDefinition {
   return defineMcpConnection({

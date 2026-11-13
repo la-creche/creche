@@ -71,13 +71,10 @@ export async function testFamily(fixture: FamilyFixture = {}): Promise<TestFamil
   return Object.assign(family, { start, vmm });
 }
 
-/** The planes, the creds and the alias of `fixture`, for a test of one edge. */
+/** The planes and the creds of `fixture`, for a test of one edge. */
 export function familyConfig(fixture: FamilyFixture = {}): FamilyConfig {
-  const alias = configOf(fixture)["model_alias"];
-
   return {
     planes: planesOf(fixture),
     creds: { litellmKey: Secret.of(CREDS.litellm_key), pepToken: Secret.of(CREDS.pep_token) },
-    modelAlias: typeof alias === "string" ? alias : "",
   };
 }

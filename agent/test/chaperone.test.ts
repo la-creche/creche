@@ -9,7 +9,7 @@ import { start } from "@flue/runtime/node";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { chaperoneConnection } from "../src/chaperone.js";
-import { litellmModel } from "../src/litellm.js";
+import { FALLBACK_LIMITS, LiveModel, specOf } from "../src/litellm.js";
 import { FakeCh, gateText, GATED_TOOL, SEARCH_TOOL } from "./fake-ch.js";
 import { FakeModel } from "./fake-model.js";
 import { familyConfig, FIXTURE_TOKEN } from "./family.js";
@@ -17,20 +17,16 @@ import { familyConfig, FIXTURE_TOKEN } from "./family.js";
 const GATED = `mcp__ch__${GATED_TOOL}`;
 const SEARCH = `mcp__ch__${SEARCH_TOOL}`;
 const ARGS = { text: "hello" };
+const ALIAS = "chat";
 
 const ch = new FakeCh(FIXTURE_TOKEN);
 const fake = new FakeModel([{ tool: GATED, args: ARGS }, { text: "waiting" }]);
 const config = familyConfig({ pepUrl: await ch.start(), litellmUrl: await fake.start() });
-const read = litellmModel(config);
-if (!read.ok) {
-  throw new Error(read.reason);
-}
-
-const { model } = read;
+const model = new LiveModel(config.planes, ALIAS, FALLBACK_LIMITS, () => config.creds);
 const connection = chaperoneConnection(config);
 
 function Probe(): string {
-  useModel(model.spec);
+  useModel(specOf(ALIAS));
   useMcpConnection(connection);
 
   return "Use the tools.";

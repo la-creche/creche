@@ -10,7 +10,7 @@ import { init, useModel, useSandbox } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { litellmModel } from "../src/litellm.js";
+import { FALLBACK_LIMITS, LiveModel, specOf } from "../src/litellm.js";
 import type { SandboxToolName } from "../src/runtime-config.js";
 import { grantedSandbox } from "../src/sandbox-tools.js";
 import { readToolEnv } from "../src/tool-env.js";
@@ -18,6 +18,7 @@ import { FakeModel } from "./fake-model.js";
 import { familyConfig } from "./family.js";
 
 const GRANT: readonly SandboxToolName[] = ["read", "grep"];
+const ALIAS = "chat";
 
 async function toolNames(grant: readonly SandboxToolName[]): Promise<string[]> {
   const factory = grantedSandbox(grant, mkdtempSync(join(tmpdir(), "agent-cwd-")), {});
@@ -29,22 +30,17 @@ async function toolNames(grant: readonly SandboxToolName[]): Promise<string[]> {
 const cwd = mkdtempSync(join(tmpdir(), "agent-cwd-"));
 const fake = new FakeModel([{ text: "done" }]);
 const config = familyConfig({ litellmUrl: await fake.start() });
-const read = litellmModel(config);
-if (!read.ok) {
-  throw new Error(read.reason);
-}
-
-const { model } = read;
+const model = new LiveModel(config.planes, ALIAS, FALLBACK_LIMITS, () => config.creds);
 
 function Empty(): string {
-  useModel(model.spec);
+  useModel(specOf(ALIAS));
   useSandbox(grantedSandbox([], cwd, {}));
 
   return "Answer.";
 }
 
 function Granted(): string {
-  useModel(model.spec);
+  useModel(specOf(ALIAS));
   useSandbox(grantedSandbox(GRANT, cwd, {}));
 
   return "Answer.";

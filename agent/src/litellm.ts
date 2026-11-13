@@ -22,7 +22,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import { setProvider } from "@flue/runtime";
 import * as v from "valibot";
 
-import type { FamilyConfig, Planes } from "./config.js";
+import type { Planes } from "./config.js";
 import type { LiveCreds } from "./family-state.js";
 import { revealSecret } from "./secret.js";
 import type { Secret } from "./secret.js";
@@ -143,17 +143,6 @@ export async function readModelLimits(planes: Planes, modelAlias: string, key: S
 /** LiteLLM is the spend authority. No rate is kept here. */
 const NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
-export interface LitellmModel {
-  readonly provider: Provider;
-  /** The specifier for `useModel`: `litellm/<alias>`. */
-  readonly spec: string;
-}
-
-/** `runtime.json` names no `model_alias`, so the agent has no model. */
-export type LitellmRead =
-  | { readonly ok: true; readonly model: LitellmModel }
-  | { readonly ok: false; readonly reason: "model_alias_unset" };
-
 /**
  * The bare alias. An alias that already carries the `litellm/` prefix loses
  * it, so a `caregiver` that writes either form lands on the same model, as
@@ -194,20 +183,6 @@ function providerOf(planes: Planes, models: ReadonlyMap<string, ModelLimits>, cr
     })),
     api: openAICompletionsApi(),
   });
-}
-
-/** `creds` gives the current creds, read at each request. The default is the start creds. */
-export function litellmModel(
-  config: FamilyConfig,
-  limits: ModelLimits = FALLBACK_LIMITS,
-  creds: () => LiveCreds = () => config.creds,
-): LitellmRead {
-  const alias = bareAlias(config.modelAlias);
-  if (alias.length === 0) {
-    return { ok: false, reason: "model_alias_unset" };
-  }
-
-  return { ok: true, model: { provider: providerOf(config.planes, new Map([[alias, limits]]), creds), spec: specOf(alias) } };
 }
 
 /**

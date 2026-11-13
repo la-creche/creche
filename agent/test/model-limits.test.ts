@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import { FALLBACK_LIMITS, limitsOf, litellmModel, readModelLimits } from "../src/litellm.js";
+import { FALLBACK_LIMITS, LiveModel, limitsOf, readModelLimits } from "../src/litellm.js";
 import { familyConfig, FIXTURE_KEY } from "./family.js";
 
 const ALIAS = "code-router";
@@ -62,21 +62,21 @@ describe("readModelLimits", () => {
   afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
   it("asks LiteLLM with the family key and feeds the model", async () => {
-    const config = familyConfig({ litellmUrl: await listening, config: { model_alias: `litellm/${ALIAS}` } });
+    const config = familyConfig({ litellmUrl: await listening });
 
-    const read = await readModelLimits(config.planes, config.modelAlias, config.creds.litellmKey);
+    const read = await readModelLimits(config.planes, `litellm/${ALIAS}`, config.creds.litellmKey);
 
     expect(read).toEqual({ ok: true, limits: { contextWindow: 1048576, maxTokens: 16384 } });
     expect(seen).toEqual([{ path: "/v1/model/info", authorization: `Bearer ${FIXTURE_KEY}` }]);
 
-    const model = litellmModel(config, read.limits);
-    const [first] = model.ok ? model.model.provider.getModels() : [];
+    const model = new LiveModel(config.planes, ALIAS, read.limits, () => config.creds);
+    const [first] = model.provider.getModels();
     expect(first?.contextWindow).toBe(1048576);
     expect(first?.maxTokens).toBe(16384);
   });
 
   it("gives the fallback when LiteLLM does not answer", async () => {
-    const config = familyConfig({ litellmUrl: "http://127.0.0.1:9", config: { model_alias: ALIAS } });
+    const config = familyConfig({ litellmUrl: "http://127.0.0.1:9" });
 
     expect(await readModelLimits(config.planes, ALIAS, config.creds.litellmKey)).toEqual({ ok: false, fault: "unreachable", limits: FALLBACK_LIMITS });
   });

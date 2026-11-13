@@ -1,7 +1,6 @@
-// The planes of the host, and what the model and the `ch` connection take
-// of a family. The CH start fixes the planes on guest loopback
-// (`src/guest-start.ts`). Each pull of the family state gives the creds and
-// the model alias (`src/family-state.ts`).
+// The planes of the host, and what the `ch` connection takes of a family.
+// The CH start fixes the planes on guest loopback (`src/guest-start.ts`).
+// Each pull of the family state gives the creds (`src/family-state.ts`).
 
 import type { LiveCreds } from "./family-state.js";
 import type { PlaneUrl } from "./planes.js";
@@ -12,12 +11,8 @@ export interface Planes {
   readonly litellm: PlaneUrl;
 }
 
-/**
- * The planes, the creds and the model alias of one family. The alias may
- * carry the `litellm/` prefix.
- */
+/** The planes and the creds of one family. */
 export interface FamilyConfig {
   readonly planes: Planes;
   readonly creds: LiveCreds;
-  readonly modelAlias: string;
 }
