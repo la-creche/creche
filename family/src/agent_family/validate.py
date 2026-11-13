@@ -77,7 +77,6 @@ RELEASABLE: Final = frozenset(
         "attendance",
         "caregiver",
         "noticeboard",
-        "playpen",
         "mcp-servers",
         "infra",
         "handover",

@@ -347,7 +347,7 @@ jobs:
       - run: uv run pytest
         working-directory: memory
 
-  # Build each flavor that the playpen release publishes, then check what
+  # Build each flavor of the disks row and its root disk, then check what
   # the build alone cannot: /etc/creche/env equals the image config env
   # (CH7-7, CH49). The steps live in playpen/bin/playpen-ci. This run also
   # catches a missing source file and an import that only the image sees.

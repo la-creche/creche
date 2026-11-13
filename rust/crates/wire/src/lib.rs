@@ -1772,9 +1772,9 @@ shape_size!(
 /// string. The schema holds it inline in `FamilyShape`, as `SystemPrompt`
 /// is held in `FamilyConfig`.
 ///
-/// `Coding` is the flavor of `code` and `creche`: a root disk of the disks
-/// row only, with no sbx image (decisions CH7-1, CH53 rule 1). It joins
-/// before the cut with this enum (decisions CH76 rule 7, CH79 rule 1).
+/// `Coding` is the flavor of `code` and `creche` (decision CH7-1). It
+/// joined before the cut with this enum (decisions CH76 rule 7, CH79 rule
+/// 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(test, derive(schemars::JsonSchema))]

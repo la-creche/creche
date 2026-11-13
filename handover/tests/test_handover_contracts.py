@@ -93,9 +93,10 @@ def test_c1_reports_a_contract_nobody_provides_and_does_not_refuse() -> None:
     """A contract with no provider root can see is reported, not refused.
 
     Root cannot tell "nothing provides it" from "its provider is not a
-    tree under an install root". `playpen` is live and provides
-    `channel`, and it is an image and never a tree, so a refusal would
-    read `caregiver requires channel 0.11, the set provides it nowhere`.
+    tree under an install root". Here `caregiver` provides
+    `manager-status` with no tree that root can read, so a refusal would
+    read `noticeboard requires manager-status 1.1, the set provides it
+    nowhere`.
 
     Refusing there refuses every release on this host for ever, for a
     reason the release neither causes nor can fix. So it is reported.

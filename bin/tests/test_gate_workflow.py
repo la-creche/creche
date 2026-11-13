@@ -174,7 +174,7 @@ ONLY_CODE = "needs.scope.outputs.scope == 'code'"
 SYSTEMD_JOB = "systemd-proof"
 SYSTEMD_RUN = "bin/systemd-proof.sh"
 
-#: The job that builds the image which the playpen release publishes.
+#: The job that builds each flavor of the disks row and its root disk.
 PLAYPEN_JOB = "playpen-image"
 PLAYPEN_RUN = "playpen/bin/playpen-ci"
 

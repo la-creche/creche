@@ -131,12 +131,11 @@ def test_the_python_lock_file_moves_no_binary_component(monkeypatch: pytest.Monk
     """A binary build reads no `uv.lock`, so a Python dependency upgrade
     must not release a binary component. Every venv component still moves.
 
-    The disks row is the one exception: it bundles each path of playpen,
-    whose test venv resolves the lock, so the wheels it pins are bytes of
-    the root disks. A lock change moves the disks tag with the venv tags.
-    The playpen row is retiring (`catalog.RETIRING`) and moves for no
-    change. The mock binary component of this suite reads only the Cargo
-    workspace files, and moves for none of the lock."""
+    The disks row is the one exception: it bundles the playpen image
+    build, whose test venv resolves the lock, so the wheels it pins are
+    bytes of the root disks. A lock change moves the disks tag with the
+    venv tags. The mock binary component of this suite reads only the
+    Cargo workspace files, and moves for none of the lock."""
     use_binary_catalog(monkeypatch)
     ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in RETIRING]
     venvs = {row.name for row in ours if row.kind is Kind.VENV and row.lock is Lock.WORKSPACE} - {

@@ -132,7 +132,7 @@ RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env
 #
 # The pins are the pins of uv.lock, the same file the host's test
 # environment uses. A dependency change for the test venv is a lockfile
-# change plus a playpen release, never an install inside a sandbox.
+# change plus a disks release, never an install inside a sandbox.
 FROM ${PYTHON_IMAGE} AS creche-test-venv
 ARG UV_VERSION
 ARG UV_WHEEL_SHA256

@@ -126,8 +126,8 @@ component's own newest tag.
   `release.yml` of that repository builds, signs and tags it. Its manifest
   is at the root of that repository (`handover/AGENTS.md`).
 - Prose moves no tag. A `.md` file outside `tests/` and `fixtures/` is
-  prose. A merge that changes only `playpen/AGENTS.md` makes no tag. The next
-  code change to `playpen/` makes one tag, and that tag covers both merges.
+  prose. A merge that changes only `disks/AGENTS.md` makes no tag. The next
+  code change to `disks/` makes one tag, and that tag covers both merges.
 - A new tag asks the operator for a release. `creche-follow.timer` on the
   host files the request for each component that has had a release.
 - Only CI mints a Release. The release executor refuses a Release that

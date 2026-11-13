@@ -709,13 +709,12 @@ def test_a_user_unit_names_its_program_through_the_home_specifier(
     assert f"bin/noticeboard-door {NOT_STAGED}" in _refusal(staging).detail
 
 
-@pytest.mark.parametrize("kind", [Kind.COMPOSE, Kind.OCI_IMAGE])
-def test_a_kind_with_no_program_tree_is_not_walked(tmp_path: Path, kind: Kind) -> None:
-    """The walk is the binary kind's. A compose project and an image tree
-    keep the checks they had."""
+def test_a_kind_with_no_program_tree_is_not_walked(tmp_path: Path) -> None:
+    """The walk is the binary kind's. A compose project keeps the checks it
+    had."""
 
     def made(new: Path) -> None:
         staged_binary_tree(new)
         (new / "bin" / "extra").symlink_to("/usr/bin/env")
 
-    make_staging(tmp_path, made, kind=kind).build()
+    make_staging(tmp_path, made, kind=Kind.COMPOSE).build()

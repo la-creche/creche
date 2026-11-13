@@ -245,7 +245,7 @@ PROSE_SAMPLES = (
     "integration/fixtures/eq-registry/families/chat/instructions.md",
     "tests/README.md",
     "playpen/src/index.ts",
-    "playpen/component.yaml",
+    "disks/component.toml",
     "noticeboard/src/noticeboard/pages.py",
     "handover/md",
     "chaperone/notes.md.py",
@@ -254,9 +254,9 @@ PROSE_SAMPLES = (
 
 
 def test_a_prose_only_range_is_cut_to_nothing() -> None:
-    """A `playpen` release rebuilds both sandbox images, and the fleet then
-    replaces every sandbox. An edit to `playpen/AGENTS.md` changes nothing
-    that runs, so it must not ask for one."""
+    """A `disks` release rebuilds every root disk, and each family VM then
+    boots the new one. An edit to `playpen/AGENTS.md` changes nothing that
+    runs, so it must not ask for one."""
     assert cut_paths(["playpen/AGENTS.md", "caregiver/AGENTS.md", "README.md"], CONTROL) == ()
 
 
