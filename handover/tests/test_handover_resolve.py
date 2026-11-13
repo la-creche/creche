@@ -31,7 +31,6 @@ EDGES: dict[str, tuple[str, str, str]] = {
     ),
     "noticeboard": ("", requires_entry("pep-grant", 2, 0), "attendance"),
     "caregiver": ("", "", ""),
-    "playpen": ("", "", ""),
     "handover": ("", "", ""),
     "mcp-servers": ("", "", ""),
     "registry-data": ("", "", ""),
@@ -46,7 +45,6 @@ LIVE = {
     "attendance": "1.4.7",
     "noticeboard": "0.7.0",
     "caregiver": "1.2.0",
-    "playpen": "3.1.2",
     "handover": "0.3.0",
     "mcp-servers": "0.9.3",
 }
@@ -259,11 +257,11 @@ def test_the_document_has_contract_06_paragraph_9_fields() -> None:
 #: The hash of two documents, as the writer before the strict writer gave
 #: it. The approval binds to the hash, so the strict writer gives each
 #: strict document the bytes of before. Each document holds the version
-#: text of the manifest contract, 0.25, so a new version moves both hashes.
+#: text of the manifest contract, 0.26, so a new version moves both hashes.
 #: Each document also lists every row of the catalog, so a row that leaves
 #: or arrives moves both hashes too.
-HASH_OF_TWO = "sha256:f686e10519e5050656fa9f2a7d5f972145fb029ff9d57e27169f075ef54ee133"
-HASH_OF_A_FRACTION = "sha256:5bc9f90d8edadc520ac95ddc44bba2ca3f61b7e5135df9fe81025585c2d3d3b0"
+HASH_OF_TWO = "sha256:e704e5e353b37cb52b8c362562f7ad2637ec266890f4b0ef798d861591edf2e0"
+HASH_OF_A_FRACTION = "sha256:52c3820263b27c7da5f34e4626ea40e9e3d03f57233a12202dbb22798c28a970"
 
 
 def test_the_hash_of_a_document_is_the_hash_of_before() -> None:

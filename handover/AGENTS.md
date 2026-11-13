@@ -338,7 +338,9 @@ has the name of the markup of the manifest: `.component.toml` or
      deletes the directory only when nothing else reads it. The row goes
      once no installed requester expects the manifest. `releasable_names()`
      keeps a retiring name, so a `host.toml` that still follows it reads
-     (`follow/` rule 7). `playpen` leaves this way (CH86, Q78-2 A). Its
+     (`follow/` rule 7). `playpen` left this way (CH86, Q78-2 A): its
+     manifest and its row went in one PR, after hosts ran the requester
+     of the first PR and dropped `playpen` from `host.toml`. Its
      `Dockerfile` and its disk scripts in `playpen/bin` stay, because the
      `disks` build reads them.
 12. Check P6 (`executor/provenance.py`) starts the verifier, `cosign`, in

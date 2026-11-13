@@ -1,6 +1,6 @@
 """§2.8's quiet window: do not drop every model call on the host.
 
-Recreating `creche-litellm` drops every in-flight model call: sandboxes and
+Recreating `creche-litellm` drops every in-flight model call: family VMs and
 the TUI alike. `creche-postgres` and `creche-redis` drag it along,
 because it depends on them. So when step 8's compose dry run lists any of
 those three, step 9 waits for five consecutive quiet minutes **before it

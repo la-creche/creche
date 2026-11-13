@@ -1,4 +1,4 @@
-"""Sets, order, the `infra` and `playpen` kinds and the quiet window.
+"""Sets, order, the `infra` kind and the quiet window.
 
 `bin/rework-release-gate.sh` section 2's list, all of it:
 
@@ -75,7 +75,6 @@ SPEC: dict[str, tuple[str, str, str]] = {
     "caregiver": ("venv", "creche-caregiver.service", ""),
     "noticeboard": ("venv", "creche-noticeboard.service", "attendance"),
     "infra": ("compose", "creche-stack.service", ""),
-    "playpen": ("oci-image", "null", ""),
     "handover": ("venv", "creche-handover.service", ""),
     "mcp-servers": ("venv", "null", ""),
     "registry-data": ("data", "null", ""),
@@ -443,32 +442,6 @@ def _log(bench: SetBench) -> list[str]:
     path = bench.spool_root / DONE_DIR / f"{REQUEST_ID}.log"
 
     return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-
-
-# -- 3. playpen: one release replaces every family's sandbox --------
-
-
-def test_a_sandbox_image_release_lands(tmp_path: Path) -> None:
-    """Contract 06 §1 rule 5 and §2.2: `playpen` is `kind: oci-image`
-    and has ONE live version, so the manifest carries no range, and it
-    releases like any other kind."""
-    version, live = "3.1.0", "3.0.0"
-    bench = _make_bench(
-        tmp_path,
-        {"playpen": live},
-        {"playpen": version},
-        _green_for(("playpen", version)),
-    )
-    _live_tree(bench, "playpen", live)
-    _serve(bench, {"playpen": version})
-
-    result = _run(bench, {"playpen": version})
-
-    assert "succeeded" in result
-    assert installed_version(bench.components / "playpen") == version
-    # `unit: null`, so nothing is restarted and no session is lost
-    # (invariant 1: sessions live on the host).
-    assert not bench.run.ran("restart")
 
 
 # -- 4. a release with every credential revoked --------------------------

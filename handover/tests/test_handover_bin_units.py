@@ -136,11 +136,10 @@ def test_a_unit_that_starts_another_tree_is_no_sibling(tmp_path: Path) -> None:
     assert staging.installer.sibling_units(staging.manifest, staging.source) == ()
 
 
-@pytest.mark.parametrize("kind", [Kind.COMPOSE, Kind.OCI_IMAGE])
-def test_a_kind_with_no_program_tree_has_no_sibling(tmp_path: Path, kind: Kind) -> None:
-    """A compose project's unit starts docker, and an image has no unit.
-    Neither kind gains the unit rules."""
-    staging = make_staging(tmp_path, unit=UNIT, kind=kind)
+def test_a_kind_with_no_program_tree_has_no_sibling(tmp_path: Path) -> None:
+    """A compose project's unit starts docker. That kind gains no unit
+    rules."""
+    staging = make_staging(tmp_path, unit=UNIT, kind=Kind.COMPOSE)
     own = unit_text(staging.program())
     staging.install_unit(own)
     staging.install_unit(own, SIBLING_UNIT)

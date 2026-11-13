@@ -154,7 +154,7 @@ def test_an_archive_with_no_verify_hook_stops_the_stage(tmp_path: Path) -> None:
         _unpack(staging, archive_bytes(programs={BINARY_NAME: PROGRAM_BYTES}))
 
 
-@pytest.mark.parametrize("kind", [Kind.VENV, Kind.COMPOSE, Kind.OCI_IMAGE])
+@pytest.mark.parametrize("kind", [Kind.VENV, Kind.COMPOSE])
 def test_every_other_kind_still_gets_the_uv_variable(tmp_path: Path, kind: Kind) -> None:
     """The kinds the executor built before read the variable they read
     before, so no existing build changes."""

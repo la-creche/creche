@@ -532,12 +532,12 @@ class Installer:
         Three narrowings, each with its reason.
 
         1. **`unit: null` is not checked.** Nothing restarts, so there is no
-           unit to disagree with the tree (`handover`, `playpen`).
+           unit to disagree with the tree (`handover`, `disks`).
         2. **Only `kind: venv` and `kind: binary`** (`PROGRAM_KINDS`).
            "The tree holds the program the unit starts" is the property of
            a venv and of a tree of compiled programs. A compose project's
            unit starts docker and is bound to its tree by
-           `WorkingDirectory`; an image has no unit at all.
+           `WorkingDirectory`. A disk image has no unit at all.
         3. **A unit nothing installed is not checked.** Step 9 already
            lists one under `manual` and never restarts it, and refusing
            here would refuse the first release of a component whose unit

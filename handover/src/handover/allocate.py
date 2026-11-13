@@ -246,7 +246,7 @@ def is_prose(path: str) -> bool:
 
     Prose moves no tag. A tag is a version somebody can release, and since
     the follower (`follow/`) a new tag asks the operator for that release. A
-    release of prose restarts a unit, or rebuilds the sandbox images, and
+    release of prose restarts a unit, or rebuilds the root disks, and
     changes nothing that runs.
     """
     anchored = f"/{path}"

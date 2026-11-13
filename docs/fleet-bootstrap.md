@@ -58,7 +58,7 @@ The fleet layer also holds two parts that `fleet-up` does not make:
 
 1. Root does each step of the root checklist (section 3). The operator runs
    `fleet-up check`, and each line of the root checklist passes. R7's
-   listener and R8 pass only after step 5. That is correct.
+   listener passes only after step 5. That is correct.
 2. The owner does O1: the registry checkout.
 3. The operator runs `fleet-up up`. It makes the tokens, the keys, the env
    files and the directories. It installs each unit whose tree is there.
@@ -66,8 +66,8 @@ The fleet layer also holds two parts that `fleet-up` does not make:
    It prints the release request to file.
 4. Root does R10: two token copies into `/etc/chaperone/secrets`.
 5. The operator files the release request that `up` printed. The order of
-   the set is `chaperone`, `playpen`, `attendance`, `caregiver`,
-   `noticeboard`. The phone asks for one tap.
+   the set is `chaperone`, `attendance`, `caregiver`, `noticeboard`. The
+   phone asks for one tap.
 6. The owner does O2: the Node-RED flow.
 7. The operator runs `fleet-up up` again. It installs the units of the new
    trees and starts them. It exits with status 0.
@@ -85,16 +85,18 @@ holds each command.
 | # | Step | `check` reads |
 |---|---|---|
 | R1 | Make the state root and the sessions root, owned by the operator. | The owner of the state root. The sessions root is writable. |
-| R2 | Install `cosign` (runbook A1) and `uv` 0.12.17 or newer (A2). Install `sbx`. | `/usr/local/bin/cosign`, `uv --version`, `sbx` on `PATH`. |
+| R2 | Install `cosign` (runbook A1) and `uv` 0.12.17 or newer (A2). | `/usr/local/bin/cosign`, `uv --version`. |
 | R3 | Run `sudo creche-deploy`. Install the handover tree and its root wrapper by hand. | `/opt/creche/bin/fleet-up`, the stamp of `/opt/components/handover`. |
 | R4 | Make the group `chaperone`. Add the operator to `chaperone` (A5). Restart the user manager. | `getent group`, and `id -nG` of this login. |
 | R5 | Make `/etc/chaperone`, mode 1775, group `chaperone`, with `plugins/`, `secrets/` and `install.toml` (A6). | The mode and the group. Each of the three paths is there. |
 | R6 | Add `CHAPERONE_LISTEN` and `AGENT_COSIGN_PROGRAM` to the site file (A8). | `creche-env check` of the site file. The file sets `CHAPERONE_LISTEN`. |
 | R7 | Install the unit of the Rust chaperone and its drop-in (A7, C2). Release the chaperone. | The binary at `/opt/components/chaperone/bin/chaperone`. A listener on port 8310. |
-| R8 | The first release of `playpen`. | `/opt/components/playpen/images.env`. |
 | R9 | Put `LITELLM_MASTER_KEY` into `hooks.env`. `docs/rework/cutover.md` §4.1 gives the one command. | The key in `hooks.env` or in `caregiver.env`. The value is never printed. |
 | R10 | After the first `up`: copy `tokens/chaperone-delegate.token` and `tokens/chaperone-dispatch.token` into `/etc/chaperone/secrets`. Mint `approval-token` and `resume-token` there (A6). | Nothing. The operator cannot read `secrets/`. |
 | R11 | Review the firewall (A10). | Nothing. |
+
+R8, the first release of `playpen`, left the list with sbx (CH86). Each
+other step keeps its number.
 
 The owner steps:
 

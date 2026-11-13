@@ -535,10 +535,7 @@ def _artifact_digest(component: str) -> str | None:
     component that deploys and whose manifest says `binary` or
     `disk-image`: the digest of root's copy of its archive, or of the sum
     lines of its files (`steps.Release._copy_artifacts`, CH76 rule 5). Step 8
-    fills it again from the same copy. Each other kind keeps `null`. For
-    `oci-image` that is so today because nothing in this repository pushes
-    `playpen` to an OCI registry, so there is no registry digest to record.
-    Contract 06 §9 carries the same sentence.
+    fills it again from the same copy. Each other kind keeps `null`.
     """
     del component
 

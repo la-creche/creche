@@ -118,7 +118,7 @@ ARGUMENT_SETS: tuple[tuple[str, dict[str, str]], ...] = (
     ("caregiver", {"depends_on": "chaperone"}),
     ("caregiver", {"provides": provides_entry("pep-grant", 2, 1)}),
     ("chaperone", {}),
-    ("chaperone", {"depends_on": "attendance, playpen"}),
+    ("chaperone", {"depends_on": "attendance, caregiver"}),
     ("chaperone", {"depends_on": "chaperone"}),
     ("chaperone", {"depends_on": "noticeboard"}),
     ("chaperone", {"path": "attendance"}),
@@ -137,7 +137,6 @@ ARGUMENT_SETS: tuple[tuple[str, dict[str, str]], ...] = (
     ("noticeboard", {"requires": requires_entry("manager-status", 1, 1)}),
     ("noticeboard", {"requires": requires_entry("pep-grant", 2, 0)}),
     ("noticeboard", {"requires": requires_entry("pep-grant", 3, 0)}),
-    ("playpen", {}),
     ("registry-data", {}),
     ("registry-data", {"release": "yes"}),
     ("vmm", {}),
@@ -355,7 +354,7 @@ def test_a_disk_image_manifest_with_a_unit_is_refused() -> None:
     assert _disks_refusal({'runs_as = "none"': unit}).detail == DISK_IMAGE_NAMES_NO_UNIT
 
 
-@pytest.mark.parametrize("account", ["operator", "root", "sandbox", "mcp"])
+@pytest.mark.parametrize("account", ["operator", "root", "mcp"])
 def test_a_disk_image_manifest_that_runs_as_an_account_is_refused(account: str) -> None:
     """Nothing runs a disk-image tree (contract 06 §8.4 rule 5)."""
     refusal = _disks_refusal({'runs_as = "none"': f'runs_as = "{account}"'})

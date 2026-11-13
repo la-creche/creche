@@ -28,11 +28,10 @@ applies here too.
    the vmm tree that the same set installs (CH78 rule 1).
 4. The flavors are the values of the wire enum `SandboxFlavor`: base,
    python and coding. Coding joined with the PR that added it to the enum,
-   before the cut (CH76 rule 7, CH79 rule 1). It has no sbx image (CH53
-   rule 1).
-5. The catalog row bundles `playpen` and each path that `playpen`
-   bundles: a change that moves the playpen tag moves the disks tag too.
-   A change under `disks/` moves the disks tag alone.
+   before the cut (CH76 rule 7, CH79 rule 1).
+5. The catalog row bundles `playpen`, `agent`, `facade`, `pyproject.toml`
+   and `uv.lock`: the image build and what it copies. A change there moves
+   the disks tag. A change under `disks/` moves the disks tag alone.
 
 ## The build
 

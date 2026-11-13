@@ -40,7 +40,7 @@ requires:
   # Minor 20 is caregiver's (plan PR CR10). This package reads no field that
   # minors 18 to 20 drop.
   - { contract: manager-status, major: 0, min_minor: 20 }
-depends_on: [chaperone, playpen]
+depends_on: [chaperone]
 verify:
   # --env-file: the same file
   # systemd/creche-attendance.service's own EnvironmentFile= names, read by

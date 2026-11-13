@@ -13,8 +13,7 @@ from handover_fixtures import manifest_text
 #: reads without a fixture tree.
 REPO_GRAPH: Graph = {
     "chaperone": (),
-    "playpen": (),
-    "attendance": ("chaperone", "playpen"),
+    "attendance": ("chaperone",),
     "caregiver": ("chaperone",),
     "noticeboard": ("attendance", "caregiver"),
     "handover": (),
@@ -35,7 +34,7 @@ def _graph(edges: dict[str, str]) -> Graph:
 
 def test_a_dependency_outside_the_catalog_is_refused() -> None:
     with pytest.raises(Refusal) as caught:
-        _graph({"chaperone": "attendance, playpen", "noticeboard": "not-a-component"})
+        _graph({"chaperone": "attendance, caregiver", "noticeboard": "not-a-component"})
 
     assert caught.value.code is RefusalCode.CATALOG
     assert "contract 06 §1 omits" in caught.value.detail
@@ -70,12 +69,9 @@ def test_an_acyclic_graph_passes() -> None:
 
 
 def test_dependencies_deploy_first() -> None:
-    order = deploy_order(
-        REPO_GRAPH, frozenset({"noticeboard", "attendance", "chaperone", "playpen"})
-    )
+    order = deploy_order(REPO_GRAPH, frozenset({"noticeboard", "attendance", "chaperone"}))
 
     assert order.index("chaperone") < order.index("attendance")
-    assert order.index("playpen") < order.index("attendance")
     assert order.index("attendance") < order.index("noticeboard")
 
 

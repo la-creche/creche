@@ -33,7 +33,6 @@ class Kind(StrEnum):
     #: build: check P6 verifies root's copy of the archive, and step 8
     #: unpacks it.
     BINARY = "binary"
-    OCI_IMAGE = "oci-image"
     COMPOSE = "compose"
     DATA = "data"
     #: A tree of unit files and the scripts they run (contract 06 §8.3).
@@ -53,7 +52,6 @@ class RunsAs(StrEnum):
     #: The site's operator account (`site.py`). A manifest never names the
     #: account itself: which one it is differs from one host to the next.
     OPERATOR = "operator"
-    SANDBOX = "sandbox"
     #: The one value that names no single user. `mcp-servers` is a FAMILY
     #: of processes and each one runs as its own `mcp-<name>` (contract 01b
     #: §9, `stage7-releases.md` §4.2), so a third-party package never runs
@@ -126,17 +124,12 @@ class CatalogRow:
     lock: Lock = Lock.WORKSPACE
 
 
-#: Contract 06 §1, in its own order. `caregiver` sits at `caregiver/`,
-#: `noticeboard` at `noticeboard/` and `playpen` at `playpen/`.
+#: Contract 06 §1, in its own order. `caregiver` sits at `caregiver/` and
+#: `noticeboard` at `noticeboard/`.
 #:
 #: `bundles` follows each build through `uv.lock`: `attendance` installs the
 #: doors and `creche-wire` (CH25), `agent-door-trigger` brings
 #: `agent-family`, and `caregiver` brings `agent-family` and `creche-wire`.
-#: `playpen`'s build is an image build, and `playpen/Dockerfile` copies `agent/` and
-#: `facade/` into the image. Its test venv resolves the workspace from
-#: `pyproject.toml` and `uv.lock`, so the row bundles those two files: the
-#: pins of the venv are the pins of the lock, and no member's code is in
-#: the image.
 #: `test_each_component_bundles_what_its_build_installs` holds it equal.
 #:
 #: `host` is the whole creche-release repository: the units that belong to
@@ -155,8 +148,10 @@ class CatalogRow:
 #: the guest kernel, one root disk for each flavor of `DISK_FLAVORS` and
 #: `digests.json` (CH7-2, CH35 (4), CH76 rule 5). The files come from
 #: `playpen/Dockerfile` and the playpen scripts, so the row bundles
-#: `playpen` and each path that `playpen` bundles: a change that moves the
-#: `playpen` tag moves the `disks` tag too (contract 06 §1 rule 15). Its
+#: `playpen`. The image build copies `agent/` and `facade/`, and its test
+#: venv resolves the workspace from `pyproject.toml` and `uv.lock`, so the
+#: row bundles those four too: the pins of the venv are the pins of the
+#: lock, and no member's code is in the venv (contract 06 §1 rule 15). Its
 #: manifest is `disks/component.toml`. It is the last row.
 CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("chaperone", Repo.CHAPERONE, ".", Kind.BINARY, Releases.YES),
@@ -170,14 +165,6 @@ CATALOG: tuple[CatalogRow, ...] = (
     ),
     CatalogRow("caregiver", Repo.CRECHE, "caregiver", Kind.VENV, Releases.YES, ("family", "wire")),
     CatalogRow("noticeboard", Repo.CRECHE, "noticeboard", Kind.VENV, Releases.YES, ("family",)),
-    CatalogRow(
-        "playpen",
-        Repo.CRECHE,
-        "playpen",
-        Kind.OCI_IMAGE,
-        Releases.YES,
-        ("agent", "facade", "pyproject.toml", "uv.lock"),
-    ),
     CatalogRow("mcp-servers", Repo.MCP, ".", Kind.VENV, Releases.YES),
     CatalogRow("handover", Repo.CRECHE, "handover", Kind.VENV, Releases.YES),
     CatalogRow("registry-data", Repo.REGISTRY, ".", Kind.DATA, Releases.NO),
@@ -256,12 +243,9 @@ MAIN_BRANCH = "main"
 #: component's manifest or not, and both read. A component leaves in two
 #: commits, this entry first and the directory's deletion second, so the
 #: requester a host already runs keeps planning across the second one. The
-#: row goes once no installed requester expects the file. `playpen` is the
-#: one name now (CH86, Q78-2 A): sbx ran its image, and the virtual machines
-#: of the vmm run no image. The commit that deletes its manifest comes after
-#: a host installs this set. `releasable_names` keeps a retiring name, so a
-#: `host.toml` that still follows `playpen` reads.
-RETIRING: frozenset[str] = frozenset({"playpen"})
+#: row goes once no installed requester expects the file. Empty now:
+#: `playpen` left this way, with its row (CH86, Q78-2 A).
+RETIRING: frozenset[str] = frozenset()
 
 #: Components on their way INTO the catalog, the opposite of `RETIRING`. The
 #: row lands before the directory, so a checkout carries the manifest or not,
@@ -284,7 +268,7 @@ ARRIVING_REPOS: frozenset[Repo] = frozenset()
 CONTRACT_OWNER: dict[ContractId, str] = {
     ContractId.FAMILY_FILE: "caregiver",
     ContractId.SESSION_API: "attendance",
-    ContractId.CHANNEL: "playpen",
+    ContractId.CHANNEL: "attendance",
     ContractId.PEP_GRANT: "chaperone",
     ContractId.MANAGER_STATUS: "caregiver",
     ContractId.COMPONENT_MANIFEST: "handover",
@@ -296,15 +280,15 @@ CONTRACT_OWNER: dict[ContractId, str] = {
 #: the two numbers is the `provides` row of `handover/component.yaml`.
 #: `tests/test_handover_contract_version.py` fails when they differ from it.
 MANIFEST_CONTRACT_MAJOR = 0
-MANIFEST_CONTRACT_MINOR = 25
+MANIFEST_CONTRACT_MINOR = 26
 
 #: `handover` deploys last whatever `depends_on` says (contract 06 §1.1).
 LAST_IN_ORDER = "handover"
 
-#: spec §9: at most eleven entries. The catalog minus `registry-data`, which
-#: never releases, is eleven rows with the `disks` row, at the cap (CH35
-#: (1)). `tests/test_handover_catalog_cap.py` fails when a releasing row
-#: passes it.
+#: spec §9: at most eleven entries (CH35 (1)). The catalog minus
+#: `registry-data`, which never releases, is ten rows, one under the cap,
+#: since `playpen` left. `tests/test_handover_catalog_cap.py` fails when a
+#: releasing row passes it.
 MAX_REQUEST_COMPONENTS = 11
 
 #: The limits of the two assets of a binary component. CI refuses an

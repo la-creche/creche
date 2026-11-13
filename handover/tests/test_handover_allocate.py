@@ -266,8 +266,7 @@ def test_the_lock_file_moves_every_venv_component_and_the_disks() -> None:
 
     The disks row moves with them: its root disks come from the playpen
     image build, and that build's test venv resolves the lock (contract 06
-    §1 rule 15). The playpen row bundles the lock too, but it is retiring
-    (`catalog.RETIRING`), so it gets no tag."""
+    §1 rule 15)."""
     plans = _plan(("uv.lock",), tags=ALL_TAGGED)
 
     ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in ARRIVING]
@@ -280,8 +279,7 @@ def test_the_lock_file_moves_every_venv_component_and_the_disks() -> None:
 def test_a_members_lock_file_is_not_the_roots() -> None:
     """Only the root `uv.lock` is read by every build. A file of that name
     deeper in the tree belongs to whatever directory holds it. The disks
-    row bundles `playpen`, so the file moves it. `playpen` itself is
-    retiring and gets no tag."""
+    row bundles `playpen`, so the file moves it."""
     plans = _plan(("playpen/uv.lock",), tags=ALL_TAGGED)
 
     assert {plan.component for plan in plans} == {"disks"}
@@ -349,17 +347,19 @@ def test_the_first_run_tags_every_component_the_commit_did_not_touch() -> None:
     assert all(item.outcome is TagOutcome.CREATE for item in plans)
 
 
-def test_a_retiring_component_is_never_tagged() -> None:
+def test_a_retiring_component_is_never_tagged(monkeypatch: pytest.MonkeyPatch) -> None:
     """A tag is a version somebody can release. A component on its way out
     of the catalog gets no new one: not a first tag, and not a bump when a
     file under its path changes (deleting its directory changes them all).
-    `playpen` is the one retiring row, and it carries a tag from before."""
-    assert frozenset({"playpen"}) == RETIRING
-    retiring = "playpen"
+    The set is empty today, so the test fills it with a row that has a path
+    to change."""
+    assert frozenset() == RETIRING
+    retiring = "caregiver"
+    monkeypatch.setattr(allocate, "RETIRING", frozenset({retiring}))
     row = CATALOG_BY_NAME[retiring]
 
     first = _plan(("pyproject.toml",), tags=OLD_TAGS)
-    bumped = _plan((f"{row.path}/src/x.py",), tags=(*ALL_TAGGED, f"{retiring}-v0.1.67"))
+    bumped = _plan((f"{row.path}/src/x.py",), tags=ALL_TAGGED)
 
     assert retiring not in {item.component for item in first}
     assert retiring not in {item.component for item in bumped}
@@ -397,7 +397,7 @@ def test_an_arriving_component_reads_absent_and_is_never_tagged(
 
 
 #: Each path that moves the `disks` tag: its own path, `playpen` and each
-#: path that `playpen` bundles (contract 06 §1 rule 15).
+#: path that the image build copies (contract 06 §1 rule 15).
 DISK_PATHS = (
     "disks/bin/playpen-release-disks",
     "playpen/Dockerfile",
@@ -409,7 +409,7 @@ DISK_PATHS = (
 
 
 @pytest.mark.parametrize("path", DISK_PATHS)
-def test_a_change_that_moves_playpen_moves_disks(path: str) -> None:
+def test_a_change_to_the_image_build_moves_disks(path: str) -> None:
     """The disks come from `playpen/Dockerfile` and the playpen scripts, so
     a change to a disk moves the disks tag."""
     assert "disks" in {plan.component for plan in _plan((path,), tags=ALL_TAGGED)}

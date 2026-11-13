@@ -250,7 +250,6 @@ CASES: Final[tuple[Case, ...]] = (
         '  - ["/usr/local/bin/cargo", "build", "--release", "--locked", "--bin", "chaperone"]',
     ),
     _with("kind-binary-build-cargo", **_BINARY_FIELDS),
-    _with("kind-oci-image", kind="kind: oci-image", runs_as="runs_as: sandbox"),
     _with("kind-compose", kind="kind: compose", runs_as="runs_as: root"),
     _with("kind-data", **_DATA_FIELDS),
     _with("kind-disk-image", **_DISK_FIELDS),
@@ -355,6 +354,8 @@ CASES: Final[tuple[Case, ...]] = (
     _with("repo-65-chars", repo="repo: " + "r" * 65),
     _with("repo-final-newline", repo='repo: "creche\\n"'),
     _with("kind-other", kind="kind: wheel"),
+    # Contract 06 minor 26 drops `oci-image` and the `runs_as` value `sandbox`.
+    _with("kind-oci-image", kind="kind: oci-image", runs_as="runs_as: sandbox"),
     _with("kind-upper", kind="kind: Venv"),
     _with("kind-null", kind="kind: ~"),
     _with("kind-list", kind="kind: [venv]"),

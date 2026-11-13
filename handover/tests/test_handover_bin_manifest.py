@@ -164,7 +164,7 @@ def test_the_output_field_is_still_refused() -> None:
 
 
 def test_the_kinds_are_the_old_ones_binary_units_and_disk_image() -> None:
-    expected = {"venv", "binary", "oci-image", "compose", "data", "units", "disk-image"}
+    expected = {"venv", "binary", "compose", "data", "units", "disk-image"}
 
     assert {str(one) for one in Kind} == expected
 
