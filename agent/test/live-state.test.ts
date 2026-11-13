@@ -6,31 +6,27 @@ import { init } from "@flue/runtime";
 import { start } from "@flue/runtime/node";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { fileBackend } from "../src/family-state.js";
+import { composeAgent } from "../src/agent.js";
+import { vmmBackend } from "../src/family-state.js";
 import type { StateBackend, StateHolder } from "../src/family-state.js";
 import { FakeCh, SEARCH_TOOL } from "./fake-ch.js";
 import { FakeModel } from "./fake-model.js";
-import { composeFamily, familyConfig, FIXTURE_TOKEN, swapConfig } from "./family.js";
-
-const NO_RETRY_MS = 0;
+import { closeFakeVmms, stateLine } from "./fake-vmm.js";
+import { BARE_CONFIG, FIXTURE_TOKEN, testFamily } from "./family.js";
 
 const ch = new FakeCh(FIXTURE_TOKEN);
 const fake = new FakeModel([{ tool: `mcp__ch__${SEARCH_TOOL}`, args: { text: "weather" } }, { text: "A." }, { text: "B." }]);
-const config = await familyConfig({
-  pepUrl: await ch.start(),
-  litellmUrl: await fake.start(),
-  runtime: { model_alias: "chat" },
-  configFiles: { "instructions.md": "FIXTURE-OLD" },
-});
+const family = await testFamily({ pepUrl: await ch.start(), litellmUrl: await fake.start(), config: { instructions: "FIXTURE-OLD" } });
 
-const composed = composeFamily(config);
+const composed = composeAgent(family.start);
 const state: StateHolder = composed.state;
-const backend: StateBackend = fileBackend(config.mounts, state.config, NO_RETRY_MS);
+const backend: StateBackend = vmmBackend(family.vmm.path, state.config, () => undefined);
 const flue = await start({ agents: [composed.agent], db: composed.db, providers: composed.providers });
 afterAll(async () => {
   await flue.stop();
   await fake.stop();
   await ch.stop();
+  closeFakeVmms();
 });
 
 /** The pull of the facade for `session`. */
@@ -58,7 +54,7 @@ describe("the config of each session", () => {
     const turnA = a.read(await a.dispatch("Weather?"));
     await held;
 
-    swapConfig(config.mounts.config, { "runtime.json": JSON.stringify({ model_alias: "chat" }), "instructions.md": "FIXTURE-NEW" });
+    family.reply = stateLine({ ...BARE_CONFIG, instructions: "FIXTURE-NEW" });
     await pullFor("session-b");
     release();
     await turnA;

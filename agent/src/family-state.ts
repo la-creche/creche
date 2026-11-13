@@ -7,33 +7,22 @@
 //
 //   backend.pull() ──► StatePull ──► holder.apply(state, session) ──► the next render
 //
-// Two backends exist. On sbx the file backend reads the mounts that the
-// agent reads at start. Under CH the vmm backend sends one
-// `FamilyStatePull` line on the family-state socket of guest init, which
-// guest init splices to host port 1100 (decisions CH5a, CH62 rule 13). It
-// reads the one `FamilyStateReply` line with `read`, takes the same fault
-// words, and gives its `FamilyConfig` to `liveConfig`. The holder never
-// holds the text of a credential: a credential stays a `Secret`.
+// The vmm backend sends one `FamilyStatePull` line on the family-state
+// socket of guest init, which guest init splices to host port 1100
+// (decisions CH5a, CH62 rule 13). It reads the one `FamilyStateReply` line
+// with `read`, and gives its `FamilyConfig` to `liveConfig`. The holder
+// never holds the text of a credential: a credential stays a `Secret`.
 
-import { readdirSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
-import { join } from "node:path";
 
-import { CRED_RETRY_MS, readCreds } from "./creds.js";
-import type { FamilyCreds } from "./creds.js";
 import { bareAlias } from "./litellm.js";
-import type { MountDirs } from "./mounts.js";
-import { readRuntimeConfig, SANDBOX_TOOL_NAMES } from "./runtime-config.js";
+import { SANDBOX_TOOL_NAMES } from "./runtime-config.js";
 import type { SandboxToolName, SystemPrompt } from "./runtime-config.js";
 import { Secret } from "./secret.js";
 import { skillOf } from "./skills.js";
 import type { LiveSkill } from "./skills.js";
 import { read, validator } from "./wire-read.js";
 import type { Wire } from "./wire-read.js";
-
-const INSTRUCTIONS_FILE = "instructions.md";
-const SKILLS_DIR = "skills";
-const SKILL_FILE = "SKILL.md";
 
 /**
  * The cap of a `state` reply text in bytes (decision CH23 rule 4). Over
@@ -42,10 +31,11 @@ const SKILL_FILE = "SKILL.md";
  */
 export const STATE_REPLY_CAP = 262_144;
 
-/** The creds part of a reply with empty texts: the creds stay a `Secret` here. */
-const NO_CRED_TEXT = { litellm_key: "", pep_token: "" };
-
-export type LiveCreds = Pick<FamilyCreds, "litellmKey" | "pepToken">;
+/** The creds of a pull. Each one stays a `Secret`. */
+export interface LiveCreds {
+  readonly litellmKey: Secret;
+  readonly pepToken: Secret;
+}
 
 /**
  * What the agent function renders from. `modelAlias` is the bare alias,
@@ -65,16 +55,10 @@ export interface LiveState {
   readonly config: LiveConfig;
 }
 
-/** The fault words of `FamilyStateReply`. The vmm backend gives the same ones. */
+/** The fault words of `FamilyStateReply`. */
 export type PullFault = "creds_missing" | "config_missing" | "not_valid" | "too_large";
 
-/**
- * `stale` is null, or the fault of the first pull that kept the last good
- * config. The caller writes it once to stderr.
- */
-export type StatePull =
-  | { readonly ok: true; readonly state: LiveState; readonly stale: PullFault | null }
-  | { readonly ok: false; readonly fault: PullFault };
+export type StatePull = { readonly ok: true; readonly state: LiveState } | { readonly ok: false; readonly fault: PullFault };
 
 export interface StateBackend {
   pull(): Promise<StatePull>;
@@ -114,8 +98,8 @@ export class StateHolder {
 
 /**
  * The config of the wire as the agent renders it. A skill whose text is
- * the text of a skill in `previous` keeps that value, with its supporting
- * files. A skill that is not valid is left out.
+ * the text of a skill in `previous` keeps that value. A skill that is not
+ * valid is left out.
  */
 export function liveConfig(config: Wire<"FamilyConfig">, previous: readonly LiveSkill[]): LiveConfig {
   const instructions = config.instructions.trim();
@@ -132,94 +116,11 @@ export function liveConfig(config: Wire<"FamilyConfig">, previous: readonly Live
   };
 }
 
-/** The text of a file, or undefined when it does not read. */
-function textAt(path: string): string | undefined {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Each `<name>/SKILL.md` under `dir`, by name in ascending order.
- * Undefined: the folder or a listed skill does not read.
- */
-function skillTexts(dir: string): Record<string, string> | undefined {
-  const texts: Record<string, string> = {};
-  try {
-    const names = readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
-    for (const name of names.map((entry) => entry.name).sort()) {
-      const text = textAt(join(dir, name, SKILL_FILE));
-      if (text === undefined) {
-        return undefined;
-      }
-
-      texts[name] = text;
-    }
-  } catch {
-    return undefined;
-  }
-
-  return texts;
-}
-
-type ConfigRead = { readonly ok: true; readonly config: LiveConfig } | { readonly ok: false; readonly fault: PullFault };
-
-/**
- * `config/` as the wire type `FamilyConfig`. The folder must list, so a
- * dead mount fails here. The one listing says which files are present. A
- * listed file that does not read, an ENOENT too, is a folder that
- * caregiver removes during the read, so the config is not valid. A half
- * deleted folder never becomes the last good config.
- */
-function readConfigDir(dir: string, previous: readonly LiveSkill[]): ConfigRead {
-  let listed: ReadonlySet<string>;
-  try {
-    listed = new Set(readdirSync(dir));
-  } catch (error) {
-    const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
-
-    return { ok: false, fault: missing ? "config_missing" : "not_valid" };
-  }
-
-  // A `runtime.json` that does not read gives no `model_alias`, so the check fails.
-  const runtime = readRuntimeConfig(dir);
-  if (!runtime.ok) {
-    return { ok: false, fault: "not_valid" };
-  }
-
-  const { modelAlias, sandboxTools, systemPrompt } = runtime.config;
-  const config = {
-    instructions: listed.has(INSTRUCTIONS_FILE) ? textAt(join(dir, INSTRUCTIONS_FILE)) : "",
-    model_alias: modelAlias,
-    sandbox_tools: Object.fromEntries(SANDBOX_TOOL_NAMES.map((name) => [name, sandboxTools.includes(name)])),
-    skills: listed.has(SKILLS_DIR) ? skillTexts(join(dir, SKILLS_DIR)) : {},
-    system_prompt: systemPrompt,
-  };
-
-  // The wire pattern takes `litellm/`, which names no model. The start
-  // refuses it (`model_alias_unset`), so a pull keeps the last good config.
-  if (!validator("FamilyConfig").Check(config) || bareAlias(modelAlias ?? "").length === 0) {
-    return { ok: false, fault: "not_valid" };
-  }
-
-  // The file backend counts the reply with empty creds texts, because it
-  // never holds their text. The key and the token add their own bytes,
-  // which the vmm counts.
-  const reply = JSON.stringify({ state: { config, creds: NO_CRED_TEXT } });
-  if (Buffer.byteLength(reply, "utf8") > STATE_REPLY_CAP) {
-    return { ok: false, fault: "too_large" };
-  }
-
-  return { ok: true, config: liveConfig(config, previous) };
-}
-
 /**
  * `pull`, one call at a time, in the order of the calls. A call starts
  * when the call before it has settled. So the caller applies the pulls in
  * the order they started, and an older creds read never lands after a
- * newer one. Each backend wraps its pull in it.
+ * newer one. The vmm backend wraps its pull in it.
  */
 export function inOrder(pull: () => Promise<StatePull>): () => Promise<StatePull> {
   let last: Promise<unknown> = Promise.resolve();
@@ -229,40 +130,6 @@ export function inOrder(pull: () => Promise<StatePull>): () => Promise<StatePull
     last = next.catch(() => undefined);
 
     return next;
-  };
-}
-
-/**
- * The file backend: `creds.json` on the creds mount, `config/` on the
- * config mount. `lastGood` is the config of the start.
- *
- * On a config read failure the file backend keeps the last good config
- * and logs one stderr line (decision CH53 rule 2). The spike of CH52
- * rule 1 shows a dead sbx mount after each config edit. sbx bind-mounts `config/` itself. After caregiver swaps the folder, each
- * read in the VM gives EACCES until the sandbox is made again. A failed
- * prompt each time would turn a stale config into an outage. A creds
- * failure still fails the prompt: a file replaced in the creds mount is
- * seen at once.
- */
-export function fileBackend(mounts: MountDirs, lastGood: LiveConfig, retryMs: number = CRED_RETRY_MS): StateBackend {
-  let kept = lastGood;
-  let failing = false;
-
-  return {
-    pull: inOrder(async () => {
-      // `creds_missing` wins when both are absent (decision CH31 rule 4).
-      const creds = await readCreds(mounts.creds, retryMs);
-      if (!creds.ok) {
-        return { ok: false, fault: creds.field === null ? "creds_missing" : "not_valid" };
-      }
-
-      const config = readConfigDir(mounts.config, kept.skills);
-      const stale = config.ok || failing ? null : config.fault;
-      failing = !config.ok;
-      kept = config.ok ? config.config : kept;
-
-      return { ok: true, state: { creds: creds.creds, config: kept }, stale };
-    }),
   };
 }
 
@@ -344,7 +211,7 @@ export type WirePull =
 /**
  * The wire state of one reply line. The wire pattern of `ModelAlias`
  * takes `litellm/`, which names no model, so a reply with it is
- * `not_valid`, as in the file backend.
+ * `not_valid`.
  */
 function wireStateOf(line: Buffer): WirePull {
   const reply = read("FamilyStateReply", line, { cap: STATE_REPLY_CAP });
@@ -417,7 +284,7 @@ export async function pullState(
 ): Promise<StatePull> {
   const pulled = await pullWire(path, say, waitMs);
 
-  return pulled.ok ? { ok: true, state: liveStateOf(pulled.state, previous), stale: null } : pulled;
+  return pulled.ok ? { ok: true, state: liveStateOf(pulled.state, previous) } : pulled;
 }
 
 /**
@@ -425,8 +292,8 @@ export async function pullState(
  * call (decisions CH5a, CH62 rule 13). `start` is the config of the start
  * pull. A typed fault fails the prompt, and nothing keeps a last good
  * config: the vmm keeps none either (decisions CH23 rule 2, CH53 rule 2).
- * So `stale` is always null. A skill whose text does not change keeps the
- * value of the last good pull.
+ * A skill whose text does not change keeps the value of the last good
+ * pull.
  */
 export function vmmBackend(path: string, start: LiveConfig, say: Say, waitMs: number = PULL_WAIT_MS): StateBackend {
   let skills = start.skills;

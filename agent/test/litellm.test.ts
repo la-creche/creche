@@ -15,7 +15,7 @@ const ALIAS = "chat-default";
 const REPLY = "settled";
 
 const fake = new FakeModel([{ text: REPLY }]);
-const config = await familyConfig({ litellmUrl: await fake.start(), runtime: { model_alias: ALIAS } });
+const config = familyConfig({ litellmUrl: await fake.start(), config: { model_alias: ALIAS } });
 const read = litellmModel(config);
 if (!read.ok) {
   throw new Error(read.reason);
@@ -36,16 +36,16 @@ afterAll(async () => {
 });
 
 describe("litellmModel", () => {
-  it("names the model litellm/<alias>, with or without the prefix in the alias", async () => {
-    const prefixed = await familyConfig({ runtime: { model_alias: `litellm/${ALIAS}` } });
+  it("names the model litellm/<alias>, with or without the prefix in the alias", () => {
+    const prefixed = familyConfig({ config: { model_alias: `litellm/${ALIAS}` } });
     const second = litellmModel(prefixed);
 
     expect(model.spec).toBe(`litellm/${ALIAS}`);
     expect(second.ok && second.model.spec).toBe(`litellm/${ALIAS}`);
   });
 
-  it("refuses a family with no model_alias", async () => {
-    const read = litellmModel(await familyConfig({ runtime: {} }));
+  it("refuses the bare prefix litellm/, which names no model", () => {
+    const read = litellmModel(familyConfig({ config: { model_alias: "litellm/" } }));
 
     expect(read).toEqual({ ok: false, reason: "model_alias_unset" });
   });

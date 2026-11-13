@@ -2,20 +2,17 @@
 // A fake socket serves the vmm end of host port 1100 as guest init splices
 // it: it reads each `FamilyStatePull` line and answers one
 // `FamilyStateReply` line. Each pull dials a link of its own. A typed fault
-// fails the pull with the fault word of the file backend, and nothing keeps
-// a last good config.
-
-import { join } from "node:path";
+// fails the pull with its fault word, and nothing keeps a last good config.
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { PULL_LINE, pullState, STATE_REPLY_CAP, vmmBackend } from "../src/family-state.js";
 import type { LiveConfig, StatePull } from "../src/family-state.js";
 import { revealSecret } from "../src/secret.js";
-import { readSkills } from "../src/skills.js";
+import { skillOf } from "../src/skills.js";
 import { validator } from "../src/wire-read.js";
 import { closeFakeVmms, CONFIG, CREDS, fakeVmm, replying, sayer, SKILL, socketPath, stateLine } from "./fake-vmm.js";
-import { familyEnv, FIXTURE_KEY, FIXTURE_TOKEN } from "./family.js";
+import { FIXTURE_KEY, FIXTURE_TOKEN } from "./family.js";
 
 const START: LiveConfig = { modelAlias: "chat", instructions: null, systemPrompt: "append", sandboxTools: [], skills: [] };
 const SHORT_WAIT_MS = 200;
@@ -30,7 +27,7 @@ function shown(pull: StatePull): unknown {
 
   const { config } = pull.state;
 
-  return { ...config, skills: config.skills.map((skill) => skill.name), stale: pull.stale };
+  return { ...config, skills: config.skills.map((skill) => skill.name) };
 }
 
 describe("PULL_LINE", () => {
@@ -52,7 +49,6 @@ describe("pullState", () => {
       systemPrompt: "replace",
       sandboxTools: ["read", "bash"],
       skills: ["weather-report"],
-      stale: null,
     });
     if (!pull.ok) {
       throw new Error("the pull failed");
@@ -155,16 +151,14 @@ describe("vmmBackend", () => {
     const vmm = await fakeVmm((link, socket) => socket.write(`${replies[link] ?? ""}\n`));
     const backend = vmmBackend(vmm.path, START, sayer().say);
 
-    expect(shown(await backend.pull())).toMatchObject({ instructions: "FIXTURE-INSTRUCTIONS", stale: null });
+    expect(shown(await backend.pull())).toMatchObject({ instructions: "FIXTURE-INSTRUCTIONS" });
     expect(await backend.pull()).toEqual({ ok: false, fault: "not_valid" });
-    expect(shown(await backend.pull())).toMatchObject({ instructions: null, stale: null });
+    expect(shown(await backend.pull())).toMatchObject({ instructions: null });
   });
 
-  it("keeps a skill of the start, files included, while its text does not change", async () => {
-    const env = familyEnv({
-      configFiles: { "skills/weather-report/SKILL.md": SKILL, "skills/weather-report/notes.md": "FIXTURE-NOTES" },
-    });
-    const start = readSkills(join(env["AGENT_FAMILY_CONFIG_DIR"] ?? "", "skills")).skills;
+  it("keeps a skill of the start while its text does not change", async () => {
+    const skill = skillOf("weather-report", SKILL);
+    const start = skill === null ? [] : [skill];
     const vmm = await replying(stateLine());
     const pull = await vmmBackend(vmm.path, { ...START, skills: start }, sayer().say).pull();
     if (!pull.ok) {

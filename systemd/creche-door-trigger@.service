@@ -22,9 +22,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/creche
-# sbx panics without both (systemd/AGENTS.md): its state is per-user and a
-# user manager sets neither. Anything downstream that shells out to sbx
-# inherits the requirement.
+# Every user unit in this repo carries both (systemd/AGENTS.md): a user
+# manager sets neither.
 Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
 # The site's AGENT_LAN_ADDRESS: where the quiet check reaches the PEP.

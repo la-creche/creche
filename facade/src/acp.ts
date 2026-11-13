@@ -2,7 +2,7 @@
 // definition of each ACP message, and the SDK validates the params of every
 // request before a handler runs.
 //
-//   stdin ──► ndJsonStream ──► AgentApp ──► strictWriter ──► one line ──► stdout
+//   socket ──► ndJsonStream ──► AgentApp ──► strictWriter ──► one line ──► socket
 //
 // The SDK writes a message with `JSON.stringify`. The facade writes it with
 // `encodeLine` instead: a strict text under the line cap. An answer that
@@ -30,7 +30,7 @@ import { Readable } from "node:stream";
 
 import { describeRefusal, encodeLine } from "./line.js";
 import type { Say } from "./stdio.js";
-import { MAX_LINE_BYTES, METHOD_BEAT, METHOD_SHUTDOWN, PROTOCOL_VERSION } from "./vectors.js";
+import { MAX_LINE_BYTES, PROTOCOL_VERSION } from "./vectors.js";
 
 export type {
   AgentApp,
@@ -63,11 +63,10 @@ export interface Peer {
 }
 
 /**
- * The session methods of the one session (`src/sessions.ts`). Null on sbx,
- * which serves no session (decision CH84 rule 10, `serveFamily` in
- * `src/family.ts`). attendance answers `session/new` and `session/list` from the host
- * list (decision CH21-7), so no link of the facade serves them, and the SDK
- * answers each with method not found.
+ * The session methods of the one session (`src/sessions.ts`). attendance
+ * answers `session/new` and `session/list` from the host list (decision
+ * CH21-7), so no link of the facade serves them, and the SDK answers each
+ * with method not found.
  */
 export interface SessionService {
   loadSession(params: LoadSessionRequest, peer: Peer): Promise<Outcome<Record<string, never>>>;
@@ -121,42 +120,8 @@ export const INITIALIZE_RESPONSE: InitializeResponse = {
   authMethods: [],
 };
 
-/** The params of a creche extension: absent or an empty object. */
-function noParams(params: unknown): Record<string, never> {
-  const empty =
-    params === undefined ||
-    (typeof params === "object" && params !== null && !Array.isArray(params) && Object.keys(params).length === 0);
-  if (!empty) {
-    throw RequestError.invalidParams(undefined, "a creche extension takes no params");
-  }
-
-  return {};
-}
-
-/** What the creche extensions do on the supervisor link. */
-export interface SupervisorHooks {
-  /** A `_creche/beat` arrived. */
-  readonly onBeat: () => void;
-  /** A `_creche/shutdown` arrived. */
-  readonly onShutdown: () => void;
-}
-
 /** The app of one link. Build one for each link: it holds the link's peer. */
-export function facadeApp(hooks: SupervisorHooks, sessions: SessionService | null): AgentApp {
-  const app = agent({ name: "creche-facade" })
-    .onRequest(methods.agent.initialize, () => INITIALIZE_RESPONSE)
-    .onRequest(METHOD_BEAT, noParams, () => {
-      hooks.onBeat();
-      return {};
-    })
-    .onNotification(METHOD_SHUTDOWN, noParams, () => {
-      hooks.onShutdown();
-    });
-
-  if (sessions === null) {
-    return app;
-  }
-
+export function facadeApp(sessions: SessionService): AgentApp {
   // One app serves one link, so the peer of its one connection is the
   // peer of every handler.
   let link: AgentConnection | null = null;
@@ -167,7 +132,8 @@ export function facadeApp(hooks: SupervisorHooks, sessions: SessionService | nul
     },
   };
 
-  return app
+  return agent({ name: "creche-facade" })
+    .onRequest(methods.agent.initialize, () => INITIALIZE_RESPONSE)
     .onConnect((connection) => {
       link = connection;
     })

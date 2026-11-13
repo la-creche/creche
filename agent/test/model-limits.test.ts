@@ -62,9 +62,9 @@ describe("readModelLimits", () => {
   afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
   it("asks LiteLLM with the family key and feeds the model", async () => {
-    const config = await familyConfig({ litellmUrl: await listening, runtime: { model_alias: `litellm/${ALIAS}` } });
+    const config = familyConfig({ litellmUrl: await listening, config: { model_alias: `litellm/${ALIAS}` } });
 
-    const read = await readModelLimits(config.planes, config.runtime.modelAlias ?? "", config.creds.litellmKey);
+    const read = await readModelLimits(config.planes, config.modelAlias, config.creds.litellmKey);
 
     expect(read).toEqual({ ok: true, limits: { contextWindow: 1048576, maxTokens: 16384 } });
     expect(seen).toEqual([{ path: "/v1/model/info", authorization: `Bearer ${FIXTURE_KEY}` }]);
@@ -76,7 +76,7 @@ describe("readModelLimits", () => {
   });
 
   it("gives the fallback when LiteLLM does not answer", async () => {
-    const config = await familyConfig({ litellmUrl: "http://127.0.0.1:9", runtime: { model_alias: ALIAS } });
+    const config = familyConfig({ litellmUrl: "http://127.0.0.1:9", config: { model_alias: ALIAS } });
 
     expect(await readModelLimits(config.planes, ALIAS, config.creds.litellmKey)).toEqual({ ok: false, fault: "unreachable", limits: FALLBACK_LIMITS });
   });

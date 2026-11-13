@@ -3,12 +3,12 @@
 // the provider object, so no `models.json` exists and no credential lands on
 // a disk.
 //
-//   planes.litellm ──► baseUrl   (the OpenAI SDK appends `/chat/completions`).
-//                      sbx: `AGENT_LITELLM_BASE_URL`. CH: guest 127.0.0.1:4000
+//   planes.litellm ──► baseUrl   (the OpenAI SDK appends `/chat/completions`):
+//                      guest 127.0.0.1:4000
 //   creds().litellmKey ──► Authorization: Bearer, per request. The facade
 //                          pulls the creds before each prompt (decision CH5a).
-//   runtime.json model_alias ──► `litellm/<alias>`, the model of each
-//                                session's last pull (decisions CH5c, CH5c-2)
+//   the pulled model_alias ──► `litellm/<alias>`, the model of each
+//                              session's last pull (decisions CH5c, CH5c-2)
 //   GET <plane>/v1/model/info ──► the alias's context window and output
 //                                  limit, read at start and at each change
 //
@@ -202,7 +202,7 @@ export function litellmModel(
   limits: ModelLimits = FALLBACK_LIMITS,
   creds: () => LiveCreds = () => config.creds,
 ): LitellmRead {
-  const alias = bareAlias(config.runtime.modelAlias ?? "");
+  const alias = bareAlias(config.modelAlias);
   if (alias.length === 0) {
     return { ok: false, reason: "model_alias_unset" };
   }
@@ -222,11 +222,8 @@ export function litellmModel(
  * the old alias just before the change still resolves it. LiteLLM refuses
  * an alias that the family key no longer carries.
  *
- * No wait for `model_live_at` happens here. Under CH the vmm holds the
- * `state` reply until that time (decision CH31 rule 1). On sbx caregiver
- * writes no `model_live_at` before the cut (decision CH45), and a config
- * edit never reaches a running sandbox (decision CH52 rule 1). So on sbx
- * the alias never changes after start.
+ * No wait for `model_live_at` happens here. The vmm holds the `state`
+ * reply until that time (decision CH31 rule 1).
  */
 export class LiveModel {
   private served = new Map<string, ModelLimits>();

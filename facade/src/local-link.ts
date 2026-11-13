@@ -3,12 +3,11 @@
 // so the facade tells guest init of each turn here, and guest init relays
 // each event to the vmm.
 //
-//   CH mode ──► connect ──► guest init moves the facade to `running`
+//   connect ──► guest init moves the facade to `running`
 //     a turn starts ──► {"start":{}} ────────────────────────► up
 //     a turn ends ────► {"end":{"title":…,"updated_at":…}} ──► up
 //     {"stop":{}} ◄── down ──► stop Flue ──► exit 0, inside the stop wait
 //     no open, a close or a fault outside a stop ──► stop Flue ──► exit 18
-//   sbx ──► no link (decision CH10-4)
 //
 // The framing is the one of control link 1200: one compact JSON value per
 // LF line, at most `CONTROL_LINE_CAP` bytes. Each line up is a wire
@@ -37,8 +36,8 @@ import { describeRefusal, encodeLine } from "./line.js";
 import type { Say } from "./stdio.js";
 
 /**
- * The time that the facade keeps after Flue's stop to release the lock and
- * exit, in milliseconds. Its share of the stop wait is the rest.
+ * The time that the facade keeps after Flue's stop to exit, in
+ * milliseconds. Its share of the stop wait is the rest.
  */
 const EXIT_MARGIN_MS = 1000;
 
@@ -181,7 +180,7 @@ export class LocalLink {
   }
 }
 
-/** The local link of the facade under CH. On sbx the facade opens none (decision CH10-4). */
+/** The local link of the facade. */
 export function guestLink(say: Say): LocalLink {
   return new LocalLink(LOCAL_LINK_SOCKET, FLUE_STOP_MS, say);
 }

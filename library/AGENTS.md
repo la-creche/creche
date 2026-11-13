@@ -20,8 +20,7 @@ a throwaway sandbox whose only egress hole is the embedder (TEI).
    plain little-endian float32. The sandbox reads `chunks_emb` only.
 
 An index whose recorded `embed_model` differs from the live one is rebuilt
-from scratch. The reader, `agent/src/index-search.ts`, refuses the vector
-half of such an index. FTS keeps serving.
+from scratch.
 
 ## Where the index lives
 
@@ -45,9 +44,9 @@ chunks_vec  = vec0(embedding[768])   rowid = chunk id
 chunks_emb(id, embedding)            768 float32, little-endian
 ```
 
-This schema is the contract for every reader. `agent/src/index-store.ts`
-reads it from TypeScript. Change one side, change each reader. `DIMS = 768` matches the pinned embedding model. A
-change of model forces a full rebuild of every corpus.
+This schema is the contract for every reader. `DIMS = 768` matches the
+pinned embedding model. A change of model forces a full rebuild of every
+corpus.
 
 ## Run it
 

@@ -6,7 +6,6 @@ roots are configurable, so a test drives the whole service inside `tmp_path`.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 STATUS_FILE = "status.json"
@@ -22,29 +21,18 @@ _DISPATCH = "dispatch"
 _TRIGGER_JOBS = "trigger-jobs"
 _AUDIT = "audit"
 
-# What the sandbox sees. sbx mounts /srv/agents/sessions/<family>/ at that
-# SAME path inside the VM (contract 03 §7.1), so a path sent on the link is
-# the host path. There is no second name for it and nothing rewrites one.
-#
-# The integration harness runs the playpen as a plain child process on a
-# Mac, under a temp directory no sbx mount put there, so it overrides the root
-# below. Nothing else sets this, on the host or anywhere.
-SANDBOX_MOUNT_ENV = "ATTENDANCE_SANDBOX_SESSIONS_MOUNT"
-
 
 def family_sessions_dir(sessions_root: Path, family: str) -> Path:
     return sessions_root / family
 
 
-def sandbox_sessions_mount(sessions_root: Path, family: str) -> str:
-    """Where the sandbox sees this family's sessions (contract 03 §7.1).
+def session_cwd(sessions_root: Path, family: str) -> str:
+    """The `cwd` of each session of this family: its sessions directory.
 
-    The default is identity: the host path IS the in-VM path, because that
-    is the only thing `sbx create` can do with a mount.
+    The row keeps it as a display value, never a guest path (decision
+    CH21-4). Nothing rewrites it.
     """
-    override = os.environ.get(SANDBOX_MOUNT_ENV, "").strip()
-
-    return override or str(family_sessions_dir(sessions_root, family))
+    return str(family_sessions_dir(sessions_root, family))
 
 
 def family_state_dir(state_root: Path, family: str) -> Path:

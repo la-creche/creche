@@ -437,14 +437,12 @@ table of the three vmm crates.
   `too_large`, because its excess may sit in fields that the reply
   drops.
 - Closed by decision CH67 rule 6 (with CH23 rule 5, CH65 rule 2):
-  `read_state` reads caregiver's files more strictly than the facade's
-  file backend (`agent/src/family-state.ts`, `runtime-config.ts`,
-  `creds.ts`). It refuses as `not_valid` an unknown key in `creds.json`
-  or `runtime.json`, a `runtime.json` with no `shell` or
-  `sandbox_tools`, a tool listed twice, and an entry of `skills/` that
-  is not a dir. The file backend ignores or defaults each. caregiver
-  writes none of these, so both backends give the same reply for every
-  file caregiver writes.
+  `read_state` reads caregiver's files strictly. It refuses as
+  `not_valid` an unknown key in `creds.json` or `runtime.json`, a
+  `runtime.json` with no `shell` or `sandbox_tools`, a tool listed
+  twice, and an entry of `skills/` that is not a dir. caregiver writes
+  none of these. The facade's file backend, which ignored or defaulted
+  each, left with the sbx path (phase 11, plan PR RT-1).
 - Closed by decision CH67 rule 4: the fd limit of the vmm, its headroom
   of 4096 and the refusal of a short hard limit (`nofile.rs`,
   `rust/crates/vmm/AGENTS.md` Known gap 21).

@@ -247,8 +247,6 @@ did not.
 - Two configs have no entry point that takes a map of variables, so no
   vector covers them: `caregiver.cli` and `agent_door_trigger.config`. The
   door reads a key file while it parses.
-- No vector covers a reader of the playpen: `runtime-config.ts`, `creds.ts`
-  and `mounts.ts` are TypeScript and have no Python entry point.
 - `config.site_file` has no vector for a file that another account owns. The
   generator cannot change the owner of a file.
 - `config.noticeboard.env` names no `NOTICEBOARD_ACCESS_KEY_FILE`. The entry point

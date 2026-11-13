@@ -20,11 +20,7 @@ const ARGS = { text: "hello" };
 
 const ch = new FakeCh(FIXTURE_TOKEN);
 const fake = new FakeModel([{ tool: GATED, args: ARGS }, { text: "waiting" }]);
-const config = await familyConfig({
-  pepUrl: await ch.start(),
-  litellmUrl: await fake.start(),
-  runtime: { model_alias: "chat" },
-});
+const config = familyConfig({ pepUrl: await ch.start(), litellmUrl: await fake.start() });
 const read = litellmModel(config);
 if (!read.ok) {
   throw new Error(read.reason);

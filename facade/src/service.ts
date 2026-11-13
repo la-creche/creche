@@ -19,7 +19,7 @@ export interface ServiceOptions {
   readonly agent: Agent;
   /** The identity under which `start()` registers the agent. */
   readonly agentName: string;
-  /** The host's id of the one session, from `CRECHE_SESSION_ID` (`src/mode.ts`). */
+  /** The host's id of the one session, from `CRECHE_SESSION_ID` (`src/session-id.ts`). */
   readonly sessionId: Wire<"SessionId">;
   /** The local link of guest init, as the supervisor gives it (`src/local-link.ts`). */
   readonly link: LocalLink | null;

@@ -1,43 +1,28 @@
-// The family's granted skills, from the read-only config mount:
+// The family's granted skills. Each pull of the family state carries the
+// text of each `SKILL.md` (`FamilySkills`):
 //
-//   <config dir>/skills/<name>/SKILL.md      frontmatter name, description; then the body
-//   <config dir>/skills/<name>/<file>        supporting files, served by Flue
+//   ---
+//   name: <name>
+//   description: <one line>
+//   ---
+//   <the body>
 //
-// At process start each one becomes a `defineSkill` value, with its
-// supporting files. A skill that is not valid is skipped and named, never
-// mounted half. `caregiver` writes the mount, and the agent cannot write it.
-//
-// Before each prompt the family state carries the `SKILL.md` text only
-// (`FamilySkills`). A skill whose text is the text of the start keeps its
-// start value, files included. A changed skill has no files
-// (`agent/AGENTS.md`, "Known gaps").
-
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+// Each text becomes one `defineSkill` value, with no supporting files. A
+// skill that is not valid is skipped and named. A skill whose text does not
+// change keeps its value (`src/family-state.ts`).
 
 import { defineSkill } from "@flue/runtime";
 import type { SkillDefinition } from "@flue/runtime";
-
-const SKILL_FILE = "SKILL.md";
-
-/** Bounds on one skill. The mount is trusted, and a bound still costs nothing. */
-const MAX_FILES = 64;
-const MAX_FILE_BYTES = 1048576;
 
 /** `---` on its own line opens and closes the frontmatter. */
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 const FIELD_RE = /^([a-z][a-z-]*):[ \t]*(.*)$/;
 
-/** One skill: its folder name, its `SKILL.md` text and its `defineSkill` value. */
+/** One skill: its name in the pull, its `SKILL.md` text and its `defineSkill` value. */
 export interface LiveSkill {
   readonly name: string;
   readonly text: string;
   readonly definition: SkillDefinition;
-}
-
-export interface SkillsRead {
-  readonly skills: readonly LiveSkill[];
-  readonly skipped: readonly string[];
 }
 
 /** A one-line value, without the quotes of a YAML scalar. */
@@ -66,58 +51,6 @@ function splitSkill(text: string): { readonly fields: Map<string, string>; reado
   return { fields, body: (match[2] ?? "").trim() };
 }
 
-/** Every file under `dir` but `SKILL.md`, by its path relative to `dir`. */
-function supportingFiles(dir: string): Record<string, Uint8Array> | null {
-  const files: Record<string, Uint8Array> = {};
-  const pending = [dir];
-  let count = 0;
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    for (const entry of readdirSync(next, { withFileTypes: true })) {
-      const path = join(next, entry.name);
-      if (entry.isDirectory()) {
-        pending.push(path);
-        continue;
-      }
-
-      const name = relative(dir, path).split(sep).join("/");
-      if (!entry.isFile() || name === SKILL_FILE) {
-        continue;
-      }
-
-      count += 1;
-      if (count > MAX_FILES || statSync(path).size > MAX_FILE_BYTES) {
-        return null;
-      }
-
-      files[name] = readFileSync(path);
-    }
-  }
-
-  return files;
-}
-
-function readSkill(dir: string, name: string): LiveSkill | null {
-  try {
-    const text = readFileSync(join(dir, SKILL_FILE), "utf8");
-    const split = splitSkill(text);
-    const files = supportingFiles(dir);
-    if (split === null || files === null) {
-      return null;
-    }
-
-    const definition = defineSkill({
-      name: split.fields.get("name") ?? name,
-      description: split.fields.get("description") ?? "",
-      instructions: split.body,
-      ...(Object.keys(files).length > 0 ? { files } : {}),
-    });
-
-    return { name, text, definition };
-  } catch {
-    return null;
-  }
-}
-
 /**
  * One skill from the text of its `SKILL.md` alone, as the family state
  * carries it (`FamilySkills`). Null: the text is not a valid skill.
@@ -139,33 +72,4 @@ export function skillOf(name: string, text: string): LiveSkill | null {
   } catch {
     return null;
   }
-}
-
-/** Null `skillsPath`: the family mounts no skills. */
-export function readSkills(skillsPath: string | null): SkillsRead {
-  if (skillsPath === null) {
-    return { skills: [], skipped: [] };
-  }
-
-  let names: string[];
-  try {
-    const entries = readdirSync(skillsPath, { withFileTypes: true });
-    names = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-  } catch {
-    return { skills: [], skipped: [] };
-  }
-
-  const skills: LiveSkill[] = [];
-  const skipped: string[] = [];
-  for (const name of names.sort()) {
-    const skill = readSkill(join(skillsPath, name), name);
-    if (skill === null) {
-      skipped.push(name);
-      continue;
-    }
-
-    skills.push(skill);
-  }
-
-  return { skills, skipped };
 }

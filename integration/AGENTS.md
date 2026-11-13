@@ -18,9 +18,9 @@ Every test is marked `slow` in `conftest.py`. The suite needs no `node`.
 
 `tests/` held a second suite, which ran the doors, `attendance` and the
 playpen in one process over the session API. That API left `attendance` in
-the phase 2 plan, row 21, and the suite left with it. Its stand-in for
-`sbx`, `tests/fake_sbx.py`, left at the Cloud Hypervisor cut (plan PR CR2):
-`attendance` opens each ACP stream on the vmm.
+the phase 2 plan, row 21, and the suite left with it. Since the Cloud
+Hypervisor cut (plan PR CR2), `attendance` opens each ACP stream on the
+vmm.
 
 ## CI
 
@@ -81,22 +81,24 @@ Run each suite in its own pytest command.
    their numbering. A later scenario goes in its own `test_<packet>_*.py`.
 7. Assert on what crossed a boundary: the SSE body, the journal, the pi spawn
    log, the control mount, the HTTP status.
-8. Every temp path stays inside the fixture. Nothing needs `/run`, `/srv`,
-   `sbx` or a network service.
+8. Every temp path stays inside the fixture. Nothing needs `/run`, `/srv`
+   or a network service.
 9. Keep the socket paths short. macOS refuses a Unix socket path over 104
    bytes.
-10. A second sandbox gets its own control directory and env file.
-    `add_sandbox` never empties a directory that exists.
+10. Retired with the sbx path (phase 11, plan PR RT-1). The
+    number stays, so that other documents keep their references.
 11. From stage 2 on, a scenario drives a family file, never a hand-written
     status document.
 12. Retired with the lock handling of `attendance` (decision CH19 rule 6).
     The number stays, so that other documents keep their references.
 13. Retired with the in-process stack (phase 2 plan, row 21). The
     number stays, so that other documents keep their references.
-14. Never put a playpen mount path in this process's environment. The three
-    directories arrive only through `--env-file`.
-15. The env file is written by `caregiver`'s own writer.
-16. A multi-family scenario must not set `ATTENDANCE_SANDBOX_SESSIONS_MOUNT`.
+14. Retired with the sbx path (phase 11, plan PR RT-1). The
+    number stays, so that other documents keep their references.
+15. Retired with the sbx path (phase 11, plan PR RT-1). The
+    number stays, so that other documents keep their references.
+16. Retired with the sbx path (phase 11, plan PR RT-1). The
+    number stays, so that other documents keep their references.
 17. Write a webhook's token file before the listener starts.
 18. Retired with the in-process stack (phase 2 plan, row 21). The
     number stays, so that other documents keep their references.

@@ -1,144 +1,134 @@
-// The relay socket: one facade in process, on faux Flue, and the built
-// `acp-relay` bin as each door connection's pipe to it.
+// The relay socket: one facade in process, on faux Flue, under a
+// supervisor on a test guest init (`test/guest-init.ts`). Each client dials
+// the socket, as guest init joins each ACP link of guest port 1201 to it
+// (decisions CH5e, CH62 rule 5).
 
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
+import type { Socket } from "node:net";
 import { join } from "node:path";
-import { PassThrough } from "node:stream";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import vectors from "../vectors/creche-extensions.json" with { type: "json" };
-import { SupervisorLock } from "../src/lock.js";
+import { FLUE_STOP_MS, LocalLink } from "../src/local-link.js";
 import { sessionService } from "../src/service.js";
 import { EXIT_OK, runSupervisor } from "../src/supervisor.js";
-import { RELAY_BIN, shortTmp, startFacade } from "./facade-process.js";
-import type { FacadeProcess } from "./facade-process.js";
+import { shortTmp } from "./facade-process.js";
 import { faux, Probe, startFlue } from "./faux-flue.js";
+import { closeGuestInits, guestInit, until } from "./guest-init.js";
+import type { GuestInit } from "./guest-init.js";
 
-const DEADLINE_MS = 300;
-
-// A test's budget is above the 5 s wait of `nextMessage`, so a missing
-// answer fails with that wait's error and the relay's stderr.
-vi.setConfig({ testTimeout: 15_000 });
+const STOP = '{"stop":{}}\n';
 
 const flue = await startFlue([Probe]);
+afterAll(() => flue.stop());
 
 interface Facade {
   /** The id of the facade's one session. */
   readonly id: string;
-  readonly tmp: string;
   readonly socket: string;
-  readonly input: PassThrough;
-  readonly said: string[];
+  readonly guest: GuestInit;
   readonly exited: Promise<number>;
 }
 
-const running: FacadeProcess[] = [];
+/** One connection to the relay socket: JSON-RPC lines out, each line in kept. */
+interface Client {
+  send(message: unknown): void;
+  /** The next whole line, parsed. */
+  nextMessage(): Promise<Record<string, unknown>>;
+}
+
 const facades: Facade[] = [];
+const clients: Socket[] = [];
 
 afterEach(async () => {
-  for (const relay of running.splice(0)) {
-    relay.child.kill();
+  for (const socket of clients.splice(0)) {
+    socket.destroy();
   }
   for (const facade of facades.splice(0)) {
-    facade.input.write(`${JSON.stringify(vectors.shutdown.notification)}\n`);
+    (await facade.guest.peer()).write(STOP);
     await facade.exited;
   }
+  closeGuestInits();
 });
 
 async function facade(): Promise<Facade> {
-  const tmp = shortTmp();
-  const socket = join(tmp, "creche-facade", "acp.sock");
-  const input = new PassThrough();
-  const said: string[] = [];
+  const guest = await guestInit();
+  const socket = join(shortTmp(), "creche-facade", "acp.sock");
   const id = randomUUID();
   let listening: () => void = () => undefined;
   const ready = new Promise<void>((resolve) => (listening = resolve));
-  // The supervisor link beats as attendance does. With no beat, the facade
-  // stops after DEADLINE_MS, often before a cold relay process connects.
-  const beating = setInterval(() => input.write(`${JSON.stringify(vectors.beat.request)}\n`), DEADLINE_MS / 3);
+  const say = (text: string): void => {
+    if (text.startsWith("serving")) {
+      listening();
+    }
+  };
 
   const exited = new Promise<number>((resolve) => {
     void runSupervisor({
-      supervision: { kind: "sbx", input, lock: new SupervisorLock(mkdtempSync(join(tmpdir(), "relay-control-")), "chat-s1") },
-      stdout: { writeLine: () => undefined, exit: resolve },
-      say: (text) => {
-        said.push(text);
-        if (text.startsWith("serving")) {
-          listening();
-        }
-      },
-      deadlineMs: DEADLINE_MS,
-      serve: async () => ({
+      link: new LocalLink(guest.path, FLUE_STOP_MS, say),
+      exit: resolve,
+      say,
+      serve: async (link) => ({
         ok: true,
-        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store }) },
+        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link, store: flue.store }) },
       }),
       socketPath: socket,
     });
   });
-  void exited.then(() => clearInterval(beating));
   await ready;
-  const made = { id, tmp, socket, input, said, exited };
+  const made = { id, socket, guest, exited };
   facades.push(made);
 
   return made;
 }
 
-function relay(on: Facade): FacadeProcess {
-  const proc = startFacade({ TMPDIR: on.tmp }, RELAY_BIN);
-  running.push(proc);
+function client(on: Facade): Client {
+  const socket = connect(on.socket);
+  clients.push(socket);
+  let text = "";
+  socket.on("data", (chunk: Buffer) => {
+    text += chunk.toString("utf8");
+  });
 
-  return proc;
+  return {
+    send: (message) => socket.write(`${JSON.stringify(message)}\n`),
+    nextMessage: async () => {
+      await until(() => text.includes("\n"));
+      const end = text.indexOf("\n");
+      const line = text.slice(0, end);
+      text = text.slice(end + 1);
+
+      return JSON.parse(line) as Record<string, unknown>;
+    },
+  };
 }
 
-async function request(proc: FacadeProcess, id: number, method: string, params: unknown): Promise<Record<string, unknown>> {
-  proc.send({ jsonrpc: "2.0", id, method, params });
+async function request(on: Client, id: number, method: string, params: unknown): Promise<Record<string, unknown>> {
+  on.send({ jsonrpc: "2.0", id, method, params });
   for (;;) {
-    const message = (await proc.nextMessage()) as Record<string, unknown>;
+    const message = await on.nextMessage();
     if (message["id"] === id) {
       return message;
     }
   }
 }
 
-describe("acp-relay", () => {
-  it("pipes a client to the facade's socket", async () => {
-    const on = await facade();
-    const client = relay(on);
-    client.send(vectors.initialize.request);
-
-    expect(await client.nextMessage()).toEqual(vectors.initialize.response);
-    client.send(vectors.beat.request);
-    expect(await client.nextMessage()).toEqual(vectors.beat.response);
-  });
-
-  it("exits 1 with a line on stderr when no facade listens", async () => {
-    const proc = startFacade({ TMPDIR: shortTmp() }, RELAY_BIN);
-
-    expect(await proc.exited()).toBe(1);
-    expect(proc.stdout().length).toBe(0);
-    expect(proc.stderr()).toContain("no facade at the relay socket");
-  });
-
-  it("exits 0 when its client closes stdin", async () => {
-    const on = await facade();
-    const client = relay(on);
-    client.send(vectors.initialize.request);
-    await client.nextMessage();
-    client.child.stdin.end();
-
-    expect(await client.exited()).toBe(EXIT_OK);
-  });
-});
-
 describe("the relay socket", () => {
+  it("answers initialize on each connection", async () => {
+    const on = await facade();
+    const one = client(on);
+    one.send(vectors.initialize.request);
+
+    expect(await one.nextMessage()).toEqual(vectors.initialize.response);
+  });
+
   it("fans a turn out to every connection on the session", async () => {
     const on = await facade();
-    const [first, second] = [relay(on), relay(on)];
+    const [first, second] = [client(on), client(on)];
     const sessionId = on.id;
     expect((await request(second, 1, "session/load", { sessionId, cwd: "/work", mcpServers: [] }))["result"]).toEqual({});
 
@@ -155,31 +145,12 @@ describe("the relay socket", () => {
     expect(seen[0]).toBe("agent_message_chunk");
   });
 
-  it("closes a connection whose beats stop, and only that one", async () => {
+  it("removes the socket at the stop line", async () => {
     const on = await facade();
-    const quiet = connect(on.socket);
-    const closed = new Promise<void>((resolve) => quiet.on("close", () => resolve()));
-    quiet.resume();
-    quiet.write(`${JSON.stringify(vectors.beat.request)}\n`);
-    const client = relay(on);
-
-    await closed;
-    client.send(vectors.initialize.request);
-    expect(await client.nextMessage()).toEqual(vectors.initialize.response);
-    expect(on.said).toContain("a relay connection sent no beat in time; it is closed");
-  });
-
-  it("keeps the facade up on _creche/shutdown from a relay, and removes the socket at the stop", async () => {
-    const on = await facade();
-    const client = relay(on);
-    client.send(vectors.shutdown.notification);
-    client.send(vectors.initialize.request);
-
-    expect(await client.nextMessage()).toEqual(vectors.initialize.response);
     expect(existsSync(on.socket)).toBe(true);
 
     facades.splice(facades.indexOf(on), 1);
-    on.input.write(`${JSON.stringify(vectors.shutdown.notification)}\n`);
+    (await on.guest.peer()).write(STOP);
     expect(await on.exited).toBe(EXIT_OK);
     expect(existsSync(on.socket)).toBe(false);
   });

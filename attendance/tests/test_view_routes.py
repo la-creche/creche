@@ -20,7 +20,6 @@ from attendance.acp_link import loads_strict
 from attendance.api import build_app
 from attendance.auth import Principal, TokenBook
 from attendance.config import Config
-from attendance.paths import SANDBOX_MOUNT_ENV
 from attendance.service import SessionService
 from attendance_harness import (
     FAMILY,
@@ -141,8 +140,9 @@ class Rig:
 
 
 @pytest.fixture
-async def rig(tmp_path: Path) -> AsyncIterator[Rig]:
-    config = make_config(tmp_path)
+async def rig(tmp_path: Path, request: pytest.FixtureRequest) -> AsyncIterator[Rig]:
+    """The rig. An indirect parameter gives the sessions root of the config."""
+    config = make_config(tmp_path, getattr(request, "param", None))
     write_status(config.state_root)
     made = write_tokens(config.state_root)
     book = TokenBook(config.state_root)
@@ -400,12 +400,9 @@ async def test_a_vmm_refusal_is_unavailable(rig: Rig, code: str) -> None:
         assert answer.json()["error"]["detail"] == {"reason": code}
 
 
-async def test_a_cwd_that_the_wire_refuses_starts_no_stream(
-    rig: Rig, monkeypatch: pytest.MonkeyPatch
-) -> None:
+@pytest.mark.parametrize("rig", [Path("sessions")], indirect=True)
+async def test_a_cwd_that_the_wire_refuses_starts_no_stream(rig: Rig) -> None:
     """Decision CH21: the cwd is checked before the stream opens."""
-    monkeypatch.setenv(SANDBOX_MOUNT_ENV, "sessions")
-
     answer = await rig.get(ONE)
 
     assert answer.status_code == HTTP_INTERNAL

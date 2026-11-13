@@ -1,18 +1,17 @@
-// The mode of the facade from `CRECHE_SESSION_ID` (decisions CH62 rule 6,
-// CH52 rule 2): the read at the edge, and the built facade in each mode.
+// The session id of the facade from `CRECHE_SESSION_ID` (decisions CH62
+// rule 6, CH52 rule 2, CH81 rule 8): the read at the edge, and the built
+// facade with no id, a bad id and a good one.
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { EXIT_SESSION_ID } from "../src/family.js";
-import { readMode, SBX } from "../src/mode.js";
-import { facadeEnv, shortTmp, startFacade } from "./facade-process.js";
+import { readSessionId } from "../src/session-id.js";
+import { shortTmp, startFacade } from "./facade-process.js";
 import type { FacadeProcess } from "./facade-process.js";
 
 const SESSION = "0123abcd-0000-4000-8000-00000000c7c7";
-const METHOD_NOT_FOUND = -32601;
 
-/** How long the CH test watches the start: past two start pulls. */
+/** How long the test watches the start: past two start pulls. */
 const START_WATCH_MS = 1000;
 
 /** Texts that are not a session id. Each one refuses the start. */
@@ -34,37 +33,44 @@ afterEach(() => {
   running = null;
 });
 
-describe("readMode", () => {
-  it("reads sbx when the variable is absent", () => {
-    expect(readMode({})).toEqual({ ok: true, mode: SBX });
+describe("readSessionId", () => {
+  it("reads the host's id for a session id", () => {
+    expect(readSessionId({ CRECHE_SESSION_ID: SESSION })).toEqual({ ok: true, sessionId: SESSION });
   });
 
-  it("reads CH and the host's id for a session id", () => {
-    expect(readMode({ CRECHE_SESSION_ID: SESSION })).toEqual({ ok: true, mode: { kind: "ch", sessionId: SESSION } });
+  it("refuses an absent variable", () => {
+    expect(readSessionId({})).toEqual({ ok: false, detail: "CRECHE_SESSION_ID is not set" });
   });
 
   it.each(BAD)("refuses %j, and names the variable but not the value", (text) => {
-    const read = readMode({ CRECHE_SESSION_ID: text });
+    const read = readSessionId({ CRECHE_SESSION_ID: text });
 
     expect(read).toEqual({ ok: false, detail: "CRECHE_SESSION_ID is not a session id" });
   });
 });
 
 describe("the built facade", () => {
+  it("exits 17 with no session id, with one stderr line", async () => {
+    running = startFacade({ TMPDIR: shortTmp() });
+
+    expect(await running.exited()).toBe(EXIT_SESSION_ID);
+    expect(running.stdout().length).toBe(0);
+    expect(running.stderr()).toBe("creche-facade: CRECHE_SESSION_ID is not set\n");
+  });
+
   it("exits 17 for a bad session id, with one stderr line and no value", async () => {
-    const bad = "not-a-session-id";
-    running = startFacade({ ...facadeEnv(), CRECHE_SESSION_ID: bad });
+    running = startFacade({ TMPDIR: shortTmp(), CRECHE_SESSION_ID: "not-a-session-id" });
 
     expect(await running.exited()).toBe(EXIT_SESSION_ID);
     expect(running.stdout().length).toBe(0);
     expect(running.stderr()).toBe("creche-facade: CRECHE_SESSION_ID is not a session id\n");
   });
 
-  it("in CH mode reads no AGENT_* variable and pulls the start state until the vmm answers", async () => {
+  it("pulls the start state until the vmm answers", async () => {
     // No guest init serves the family-state socket here, so each start
     // pull gets no state. The facade never exits on it (decision CH23
-    // rule 2). With no `AGENT_*` variable, sbx would exit 7. In-process
-    // tests cover the local link: `test/local-link.test.ts`.
+    // rule 2). In-process tests cover the local link:
+    // `test/local-link.test.ts`.
     running = startFacade({ TMPDIR: shortTmp(), CRECHE_SESSION_ID: SESSION });
     const exited = running.exited();
     await new Promise((resolve) => setTimeout(resolve, START_WATCH_MS));
@@ -74,20 +80,5 @@ describe("the built facade", () => {
     expect(running.stderr()).toMatch(
       /^creche-facade: the family-state pull got no state: the link closed with no reply: connect E[A-Z]+ \/run\/creche\/family-state\.sock\ncreche-facade: the start pull of the family state failed \(not_valid\); the next pull is in 250 ms\n/,
     );
-  });
-
-  it("serves no session on sbx after the cut", async () => {
-    // attendance answers session/new from the host list (decision CH21-7),
-    // and on sbx the facade serves no session (decision CH84 rule 10). So
-    // only initialize, the beat and the shutdown answer.
-    running = startFacade();
-    running.send(vectors.initialize.request);
-    await running.nextMessage();
-    running.send({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/work", mcpServers: [] } });
-    const answer = (await running.nextMessage()) as { error: { code: number } };
-
-    expect(answer.error.code).toBe(METHOD_NOT_FOUND);
-    // On sbx the facade opens no local link (decision CH10-4).
-    expect(running.stderr()).not.toContain("local link");
   });
 });

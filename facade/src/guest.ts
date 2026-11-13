@@ -5,7 +5,7 @@
 
 /**
  * The env name that carries the session id to the facade. guest init sets
- * it, and it also marks CH mode (decision CH62 rule 6).
+ * it (decision CH62 rule 6).
  */
 export const SESSION_ID_ENV = "CRECHE_SESSION_ID";
 
@@ -28,8 +28,7 @@ export const CONTROL_LINE_CAP = 65_536;
 export const FACADE_STOP_WAIT_MS = 25_000;
 
 /**
- * The relay socket of the facade under CH, where guest init joins each
- * ACP link of guest port 1201 (decisions CH5e, CH62 rule 5). On sbx the
- * path comes from `TMPDIR` (`relaySocketPath`).
+ * The relay socket of the facade, where guest init joins each ACP link of
+ * guest port 1201 (decisions CH5e, CH62 rule 5).
  */
 export const RELAY_SOCKET = "/tmp/creche-facade/acp.sock";

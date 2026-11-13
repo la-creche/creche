@@ -23,7 +23,7 @@ from attendance.jobs import (
     JobStatus,
     job_timeout_s,
 )
-from attendance.paths import SANDBOX_MOUNT_ENV, sandbox_sessions_mount
+from attendance.paths import session_cwd
 from attendance.requests import DelegateRequest, read_delegate
 from attendance.vmm import HOST_FULL
 from attendance_harness import (
@@ -59,8 +59,9 @@ class DelegateHarness:
         tmp_path: Path,
         job_timeout_s: int | None = DEFAULT_JOB_TIMEOUT_S,
         mode: PromptMode = PromptMode.OK,
+        sessions_root: Path | None = None,
     ) -> None:
-        self.config = make_config(tmp_path)
+        self.config = make_config(tmp_path, sessions_root)
         write_status(self.config.state_root)
 
         for family in (ORACLE, CODING_SANDBOX_FAMILY):
@@ -134,7 +135,7 @@ async def test_the_job_makes_one_row_with_the_delegate_origin(tmp_path: Path) ->
     assert origin.delegate.delegation.root == delegation_id
     assert is_session_id(create.id.root)
     assert create.family.root == ORACLE
-    assert create.cwd.root == sandbox_sessions_mount(harness.config.sessions_root, ORACLE)
+    assert create.cwd.root == session_cwd(harness.config.sessions_root, ORACLE)
     assert "_meta" not in harness.facade().received[-1]["params"]
     assert harness.vmm.opened == [create.id.root]
     await harness.stop()
@@ -151,13 +152,10 @@ async def test_the_session_drops_at_the_end_of_the_job(tmp_path: Path) -> None:
     await harness.stop()
 
 
-@pytest.mark.parametrize("mount", ["sessions", "/" + "a" * 4096])
-async def test_a_cwd_that_the_wire_refuses_is_never_sent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mount: str
-) -> None:
+@pytest.mark.parametrize("root", [Path("sessions"), Path("/" + "a" * 4096)])
+async def test_a_cwd_that_the_wire_refuses_is_never_sent(tmp_path: Path, root: Path) -> None:
     """Decision CH21: `SessionCwd` is absolute, at most 4096 characters."""
-    monkeypatch.setenv(SANDBOX_MOUNT_ENV, mount)
-    harness = DelegateHarness(tmp_path)
+    harness = DelegateHarness(tmp_path, sessions_root=root)
 
     with pytest.raises(ApiError) as refused:
         await harness.delegate(harness.call())
@@ -357,7 +355,7 @@ async def test_a_job_works_in_the_family_mount(tmp_path: Path, owner: str | None
     the calling chat makes no directory and names no cwd."""
     harness = DelegateHarness(tmp_path)
     await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY, owner=owner))
-    mount = sandbox_sessions_mount(harness.config.sessions_root, CODING_SANDBOX_FAMILY)
+    mount = session_cwd(harness.config.sessions_root, CODING_SANDBOX_FAMILY)
 
     assert harness.create().cwd.root == mount
     await harness.stop()

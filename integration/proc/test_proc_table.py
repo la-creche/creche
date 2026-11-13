@@ -68,9 +68,9 @@ END_OF_COMMAND = ";"
 #: The directory of this suite.
 SUITE_DIR = Path(__file__).resolve().parent
 
-#: The two files whose scenarios run the reference beside the judged
+#: The file whose scenarios run the reference beside the judged
 #: command (`AGENTS.md`, "The reference").
-REFERENCE_FILES = {"test_proc_library_cross.py", "test_proc_library_reader.py"}
+REFERENCE_FILES = {"test_proc_library_cross.py"}
 
 
 def test_each_default_is_what_its_unit_runs() -> None:

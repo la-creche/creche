@@ -1,8 +1,8 @@
 """`playpen/Dockerfile`, read as text, because no test here builds an image.
 
-The image is the facade: `creche-facade` and `acp-relay` on `PATH`, built
-from the facade's lockfile. The build itself runs both programs once and
-stops on a program that does not load. These tests hold the file to the
+The image is the facade: `creche-facade` on `PATH`, built from the
+facade's lockfile. The build itself runs the facade once and stops when it
+does not load. These tests hold the file to the
 facts that the build cannot check: the names the host runs, the targets the
 release script builds, and the programs that Flue's tools run.
 """
@@ -72,29 +72,25 @@ def test_the_targets_are_the_flavors_the_release_builds() -> None:
     assert "FROM agent-sandbox AS agent-sandbox-python" in _text()
 
 
-def test_each_facade_bin_has_a_shim_on_path() -> None:
+def test_the_facade_bin_has_a_shim_on_path() -> None:
     """guest-init runs `creche-facade` at `FACADE_PROGRAM`
-    (rust/crates/wire/src/guest.rs). The image also keeps the shim of
-    `acp-relay`, the other bin of the facade."""
-    stage = _stage("agent-sandbox")
-    bins = _facade_bins()
-
-    assert sorted(bins) == ["acp-relay", "creche-facade"]
-    assert "for name in creche-facade acp-relay; do" in stage
-    assert '> "/usr/local/bin/$name"' in stage
-    for path in bins.values():
-        assert path.startswith("dist/src/bin/")
-        assert path.endswith(".js")
-    assert f"exec node {DEPLOYED}/dist/src/bin/%s.js" in stage
-
-
-def test_the_build_runs_each_program_once() -> None:
+    (rust/crates/wire/src/guest.rs). It is the one bin of the facade."""
     stage = _stage("agent-sandbox")
 
-    assert "creche-facade </dev/null" in stage
-    assert "-ne 2 ]" in stage
-    assert 'acp-relay </dev/null; [ "$?" = "1" ]' in stage
-    assert "AGENT_SANDBOX=" not in stage
+    assert _facade_bins() == {"creche-facade": "dist/src/bin/creche-facade.js"}
+    assert "> /usr/local/bin/creche-facade" in stage
+    assert f"exec node {DEPLOYED}/dist/src/bin/creche-facade.js" in stage
+
+
+def test_the_build_runs_the_facade_once() -> None:
+    """With no `CRECHE_SESSION_ID` the facade refuses with 17
+    (facade/AGENTS.md, "Exit status")."""
+    stage = _stage("agent-sandbox")
+
+    assert 'err="$(creche-facade </dev/null 2>&1 >/dev/null)"' in stage
+    assert "-ne 17 ]" in stage
+    assert "creche-facade: CRECHE_SESSION_ID is not set" in stage
+    assert "AGENT_" not in stage
 
 
 def test_the_facade_installs_from_its_frozen_lockfile() -> None:
@@ -117,7 +113,7 @@ def test_ripgrep_is_in_the_base_stage() -> None:
 
 
 def test_the_image_fixes_no_address() -> None:
-    """A sandbox reads the two plane URLs from its env file."""
+    """The two planes are fixed on guest loopback (agent/src/guest-start.ts)."""
     assert "AGENT_LAN_ADDRESS" not in _text()
     assert "--build-arg" not in BUILD.read_text(encoding="utf-8")
 

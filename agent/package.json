@@ -12,10 +12,6 @@
       "types": "./dist/agent.d.ts",
       "default": "./dist/agent.js"
     },
-    "./config": {
-      "types": "./dist/config.d.ts",
-      "default": "./dist/config.js"
-    },
     "./strict-json": {
       "types": "./dist/strict-json.d.ts",
       "default": "./dist/strict-json.js"

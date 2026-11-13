@@ -33,7 +33,8 @@ installed unit file in place and never runs an installer.
   Environment=HOME=%h
   Environment=XDG_CONFIG_HOME=%h/.config
   ```
-  `sbx` panics without them.
+  A user manager sets neither, and a program that reads per-user state
+  needs both.
 - **Every user unit reads the site file, except `creche-vmm.service`.**
   `EnvironmentFile=/etc/creche/site.env` sets `AGENT_LAN_ADDRESS` and the
   other site values. No unit names an address. `creche-vmm.service` reads
@@ -50,8 +51,7 @@ installed unit file in place and never runs an installer.
 - **A user unit still gets the hardening that needs no namespace:**
   `NoNewPrivileges`, `UMask`, `SystemCallArchitectures`, `RestrictRealtime`,
   `LockPersonality`. `SystemCallFilter` and `MemoryDenyWriteExecute` are not
-  set on the user units. They shell out to `sbx`, and neither option has been
-  tested against that.
+  set on the user units. Neither option has been tested against them.
 - **The release executor's service has no mount-namespace sandboxing.** Its
   `code` step is the deploy.
 

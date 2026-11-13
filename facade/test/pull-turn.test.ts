@@ -18,8 +18,6 @@ import { faux, Probe, startFlue } from "./faux-flue.js";
 import { closeGuestInits, guestInit, NO_HANDLERS, until } from "./guest-init.js";
 import type { GuestInit } from "./guest-init.js";
 
-const NO_HOOKS = { onBeat: () => undefined, onShutdown: () => undefined };
-
 const flue = await startFlue();
 afterAll(() => flue.stop());
 afterEach(closeGuestInits);
@@ -32,7 +30,7 @@ let refresh: Refresh;
 beforeEach(() => {
   id = randomUUID();
   const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store, refresh: (one) => refresh(one) });
-  wire = new Wire(facadeApp(NO_HOOKS, service));
+  wire = new Wire(facadeApp(service));
 });
 
 function prompt(sessionId: string): ReturnType<Wire["request"]> {
@@ -86,7 +84,7 @@ describe("the local link in a turn", () => {
     link.open(NO_HANDLERS);
     await guest.peer();
     const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link, store: flue.store, refresh: (one) => refresh(one) });
-    wire = new Wire(facadeApp(NO_HOOKS, service));
+    wire = new Wire(facadeApp(service));
 
     return guest;
   }

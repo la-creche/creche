@@ -16,7 +16,7 @@ const OPEN = '[untrusted output from "codemode"';
 const CLOSE = closeMarker("codemode");
 
 const ch = new FakeCh(FIXTURE_TOKEN);
-const config = await familyConfig({ pepUrl: await ch.start() });
+const config = familyConfig({ pepUrl: await ch.start() });
 const tool = codemodeTool(chaperoneConnection(config));
 afterAll(() => ch.stop());
 
