@@ -80,7 +80,7 @@ Run each suite in its own pytest command.
 6. One scenario, one behaviour, one name. The thirteen stage 1 scenarios keep
    their numbering. A later scenario goes in its own `test_<packet>_*.py`.
 7. Assert on what crossed a boundary: the SSE body, the journal, the pi spawn
-   log, the control mount, the HTTP status.
+   log, the HTTP status.
 8. Every temp path stays inside the fixture. Nothing needs `/run`, `/srv`
    or a network service.
 9. Keep the socket paths short. macOS refuses a Unix socket path over 104
