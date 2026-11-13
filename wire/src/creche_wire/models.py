@@ -1205,8 +1205,8 @@ class FamilyConfig(BaseModel):
     tools and the model change at the next prompt of a running session
     (decision CH5c).
 
-    `shell` of `runtime.json` is not here: the agent reads it and grants
-    nothing with it (`agent/src/runtime-config.ts:18`).
+    `shell` of `runtime.json` is not here. The vmm refuses a `runtime.json`
+    with no `shell`, and the pull carries none, so `shell` grants nothing.
 
     `model_live_at` of `runtime.json` is not here either. The vmm holds the
     reply on it (`FamilyStateReply`).
@@ -1218,7 +1218,7 @@ class FamilyConfig(BaseModel):
     instructions: Annotated[
         StrictStr,
         Field(
-            description="The text of `config/instructions.md`. The agent trims it, and an empty\ntext gives no instructions, as today (`agent/src/agent.ts:72-85`)."
+            description="The text of `config/instructions.md`. The agent trims it, and an empty\ntext gives no instructions (`agent/src/family-state.ts` `liveConfig`)."
         ),
     ]
     model_alias: Annotated[ModelAlias, Field(description="The alias of the model.")]
