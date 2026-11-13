@@ -41,7 +41,6 @@ export type { PullFault, Say, StateBackend, StatePull } from "./family-state.js"
 export { FAMILY_STATE_SOCKET } from "./guest.js";
 export { readGuestStart } from "./guest-start.js";
 export { PlaneUrl } from "./planes.js";
-export type { Planes } from "./config.js";
 import { grantedSandbox } from "./sandbox-tools.js";
 import type { ToolEnv } from "./tool-env.js";
 
