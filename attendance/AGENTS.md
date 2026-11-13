@@ -187,10 +187,10 @@ conversation and the one-writer rule (Flue's queue).
 8. Give each step of a loop that lives as long as the service a handler.
    The handler logs the failure, and the loop goes on. `_upkeep_loop` is the
    pattern. A link loop is the exception: a dead reader ends in a lost link.
-9. A vmm that does not answer is transient (decision CH20): ENOENT,
-   ECONNREFUSED and EOF give the code `unreachable`, and the next request
-   tries again. The unit orders `After=creche-vmm.service` and has no
-   `Requires=`.
+9. A vmm that does not answer is transient (decision CH20). ENOENT,
+   ECONNREFUSED and EOF start a retry. Attendance makes four requests, 2 s
+   apart. The last failure gives the code `unreachable`. The unit orders
+   `After=creche-vmm.service` and has no `Requires=`.
 10. The unit sets `ATTENDANCE_VMM_SOCKET` from `%t`, outside `default.env`
     (decision CH84 rule 1). Decision CH20 fixes the path
     `/run/user/<uid>/vmm/vmm.sock`, and the env catalog cannot spell a uid
@@ -312,6 +312,10 @@ is marked `slow`.
 
 ## Known gaps
 
+- CONTRACT-QUESTION: Decision CH20 says that the next request tries after
+  `unreachable`. It does not say that the current request can retry. The
+  client retries the current request four times. A strict reading removes
+  the retry loop in `vmm.py`.
 - The phase 2 plan names no family kind for the ACP door. `door-acp`
   reaches attended families only (`auth.py`).
 - ACP's prompt answer carries no usage. A delegate answer's `usage` is null.

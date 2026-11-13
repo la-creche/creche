@@ -15,12 +15,14 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import httpx
 import pytest
 from attendance.faults import FaultCode, FaultReporter
 from attendance.paths import fault_file
 from attendance.vmm import (
     MISMATCH_TRIES,
     UNREACHABLE,
+    UNREACHABLE_TRIES,
     UNREADABLE,
     VMM_PROTOCOL_MISMATCH,
     HttpVmm,
@@ -196,6 +198,7 @@ async def test_a_route_error_raises_its_code(rig: Rig) -> None:
         await rig.vmm.create(create())
 
     assert refused.value.code == "conflict"
+    assert len(rig.stub.seen) == 1
 
 
 async def test_a_body_of_another_shape_is_unreadable(rig: Rig) -> None:
@@ -270,8 +273,11 @@ async def test_a_fault_file_that_cannot_be_written_changes_no_call(
     assert written["faults"] == []
 
 
-async def test_an_absent_socket_is_unreachable(tmp_path: Path) -> None:
+async def test_an_absent_socket_is_unreachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Decision CH20: ENOENT is transient."""
+    monkeypatch.setattr(vmm_module, "UNREACHABLE_PAUSE_S", 0.0)
     client = HttpVmm.over_socket(tmp_path / "none.sock", FaultReporter(tmp_path))
 
     with pytest.raises(VmmRefused) as refused:
@@ -279,6 +285,59 @@ async def test_an_absent_socket_is_unreachable(tmp_path: Path) -> None:
 
     assert refused.value.code == UNREACHABLE
     await client.aclose()
+
+
+async def test_an_unreachable_call_retries_until_the_vmm_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A normal vmm restart waits 5 s before its next start. Four calls 2 s
+    apart give the new socket one call after that wait."""
+    monkeypatch.setattr(vmm_module, "UNREACHABLE_PAUSE_S", 0.0)
+    calls = 0
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+
+        if calls < UNREACHABLE_TRIES:
+            raise httpx.ConnectError("the vmm is restarting", request=request)
+
+        return httpx.Response(200, json=row())
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(answer))
+    client = HttpVmm(http, FaultReporter(tmp_path))
+
+    try:
+        made = await client.create(create())
+    finally:
+        await client.aclose()
+
+    assert made.id.root == SESSION
+    assert calls == UNREACHABLE_TRIES
+
+
+async def test_an_unreachable_call_stops_at_its_retry_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(vmm_module, "UNREACHABLE_PAUSE_S", 0.0)
+    calls = 0
+
+    def absent(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ConnectError("the vmm is restarting", request=request)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(absent))
+    client = HttpVmm(http, FaultReporter(tmp_path))
+
+    try:
+        with pytest.raises(VmmRefused) as refused:
+            await client.create(create())
+    finally:
+        await client.aclose()
+
+    assert refused.value.code == UNREACHABLE
+    assert calls == UNREACHABLE_TRIES
 
 
 async def test_the_acp_route_turns_into_a_stream(rig: Rig) -> None:
