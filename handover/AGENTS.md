@@ -330,6 +330,17 @@ has the name of the markup of the manifest: `.component.toml` or
      `vmm` came this way: the row first, then `rust/component.toml`
      (CH7-5, CH76 rule 1). `disks` came the same way, then
      `disks/component.toml`.
+11b. A row leaves in two PRs, the opposite of rule 11a. The first PR puts
+     its name in `catalog.RETIRING`. Discovery then reads a checkout with
+     or without the manifest of that name, and the allocator tags no such
+     row. `handover` releases with the new set. The second PR deletes the
+     manifest of that name, after a host installs that `handover`. It
+     deletes the directory only when nothing else reads it. The row goes
+     once no installed requester expects the manifest. `releasable_names()`
+     keeps a retiring name, so a `host.toml` that still follows it reads
+     (`follow/` rule 7). `playpen` leaves this way (CH86, Q78-2 A). Its
+     `Dockerfile` and its disk scripts in `playpen/bin` stay, because the
+     `disks` build reads them.
 12. Check P6 (`executor/provenance.py`) starts the verifier, `cosign`, in
     two children. Each child runs in a transient unit of systemd, as a
     dynamic user with no privilege (`host.As.VERIFIER`). Child 1 loads the

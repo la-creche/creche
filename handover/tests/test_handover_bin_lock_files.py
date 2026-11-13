@@ -6,8 +6,8 @@ A binary build reads three files of the Cargo workspace in the same way.
 
 Two properties are held here. A binary component moves when one of those
 files moves. No component of another kind moves, with one exception: the
-playpen image resolves the lock for its test venv, so the lock moves it
-with the venv components.
+disks row bundles the playpen image build, whose test venv resolves the
+lock, so the lock moves it with the venv components.
 """
 
 from __future__ import annotations
@@ -131,19 +131,19 @@ def test_the_python_lock_file_moves_no_binary_component(monkeypatch: pytest.Monk
     """A binary build reads no `uv.lock`, so a Python dependency upgrade
     must not release a binary component. Every venv component still moves.
 
-    The playpen image is the one exception: its test venv resolves the
-    lock, so the wheels it pins are bytes of the image, and a lock change
-    moves the image tag with the venv tags. The disks row bundles each
-    path of playpen, so it moves too. The mock binary component of this
-    suite reads only the Cargo workspace files, and moves for none of the
-    lock."""
+    The disks row is the one exception: it bundles each path of playpen,
+    whose test venv resolves the lock, so the wheels it pins are bytes of
+    the root disks. A lock change moves the disks tag with the venv tags.
+    The playpen row is retiring (`catalog.RETIRING`) and moves for no
+    change. The mock binary component of this suite reads only the Cargo
+    workspace files, and moves for none of the lock."""
     use_binary_catalog(monkeypatch)
     ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in RETIRING]
     venvs = {row.name for row in ours if row.kind is Kind.VENV and row.lock is Lock.WORKSPACE} - {
         BINARY_NAME
     }
 
-    assert _moved((PYTHON_LOCK,)) == venvs | {"playpen", "disks"}
+    assert _moved((PYTHON_LOCK,)) == venvs | {"disks"}
 
 
 @pytest.mark.parametrize(

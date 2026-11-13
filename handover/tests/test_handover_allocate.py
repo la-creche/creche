@@ -259,31 +259,32 @@ def test_a_level_line_the_script_would_never_write_is_refused(line: str) -> None
         _plan(("caregiver/src/x.py",), tags=ALL_TAGGED, levels=(line,))
 
 
-def test_the_lock_file_moves_every_venv_component_and_the_playpen_image() -> None:
+def test_the_lock_file_moves_every_venv_component_and_the_disks() -> None:
     """`uv sync --frozen` installs what `uv.lock` pins, into every venv
     tree. A dependency upgrade that changed nothing else used to move no
     tag, and shipped only when something else changed the component.
 
-    The playpen image moves with them: its test venv resolves the lock,
-    so the wheels it pins are bytes of the image. It is the one image
-    component the lock moves. The disks row moves with it: its root disks
-    come from the same image build (contract 06 §1 rule 15)."""
+    The disks row moves with them: its root disks come from the playpen
+    image build, and that build's test venv resolves the lock (contract 06
+    §1 rule 15). The playpen row bundles the lock too, but it is retiring
+    (`catalog.RETIRING`), so it gets no tag."""
     plans = _plan(("uv.lock",), tags=ALL_TAGGED)
 
     ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in ARRIVING]
     venvs = {row.name for row in ours if row.kind is Kind.VENV and row.lock is Lock.WORKSPACE}
 
-    assert {plan.component for plan in plans} == venvs | {"playpen", "disks"}
-    assert "playpen" not in venvs
+    assert {plan.component for plan in plans} == venvs | {"disks"}
+    assert "playpen" in CATALOG_BY_NAME["disks"].bundles
 
 
 def test_a_members_lock_file_is_not_the_roots() -> None:
     """Only the root `uv.lock` is read by every build. A file of that name
     deeper in the tree belongs to whatever directory holds it. The disks
-    row bundles `playpen`, so the file moves it too."""
+    row bundles `playpen`, so the file moves it. `playpen` itself is
+    retiring and gets no tag."""
     plans = _plan(("playpen/uv.lock",), tags=ALL_TAGGED)
 
-    assert {plan.component for plan in plans} == {"playpen", "disks"}
+    assert {plan.component for plan in plans} == {"disks"}
 
 
 #: A venv row with a lock of its own, beside the real rows (contract 06 §1
@@ -348,19 +349,17 @@ def test_the_first_run_tags_every_component_the_commit_did_not_touch() -> None:
     assert all(item.outcome is TagOutcome.CREATE for item in plans)
 
 
-def test_a_retiring_component_is_never_tagged(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_retiring_component_is_never_tagged() -> None:
     """A tag is a version somebody can release. A component on its way out
     of the catalog gets no new one: not a first tag, and not a bump when a
     file under its path changes (deleting its directory changes them all).
-    The set is empty today, so the test fills it with a row that has a path
-    to change."""
-    assert frozenset() == RETIRING
-    retiring = "caregiver"
-    monkeypatch.setattr(allocate, "RETIRING", frozenset({retiring}))
+    `playpen` is the one retiring row, and it carries a tag from before."""
+    assert frozenset({"playpen"}) == RETIRING
+    retiring = "playpen"
     row = CATALOG_BY_NAME[retiring]
 
     first = _plan(("pyproject.toml",), tags=OLD_TAGS)
-    bumped = _plan((f"{row.path}/src/x.py",), tags=ALL_TAGGED)
+    bumped = _plan((f"{row.path}/src/x.py",), tags=(*ALL_TAGGED, f"{retiring}-v0.1.67"))
 
     assert retiring not in {item.component for item in first}
     assert retiring not in {item.component for item in bumped}
