@@ -18,6 +18,7 @@ pub mod image_root;
 mod links;
 pub mod mirror;
 pub mod planes;
+mod readiness;
 pub mod relay;
 pub mod restore;
 pub mod root_owned;
@@ -35,6 +36,8 @@ pub use compose::{StartError, serve};
 pub enum ServeError {
     /// The server could not bind its socket.
     Bind(io::ErrorKind),
+    /// The process could not report that the socket is ready.
+    Ready(io::ErrorKind),
     /// A fixed reply of the server failed to build at its start.
     Reply,
 }
@@ -43,6 +46,7 @@ impl fmt::Display for ServeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Bind(kind) => write!(formatter, "cannot bind the socket: {kind}"),
+            Self::Ready(kind) => write!(formatter, "cannot report readiness: {kind}"),
             Self::Reply => formatter.write_str("a fixed reply failed to build"),
         }
     }

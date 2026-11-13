@@ -19,9 +19,10 @@ use hyper::{Response, StatusCode};
 
 use crate::ServeError;
 
-pub(crate) use accept::ACCEPT_PAUSE;
+pub(crate) use accept::{ACCEPT_PAUSE, run_ready};
 pub use accept::{Stop, StopSignal, run_with};
 pub use check::BodyCheck;
+pub(crate) use router::run_routes_ready;
 pub use router::{Relay, Route, Routes, run_routes};
 
 /// The wire crate, for the expansion of `routes!` in another crate.

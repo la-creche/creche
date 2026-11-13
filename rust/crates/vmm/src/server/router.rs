@@ -23,7 +23,7 @@ use hyper::{HeaderMap, Method, Request, Response, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
 use serde::Serialize;
 
-use super::{BodyCheck, Reply, StopSignal, error_reply, json_reply, run_with};
+use super::{BodyCheck, Reply, StopSignal, error_reply, json_reply, run_ready};
 use crate::ServeError;
 
 /// A handler set: one handler for each route of `route_table!`.
@@ -130,12 +130,24 @@ pub async fn run_routes<H: Routes>(
     stop: StopSignal,
     handlers: H,
 ) -> Result<(), ServeError> {
+    run_routes_ready(path, stop, handlers, || Ok(())).await
+}
+
+pub(crate) async fn run_routes_ready<H: Routes, R>(
+    path: &Path,
+    stop: StopSignal,
+    handlers: H,
+    ready: R,
+) -> Result<(), ServeError>
+where
+    R: FnOnce() -> std::io::Result<()> + Send,
+{
     let router = Arc::new(Router::new(handlers)?);
     let answer = move |request| {
         let router = Arc::clone(&router);
         async move { router.answer(request).await }
     };
-    run_with(path, stop, answer).await
+    run_ready(path, stop, ready, answer).await
 }
 
 /// The handler set and the replies of the shared codes, made once at the

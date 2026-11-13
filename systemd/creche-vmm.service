@@ -19,7 +19,10 @@ Description=creche-vmm, the owner of every Cloud Hypervisor VM
 StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+# The vmm sends READY=1 only after it binds vmm.sock. A client whose start
+# orders After= this unit therefore starts after the first import and bind.
+Type=notify
+NotifyAccess=main
 Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
 # Decision CH59 rule 1: the vmm compiles in no default
@@ -71,8 +74,8 @@ RestartMaxDelaySec=120s
 # A restart changes nothing until the operator fixes the cause
 # (bin/systemd-proof.sh, the restart rule).
 RestartPreventExitStatus=78
-# The start. The vmm sends no readiness notice, so under Type=simple the
-# start job ends at the fork, and no start timeout reaches `vmm serve`.
+# The start. The start job ends at the readiness notice after `vmm.sock`
+# binds. The timeout therefore covers each start step and the bind.
 # The first start after a release imports each entry of `digests.json`
 # before the bind of `vmm.sock`: it runs `zstd -d` on each root disk and
 # hashes it (decision CH58 rule 5). No one measured that time on the host.
