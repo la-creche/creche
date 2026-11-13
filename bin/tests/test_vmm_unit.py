@@ -31,6 +31,7 @@ DECIDED = [
     ("ExecStart", ["/opt/components/vmm/bin/vmm serve"], "CH7-5"),
     ("Restart", ["always"], "the rework restart policy"),
     ("RestartPreventExitStatus", ["78"], "owner item 86"),
+    ("TimeoutStartSec", ["480"], "the 600 s release restart bound"),
     ("RuntimeDirectory", ["vmm"], "CH20, G5 option A"),
     ("RuntimeDirectoryMode", ["0700"], "CH20"),
     ("RuntimeDirectoryPreserve", [], "accept.rs refuses an existing vmm.sock"),

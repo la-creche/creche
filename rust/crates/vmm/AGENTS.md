@@ -1564,6 +1564,9 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
 - CONTRACT-QUESTION: CH20 specifies `vmm.sock`, but no contract specifies
   service readiness. The vmm reports readiness after the socket bind. A
   different rule changes `readiness.rs`, the bind callback and the unit.
+- CONTRACT-QUESTION: CH58 rule 5 gives no maximum time for the first image
+  import. The unit allows 480 s. A slower import fails the release. A
+  different limit changes the unit and the release restart bound.
 
 1. Closed by decision CH54 rule 1: a drop waits for a start that its
    mark overlapped, with no bound (`src/handlers/drop.rs`). So a drop
@@ -1795,8 +1798,8 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
 9. Decision CH58 rule 5: the compose step imports each entry of
    `digests.json` before the bind of `vmm.sock`. The first import of a
    release decompresses each disk (`zstd -d`) and hashes it. So the unit
-   of plan PR C13 must not bound the start of the vmm below that time.
-   A later start finds each digest in the store and reads no byte.
+   allows 480 s for this work. A later start finds each digest in the store
+   and reads no byte.
 10. Decision CH59 rule 1: the vmm reads `VMM_EGRESS_LOG` (plan PR E2),
     `VMM_MIRROR_ROOT` and `VMM_GIT_PROGRAM` (plan PR M1), so the
     `vmm.env` that `bin/fleet-up up` writes must hold them before this

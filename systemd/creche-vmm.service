@@ -78,11 +78,10 @@ RestartPreventExitStatus=78
 # binds. The timeout therefore covers each start step and the bind.
 # The first start after a release imports each entry of `digests.json`
 # before the bind of `vmm.sock`: it runs `zstd -d` on each root disk and
-# hashes it (decision CH58 rule 5). No one measured that time on the host.
-# So the bound is `infinity`: a later readiness notice or ExecStartPre then
-# cannot cut that first start short (rust/crates/vmm/AGENTS.md, caller duty
-# 9). A later start finds each digest in the store and reads no byte.
-TimeoutStartSec=infinity
+# hashes it (decision CH58 rule 5). A later start finds each digest in the
+# store and reads no byte. The release executor allows 600 s for the stop
+# and start. The 480 s start plus the 90 s stop leaves 30 s for the caller.
+TimeoutStartSec=480
 # The stop. At SIGTERM the vmm closes the door links, snapshots each VM that
 # may sleep and stops the rest (gap G16 option A). One deadline bounds every
 # step: SHUTDOWN_WAIT, 85 s (decision CH56 rule 2). The vmm keeps 5 s for its
