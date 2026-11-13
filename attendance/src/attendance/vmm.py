@@ -18,8 +18,8 @@ After 101 the connection carries raw ACP lines (decision CH20). The vmm
 parses none of them.
 
 ENOENT, ECONNREFUSED and EOF are transient (decision CH20): a vmm restart
-drops each connection. A call that meets one raises `VmmRefused` with the
-code `unreachable`, and the next request tries again.
+drops each connection. A call tries four times, 2 s apart, before it raises
+`VmmRefused` with the code `unreachable`.
 """
 
 from __future__ import annotations
@@ -89,6 +89,12 @@ VMM_SOCKET_ENV: Final = "ATTENDANCE_VMM_SOCKET"
 #: 2: the 3 requests include the first one.
 MISMATCH_TRIES: Final = 3
 MISMATCH_PAUSE_S: Final = 2.0
+
+#: A normal vmm restart waits 5 s before its next start. Four requests 2 s
+#: apart give the ready socket one request after that wait. The requests
+#: include the first one.
+UNREACHABLE_TRIES: Final = 4
+UNREACHABLE_PAUSE_S: Final = 2.0
 
 #: The host part of the URL. The transport dials the socket, so it names
 #: nothing.
@@ -377,7 +383,26 @@ class HttpVmm:
         more: dict[str, str] | None,
         timeout: httpx.Timeout | None,
     ) -> httpx.Response:
-        """One request. A vmm that does not answer is `unreachable`."""
+        """One request with bounded retries for an unreachable vmm."""
+        for _ in range(UNREACHABLE_TRIES - 1):
+            try:
+                return await self._send_once(path, body, more, timeout)
+            except VmmRefused as error:
+                if error.code != UNREACHABLE:
+                    raise
+
+            await asyncio.sleep(UNREACHABLE_PAUSE_S)
+
+        return await self._send_once(path, body, more, timeout)
+
+    async def _send_once(
+        self,
+        path: str,
+        body: bytes,
+        more: dict[str, str] | None,
+        timeout: httpx.Timeout | None,
+    ) -> httpx.Response:
+        """One transport attempt. A vmm that does not answer is unreachable."""
         headers = {HOST_API_HEADER: str(HOST_API_PROTOCOL), "Content-Type": "application/json"}
         headers.update(more or {})
         url = f"{SOCKET_BASE_URL}{path}"
