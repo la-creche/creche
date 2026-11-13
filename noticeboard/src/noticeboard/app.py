@@ -30,6 +30,7 @@ parser would be a dependency and a parser this service does not need.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
@@ -43,6 +44,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 
 from . import pages, security, tomlkeep
+from .approvals import ApprovalChannel, Decision, Lookup, Outcome, build_channel, is_job
 from .auditfiles import ARGS_NOTICE, AuditFilter
 from .config import Config
 from .familyform import Form, document_of, form_of, parse_posted, with_posted
@@ -55,6 +57,7 @@ HERE: Final = Path(__file__).parent
 TEMPLATES: Final = HERE / "templates"
 STATIC: Final = HERE / "static"
 
+_BAD_REQUEST: Final = 400
 _FORBIDDEN: Final = 403
 _NOT_FOUND: Final = 404
 _SERVER_ERROR: Final = 500
@@ -70,13 +73,17 @@ VERB_SAVE: Final = "save"
 
 
 def build_app(
-    config: Config, reader: SessionReader, clock: Callable[[], datetime] | None = None
+    config: Config,
+    reader: SessionReader,
+    clock: Callable[[], datetime] | None = None,
+    approvals: ApprovalChannel | None = None,
 ) -> FastAPI:
     """The whole service.
 
     `reader` and `clock` are injected so a test needs no socket and no
     real time: staleness is a comparison against a clock, so a test that
-    could not pin one could not test it.
+    could not pin one could not test it. `approvals` defaults to the
+    channel of `config`.
     """
     app = FastAPI(title="noticeboard", docs_url=None, redoc_url=None, openapi_url=None)
     render = _renderer(config)
@@ -85,6 +92,9 @@ def build_app(
     _perimeter(app, config)
     _last_resort(app)
     _routes(app, config, reader, render, clock or _now)
+    _approval_routes(
+        app, approvals or build_channel(config.approval_url, config.approval_token_file), render
+    )
 
     return app
 
@@ -255,6 +265,85 @@ def _routes(
             return RedirectResponse(f"/families/{name}?saved={page.saved}", status_code=_SEE_OTHER)
 
         return render(request, "edit.html", {"page": page})
+
+
+@dataclass(frozen=True)
+class ApprovalPage:
+    """What `approval.html` shows. No gate and no outcome is a gone request."""
+
+    job: str
+    found: Lookup
+    decision: Decision | None = None
+    outcome: Outcome | None = None
+    problem: str = ""
+
+
+def _approval_routes(
+    app: FastAPI,
+    approvals: ApprovalChannel,
+    render: Callable[[Request, str, dict[str, object]], HTMLResponse],
+) -> None:
+    """The page a phone card opens when its tap is lost (`approvals.py`).
+
+    A GET changes nothing, so a link preview cannot decide. The POST is a
+    form post under the CSRF rules of every other write.
+    """
+
+    def page(request: Request, body: ApprovalPage) -> HTMLResponse:
+        answer = render(
+            request,
+            "approval.html",
+            {"page": body, "approve": Decision.APPROVE, "deny": Decision.DENY},
+        )
+        gone = body.found.gate is None and not body.found.problem
+        if gone and body.outcome is None:
+            answer.status_code = _NOT_FOUND
+
+        return answer
+
+    @app.get("/approvals/{job}", response_class=HTMLResponse)
+    def _approval(request: Request, job: str) -> HTMLResponse:  # pyright: ignore[reportUnusedFunction]
+        _require_job(job)
+
+        return page(request, ApprovalPage(job=job, found=approvals.lookup(job)))
+
+    @app.post("/approvals/{job}")
+    async def _decide(request: Request, job: str) -> Response:  # pyright: ignore[reportUnusedFunction]
+        _require_job(job)
+        posted, refusal = await _form_of(request)
+
+        if refusal is not None:
+            return _refused(refusal)
+
+        try:
+            decision = Decision(posted.get("decision", ""))
+        except ValueError:
+            raise HTTPException(status_code=_BAD_REQUEST) from None
+
+        found = await run_in_threadpool(approvals.lookup, job)
+
+        if found.gate is None:
+            # Decided, expired or abandoned before this post: nothing to send.
+            outcome = None if found.problem else Outcome.GONE
+            body = ApprovalPage(job=job, found=found, decision=decision, outcome=outcome)
+
+            return page(request, body)
+
+        sent = await run_in_threadpool(approvals.decide, found.gate, decision)
+        body = ApprovalPage(
+            job=job, found=found, decision=decision, outcome=sent.outcome, problem=sent.problem
+        )
+
+        return page(request, body)
+
+
+def _require_job(job: str) -> None:
+    """Answer 404 unless the route parameter has the form of a job id.
+
+    The parameter becomes one segment of a path on the approval plugin.
+    """
+    if not is_job(job):
+        raise _no_such_page()
 
 
 def _require_family(name: str) -> None:

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "macros.html" import problem, csrf %}
+{# The page a phone card opens when its tap is lost. It lives only as long
+   as the request: the approval plugin forgets a gate once it is decided,
+   expired or no longer awaited, and this page then says the request is
+   gone. #}
+{% block title %}approval{% endblock %}
+{% block main %}
+{% set gate = page.found.gate %}
+{% if page.outcome %}
+<h1>approval</h1>
+{% if page.outcome.value == "recorded" %}
+<p class="saved">{{ "Approved" if page.decision == approve else "Denied" }}.
+The agent has its answer.</p>
+{% elif page.outcome.value == "repeated" %}
+<p class="saved">Already {{ "approved" if page.decision == approve else "denied" }}.
+Nothing changed.</p>
+{% elif page.outcome.value == "contradicted" %}
+<p class="problem">The other answer came first, and it stands.</p>
+{% elif page.outcome.value == "gone" %}
+<p class="problem">This request is gone. It was decided, it expired, or the
+agent stopped waiting. Nothing was sent.</p>
+{% else %}
+{{ problem(page.problem or "The decision did not reach the approval plugin.") }}
+{% endif %}
+{% elif gate %}
+<h1>{{ gate.agent }} needs approval</h1>
+<pre>{{ gate.summary }}</pre>
+<p class="foot">This request expires in {{ gate.expires_in_s // 60 }} min {{ gate.expires_in_s % 60 }} s,
+and this page with it.</p>
+<form method="post" action="/approvals/{{ page.job }}">
+{{ csrf(csrf_token, csrf_field) }}
+<p class="verbs">
+  <button type="submit" name="decision" value="{{ approve.value }}">Approve</button>
+  <button type="submit" name="decision" value="{{ deny.value }}">Deny</button>
+</p>
+</form>
+{% elif page.found.problem %}
+<h1>approval</h1>
+{{ problem(page.found.problem) }}
+{% else %}
+<h1>approval</h1>
+<p>This request is gone. It was decided, it expired, or the agent stopped
+waiting.</p>
+{% endif %}
+{% endblock %}
