@@ -50,12 +50,14 @@ def _provided(found: ManifestSet) -> dict[ContractId, tuple[int, int]]:
 
 
 def test_every_creche_component_declares_itself(found: ManifestSet) -> None:
-    """All but a retiring one, whose directory has left this tree
-    (`catalog.RETIRING`), and an arriving one, whose directory has not
-    reached it yet (`catalog.ARRIVING`)."""
+    """Every one but an arriving one, whose directory has not reached this
+    tree yet (`catalog.ARRIVING`). A retiring one (`catalog.RETIRING`) may
+    declare itself or not: its manifest leaves in a later commit than the
+    one that names it."""
     here = {row.name for row in CATALOG_BY_NAME.values() if row.repo is Repo.CRECHE}
+    declared = set(found.manifests())
 
-    assert set(found.manifests()) == here - RETIRING - ARRIVING
+    assert here - RETIRING - ARRIVING <= declared <= here - ARRIVING
 
 
 def test_only_the_other_repos_components_are_missing(found: ManifestSet) -> None:

@@ -256,8 +256,12 @@ MAIN_BRANCH = "main"
 #: component's manifest or not, and both read. A component leaves in two
 #: commits, this entry first and the directory's deletion second, so the
 #: requester a host already runs keeps planning across the second one. The
-#: row goes once no installed requester expects the file.
-RETIRING: frozenset[str] = frozenset()
+#: row goes once no installed requester expects the file. `playpen` is the
+#: one name now (CH86, Q78-2 A): sbx ran its image, and the virtual machines
+#: of the vmm run no image. The commit that deletes its manifest comes after
+#: a host installs this set. `releasable_names` keeps a retiring name, so a
+#: `host.toml` that still follows `playpen` reads.
+RETIRING: frozenset[str] = frozenset({"playpen"})
 
 #: Components on their way INTO the catalog, the opposite of `RETIRING`. The
 #: row lands before the directory, so a checkout carries the manifest or not,
