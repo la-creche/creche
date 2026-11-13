@@ -44,7 +44,7 @@ CLIENT_TIMEOUT: Final = httpx.Timeout(5.0, read=60.0)
 
 #: What a unit gives every service: a PATH, a home, and nothing of the
 #: operator's shell. `LANG` and `TMPDIR` pass through when this process has
-#: them, because `node` and the stand-ins read them.
+#: them, because the stand-ins read them.
 _PASSED_THROUGH: Final = ("LANG", "TMPDIR")
 
 
