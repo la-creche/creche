@@ -22,6 +22,7 @@ from creche_memory.search import STOP_TIMEOUT_S, StoreLoop
 from creche_memory.sync import Syncer
 from memory_graph_helpers import (
     GRAPH_NAME,
+    held_open,
     kill_graph,
     ladybug_check,
     leave_recoverable,
@@ -162,6 +163,8 @@ def test_a_dead_graph_stops_the_start_with_exit_78_and_one_line(host: Path) -> N
     # Cognee reports the path with each symlink resolved.
     graph_file = make_graph(_graph_file(host)).resolve()
     kill_graph(graph_file)
+    wal = graph_file.with_name(f"{GRAPH_NAME}.wal")
+    wal.write_bytes(b"\x5a" * 42)
 
     service = _start(host)
     _, err = service.communicate(timeout=START_TIMEOUT_S)
@@ -173,8 +176,37 @@ def test_a_dead_graph_stops_the_start_with_exit_78_and_one_line(host: Path) -> N
     assert lines[0].startswith(f"creche-memory: The graph database {graph_file} does not open: ")
     assert "Checksum verification failed" in lines[0]
     assert f"To recover, set aside {graph_file.parent}. Then start the unit." in lines[0]
-    # The service moves and removes no file of the store.
+    # The report names the files from before the open.
+    assert f"Files beside it: {GRAPH_NAME}.wal, {GRAPH_NAME}.wal.checkpoint, " in lines[0]
+    # Cognee's open removes the `.wal` file when the error names the WAL.
+    # The service itself moves and removes no other file of the store.
+    assert not wal.exists()
     assert (graph_file.parent / f"{GRAPH_NAME}.wal.checkpoint").exists()
+    assert KEY not in err
+
+
+def test_a_lock_at_the_start_check_exits_75_with_one_line(host: Path) -> None:
+    graph_file = make_graph(_graph_file(host))
+
+    with held_open(graph_file):
+        service = _start(host)
+        _, err = service.communicate(timeout=START_TIMEOUT_S)
+
+    assert service.returncode == EX_TEMPFAIL, err[-2000:]
+    assert not (host / "run" / "memory.sock").exists()
+    lines = [one for one in err.splitlines() if one.startswith("creche-memory: ")]
+    assert len(lines) == 1
+    # The line carries ladybug's text, so the journal names the cause.
+    assert lines[0].startswith(
+        "creche-memory: the graph check failed: NotAVerdict: "
+        "IO exception: Could not set lock on file"
+    )
+    assert str(graph_file) in lines[0]
+    # Ladybug's text ends in a period, and the line keeps only one.
+    assert lines[0].endswith(
+        "for more information. systemd restarts the unit. "
+        "The next start checks the graph database again."
+    )
     assert KEY not in err
 
 

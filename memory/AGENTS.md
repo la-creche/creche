@@ -32,7 +32,7 @@ service of the vault. The service hosts the memory store and answers the
 | `tests/test_memory_store.py` | The tests of the settings. One test imports Cognee in a process of its own and reads its settings back. |
 | `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure and a dead graph. |
 | `tests/test_memory_graph.py` | The tests of the graph check, on real ladybug databases. |
-| `tests/memory_graph_helpers.py` | Real ladybug databases for the tests: a clean one, a dead one and one that recovers. |
+| `tests/memory_graph_helpers.py` | Real ladybug databases for the tests: a clean one, a dead one and one that recovers. The check through Cognee in a child process, after a failed checkpoint. |
 | `tests/test_memory_pdf.py` | The tests of the PDFs: the listing, the rows, the cap, the cache, the child and the real source. |
 | `tests/test_memory_search.py` | The tests of the search: `not_ready`, the paths, the caps, a slow search and a failed one. |
 | `tests/test_memory_server.py` | The tests of the socket: the peer check, the line rules and the dispatch. |
@@ -219,26 +219,39 @@ in a checkpoint can leave the file in a state that no open repairs. Then
 every sync and every search fails. Cognee's own repair removes only the
 `.wal` file, so it cannot fix this state.
 
-1. The graph check opens the database through Cognee's engine and asks one
-   query. Ladybug raises a `RuntimeError` for a file that does not open,
-   and the check calls that a dead graph. Two kinds of `RuntimeError` are
-   not a verdict: a `SubprocessTransportError` of Cognee's worker, and a
-   lock that another opener holds. These and any other error go up, and
-   the service exits 75.
-2. The test is the open, not the files beside the database. A checkpoint
+1. The graph check asks Cognee's cached engine `RETURN 1`, at the start
+   and after a failed sync. The first call into Cognee opens the database,
+   and later calls use the same open. The check never closes the engine,
+   and `RETURN 1` writes nothing. A checkpoint in the check can lose rows
+   or leave a file that does not open. A close after a failed checkpoint
+   can leave a file that does not open. The first call builds Cognee's
+   engine, and that build writes (gap 6). The checks after a failed sync
+   use the cached engine and write nothing.
+2. Ladybug usually raises a `RuntimeError` or an `IndexError` for a file
+   that does not open, and the check calls that a dead graph. Some dead
+   files raise a `MemoryError` instead (gap 7). Three kinds of error
+   are not a verdict: a `SubprocessTransportError` of Cognee's worker, a
+   lock that another opener holds, and an error of the host. The host
+   errors are a full disk, a quota, a denied permission, an operation that
+   is not permitted, a read-only file system, too many open files and an
+   I/O error of the device. These and any other error go up, and the
+   service exits 75. For a lock or a host error, the line carries
+   ladybug's text, which names the file.
+3. The test is the open, not the files beside the database. A checkpoint
    that stops part way leaves files (`.shadow`, `.wal.checkpoint`, two
-   `.checkpoint.*.lock` files) that the next open replays and removes. These
-   files are a normal state.
-3. The service checks the graph at the start, before the socket opens, and
+   `.checkpoint.*.lock` files) that the next open replays and removes.
+   These files are a normal state.
+4. The service checks the graph at the start, before the socket opens, and
    after each failed sync. A search does not check it. Cognee's search
    writes nothing to the graph while `ENABLE_LAST_ACCESSED` is off, which
    is its default. So a graph dies in a sync or in a stop, and the next
    check after it is the failed sync or the next start.
-4. A dead graph prints one line: the database, the error, the files beside
-   it and the recovery. Then the service exits 78, and systemd holds the
-   unit in the failed state.
-5. The service never moves or removes a file of the store. A WAL file can
-   hold committed writes, so removing it can lose data that no sync
+5. A dead graph prints one line: the database, the error, the files beside
+   it before the open, and the recovery. The check lists the files before
+   the open, because Cognee's open can remove `<db>.wal`. Then the service
+   exits 78, and systemd holds the unit in the failed state.
+6. The service code never moves or removes a file of the store. A WAL file
+   can hold committed writes, so removing it can lose data that no sync
    restores.
 
 The operator's recovery:
@@ -273,3 +286,29 @@ root `uv.lock`, because a change there moves every venv component
 
 1. No script installs the unit yet. The operator installs it once, before
    the first release of the component.
+
+Gaps 2 to 4 and gap 6 come from ladybug and Cognee, not from the
+dead-graph check. Gaps 5 and 7 belong to the exit 75 of the check.
+
+2. Ladybug 0.19.0 replays a `.wal.checkpoint` only into memory, and it
+   removes the file. A stop before the next successful checkpoint loses
+   those rows. The fix belongs to the stop path, not to the check.
+3. Cognee's open removes `<db>.wal` when ladybug's open error names the
+   WAL. Then it opens again. A WAL file can hold committed writes.
+4. A stop that kills the worker inside a checkpoint can leave a file that
+   does not open. The unit gives a stop 20 s (`TimeoutStopSec=20`).
+5. An exit-75 loop never reaches the `failed` state, so the watchdog's
+   `is-failed` check does not see it. The journal line names the cause.
+6. The first check of a process builds Cognee's engine. In subprocess
+   mode, the default, that build runs three `CREATE ... IF NOT EXISTS`
+   statements. Each one commits a write. The commit can write a `.wal`.
+   After a large write that no checkpoint ended, the commit can run
+   ladybug's auto-checkpoint inside the start check. A full disk or a kill
+   inside that checkpoint can then lose rows or leave a file that does not
+   open (gaps 2 and 4).
+7. Some dead files make ladybug raise `MemoryError('std::bad_alloc')`. One
+   such file is a database whose bytes after the first 4096 are garbage.
+   The check passes a `MemoryError` up, because host memory pressure
+   raises it too. So the service exits 75 on every start, and gap 5 hides
+   the loop from the watchdog. The journal line names only the type,
+   `MemoryError`.
