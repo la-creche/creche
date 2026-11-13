@@ -99,8 +99,23 @@ where
     H: Fn(Request<Incoming>) -> F + Clone + Send + Sync + 'static,
     F: Future<Output = Reply> + Send + 'static,
 {
+    run_ready(path, stop, || Ok(()), handler).await
+}
+
+pub(crate) async fn run_ready<H, F, R>(
+    path: &Path,
+    stop: StopSignal,
+    ready: R,
+    handler: H,
+) -> Result<(), ServeError>
+where
+    H: Fn(Request<Incoming>) -> F + Clone + Send + Sync + 'static,
+    F: Future<Output = Reply> + Send + 'static,
+    R: FnOnce() -> io::Result<()> + Send,
+{
     let check = Arc::new(ProtocolCheck::new()?);
     let listener = UnixListener::bind(path).map_err(|error| ServeError::Bind(error.kind()))?;
+    ready().map_err(|error| ServeError::Ready(error.kind()))?;
     let accept = |context: &mut Context<'_>| {
         listener
             .poll_accept(context)
@@ -232,13 +247,49 @@ async fn accept_each<S>(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::io;
+    use std::path::PathBuf;
     use std::task::{Context, Poll};
     use std::time::Duration;
 
+    use http_body_util::Full;
+    use hyper::Response;
     use tokio::runtime::Builder;
 
-    use super::{Stop, accept_each};
+    use super::{Stop, accept_each, run_ready};
+
+    fn socket_path(name: &str) -> PathBuf {
+        PathBuf::from(format!(
+            "creche-vmm-ready-{}-{name}.sock",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn readiness_follows_the_socket_bind() {
+        let runtime = Builder::new_current_thread().enable_io().build().unwrap();
+        let path = socket_path("order");
+        let _ = fs::remove_file(&path);
+        let (_stop, signal) = Stop::pair();
+        let error = runtime
+            .block_on(run_ready(
+                &path,
+                signal,
+                || {
+                    assert!(path.exists());
+                    Err(io::Error::from(io::ErrorKind::PermissionDenied))
+                },
+                |_request| async { Response::new(Full::new(hyper::body::Bytes::new())) },
+            ))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::ServeError::Ready(io::ErrorKind::PermissionDenied)
+        ));
+        fs::remove_file(path).unwrap();
+    }
 
     /// A listener whose every accept fails, as after EMFILE, does not spin:
     /// the loop pauses between two accepts, and the stop still ends it.

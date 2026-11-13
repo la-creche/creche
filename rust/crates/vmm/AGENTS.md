@@ -98,12 +98,13 @@ component of this repository") holds its rules. In short:
    host whose hard limit is below the need, such as the 65536 of a
    GitHub runner. The raise runs before the bind and the first VM, so
    each listener and each CH gets the raised limit.
-5. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`,
-   `Checks`) binds `vmm.sock` in the run root. `sleep::run` runs beside it (caller
-   duty 5), and so does `FaultBook::refresh` every `faults::REFRESH`,
-   and so does the digests follow (see "The digests follow"). The
-   snapshot sweep also collects unused store images when the VM table is
-   empty. SIGTERM aborts the follow.
+5. The handler set of `routes!` binds `vmm.sock` in the run root. The
+   handlers are `Creates`, `Lists`, `Acp`, `Drops` and `Checks`. The vmm
+   sends `READY=1` after the bind. A direct run without `NOTIFY_SOCKET`
+   sends no notice. `sleep::run` runs beside the server (caller duty 5).
+   `FaultBook::refresh` and the digests follow also run beside it. The
+   snapshot sweep collects unused store images when the VM table is empty.
+   SIGTERM aborts the follow.
 6. At SIGTERM the sleep loop gets its stop, and `shutdown::shutdown`
    runs with the end of `sleep::run` as its `sleep` future. `src/main.rs`
    then ends the runtime with `shutdown_timeout(RUNTIME_END)`, 4 s of
@@ -1560,6 +1561,12 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
   store removal. The vmm uses a complete strict snapshot scan, a shared
   image gate and an empty VM table. A less conservative rule needs live
   image reference tracking.
+- CONTRACT-QUESTION: CH20 specifies `vmm.sock`, but no contract specifies
+  service readiness. The vmm reports readiness after the socket bind. A
+  different rule changes `readiness.rs`, the bind callback and the unit.
+- CONTRACT-QUESTION: CH58 rule 5 gives no maximum time for the first image
+  import. The unit allows 480 s. A slower import fails the release. A
+  different limit changes the unit and the release restart bound.
 
 1. Closed by decision CH54 rule 1: a drop waits for a start that its
    mark overlapped, with no bound (`src/handlers/drop.rs`). So a drop
@@ -1791,8 +1798,8 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
 9. Decision CH58 rule 5: the compose step imports each entry of
    `digests.json` before the bind of `vmm.sock`. The first import of a
    release decompresses each disk (`zstd -d`) and hashes it. So the unit
-   of plan PR C13 must not bound the start of the vmm below that time.
-   A later start finds each digest in the store and reads no byte.
+   allows 480 s for this work. A later start finds each digest in the store
+   and reads no byte.
 10. Decision CH59 rule 1: the vmm reads `VMM_EGRESS_LOG` (plan PR E2),
     `VMM_MIRROR_ROOT` and `VMM_GIT_PROGRAM` (plan PR M1), so the
     `vmm.env` that `bin/fleet-up up` writes must hold them before this

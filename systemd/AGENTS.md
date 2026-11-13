@@ -124,3 +124,8 @@ file's removal is always a human verb.
    with the control that CH runs while the stand-in runs
    (`rust/crates/vmm-confine/tests/kvm_slot.rs`). Each stand-in runs the
    `vmm kill-scopes` of the `vmm` that cargo built for the test run.
+5. The vmm unit uses `Type=notify`. The vmm sends `READY=1` after it binds
+   `vmm.sock`. Thus, a unit ordered after it starts after the socket bind.
+   `NotifyAccess=main` lets only the main process send this notice. The
+   start limit is 480 s. The 90 s stop and start fit in the 600 s release
+   restart limit.

@@ -374,10 +374,9 @@ START_STEPS = ("ExecStartPre", "ExecStartPost")
 def _start_bound_s(text: str) -> int:
     """How long the start job of a restart may last. Under `Type=simple`
     the job ends at the fork, so with no step before or after the main
-    process the bound is 0, whatever `TimeoutStartSec=` says. The vmm sets
-    `TimeoutStartSec=infinity` for its first start after a release
-    (systemd/creche-vmm.service, CH58 rule 5). Any other start is bounded
-    by `TimeoutStartSec=`."""
+    process the bound is 0, whatever `TimeoutStartSec=` says. A different
+    service type waits for its start protocol, so `TimeoutStartSec=` bounds
+    it."""
     types = _settings(text, "Type")
     steps = [value for key in START_STEPS for value in _settings(text, key)]
     if types and types[-1] == "simple" and not steps:

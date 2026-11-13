@@ -26,9 +26,12 @@ STATE_ROOT_DEFAULT = "VMM_STATE_ROOT=${AGENT_OPERATOR_HOME}/.local/state/"
 
 # Each row: the key, every value the unit gives it in order, the decision.
 DECIDED = [
+    ("Type", ["notify"], "vmm.sock readiness"),
+    ("NotifyAccess", ["main"], "only the vmm process signals readiness"),
     ("ExecStart", ["/opt/components/vmm/bin/vmm serve"], "CH7-5"),
     ("Restart", ["always"], "the rework restart policy"),
     ("RestartPreventExitStatus", ["78"], "owner item 86"),
+    ("TimeoutStartSec", ["480"], "the 600 s release restart bound"),
     ("RuntimeDirectory", ["vmm"], "CH20, G5 option A"),
     ("RuntimeDirectoryMode", ["0700"], "CH20"),
     ("RuntimeDirectoryPreserve", [], "accept.rs refuses an existing vmm.sock"),

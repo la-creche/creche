@@ -26,7 +26,8 @@
 //!    image root or digest names its own fault on a host of any hard
 //!    limit. It runs before the bind and the first VM, so each listener
 //!    and each CH gets the raised limit.
-//! 5. The handler set of `routes!` binds `vmm.sock` in the run root.
+//! 5. The handler set of `routes!` binds `vmm.sock` in the run root and
+//!    sends the systemd readiness notice.
 //!    `sleep::run`, the refresh of the fault book and the digests follow
 //!    (`image_root::follow`, decision CH76 rule 8) run beside it (caller
 //!    duty 5).
@@ -82,10 +83,11 @@ use crate::image_lifecycle::ImageLifecycle;
 use crate::image_root::follow::Follow;
 use crate::image_root::{self, DigestsError, ImageImportError};
 use crate::mirror::{self, Mirror};
+use crate::readiness;
 use crate::relay::{AcpLink, AcpRelay, Relays};
 use crate::restore::ChTools;
 use crate::root_owned::{ProgramError, check_program};
-use crate::server::{Stop, run_routes};
+use crate::server::{Stop, run_routes_ready};
 use crate::shutdown::{self, Ended};
 use crate::start::{ColdBoot, Digests, StartConfig};
 use crate::{family_state, planes, sleep};
@@ -420,7 +422,9 @@ impl Vmm {
             follow,
         } = self;
         let (stop, signal) = Stop::pair();
-        let mut server = tokio::spawn(async move { run_routes(&socket, signal, handlers).await });
+        let mut server = tokio::spawn(async move {
+            run_routes_ready(&socket, signal, handlers, readiness::notify).await
+        });
         let (sleep_stop, sleep_signal) = oneshot::channel::<()>();
         let sleep = tokio::spawn({
             let hook = hook.clone();
