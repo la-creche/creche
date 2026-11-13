@@ -1,4 +1,5 @@
-"""The sync reads the right folders, waits for a quiet vault, and keeps going."""
+"""The sync reads the right folders, waits for a quiet vault, and keeps going
+until a failed sync finds a dead graph."""
 
 import asyncio
 import os
@@ -9,6 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
+from creche_memory.graph import Dead, GraphCheck
 from creche_memory.sync import (
     Debounce,
     Outcome,
@@ -17,6 +19,7 @@ from creche_memory.sync import (
     ingest_folders,
     vault_stamp,
 )
+from memory_graph_helpers import GRAPH_NAME, kill_graph, ladybug_check, make_graph
 
 QUIET_S = 30.0
 
@@ -44,6 +47,22 @@ def vault(tmp_path: Path) -> Path:
     (root / "profile" / "memories" / "dentist.md").write_text("Oak St.", encoding="utf-8")
 
     return root
+
+
+@pytest.fixture
+def usable(tmp_path_factory: pytest.TempPathFactory) -> GraphCheck:
+    """The check of a real graph database that opens. It lives outside
+    `tmp_path`, which one test uses as its vault."""
+    return ladybug_check(make_graph(tmp_path_factory.mktemp("usable") / GRAPH_NAME))
+
+
+@pytest.fixture
+def dead(tmp_path_factory: pytest.TempPathFactory) -> GraphCheck:
+    """The check of a real graph database in the state of 2026-11-04."""
+    graph_file = make_graph(tmp_path_factory.mktemp("dead") / GRAPH_NAME)
+    kill_graph(graph_file)
+
+    return ladybug_check(graph_file)
 
 
 class Clock:
@@ -121,9 +140,9 @@ def test_a_poll_waits_for_a_quiet_vault_and_a_write_does_not() -> None:
     assert debounce.due("c", 501.0, Trigger.WRITE)
 
 
-def test_the_syncer_syncs_once_the_vault_is_quiet(vault: Path) -> None:
+def test_the_syncer_syncs_once_the_vault_is_quiet(vault: Path, usable: GraphCheck) -> None:
     clock, ingests = Clock(), Ingests()
-    syncer = Syncer(vault, ingests, quiet_s=QUIET_S, clock=clock)
+    syncer = Syncer(vault, ingests, usable, quiet_s=QUIET_S, clock=clock)
 
     assert _step(syncer) is Outcome.WAITING
     assert not syncer.ready.is_set()
@@ -138,9 +157,9 @@ def test_the_syncer_syncs_once_the_vault_is_quiet(vault: Path) -> None:
     assert len(ingests.calls) == 1
 
 
-def test_a_write_syncs_at_the_next_check(vault: Path) -> None:
+def test_a_write_syncs_at_the_next_check(vault: Path, usable: GraphCheck) -> None:
     clock, ingests = Clock(), Ingests()
-    syncer = Syncer(vault, ingests, quiet_s=QUIET_S, clock=clock)
+    syncer = Syncer(vault, ingests, usable, quiet_s=QUIET_S, clock=clock)
 
     (vault / "profile" / "memories" / "new.md").write_text("new", encoding="utf-8")
     syncer.request()
@@ -150,10 +169,10 @@ def test_a_write_syncs_at_the_next_check(vault: Path) -> None:
 
 
 def test_a_failed_sync_prints_no_message_and_tries_again(
-    vault: Path, capsys: pytest.CaptureFixture[str]
+    vault: Path, capsys: pytest.CaptureFixture[str], usable: GraphCheck
 ) -> None:
     clock, ingests = Clock(), Ingests()
-    syncer = Syncer(vault, ingests, quiet_s=0.0, clock=clock)
+    syncer = Syncer(vault, ingests, usable, quiet_s=0.0, clock=clock)
     ingests.fail = True
 
     assert _step(syncer) is Outcome.FAILED
@@ -162,6 +181,57 @@ def test_a_failed_sync_prints_no_message_and_tries_again(
 
     ingests.fail = False
     assert _step(syncer) is Outcome.SYNCED
+
+
+def test_a_failed_sync_with_a_dead_graph_returns_the_dead_graph(
+    vault: Path, capsys: pytest.CaptureFixture[str], dead: GraphCheck
+) -> None:
+    ingests = Ingests()
+    ingests.fail = True
+    syncer = Syncer(vault, ingests, dead, quiet_s=0.0, clock=Clock())
+
+    state = _step(syncer)
+
+    assert isinstance(state, Dead)
+    assert state.side_files[0] == f"{GRAPH_NAME}.wal.checkpoint"
+    assert "secret.test" not in capsys.readouterr().err
+    assert not syncer.ready.is_set()
+
+
+def test_a_dead_graph_ends_run_and_sets_the_stop(vault: Path, dead: GraphCheck) -> None:
+    ingests = Ingests()
+    ingests.fail = True
+    syncer = Syncer(vault, ingests, dead, poll_s=60.0, quiet_s=0.0, clock=Clock())
+    stop = threading.Event()
+
+    started = time.monotonic()
+    state = asyncio.run(syncer.run(stop))
+
+    assert isinstance(state, Dead)
+    assert stop.is_set()
+    assert len(ingests.calls) == 1
+    assert time.monotonic() - started < 5.0
+
+
+def test_a_successful_sync_does_not_check_the_graph(vault: Path, dead: GraphCheck) -> None:
+    syncer = Syncer(vault, Ingests(), dead, quiet_s=0.0, clock=Clock())
+
+    assert _step(syncer) is Outcome.SYNCED
+
+
+def test_an_error_of_the_check_ends_run_and_sets_the_stop(vault: Path) -> None:
+    async def broken() -> Dead:
+        raise TimeoutError("the worker did not answer")
+
+    ingests = Ingests()
+    ingests.fail = True
+    syncer = Syncer(vault, ingests, broken, poll_s=60.0, quiet_s=0.0, clock=Clock())
+    stop = threading.Event()
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(syncer.run(stop))
+
+    assert stop.is_set()
 
 
 class SlowIngests(Ingests):
@@ -177,10 +247,10 @@ class SlowIngests(Ingests):
 
 
 def test_each_sync_logs_its_start_and_end_and_the_first_says_search_is_ready(
-    vault: Path, capsys: pytest.CaptureFixture[str]
+    vault: Path, capsys: pytest.CaptureFixture[str], usable: GraphCheck
 ) -> None:
     clock = Clock()
-    syncer = Syncer(vault, SlowIngests(clock), quiet_s=0.0, clock=clock)
+    syncer = Syncer(vault, SlowIngests(clock), usable, quiet_s=0.0, clock=clock)
     folders = len(ingest_folders(vault))
 
     assert _step(syncer) is Outcome.SYNCED
@@ -195,12 +265,12 @@ def test_each_sync_logs_its_start_and_end_and_the_first_says_search_is_ready(
 
 
 def test_a_failed_sync_logs_its_time_and_the_type_only(
-    vault: Path, capsys: pytest.CaptureFixture[str]
+    vault: Path, capsys: pytest.CaptureFixture[str], usable: GraphCheck
 ) -> None:
     clock = Clock()
     ingests = SlowIngests(clock)
     ingests.fail = True
-    syncer = Syncer(vault, ingests, quiet_s=0.0, clock=clock)
+    syncer = Syncer(vault, ingests, usable, quiet_s=0.0, clock=clock)
 
     assert _step(syncer) is Outcome.FAILED
     assert capsys.readouterr().err.splitlines()[-1] == (
@@ -208,9 +278,9 @@ def test_a_failed_sync_logs_its_time_and_the_type_only(
     )
 
 
-def test_a_vault_with_no_folder_to_read_is_never_synced(tmp_path: Path) -> None:
+def test_a_vault_with_no_folder_to_read_is_never_synced(tmp_path: Path, usable: GraphCheck) -> None:
     ingests = Ingests()
-    syncer = Syncer(tmp_path, ingests, quiet_s=0.0, clock=Clock())
+    syncer = Syncer(tmp_path, ingests, usable, quiet_s=0.0, clock=Clock())
 
     assert _step(syncer) is Outcome.NOTHING_TO_READ
     assert ingests.calls == []
@@ -255,9 +325,11 @@ def test_the_connector_takes_the_arguments_of_the_sync(vault: Path) -> None:
     assert done.stdout.strip().splitlines()[-1] == "DltResource"
 
 
-def test_a_write_to_a_skipped_folder_neither_syncs_nor_spins(vault: Path) -> None:
+def test_a_write_to_a_skipped_folder_neither_syncs_nor_spins(
+    vault: Path, usable: GraphCheck
+) -> None:
     clock, ingests = Clock(), Ingests()
-    syncer = Syncer(vault, ingests, poll_s=60.0, quiet_s=0.0, clock=clock)
+    syncer = Syncer(vault, ingests, usable, poll_s=60.0, quiet_s=0.0, clock=clock)
     assert _step(syncer) is Outcome.SYNCED
 
     (vault / "house" / "scrum" / "STATE.md").write_text("an hour later", encoding="utf-8")
@@ -265,7 +337,9 @@ def test_a_write_to_a_skipped_folder_neither_syncs_nor_spins(vault: Path) -> Non
     assert _step(syncer) is Outcome.UNCHANGED
 
     checks: list[float] = []
-    counted = Syncer(vault, ingests, poll_s=60.0, quiet_s=0.0, clock=lambda: checks.append(0) or 0)
+    counted = Syncer(
+        vault, ingests, usable, poll_s=60.0, quiet_s=0.0, clock=lambda: checks.append(0) or 0
+    )
     counted.request()
     stop = threading.Event()
     threading.Timer(0.3, stop.set).start()
@@ -276,8 +350,8 @@ def test_a_write_to_a_skipped_folder_neither_syncs_nor_spins(vault: Path) -> Non
     assert len(checks) <= 3
 
 
-def test_wake_ends_the_wait_of_run_at_once(vault: Path) -> None:
-    syncer = Syncer(vault, Ingests(), poll_s=60.0, quiet_s=60.0, clock=Clock())
+def test_wake_ends_the_wait_of_run_at_once(vault: Path, usable: GraphCheck) -> None:
+    syncer = Syncer(vault, Ingests(), usable, poll_s=60.0, quiet_s=60.0, clock=Clock())
     stop = threading.Event()
 
     def end() -> None:

@@ -17,6 +17,7 @@ service of the vault. The service hosts the memory store and answers the
 | `src/creche_memory/writes.py` | `Writer`: it creates inbox notes and rewrites whole files in the agent areas. |
 | `src/creche_memory/store.py` | `StoreSettings` and `configure`: the settings of the memory store, as the env that Cognee reads. |
 | `src/creche_memory/sync.py` | `Syncer`: the checks of the vault and the syncs into the store. |
+| `src/creche_memory/graph.py` | The graph check: it tells a dead graph database from one that opens. |
 | `src/creche_memory/pdf.py` | The PDFs of the vault as a second source of the store: the listing, the rows, the cache of texts. |
 | `src/creche_memory/pdftext.py` | The child process that reads the text of one PDF, with its limits. |
 | `src/creche_memory/search.py` | `Searcher` and `StoreLoop`: the search, and the one asyncio loop in which Cognee runs. |
@@ -29,7 +30,9 @@ service of the vault. The service hosts the memory store and answers the
 | `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
 | `tests/test_memory_writes.py` | The tests of the writes: the areas, the digest check, the modes and the symlink rules. |
 | `tests/test_memory_store.py` | The tests of the settings. One test imports Cognee in a process of its own and reads its settings back. |
-| `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write and a failure. |
+| `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure and a dead graph. |
+| `tests/test_memory_graph.py` | The tests of the graph check, on real ladybug databases. |
+| `tests/memory_graph_helpers.py` | Real ladybug databases for the tests: a clean one, a dead one and one that recovers. |
 | `tests/test_memory_pdf.py` | The tests of the PDFs: the listing, the rows, the cap, the cache, the child and the real source. |
 | `tests/test_memory_search.py` | The tests of the search: `not_ready`, the paths, the caps, a slow search and a failed one. |
 | `tests/test_memory_server.py` | The tests of the socket: the peer check, the line rules and the dispatch. |
@@ -124,12 +127,17 @@ after it reads `json`, or `null` when the type refuses `json`.
 
 ## The command
 
-1. `creche-memory` starts the store loop, the syncer and the socket server.
-   SIGTERM or SIGINT stops each one in turn, and the command exits 0.
+1. `creche-memory` starts the store loop, checks the graph database, then
+   starts the syncer and the socket server. SIGTERM or SIGINT stops each one
+   in turn, and the command exits 0.
 2. `creche-memory --check` reads the config and checks the host. It opens
    no socket. The unit runs it as `ExecStartPre`.
-3. A config or a host that stops the start exits 78. The unit holds
+3. A config or a host that stops the start exits 78. A dead graph database
+   exits 78 too, at the start or after a failed sync. The unit holds
    `RestartPreventExitStatus=78`, so systemd does not restart it in a loop.
+   An error of the graph check that is not a verdict, or any other error
+   that ends the sync loop, exits 75. systemd restarts the unit, and the
+   check at the next start decides.
 4. The environment:
 
    | Key | Default | What it is |
@@ -173,8 +181,11 @@ after it reads `json`, or `null` when the type refuses `json`.
 4. A stamp of each note's path, size and time tells the loop that the
    vault changed. A change in a skipped folder does not move it.
 5. A failed sync prints only the type of the error, because a message can
-   hold a URL. The next check tries again. `ready` is set after the first
-   sync that ends well.
+   hold a URL. Then the loop checks the graph database. A dead graph ends
+   the loop and stops the service with exit 78. An error of the check
+   itself ends the loop too, with exit 75. After any other failed sync,
+   the next check tries again. `ready` is set after the first sync
+   that ends well.
 6. The sync calls `remember` with batches of one note and four chunks.
 
 ## The PDFs
@@ -199,6 +210,47 @@ PDFs of the same folders, as a second `remember` after the notes.
    reads run in a worker thread before `remember`, so the store loop keeps
    answering searches.
 6. The vault stamp counts PDFs too, so a new PDF starts a sync.
+
+## The dead graph
+
+Cognee keeps its knowledge graph in one ladybug database file,
+`<store>/system/databases/cognee_graph_ladybug`. A worker process that dies
+in a checkpoint can leave the file in a state that no open repairs. Then
+every sync and every search fails. Cognee's own repair removes only the
+`.wal` file, so it cannot fix this state.
+
+1. The graph check opens the database through Cognee's engine and asks one
+   query. Ladybug raises a `RuntimeError` for a file that does not open,
+   and the check calls that a dead graph. Two kinds of `RuntimeError` are
+   not a verdict: a `SubprocessTransportError` of Cognee's worker, and a
+   lock that another opener holds. These and any other error go up, and
+   the service exits 75.
+2. The test is the open, not the files beside the database. A checkpoint
+   that stops part way leaves files (`.shadow`, `.wal.checkpoint`, two
+   `.checkpoint.*.lock` files) that the next open replays and removes. These
+   files are a normal state.
+3. The service checks the graph at the start, before the socket opens, and
+   after each failed sync. A search does not check it. Cognee's search
+   writes nothing to the graph while `ENABLE_LAST_ACCESSED` is off, which
+   is its default. So a graph dies in a sync or in a stop, and the next
+   check after it is the failed sync or the next start.
+4. A dead graph prints one line: the database, the error, the files beside
+   it and the recovery. Then the service exits 78, and systemd holds the
+   unit in the failed state.
+5. The service never moves or removes a file of the store. A WAL file can
+   hold committed writes, so removing it can lose data that no sync
+   restores.
+
+The operator's recovery:
+
+1. Move the whole `<store>/system/databases` folder aside. Do not move only
+   the files beside the graph: the sync does not re-read work that the
+   other stores already hold.
+2. Start the unit. The first sync rebuilds the graph, the relational store
+   and the vector store from the vault.
+
+The time of a full rebuild is not measured. A search gets `not_ready` until
+the first sync ends.
 
 ## Not a workspace member
 
