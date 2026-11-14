@@ -18,8 +18,7 @@
 #                         that runs this repository's own test suites. All
 #                         installed at BUILD time, so a run needs no network
 #   agent-sandbox-coding  the coding flavor of code and creche (CH7-1): the
-#                         python flavor plus uv, pnpm and cargo. A root
-#                         disk only (CH53 rule 1): no sbx image
+#                         python flavor plus uv, pnpm and cargo
 #   creche-test-venv      build-only: it resolves uv.lock and installs the
 #                         test venv and the 3.12 interpreter. It ships in
 #                         no image. Only the coding flavor copies its uv
@@ -118,11 +117,9 @@ RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env
     && sh /run/creche-env-write HOME NODE_ENV NODE_VERSION PATH TMPDIR YARN_VERSION \
        > /etc/creche/env
 
-# No CMD (fact 59). sbx v0.50.1 gives each sandbox its own command, a fixed
-# `sh -c "trap ...; sleep infinity & wait"` in its binary, so the image CMD
-# never runs. A Cloud Hypervisor guest boots guest init as PID 1 from a root
-# disk that carries no image config. The node parent's CMD, `node`, stays in
-# the config, and neither runtime reads it.
+# No CMD (fact 59). A Cloud Hypervisor guest boots guest init as PID 1 from a
+# root disk that carries no image config. The node parent's CMD, `node`,
+# stays in the config, and the guest does not read it.
 
 # --- creche-test-venv -------------------------------------------------------
 # Build-only stage. It resolves the Python workspace of this repository
@@ -132,7 +129,7 @@ RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env
 #
 # The pins are the pins of uv.lock, the same file the host's test
 # environment uses. A dependency change for the test venv is a lockfile
-# change plus a playpen release, never an install inside a sandbox.
+# change plus a disks release, never an install inside a sandbox.
 FROM ${PYTHON_IMAGE} AS creche-test-venv
 ARG UV_VERSION
 ARG UV_WHEEL_SHA256

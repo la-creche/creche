@@ -52,9 +52,9 @@ ProtectHostname=yes
 RestrictSUIDSGID=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 # Deliberately NOT set, each with its reason:
-#   RestrictNamespaces   — the `infra` and `playpen` components run
-#                          compose and an image build, and both make
-#                          namespaces.
+#   RestrictNamespaces   — untested. Its reason left with `infra` and
+#                          `playpen`, whose compose run and image build
+#                          made namespaces. Measure before setting it.
 #   NoNewPrivileges      — runuser and sops. Untested against either.
 #   MemoryDenyWriteExecute — uv builds wheels. Untested.
 #   SystemCallFilter     — plausible as @system-service, untested against

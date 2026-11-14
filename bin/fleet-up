@@ -68,7 +68,6 @@ SESSIONS_ROOT="$PREFIX/srv/agents/sessions"
 REGISTRY="$PREFIX/srv/agents/registry"
 INSTALL_ROOT="$PREFIX/opt/components"
 HANDOVER="$INSTALL_ROOT/handover/bin/handover"
-IMAGES_ENV="$INSTALL_ROOT/playpen/images.env"
 PRODUCT_ROOT="$PREFIX/opt/creche"
 CHAPERONE_DIR="$PREFIX/etc/chaperone"
 CHAPERONE_INSTALLED="$INSTALL_ROOT/chaperone/bin/chaperone"
@@ -688,10 +687,6 @@ master_key_is_there() {
   [[ -n "$(envfile_value "$HOOKS_ENV" LITELLM_MASTER_KEY)$(envfile_value "$CAREGIVER_ENV" LITELLM_MASTER_KEY)" ]]
 }
 
-has_program() {  # has_program <name>
-  command -v "$1" >/dev/null 2>&1
-}
-
 private_file() {  # private_file <path>
   [[ -f "$1" && "$(file_mode "$1")" == 600 ]]
 }
@@ -708,7 +703,6 @@ check_root() {
   item "R1 sessions root $SESSIONS_ROOT, writable by $me" dir_is_writable "$SESSIONS_ROOT"
   item "R2 cosign at $COSIGN" test -x "$COSIGN"
   item "R2 uv $UV_MINIMUM or newer at $UV (found: $(uv_version))" uv_is_new
-  item "R2 sbx on PATH" has_program sbx
   item "R3 deployed checkout at $PRODUCT_ROOT" test -f "$PRODUCT_ROOT/bin/fleet-up"
   item "R3 handover tree at $INSTALL_ROOT/handover" test -f "$INSTALL_ROOT/handover/$STAMP"
   item "R4 group chaperone exists and holds $me" group_has_me chaperone
@@ -723,7 +717,6 @@ check_root() {
   item "R7 chaperone binary at $CHAPERONE_INSTALLED" test -x "$CHAPERONE_INSTALLED"
   item "R7 a listener on port $APPROVAL_PORT (ha-approval, after the chaperone release)" \
     port_listens "$APPROVAL_PORT"
-  item "R8 playpen images at $IMAGES_ENV (the first playpen release)" test -f "$IMAGES_ENV"
   item "R9 LITELLM_MASTER_KEY in hooks.env or caregiver.env (the value is never printed)" \
     master_key_is_there
   item "O1 registry checkout at $REGISTRY" test -d "$REGISTRY/.git"

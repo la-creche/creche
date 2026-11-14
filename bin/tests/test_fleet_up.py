@@ -39,8 +39,6 @@ VMM_CONFIG: Final = REPO_ROOT / "rust" / "crates" / "vmm" / "src" / "config.rs"
 
 STATE: Final = "srv/agents/state/creche"
 MASTER_KEY: Final = "sk-fleet-up-test-master-key-0123456789abcdef"
-IMAGE_BASE: Final = "127.0.0.1:5000/agent-sandbox@sha256:" + "a" * 64
-IMAGE_PYTHON: Final = "127.0.0.1:5000/agent-sandbox-python@sha256:" + "b" * 64
 
 #: The status of an `up` that did its part and waits for a step of another
 #: actor: a release, or a root step.
@@ -102,7 +100,6 @@ ROOT_ITEMS: Final = (
     "sessions root",
     "registry checkout",
     "handover tree",
-    "playpen images",
     "LITELLM_MASTER_KEY",
 )
 
@@ -254,11 +251,6 @@ def ready(tmp_path: Path) -> Host:
     handover = host.prefix / "opt/components/handover"
     handover.mkdir(parents=True)
     (handover / ".release-version").write_text("0.1.30\n", encoding="utf-8")
-    playpen = host.prefix / "opt/components/playpen"
-    playpen.mkdir(parents=True)
-    (playpen / "images.env").write_text(
-        f"base={IMAGE_BASE}\npython={IMAGE_PYTHON}\n", encoding="utf-8"
-    )
 
     hooks = host.state / "hooks.env"
     hooks.write_text(f"LITELLM_MASTER_KEY={MASTER_KEY}\n", encoding="utf-8")

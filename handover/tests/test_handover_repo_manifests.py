@@ -50,14 +50,12 @@ def _provided(found: ManifestSet) -> dict[ContractId, tuple[int, int]]:
 
 
 def test_every_creche_component_declares_itself(found: ManifestSet) -> None:
-    """Every one but an arriving one, whose directory has not reached this
-    tree yet (`catalog.ARRIVING`). A retiring one (`catalog.RETIRING`) may
-    declare itself or not: its manifest leaves in a later commit than the
-    one that names it."""
+    """All but a retiring one, whose directory has left this tree
+    (`catalog.RETIRING`), and an arriving one, whose directory has not
+    reached it yet (`catalog.ARRIVING`)."""
     here = {row.name for row in CATALOG_BY_NAME.values() if row.repo is Repo.CRECHE}
-    declared = set(found.manifests())
 
-    assert here - RETIRING - ARRIVING <= declared <= here - ARRIVING
+    assert set(found.manifests()) == here - RETIRING - ARRIVING
 
 
 def test_only_the_other_repos_components_are_missing(found: ManifestSet) -> None:
@@ -246,14 +244,15 @@ COPY_WORD = "COPY"
 FROM_STAGE = "--from="
 
 #: The build-only stage that resolves the test venv. Its copies name the
-#: inputs of `uv.lock`, and the lock itself is what the playpen row
+#: inputs of `uv.lock`, and the lock itself is what the disks row
 #: bundles: the stage ships no file it copies, so its copies move no tag
 #: that the lock does not already move.
 VENV_STAGE = "creche-test-venv"
 
 
-#: The image row whose build makes the files of the disk-image row.
-IMAGE_ROW = "playpen"
+#: The directory of the image build that makes the files of the
+#: disk-image row.
+IMAGE_DIR = "playpen"
 
 
 def _copied(dockerfile: Path) -> set[str]:
@@ -302,34 +301,10 @@ def test_each_component_bundles_what_its_build_installs(found: ManifestSet) -> N
     for name, item in found.found.items():
         row = CATALOG_BY_NAME[name]
         installed = _installed(item.manifest.build, packages)
-        if row.kind is Kind.OCI_IMAGE:
-            installed |= _copied(REPO_ROOT / row.path / "Dockerfile")
         if row.kind is Kind.DISK_IMAGE:
-            installed |= {IMAGE_ROW, *_copied(REPO_ROOT / IMAGE_ROW / "Dockerfile")}
+            installed |= {IMAGE_DIR, *_copied(REPO_ROOT / IMAGE_DIR / "Dockerfile")}
 
         assert set(row.bundles) == installed - {row.path}, name
-
-
-def test_the_image_component_builds_and_stages_its_own_hook(found: ManifestSet) -> None:
-    """Contract 06 §4 rule 6. An image component has no venv to hold a
-    console script, so its build names a script of its own tree, and that
-    script stages the file `verify.command` runs.
-
-    Without a `build` the executor finds no staged tree at step 8 and the
-    release fails before the hook is reached."""
-    manifest = found.manifests()["playpen"]
-    assert manifest.kind is Kind.OCI_IMAGE
-    assert len(manifest.build) == 1
-
-    script = REPO_ROOT / manifest.build[0][-1]
-    assert script.is_file(), script
-    assert script.is_relative_to(REPO_ROOT / "playpen")
-
-    hook = Path(manifest.verify.command[0])
-    assert hook.is_relative_to(manifest.install.to)
-    staged = hook.relative_to(manifest.install.to)
-    assert (REPO_ROOT / "playpen" / staged).is_file()
-    assert f'"$STAGED/{staged}"' in script.read_text(encoding="utf-8")
 
 
 #: systemd's own `TimeoutStopSec` and `TimeoutStartSec` when a unit sets

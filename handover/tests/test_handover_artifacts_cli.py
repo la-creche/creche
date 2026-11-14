@@ -147,7 +147,6 @@ def test_only_a_binary_and_a_disk_image_component_ship_signed_assets() -> None:
     assert {kind: assets_expected(kind) for kind in Kind} == {
         Kind.VENV: False,
         Kind.BINARY: True,
-        Kind.OCI_IMAGE: False,
         Kind.COMPOSE: False,
         Kind.DATA: False,
         Kind.UNITS: False,

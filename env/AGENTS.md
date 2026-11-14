@@ -150,11 +150,9 @@ command prints `<file>: cannot be read: <reason>` and exits with status 78.
   3. The path of the site file in `bin/fleet-up`, and in creche-release's
      `bin/creche-watchdog.sh`.
      The packet `bin-site-keys` removes it.
-  4. The path of the site file in `playpen/bin/playpen-build`. The packet
-     `playpen-site-keys` removes it.
-  5. The `EnvironmentFile=` line of each unit under `systemd/`. The packet
+  4. The `EnvironmentFile=` line of each unit under `systemd/`. The packet
      `units-site-keys` removes it.
-  6. The path of the site file in the text of a config error of
+  5. The path of the site file in the text of a config error of
      `attendance`, `caregiver`, `noticeboard` and `door-trigger`. The
      change that moves each program removes it.
 - `Problem` keeps its fields public, so each module can make one. The

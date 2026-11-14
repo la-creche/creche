@@ -96,9 +96,8 @@ def test_a_user_venv_component_is_not_refused_by_containment(name: str) -> None:
     assert str(paths.to).startswith(operator_install_root())
 
 
-@pytest.mark.parametrize("name", ["handover", "playpen"])
-def test_a_root_venv_component_is_still_contained(name: str) -> None:
-    manifest = _repo_manifest(name)
+def test_a_root_venv_component_is_still_contained() -> None:
+    manifest = _repo_manifest("handover")
 
     paths = paths_of(manifest, _default_roots())
 
@@ -379,7 +378,7 @@ def test_a_component_with_no_install_tree_declares_nothing() -> None:
 def test_a_silent_manifest_passes_the_real_parser() -> None:
     """It is built as YAML and parsed, so it is not the one manifest in the
     system with no validation behind it."""
-    for name in ("chaperone", "playpen", "registry-data"):
+    for name in ("chaperone", "disks", "registry-data"):
         assert silent_manifest(name).name == name
 
 

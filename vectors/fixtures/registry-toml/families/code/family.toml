@@ -19,7 +19,6 @@ verbs.release.components = [
     "attendance",
     "caregiver",
     "noticeboard",
-    "playpen",
     "mcp-servers",
     "infra",
     "handover",

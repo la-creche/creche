@@ -18,11 +18,12 @@ from handover.errors import Refusal, RefusalCode
 from handover.manifest import MAX_MANIFEST_BYTES
 from handover_fixtures import manifest_text, write_manifest
 
+from handover import discovery
+
 CONTROL_NAMES = (
     "attendance",
     "caregiver",
     "noticeboard",
-    "playpen",
     "handover",
     "memory",
     "vmm",
@@ -96,21 +97,25 @@ def _other_roots(tmp_path: Path) -> list[Path]:
     return roots
 
 
-def _retiring() -> str:
-    """The one creche component in `catalog.RETIRING`. Only a name with a
-    row has a manifest to read."""
-    assert frozenset({"playpen"}) == RETIRING
-    retiring = "playpen"
+def _retire(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Put one creche component into `RETIRING` for one test. The set is
+    empty today (`catalog.RETIRING`), and only a name with a row has a
+    manifest to read."""
+    assert frozenset() == RETIRING
+    retiring = "noticeboard"
     assert retiring in CATALOG_BY_NAME
+    monkeypatch.setattr(discovery, "RETIRING", frozenset({retiring}))
 
     return retiring
 
 
-def test_a_retiring_component_may_be_absent(tmp_path: Path) -> None:
+def test_a_retiring_component_may_be_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A component leaves in two commits: this code first, then the commit
     that deletes its directory. A requester already installed must plan
     over both trees, so the absent manifest is not `missing`."""
-    retiring = _retiring()
+    retiring = _retire(monkeypatch)
     kept = tuple(name for name in CONTROL_NAMES if name != retiring)
 
     found = discover(_all_five(tmp_path, kept))
@@ -120,8 +125,10 @@ def test_a_retiring_component_may_be_absent(tmp_path: Path) -> None:
     require_complete(found)
 
 
-def test_a_retiring_component_still_reads_when_it_is_present(tmp_path: Path) -> None:
-    retiring = _retiring()
+def test_a_retiring_component_still_reads_when_it_is_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    retiring = _retire(monkeypatch)
 
     found = discover(_all_five(tmp_path, CONTROL_NAMES))
 
@@ -197,14 +204,14 @@ def test_a_declared_kind_must_match_the_catalog(tmp_path: Path) -> None:
 def test_the_executors_reader_refuses_another_kind_too(tmp_path: Path) -> None:
     """`read_one` reads the manifest of one fetched tree, and it applies
     the same catalog rules as the walk."""
-    text = manifest_text("playpen").replace("kind: oci-image", "kind: venv")
-    write_manifest(tmp_path, "playpen", text)
+    text = manifest_text("handover").replace("kind: venv", "kind: compose")
+    write_manifest(tmp_path, "handover", text)
 
     with pytest.raises(Refusal) as caught:
-        read_one(tmp_path, "playpen")
+        read_one(tmp_path, "handover")
 
     assert caught.value.code is RefusalCode.CATALOG
-    assert caught.value.detail == "playpen is kind oci-image, not venv"
+    assert caught.value.detail == "handover is kind venv, not compose"
 
 
 @pytest.mark.parametrize("name", [row.name for row in CATALOG])

@@ -19,17 +19,20 @@ from handover.follow.policy import (
 from handover.state import ReleaseState
 from handover.tomlfile import FileKind
 
-#: `creche-release`'s `host.toml` on 2026-11-02, without its comments.
+#: `creche-release`'s `host.toml` once it stops following `playpen` (phase
+#: 11 RR-1), without its comments.
 CRECHE_RELEASE_POLICY = """\
 [follow]
 chaperone = "newest"
 attendance = "newest"
 caregiver = "newest"
 noticeboard = "newest"
-playpen = "newest"
 handover = "newest"
 mcp-servers = "newest"
 host = "newest"
+memory = "newest"
+vmm = "newest"
+disks = "newest"
 
 [registry]
 mcp = "follow"
@@ -52,7 +55,7 @@ def test_the_policy_of_creche_release_today_is_read() -> None:
     policy = parse_policy(CRECHE_RELEASE_POLICY.encode())
 
     assert policy.registry is Registry.FOLLOW
-    assert len(policy.follow) == 8
+    assert len(policy.follow) == 10
     assert set(policy.follow.values()) == {None}
 
 

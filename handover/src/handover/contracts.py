@@ -44,8 +44,8 @@ class Unprovided:
 
     Contract 06 §3.2, rule C1's second half. It is REPORTED and never
     refused, because root cannot tell "nothing provides it" from "its
-    provider is not a tree under an install root", and `playpen`,
-    an image and never a tree, is always the second.
+    provider is not a tree under an install root". `mcp-servers` and
+    `registry-data` are never such trees (contract 06 §3.2).
     """
 
     consumer: str
@@ -215,9 +215,11 @@ def _check_floors(
 
     **A contract with no provider in the set is reported, not refused.**
     Root learns a component's interface from a tree under an install root,
-    and a provider can be live without one: `playpen` is an image
-    and never a tree. Refusing would answer `caregiver requires channel
-    0.11, the set provides it nowhere` for a set the host already runs.
+    and a component can be live without one: `mcp-servers` and
+    `registry-data` are never trees under an install root. Refusing would
+    answer `noticeboard requires manager-status 0.20, the set provides it
+    nowhere` for a set the host already runs, when `caregiver` has no
+    stamped tree yet.
 
     Root cannot tell "nothing provides it" from "its provider is not a tree
     root reads". Refusing there refuses every release on this host for ever,

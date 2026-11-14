@@ -3,8 +3,8 @@
 The image is the facade: `creche-facade` on `PATH`, built from the
 facade's lockfile. The build itself runs the facade once and stops when it
 does not load. These tests hold the file to the
-facts that the build cannot check: the names the host runs, the targets the
-release script builds, and the programs that Flue's tools run.
+facts that the build cannot check: the names the host runs, the targets CI
+builds, and the programs that Flue's tools run.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from typing import cast
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO_ROOT / "playpen" / "Dockerfile"
-BUILD = REPO_ROOT / "playpen" / "bin" / "playpen-build"
 CI = REPO_ROOT / "playpen" / "bin" / "playpen-ci"
+ROOTFS = REPO_ROOT / "playpen" / "bin" / "playpen-rootfs"
 DISK = REPO_ROOT / "playpen" / "bin" / "playpen-disk"
 GUEST_INIT_BOOT = REPO_ROOT / "rust" / "crates" / "guest-init" / "src" / "boot.rs"
 GUEST_VECTORS = REPO_ROOT / "rust" / "crates" / "wire" / "vectors" / "guest.json"
@@ -35,11 +35,6 @@ STAGE_RE = re.compile(r"^FROM \S+ AS (\S+)$", re.MULTILINE)
 #: Stages that build a tool for a later stage. A build-only stage ships in
 #: no image, so it is not a flavor target.
 BUILD_ONLY_STAGES = ("build", "creche-test-venv")
-
-#: Flavors that ship as a root disk only: CI builds them, playpen-build does
-#: not, and caregiver maps them to no sbx image (CH7-1, CH53 rule 1, CH79
-#: rule 1).
-DISK_ONLY = ("coding:agent-sandbox-coding",)
 
 
 def _text() -> str:
@@ -59,16 +54,13 @@ def _facade_bins() -> dict[str, str]:
     return cast("dict[str, str]", json.loads(FACADE_PACKAGE.read_text(encoding="utf-8"))["bin"])
 
 
-def test_the_targets_are_the_flavors_the_release_builds() -> None:
-    """playpen/AGENTS.md rule 6: the targets and the flavors are one list."""
+def test_the_targets_are_the_flavors_ci_builds() -> None:
+    """playpen/AGENTS.md rule 3: the targets and the flavors are one list."""
     targets = [name for name in STAGE_RE.findall(_text()) if name not in BUILD_ONLY_STAGES]
-    flavors = re.search(r'^FLAVORS="([^"]*)"$', BUILD.read_text(encoding="utf-8"), re.MULTILINE)
     checked = re.search(r'^FLAVORS="([^"]*)"$', CI.read_text(encoding="utf-8"), re.MULTILINE)
 
-    assert flavors is not None
     assert checked is not None
     assert targets == [pair.split(":", 1)[1] for pair in checked.group(1).split()]
-    assert checked.group(1) == flavors.group(1) + " " + " ".join(DISK_ONLY)
     assert "FROM agent-sandbox AS agent-sandbox-python" in _text()
 
 
@@ -113,9 +105,13 @@ def test_ripgrep_is_in_the_base_stage() -> None:
 
 
 def test_the_image_fixes_no_address() -> None:
-    """The two planes are fixed on guest loopback (agent/src/guest-start.ts)."""
+    """The two planes are fixed on guest loopback (agent/src/guest-start.ts).
+    The build of each root disk passes the build time and nothing else."""
     assert "AGENT_LAN_ADDRESS" not in _text()
-    assert "--build-arg" not in BUILD.read_text(encoding="utf-8")
+    assert "--build-arg" not in CI.read_text(encoding="utf-8")
+    assert re.findall(r"--build-arg\s+\"?(\w+)=", ROOTFS.read_text(encoding="utf-8")) == [
+        "SOURCE_DATE_EPOCH"
+    ]
 
 
 def test_the_test_venv_installs_the_locked_dependencies() -> None:
@@ -232,8 +228,8 @@ def test_the_image_ships_no_installer() -> None:
 
 
 def test_no_flavor_sets_a_cmd() -> None:
-    """Fact 59: sbx gives each sandbox its own command, and a root disk
-    carries no image config, so a CMD line would only mislead."""
+    """Fact 59: a root disk carries no image config, so a CMD line would
+    only mislead."""
     assert re.search(r"^CMD ", _text(), re.MULTILINE) is None
 
 

@@ -81,11 +81,11 @@ UNIT = "creche-noticeboard.service"
 #: `bin/rework-cutover.sh` made the three operator-owned ones and
 #: `bin/rework-release-visit.sh` made `handover`. None is stamped.
 #:
-#: The other five are live or absent and are NOT trees: `chaperone` runs out
-#: of the deployed checkout's venv, `playpen` is an image, `infra`
-#: is a compose project, `mcp-servers` is `/opt/mcp/<name>` and
-#: `registry-data` is a checkout. Root learns a component's manifest from
-#: a tree under an install root, so it can see none of them.
+#: The other four are live or absent and are NOT trees: `chaperone` runs out
+#: of the deployed checkout's venv, `infra` is a compose project,
+#: `mcp-servers` is `/opt/mcp/<name>` and `registry-data` is a checkout.
+#: Root learns a component's manifest from a tree under an install root, so
+#: it can see none of them.
 INSTALLED_TREES = ("caregiver", "handover", "attendance", "noticeboard")
 
 #: What `chaperone` provides, and nobody in the resolved set does.

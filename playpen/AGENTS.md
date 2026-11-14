@@ -1,7 +1,7 @@
 # playpen
 
-The sandbox image and its release scripts. The root `AGENTS.md` applies
-here too.
+The image that each root disk of the `disks` row is built from, and its
+scripts. The root `AGENTS.md` applies here too.
 
 ## The image
 
@@ -28,13 +28,12 @@ the analysis stack.
 The `coding` flavor of `code` and `creche` is the python flavor plus uv,
 pnpm through corepack, and cargo with Rust 1.92.0, rustfmt and clippy
 (CH7-1, for now). Agents install a repo's locked dependencies through the
-egress proxy and run its checks. It ships as a root disk only (CH53
-rule 1): no sbx image. Its `SandboxFlavor` member joined before the cut
-(CH79 rule 1), and caregiver maps it to no image.
+egress proxy and run its checks. Its `SandboxFlavor` member joined before
+the cut (CH79 rule 1).
 
 The Python flavor ships no Python package installer. `pip`, `uv` and
 `ensurepip` exist in build steps only. The test venv excludes `nodeenv`.
-A dependency change for a venv is a lockfile change plus a playpen release.
+A dependency change for a venv is a lockfile change plus a disks release.
 
 Python 3.11 also rides in with the node parent image. It is an accident
 of the parent, not a tool of this image: it has no `pip` and it cannot
@@ -59,7 +58,7 @@ that drops a tmpfs dir. The build mounts `/dev`, `/proc` and `/sys` in each
 `RUN` step, so only the disk can show them missing. `bin/playpen-disk`
 reads all nine back from the disk with `debugfs`, and
 `bin/tests/test_playpen_image.py` holds both lists equal to the boot plan
-of guest init. sbx ignores the extra empty dir.
+of guest init.
 
 The kvm job builds the base disk from the tree of each run
 (`bin/vm-smoke-setup.sh`), and `rust/crates/vmm/tests/kvm_facade.rs` boots
@@ -70,49 +69,37 @@ CH80).
 The image holds no pi, no fd, no playpen bundle, no PEP bridge, no
 `agent-pi-launch`. Only the `coding` flavor holds a package installer.
 
-The image is built on the host, from the repository root, with
-`playpen/Dockerfile`. Do not build it on a development machine.
-CI builds each flavor on each code change (`bin/playpen-ci`).
+CI builds the image from the repository root, with `playpen/Dockerfile`.
+Do not build it on a development machine. CI builds each flavor on each
+code change (`bin/playpen-ci`).
 
 ## The release
 
-1. `bin/playpen-build` runs as root at release step 8, out of the fetched
-   source. It builds the two images and pushes them to the registry of the
-   host. It writes the staged tree: `images.env` and the verify hook.
-2. `images.env` names each image by digest, never by tag. A tag can move.
-   The phone tap approves exact bytes.
-3. The build stages the tree only after both images are in the registry.
-   A failed build stages nothing, and the host stays as it was.
-4. The build script reads nothing outside `playpen/`. The image build also
-   copies `agent/`, `facade/` and the workspace definition (the root
-   pyproject, `uv.lock` and the pyproject of every member), so the catalog
-   row bundles those.
-5. `bin/playpen-verify` changes nothing and reaches nothing outside the
-   host. It asks the registry for each digest in `images.env`.
-6. Keep the flavor lists equal: the flavors in `bin/playpen-build` are
-   the members of `SandboxFlavor` with an sbx image. `bin/playpen-ci` lists
-   those, then the flavors that
-   ship as a root disk only (today `coding`). The targets of
-   `Dockerfile` are the `bin/playpen-ci` list.
-7. `bin/tests/test_playpen_release.py` runs both scripts against a stub
-   `docker` and a stub registry. `bin/tests/test_playpen_image.py` reads the
-   Dockerfile as text. No test builds an image.
+This tree has no release of its own. The `disks` row ships what it builds
+(`disks/AGENTS.md`), and its catalog row bundles `playpen`, `agent`,
+`facade`, `pyproject.toml` and `uv.lock`. So a change here moves the
+`disks` tag.
+
+1. `bin/playpen-ci` builds each flavor and its root disk twice, and checks
+   that the two disks are equal. It runs in the `playpen-image` job of CI.
+2. `disks/bin/playpen-release-disks` runs `bin/playpen-rootfs`,
+   `bin/playpen-disk` and `bin/playpen-kernel` in the `disks` job of
+   `release.yml`. CI signs each file. Root installs each signed file and
+   runs no build.
+3. Keep the flavor lists equal: the targets of `Dockerfile` are the
+   `bin/playpen-ci` list, and that list equals `FLAVORS` of
+   `disks/bin/playpen-release-disks` and `catalog.DISK_FLAVORS`.
+   `bin/tests/test_playpen_image.py` reads the Dockerfile as text, and
+   `bin/tests/test_playpen_release_disks.py` holds the other lists equal.
+   No test builds an image.
 
 ## Layout
 
 | File | Owns |
 |---|---|
 | `Dockerfile` | the image: the build stage and the flavors |
-| `component.yaml` | the release manifest of the component |
-| `bin/playpen-build`, `bin/playpen-verify`, `bin/lib/registry.sh` | the release build, the verify hook, the one registry question |
 | `bin/creche-env-write`, `bin/playpen-env-check` | `/etc/creche/env` in each flavor's last step, and the CI check that it equals the image config env and that an agent list holds each name |
 | `bin/playpen-ci` | the steps of the `playpen-image` CI job: build each flavor, then check it |
 | `bin/playpen-rootfs` | the tar export of one flavor, the input of its root disk |
 | `bin/playpen-disk`, `disk/Dockerfile` | the root disk of one flavor from its tar, in the pinned trixie stage |
 | `bin/playpen-kernel` | the pinned CH guest kernel, compressed to ship like the disks |
-
-## Known gaps
-
-- The verify hook does not start an image. The image build runs each program
-  once and stops on a program that does not load (`bin/playpen-verify`).
-- A release never removes an image from the registry (`bin/playpen-build`).

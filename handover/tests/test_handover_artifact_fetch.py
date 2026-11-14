@@ -434,7 +434,7 @@ def test_a_component_of_another_kind_starts_no_child(store: Path, curl: _Curl) -
 def test_only_a_binary_or_disk_image_row_ships_signed_assets(home: Path) -> None:
     assert ships_assets(BINARY_NAME)
     assert ships_assets("disks")
-    others = ("attendance", "playpen", "registry-data")
+    others = ("attendance", "registry-data")
     assert [name for name in others if ships_assets(name)] == []
 
 

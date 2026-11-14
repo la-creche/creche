@@ -51,7 +51,7 @@ turn. The `attendance` service takes that call from four doors.
 | `door-acp/` | in `attendance` | `creche-door-acp.service`, user | The ACP door: `WS /acp/<family>`, forwarded to `attendance`. Also `creche-acp-connect`. | [door-acp/AGENTS.md](door-acp/AGENTS.md) |
 | `caregiver/` | `caregiver` | `creche-caregiver.service`, user | The reconciler. It converges every family to its file. | [caregiver/AGENTS.md](caregiver/AGENTS.md) |
 | `noticeboard/` | `noticeboard` | `creche-noticeboard.service`, user | The one view: every family, sandbox, session and audit line. | [noticeboard/AGENTS.md](noticeboard/AGENTS.md) |
-| `playpen/` | `playpen` | none, an OCI image | The sandbox image: the ACP facade and the agent module. | [playpen/AGENTS.md](playpen/AGENTS.md) |
+| `playpen/` | in `disks` | none, a build input | The image that each root disk of `disks` is built from: the ACP facade and the agent module. | [playpen/AGENTS.md](playpen/AGENTS.md) |
 | `handover/` | `handover` | `creche-handover.{path,service}`, system, root | The release tool: resolver, tag allocator, executor, requester, follower. | [handover/AGENTS.md](handover/AGENTS.md) |
 | `family/` | in `caregiver` | none, a library | The `family.toml` and `server.toml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
 | `memory/` | none yet | `creche-memory.service`, user | The memory service: the store of the vault, its sync, the search and every agent write. | [memory/AGENTS.md](memory/AGENTS.md) |
@@ -85,7 +85,7 @@ The other directories:
 | Change the call caregiver makes to the vmm | `caregiver/src/caregiver/vmm.py` |
 | Change a delegate job, a dispatched job or the switch | `attendance/src/attendance/service.py`, `acp_jobs.py` |
 | Change the ACP link, host side | `attendance/src/attendance/acp_link.py` |
-| Change the sandbox image | `playpen/Dockerfile` |
+| Change the image of the root disks | `playpen/Dockerfile` |
 | Change a page or the edit form | `noticeboard/src/noticeboard/pages.py`, `familyform.py` |
 | Change the release steps | `handover/src/handover/executor/steps.py` |
 | Change what a `component.yaml` may say | `handover/src/handover/manifest.py` |
