@@ -36,6 +36,9 @@ class InstallBlock(Strict):
     asset: str | None = None
     sha256: str | None = None
     ref: str | None = None
+    #: Contract 01b §3.2: `tar` (the default) or `binary`, `github-release`
+    #: only. `serverrules` holds the rule, as `handover.mcpserver` rule 16.
+    format: str | None = None
 
 
 class RunBlock(Strict):

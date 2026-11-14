@@ -186,6 +186,13 @@ class Verb(StrEnum):
     RELEASE = "release"
 
 
+class AssetFormat(StrEnum):
+    """Contract 01b §3.2: what a `github-release` asset is."""
+
+    TAR = "tar"
+    BINARY = "binary"
+
+
 class InstallSource(StrEnum):
     PYPI = "pypi"
     GITHUB_RELEASE = "github-release"

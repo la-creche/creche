@@ -295,6 +295,11 @@ shared_secrets = [
             f'install.sha256 = "{DIGEST}"\ninstall.repo = "a/b"\ninstall.lock =',
         ),
     ),
+    # --- install.format (contract 01b §3.2) -------------------------------------
+    _case("rule-release-format-tar", RELEASE + 'install.format = "tar"\n'),
+    _case("rule-release-format-binary", RELEASE + 'install.format = "binary"\n'),
+    _case("rule-release-format-zip", RELEASE + 'install.format = "zip"\n'),
+    _case("rule-pypi-format", PYPI + 'install.format = "binary"\n'),
     _case(
         "rule-release-extra",
         _replaced(RELEASE, "install.version =", 'install.package = "x"\ninstall.version ='),

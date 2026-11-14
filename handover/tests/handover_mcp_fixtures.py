@@ -99,6 +99,31 @@ def github_server(sha256: str) -> ServerFile:
     return parse_server(GITHUB_YAML.format(sha256=sha256).encode("utf-8"), "github-code")
 
 
+#: A `format: binary` release (rule 16): the asset IS the program, the
+#: shape agent-browser publishes.
+BINARY_YAML = """
+name: browser
+identity: "No credential. A headless browser driven by agent-browser."
+install:
+  source: github-release
+  repo: vercel-labs/agent-browser
+  version: 0.43.0
+  asset: agent-browser-linux-x64
+  sha256: "{sha256}"
+  format: binary
+run:
+  entrypoint: agent-browser
+  args: [mcp]
+tools:
+  - name: agent_browser_open
+    description: Open a URL.
+"""
+
+
+def binary_server(sha256: str) -> ServerFile:
+    return parse_server(BINARY_YAML.format(sha256=sha256).encode("utf-8"), "browser")
+
+
 def vikunja_server() -> ServerFile:
     return parse_server(VIKUNJA_YAML.encode("utf-8"), "vikunja-finance")
 

@@ -43,6 +43,7 @@ from handover_mcp_fixtures import (
     LOCK_TEXT,
     VIKUNJA_YAML,
     McpFake,
+    binary_server,
     github_server,
     hostile_tarball,
     kagi_server,
@@ -160,6 +161,33 @@ def test_a_github_release_server_is_downloaded_hashed_then_unpacked(tmp_path: Pa
     assert build.artifact.endswith("v1.12.0/github-mcp-server_Linux_x86_64.tar.gz")
     # The proven flags: a redirect to http or file: is refused by curl.
     assert any("--proto =https" in line for line in fake.argv_lines())
+
+
+def test_a_binary_release_asset_is_hashed_then_placed_as_the_entrypoint(tmp_path: Path) -> None:
+    """Rule 16: the asset IS the program. Nothing is unpacked, so a file
+    that is not a tarball is not refused for that."""
+    asset = b"\x7fELF not a tarball"
+    fake = McpFake(asset_bytes=asset)
+    builder, work, source = _builder(tmp_path, fake)
+
+    build = builder.stage_one(binary_server(sha256_of(asset)), work, source)
+
+    program = build.paths.new / "bin" / "agent-browser"
+    assert program.read_bytes() == asset
+    assert stat.S_IMODE(program.stat().st_mode) == 0o755
+    assert build.artifact.endswith("v0.43.0/agent-browser-linux-x64")
+
+
+def test_a_binary_release_asset_whose_hash_differs_is_refused(tmp_path: Path) -> None:
+    fake = McpFake(asset_bytes=b"\x7fELF other bytes")
+    builder, work, source = _builder(tmp_path, fake)
+
+    with pytest.raises(Refusal) as caught:
+        builder.stage_one(binary_server("0" * 64), work, source)
+
+    assert caught.value.code is RefusalCode.SERVER
+    assert "agent-browser-linux-x64" in caught.value.detail
+    assert not (builder.mcp_root / "browser").exists()
 
 
 def test_an_agent_mcp_server_installs_from_the_tree_this_release_fetched(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ must be refused. A reader who adds a field to that module adds a row here.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 import yaml
@@ -14,6 +15,7 @@ from handover.errors import Refusal, RefusalCode
 from handover.mcpserver import (
     MAX_SERVER_BYTES,
     MAX_TOOLS,
+    AssetFormat,
     ServerFile,
     Source,
     parse_server,
@@ -579,3 +581,40 @@ def test_more_servers_than_the_limit_are_refused(tmp_path: Path) -> None:
 
     with pytest.raises(Refusal, match="more than 2 servers"):
         read_registry(tmp_path, limit=2)
+
+
+# -- rule 16: install.format ---------------------------------------------
+
+
+def _with_install(body: dict[str, object], **extra: object) -> dict[str, object]:
+    install = cast(dict[str, object], body["install"])
+
+    return {**body, "install": {**install, **extra}}
+
+
+def _github_body() -> dict[str, object]:
+    loaded: dict[str, object] = yaml.safe_load(GITHUB_CODE)
+
+    return loaded
+
+
+def test_a_github_release_unpacks_a_tarball_by_default() -> None:
+    assert _parse(_github_body(), "github-code").pin.format is AssetFormat.TAR
+
+
+def test_a_github_release_may_name_a_bare_binary_asset() -> None:
+    body = _with_install(_github_body(), format="binary")
+
+    assert _parse(body, "github-code").pin.format is AssetFormat.BINARY
+
+
+def test_an_unknown_asset_format_is_refused() -> None:
+    body = _with_install(_github_body(), format="zip")
+
+    assert "install.format" in _refusal(body, "github-code").detail
+
+
+def test_a_format_under_another_source_is_refused() -> None:
+    body = _with_install(_kagi_body(), format="binary")
+
+    assert "install.format does not belong to pypi" in _refusal(body).detail

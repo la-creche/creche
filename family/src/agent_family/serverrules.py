@@ -44,6 +44,7 @@ from .grammar import (
     TOOL_NAME,
     TOOL_NAME_FORM,
     VERSION_RANGE_CHARS,
+    AssetFormat,
     InstallSource,
 )
 from .report import Issues
@@ -163,7 +164,23 @@ def _check_install(server: McpServerFile, issues: Issues) -> None:
     for name in sorted(present - set(_REQUIRED[source])):
         issues.error(f"install.{name}", f"source '{source}' does not take 'install.{name}'")
 
+    _check_format(source, install, issues)
     _check_pin_values(server, issues)
+
+
+def _check_format(source: InstallSource, install: InstallBlock, issues: Issues) -> None:
+    """Contract 01b §3.2: `install.format` is `tar` or `binary`, and only a
+    `github-release` takes it (`handover.mcpserver` rule 16)."""
+    if install.format is None:
+        return
+
+    if source is not InstallSource.GITHUB_RELEASE:
+        issues.error("install.format", f"source '{source}' does not take 'install.format'")
+        return
+
+    if install.format not in {str(member) for member in AssetFormat}:
+        allowed = ", ".join(str(member) for member in AssetFormat)
+        issues.error("install.format", f"'{install.format}' is not a format; use one of {allowed}")
 
 
 def _check_pin_values(server: McpServerFile, issues: Issues) -> None:
