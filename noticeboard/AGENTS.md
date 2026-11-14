@@ -9,11 +9,19 @@ script tag on any page. Every page works with scripts off.
 
 ## The sentence that bounds this package
 
-**Read everything, write one thing: a validated git commit in the registry.**
+**Read everything, write two things: a validated git commit in the registry,
+and the operator's decision on one open approval gate.**
 
 There is no systemd call, no daemon verb and no `sbx` in this package. Adding
 one is a design change. `caregiver` watches the registry and converges. A
 view that also applied would be a second writer to the same state.
+
+The approval page is the second write. A phone card holds Approve and Deny
+behind a long press. A plain tap opens the card's link, `/approvals/<job>`,
+instead. The page sends the same decision that a tap sends, to the same
+route of the approval plugin of the chaperone. The page holds no state. It
+shows a gate only while the plugin holds it open, so the page lives only as
+long as the request.
 
 | It reads | From |
 |---|---|
@@ -23,6 +31,7 @@ view that also applied would be a second writer to the same state.
 | every tool call and its decision | the chaperone's audit file, `/var/lib/chaperone/audit.jsonl` |
 | the sessions of a family and the VM state of each, one page of a transcript | the two view routes of `attendance`, as the principal `noticeboard` |
 | the family file behind the form | the registry checkout |
+| one open approval gate | `GET /pending/{job}` of the approval plugin, under its resume bearer |
 
 ## Perimeter rules
 
@@ -39,8 +48,20 @@ view that also applied would be a second writer to the same state.
 6. `/static` stays styling only. Nothing that holds a fact may live there.
 
 A route parameter is an id. `app.py` checks a family name against
-`registrywrite.NAME_RE` and a session id with `sessions.is_session` before
-any use. A value that fails answers 404.
+`registrywrite.NAME_RE`, a session id with `sessions.is_session` and a job
+id with `approvals.is_job` before any use. A value that fails answers 404.
+
+## The approval page
+
+1. A GET never decides. A link preview of the card can fetch the page.
+2. The decision is a form post under the CSRF rules of every other write.
+3. The page sends a decision only for a gate that the plugin shows open at
+   that moment. A gate that is gone answers "gone" and sends nothing.
+4. The first decision stands. A later decision, from the card or from the
+   page, changes nothing, and the page says so.
+5. Set both `NOTICEBOARD_APPROVAL_URL` and `NOTICEBOARD_APPROVAL_TOKEN_FILE`,
+   or neither. With neither, the page is off and shows no button. With one,
+   or with an empty token file, the service refuses to start.
 
 ## Reading another process's files
 
@@ -136,6 +157,8 @@ uv run noticeboard-verify --json                # the component's verify hook
 | `NOTICEBOARD_ATTENDANCE_SOCKET`, `NOTICEBOARD_ATTENDANCE_URL` | `attendance`, over a socket or TCP |
 | `NOTICEBOARD_PAGE_SIZE` | audit calls and sessions per page |
 | `NOTICEBOARD_COOKIE_SECURE` | `Secure` on the CSRF cookie. Set `0` only for a plain-HTTP dev run. |
+| `NOTICEBOARD_APPROVAL_URL` | the base URL of the approval plugin, the address of its `--listen` |
+| `NOTICEBOARD_APPROVAL_TOKEN_FILE` | a mode-0600 file that holds the plugin's `RESUME_TOKEN`. The service reads it at each call. |
 
 A LAN bind with no key refuses to start, exit 2. The reverse proxy injects
 `X-View-Key` inside its `location /` block and forwards `Cookie`, `Origin`
@@ -151,6 +174,7 @@ and `Referer` unchanged. `/healthz` and `/static/*` stay keyless.
 | `notices.py` | the notice of a refused JSON text: one log line, and one row in the notice file that `bin/creche-watchdog.sh` reads. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `rfc3339.py` | the one reader of a time text. The file is a copy, and `bin/tests/test_rfc3339_copies.py` holds each copy to the same bytes |
 | `sessions.py`, `attendancehttp.py` | the view routes of `attendance` as `noticeboard`, and the wire |
+| `approvals.py` | the open gate of the approval plugin, the decision on it, and the wire |
 | `familyform.py`, `tomlout.py`, `tomlkeep.py`, `registrywrite.py` | the form, the whole file, the patched file, the commit |
 | `pages.py`, `app.py` | what each page needs, and the routes |
 | `verify.py` | `noticeboard-verify` |
@@ -184,6 +208,9 @@ prefixed `test_noticeboard_`.
   each rule. For a longer refused text, it names the fault that the
   standard decoder finds, with no offset, and the two words can differ. An
   answer of `attendance` has a cap of 4 MiB.
+- No contract names the route of the approval plugin that the approval page
+  reads. The page takes `GET /pending/{job}` of the chaperone's
+  `docs/design.md` section 12 (`approvals.py`).
 - No contract names the surface word of the validation report in a notice.
   `jsonfiles.Surface` gives the report the word `status.report`
   (`jsonfiles.py`).
