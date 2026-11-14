@@ -87,8 +87,8 @@ host where something has gone wrong.
   rule 5, CH70 rule 4). A family with no `egress` gets `{"hosts": []}`.
   The planes never enter it (decision CH6-2). The file sits beside
   `config/`, mode 0640, and bytes equal to the file on disk write nothing.
-  A write of either reach file is the step `set_egress` (contract 05
-  §3.4).
+  A write of any of the three reach files (`egress.json`, `repos.json`
+  and `git-platform.json`) is the step `set_egress` (contract 05 §3.4).
 - A revision whose `egress.json` would pass `EGRESS_CAP` of
   `reach_files.py`, the 64 KiB cap of the vmm (decision CH70 rule 1), is
   refused (decision CH71). The pass and `apply-once` render the file

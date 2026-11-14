@@ -114,7 +114,7 @@ pub const EGRESS_CAP: u64 = 64 * 1024;
 pub const REPOS_CAP: u64 = 4 * 1024;
 
 /// The most bytes of `git-platform.json`: 256. caregiver writes the
-/// indented form of two bools, at most 39 bytes, so a file that caregiver
+/// indented form of two bools, at most 38 bytes, so a file that caregiver
 /// writes always fits. A larger file is `ReachFault::TooLarge`, so the vmm
 /// grants nothing. `rust/crates/wire/vectors/family.json` holds the same
 /// value for caregiver, and a test of each side holds it equal.

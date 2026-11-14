@@ -286,7 +286,8 @@ def _converge(
 
     # Contract 01 §6.1.1, contract 05 §3.4's `set_egress`: on every pass,
     # so each file holds the list of the revision this pass converges to
-    # (decision CH69 rule 6). The vmm reads both files (decision CH6-5).
+    # (decision CH69 rule 6). The vmm reads the three files (decisions
+    # CH6-5, CH3).
     egress_moved = reach_files.write_egress_file(egress_file, state_root)
     repos_moved = reach_files.write_repos_file(family, state_root)
     spool_moved = reach_files.write_git_platform_file(family, state_root)

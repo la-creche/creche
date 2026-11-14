@@ -1891,9 +1891,10 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
    allows 480 s for this work. A later start finds each digest in the store
    and reads no byte.
 10. Decision CH59 rule 1: the vmm reads `VMM_EGRESS_LOG` (plan PR E2),
-    `VMM_MIRROR_ROOT` and `VMM_GIT_PROGRAM` (plan PR M1), so the
-    `vmm.env` that `bin/fleet-up up` writes must hold them before this
-    vmm starts on a host, or the start exits 78. Root must own the file
+    `VMM_MIRROR_ROOT` and `VMM_GIT_PROGRAM` (plan PR M1), and
+    `VMM_GIT_SPOOL_ROOT` (decision CH3), so the `vmm.env` that
+    `bin/fleet-up up` writes must hold them before this vmm starts on a
+    host, or the start exits 78. Root must own the file
     of `VMM_GIT_PROGRAM` (`/usr/bin/git` of Ubuntu). The hard
     `RLIMIT_NOFILE` of the user unit must hold 103552 (decision CH67
     rule 4, plan risk 3).
