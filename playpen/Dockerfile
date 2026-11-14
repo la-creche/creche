@@ -298,6 +298,13 @@ RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env
 # the python flavor's. Agents install a repo's locked dependencies through
 # the egress proxy (CH6-1), then run its checks.
 #
+# It also holds Chromium, for a repo whose checks drive a browser. Both
+# halves land at build time: the Debian packages a Chromium needs, and one
+# browser at the Playwright version pinned below. `PLAYWRIGHT_BROWSERS_PATH`
+# at the foot of this stage names it. A browser matches the Playwright that
+# launches it, so a repo on another version overrides that name for its own
+# commands and fetches the revision it wants through the egress proxy.
+#
 # This flavor ALONE breaks the no-installer rule of the python flavor. Every
 # other flavor keeps it. "For now": revisit with the mirror trigger of
 # CH6-1.
@@ -305,6 +312,10 @@ FROM agent-sandbox-python AS agent-sandbox-coding
 ARG RUST_VERSION=1.92.0
 ARG RUST_SHA256=d2ccef59dd9f7439f2c694948069f789a044dc1addcc0803613232af8f88ee0c
 ARG PNPM_VERSION=11.20.0
+# The one Playwright version this image bakes a browser for. It is the
+# latest stable at 2026-11-14. The version and the browser it installs are
+# one pin: raise the two together.
+ARG PLAYWRIGHT_VERSION=1.65.1
 
 # uv: the binary that the creche-test-venv stage installed from the pinned
 # wheel. It needs no Python of its own.
@@ -327,6 +338,20 @@ RUN tarball="rust-${RUST_VERSION}-x86_64-unknown-linux-gnu" \
 RUN corepack enable pnpm \
     && corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
+# Chromium, for a repo whose checks drive a browser. `install --with-deps`
+# is both halves at once: the Debian packages a Chromium needs, and the
+# browser itself. The build proves the browser landed, so a silent fetch
+# failure is a failed image and never a broken sandbox.
+#
+# The path is set on this RUN because the ENV below comes too late for the
+# install to read it, and `/root` is a tmpfs mount, so a browser left in the
+# default cache would not reach the disk.
+RUN PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+      npx --yes "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium \
+    && find /opt/ms-playwright -type f -name chrome -print -quit | grep -q . \
+    && rm -rf /root/.npm /var/lib/apt/lists/*
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+
 # Fail the BUILD, not the first switch: each installer starts.
 RUN uv --version \
     && cargo --version && rustc --version \
@@ -343,4 +368,4 @@ ENV CRECHE_TOOL_HTTPS_PROXY=http://127.0.0.1:3128
 
 RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
     sh /run/creche-env-write CRECHE_TOOL_HTTPS_PROXY HOME MPLBACKEND MPLCONFIGDIR NODE_ENV \
-       NODE_VERSION PATH TMPDIR YARN_VERSION > /etc/creche/env
+       NODE_VERSION PATH PLAYWRIGHT_BROWSERS_PATH TMPDIR YARN_VERSION > /etc/creche/env
