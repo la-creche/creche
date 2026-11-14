@@ -282,7 +282,10 @@ left one. So the stop never ends the graph worker in a statement.
    No new statement reaches the graph worker. The worker ends the statement
    that it runs now. A task that still runs 10 s after its cancel can still
    send a statement or a checkpoint. Then the stop writes nothing, as in
-   step 4, and the stop of the loop freezes the task.
+   step 4, and ends the process at once (`os._exit`). A normal exit hangs
+   on Linux: Cognee's graph worker sets `PR_SET_PDEATHSIG`, so the end of
+   the loop thread kills it, and Cognee starts a new worker that the exit
+   waits on.
 4. `close_graph` sends `RETURN 1`. The worker runs one statement at a time,
    so the probe ends after the current one. Then the close reads the files
    beside the database. A `.shadow`, a `.wal.checkpoint` or a checkpoint
