@@ -248,12 +248,6 @@ pub struct PushFile {
 }
 
 impl PushFile {
-    /// The id that `commit` gives the file.
-    #[must_use]
-    pub const fn id(&self) -> &BundleId {
-        &self.id
-    }
-
     /// Appends `bytes` to the file.
     ///
     /// # Errors

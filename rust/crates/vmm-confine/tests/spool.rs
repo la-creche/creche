@@ -74,9 +74,17 @@ fn a_put_commits_to_its_id_with_mode_0640() {
     rustix::process::umask(Mode::from_raw_mode(0o077));
     let scratch = Scratch::new("put");
     let mut file = scratch.root().create_push(&code()).unwrap();
-    let id = file.id().clone();
+    let names = scratch.names(PUSH_DIR);
+    let [part] = names.as_slice() else {
+        panic!("{names:?}");
+    };
+    let id: BundleId = part
+        .strip_prefix('.')
+        .and_then(|rest| rest.strip_suffix(".part"))
+        .unwrap()
+        .parse()
+        .unwrap();
     assert_eq!(id.family(), &code());
-    assert_eq!(scratch.names(PUSH_DIR), [format!(".{id}.part")]);
     file.write(b"# v2 git bundle\n").unwrap();
     assert_eq!(file.commit().unwrap(), id);
     assert_eq!(scratch.names(PUSH_DIR), [id.to_string()]);
@@ -92,7 +100,7 @@ fn two_puts_get_two_ids() {
     let scratch = Scratch::new("two");
     let first = scratch.root().create_push(&code()).unwrap();
     let second = scratch.root().create_push(&code()).unwrap();
-    assert_ne!(first.id(), second.id());
+    assert_ne!(first.commit().unwrap(), second.commit().unwrap());
 }
 
 /// The drop of a put that did not commit removes its temporary file, so a
