@@ -57,15 +57,15 @@ FIXTURE = {
     "ui/node_modules/react/index.js": "js",
     "shim/src/agent_shim.egg-info/PKG-INFO": "egg",
     # Live: tracked source beside leftovers of its own.
-    "library/src/library/host.py": "py",
-    "library/src/library/__pycache__/host.pyc": "pyc",
+    "caregiver/src/caregiver/host.py": "py",
+    "caregiver/src/caregiver/__pycache__/host.pyc": "pyc",
     # The venv the units run from.
-    f"{VENV}/bin/index-scope": "#!/bin/sh\n",
-    f"{VENV}/lib/python3.12/site-packages/library/__init__.py": "",
+    f"{VENV}/bin/caregiver": "#!/bin/sh\n",
+    f"{VENV}/lib/python3.12/site-packages/caregiver/__init__.py": "",
     # Untracked and NOT ignored: `-X` must leave it, `-x` would not.
     "left-by-hand.txt": "a decrypted secret, or a copy of a unit",
 }
-TRACKED = (".gitignore", "pyproject.toml", "library/src/library/host.py")
+TRACKED = (".gitignore", "pyproject.toml", "caregiver/src/caregiver/host.py")
 
 #: What the leftovers' own directories are called, once the files under them
 #: are gone: `git clean -d` removes the directory too.
@@ -140,8 +140,8 @@ def test_the_clean_keeps_the_venv_every_unit_runs_from(deployed: Path) -> None:
     done = _git(deployed, *_clean_argv()[1:])
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert (deployed / VENV / "bin" / "index-scope").is_file()
-    assert (deployed / VENV / "lib/python3.12/site-packages/library/__init__.py").is_file()
+    assert (deployed / VENV / "bin" / "caregiver").is_file()
+    assert (deployed / VENV / "lib/python3.12/site-packages/caregiver/__init__.py").is_file()
 
 
 def test_the_clean_keeps_what_git_does_not_ignore(deployed: Path) -> None:
@@ -154,12 +154,12 @@ def test_the_clean_keeps_what_git_does_not_ignore(deployed: Path) -> None:
 
 
 def test_a_live_directory_keeps_its_tracked_files(deployed: Path) -> None:
-    """`library/` is not deleted: it loses its `__pycache__` and keeps its
-    source. The next two steps of the deploy write that cache again."""
+    """`caregiver/` is not deleted: it loses its `__pycache__` and keeps its
+    source."""
     assert _git(deployed, *_clean_argv()[1:]).returncode == 0
 
-    assert (deployed / "library/src/library/host.py").is_file()
-    assert not (deployed / "library/src/library/__pycache__").exists()
+    assert (deployed / "caregiver/src/caregiver/host.py").is_file()
+    assert not (deployed / "caregiver/src/caregiver/__pycache__").exists()
 
 
 def test_an_exclude_pattern_would_not_have_kept_the_venv(deployed: Path) -> None:
@@ -185,7 +185,7 @@ def test_the_keep_is_anchored_to_the_top_of_the_tree(deployed: Path) -> None:
     assert _git(deployed, *_clean_argv()[1:]).returncode == 0
 
     assert not (deployed / "toybox").exists()
-    assert (deployed / VENV / "bin" / "index-scope").is_file()
+    assert (deployed / VENV / "bin" / "caregiver").is_file()
 
 
 def test_the_deploy_never_cleans_everything_untracked() -> None:
@@ -201,8 +201,8 @@ def test_the_deploy_never_cleans_everything_untracked() -> None:
 
 def test_the_clean_runs_after_the_checkout_and_before_the_build() -> None:
     """Order, and both halves matter. Before the checkout it would clean the
-    previous ref's tree; after `uv sync --compile-bytecode` and `compileall`
-    it would delete the caches the deploy had just written."""
+    previous ref's tree; after `uv sync --compile-bytecode` it would delete
+    the caches the deploy had just written."""
     lines = SCRIPT.read_text(encoding="utf-8").splitlines()
     checkout = next(i for i, one in enumerate(lines) if one.startswith("git checkout -f"))
     clean = next(i for i, one in enumerate(lines) if one.startswith("git clean"))

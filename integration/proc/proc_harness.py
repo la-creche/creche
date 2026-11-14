@@ -55,7 +55,7 @@ STOP_GRACE_S: Final = 20.0
 REAP_DEADLINE_S: Final = 10.0
 
 #: The time of one test: its setup, its call and its teardown. The longest
-#: wait of a test is the 120 s of `INDEX_DEADLINE_S` in `proc_library.py`.
+#: wait of a test is the 150 s of `BUILD_TIMEOUT_S` in `test_proc_vmm_upgrade.py`.
 #: A teardown takes 30 s at most: `STOP_GRACE_S` and `REAP_DEADLINE_S`.
 TEST_LIMIT_S: Final = 180
 

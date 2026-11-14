@@ -34,7 +34,6 @@ from proc_chaperone_pin import BuildError, NoToolchain, build_pinned
 from proc_chaperone_rs import ChaperoneRsStack
 from proc_exit import ExitStack
 from proc_harness import TEST_LIMIT_S, Supervisor, end_leaked_groups, time_limit
-from proc_library import LibraryStack
 from proc_report import describe, end_processes
 from proc_services import (
     KEEP_ROOTS_ENV,
@@ -275,23 +274,6 @@ def trigger(trigger_prepared: TriggerStack) -> TriggerStack:
     trigger_prepared.start()
 
     return trigger_prepared
-
-
-@pytest.fixture
-def library_prepared(tree: Tree, supervisor: Supervisor) -> LibraryStack:
-    """The seventh topology on disk, with no TEI stand-in."""
-    stack = LibraryStack(tree, supervisor)
-    stack.prepare()
-
-    return stack
-
-
-@pytest.fixture
-def library(library_prepared: LibraryStack) -> LibraryStack:
-    """The seventh topology: the TEI stand-in listens. A test runs the index builder."""
-    library_prepared.start_tei()
-
-    return library_prepared
 
 
 @pytest.fixture(scope="session")

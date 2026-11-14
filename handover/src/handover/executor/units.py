@@ -210,7 +210,7 @@ class Change(StrEnum):
 #: restarts a changed one. A service runs its new file at its next start.
 TIMER_SUFFIX: Final = ".timer"
 
-#: The mark of a template unit (`creche-library@.timer`). A template has no
+#: The mark of a template unit (`<name>@.timer`). A template has no
 #: instance of its own, so root does not start, restart, stop or disable it.
 #: `creche-release`'s `bin/host-verify` skips a template timer too.
 TEMPLATE_MARK: Final = "@."

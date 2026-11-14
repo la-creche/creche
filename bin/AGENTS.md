@@ -26,7 +26,7 @@ A reader must not infer it from the `id -u` guard. A root script asserts
 
 | Family | Files | Contract |
 |---|---|---|
-| Setup | `provision-library.sh`, `fleet-up` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
+| Setup | `fleet-up` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
 | Operations | `creche-deploy`, `creche-handover` | Run unattended from units and timers. Fail loudly into the journal. |
 | Checks | `quality-gate.sh`, `systemd-proof.sh`, `vm-smoke-setup.sh` | Run from the hooks and from CI. `systemd-proof.sh` and `vm-smoke-setup.sh` run in CI only. No unit runs them. They use `set -euo pipefail`. The first failed check stops the run. |
 | Build | `build-artifacts.sh`, `check-disk-files.sh` | `build-artifacts.sh` runs in CI only, from the job `artifacts` of `release.yml` and the job `vmm-archive` of `gate.yml`. `check-disk-files.sh` runs in CI only, from the job `disks` of `release.yml`. No hook and no unit runs it, and the host never runs it. It uses `set -euo pipefail`: the first fault stops the run with one line, and `build-artifacts.sh` then writes no digest list. It can use the GNU tools of a runner. It stays bash 3.2-clean, because its tests run it on a development machine. |
@@ -79,7 +79,6 @@ through a file or a health endpoint, and give a short in-VM command a
 |---|---|---|
 | `creche-deploy` | ROOT, the single sudoers entry | Puts this repository at `/opt/creche` and the site at `/opt/private-docs`, fills the venv. The site checkout serves the compose stack and the personal units. `/etc/creche` links into the `host` release instead. It restarts no unit. Origin is the operator's checkout, so root needs no GitHub credential. It installs no MCP server. |
 | `creche-handover` | ROOT, from `creche-handover.path` | Decrypts the site's sops file and execs `handover-exec` under it. Installed to `/usr/local/sbin` by hand, never by a release. Refuses a path another account can write. |
-| `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
 | `fleet-up` | OPERATOR | Draft. `check`, `up`, `down` of the fleet layer: the tokens, the keys, the env files, the state directories and the user units. `check` is read-only and lists the root checklist. `up` records each write, and `down` removes only a recorded path. `docs/fleet-bootstrap.md` is the design. |
 | `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests` or `--docs`. |
 | `systemd-proof.sh` | CI, from the `systemd-proof` job and from the scope of each workflow | Proves the restart rule of the daemon units on the systemd of the runner, with three transient units. Then gives each unit file under `systemd/` to `systemd-analyze verify`. `--unchanged FROM TO` says if a change needs no proof. |
@@ -274,7 +273,7 @@ scope of `release.yml` ask it.
 | `test_git_config_dropped.py` | No `git` child of a test run reads the config file of a person or of the system. The same holds for the ignore file and the attributes file of a person. The root `conftest.py` sets the variables that do this. The registry writer of the noticeboard, `noticeboard/src/noticeboard/registrywrite.py`, starts `git` with `HOME` and with none of those variables. The root `conftest.py` gives each test under `noticeboard/tests` an empty home directory. That child then starts no program that a config file below `HOME` names, but it still reads the config file of the system. |
 | `test_git_background_dropped.py` | No `git` command that inherits the environment of a test run starts the maintenance that `git` does not wait for. That holds for a commit, a merge, a fetch and a repository that receives a push. The root `conftest.py` sets the two settings that do this. A fixture that asks for the maintenance gets it in the foreground. |
 | `test_ignored_signal_kept.py` | A test run that starts with SIGINT, SIGTERM or SIGHUP ignored passes the same tests, and the signal stays ignored. The fixture of the root `conftest.py` still fails a handler that a test leaves. |
-| `test_creche_deploy.py`, `test_provision_library.py` | Each script, against binstubs and a temp root. |
+| `test_creche_deploy.py` | The script, against a throwaway repository and the real `git`. |
 
 ## Adding a script
 

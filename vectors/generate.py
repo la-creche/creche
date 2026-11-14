@@ -45,7 +45,6 @@ from vectors.surfaces import (
     family_cli,
     family_file,
     ids,
-    library,
     manifest,
     noticeboard,
     runtime,
@@ -108,7 +107,6 @@ GROUPS: Final[dict[str, Callable[[], tuple[Surface, ...]]]] = {
     "session": session.surfaces,
     "runtime": runtime.surfaces,
     "noticeboard": noticeboard.surfaces,
-    "library": library.surfaces,
     "tomlfile": tomlfile.surfaces,
     "envfile": envfile.surfaces,
 }

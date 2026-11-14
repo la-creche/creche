@@ -6,7 +6,6 @@ test of this suite starts a service through.
 
 from __future__ import annotations
 
-import ast
 import shlex
 from pathlib import Path
 
@@ -21,7 +20,6 @@ from proc_chaperone_pin import (
     pinned_commit,
     repository_url,
 )
-from proc_library import Profile, index_words
 from proc_services import (
     DEFAULT_ONLY_ENV,
     SERVICES,
@@ -31,7 +29,6 @@ from proc_services import (
     Service,
     command_of,
     env_of,
-    reference_of,
     unknown_variables,
     venv_bin,
 )
@@ -49,28 +46,6 @@ FLAG = "--"
 
 #: The three flags of `caregiver serve` that the suite adds to those of the unit.
 NOT_IN_THE_UNIT = {"--litellm-base-url", "--poll-interval-s", "--chaperone-bin"}
-
-#: The `ExecStart` of each unit that runs the index builder in a sandbox, and
-#: the profile word that it gives. None is a unit that gives no such word.
-#: The unit file is creche-release's `units/user/creche-library@.service`, so
-#: this is a copy of its `ExecStart`, with the continuation line joined.
-#: Change both together.
-INDEX_UNITS: dict[str, Profile | None] = {
-    "/usr/bin/timeout --signal=KILL 1500 sbx exec index-%i -- "
-    "sh -c 'index-scope /srv/agents/vault/%i /srv/agents/state/index/%i;"
-    " rc=$?; sleep 8; exit $rc'": None,
-}
-
-#: The words of an `ExecStart` that give a shell its command text.
-SHELL = ("sh", "-c")
-END_OF_COMMAND = ";"
-
-#: The directory of this suite.
-SUITE_DIR = Path(__file__).resolve().parent
-
-#: The file whose scenarios run the reference beside the judged
-#: command (`AGENTS.md`, "The reference").
-REFERENCE_FILES = {"test_proc_library_cross.py"}
 
 
 def test_each_default_is_what_its_unit_runs() -> None:
@@ -118,24 +93,6 @@ def test_the_verify_hook_is_what_its_manifest_runs() -> None:
     assert verify_words(env_file) == command[1:]
 
 
-def test_the_index_units_run_the_program_of_the_library_row() -> None:
-    """The row of `library` names no unit, so its program is held here.
-
-    Each index unit runs a shell in a sandbox. The first command of the
-    shell text is the index builder with a corpus directory, an index
-    directory and the profile word of the unit. The suite gives the program
-    the same words: `index_words` of `proc_library.py`.
-    """
-    for unit, profile in INDEX_UNITS.items():
-        words = shlex.split(unit)
-        text_at = _index_after(words, SHELL)
-        command = shlex.split(words[text_at].partition(END_OF_COMMAND)[0])
-        suite = index_words(Path(command[1]), Path(command[2]), profile)
-
-        assert command[0] == SERVICES[Service.LIBRARY].program, unit
-        assert command[1:] == suite, unit
-
-
 def test_every_service_has_a_row_and_its_own_variable() -> None:
     overrides = [entry.override for entry in SERVICES.values()]
 
@@ -169,39 +126,6 @@ def test_an_override_reaches_one_service_only(tmp_path: Path) -> None:
     environ = {"CRECHE_PROC_ATTENDANCE": str(program)}
 
     assert command_of(Service.DOOR_TRIGGER, environ).origin is Origin.DEFAULT
-
-
-def test_the_reference_is_the_default_with_the_variable_set(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The reference of a row reads no variable: it stays the default command.
-
-    The variable of the row names another program here. The judged command
-    is that program, and the reference is the default command of the row,
-    with what only the default command gets.
-    """
-    entry = SERVICES[Service.LIBRARY]
-    monkeypatch.setenv(entry.override, str(_program(tmp_path / "other-library")))
-
-    judged = command_of(Service.LIBRARY)
-    reference = reference_of(Service.LIBRARY)
-
-    assert judged.origin is Origin.OVERRIDE
-    assert reference.origin is Origin.DEFAULT
-    assert reference.words == (str(venv_bin() / entry.program), *entry.selector)
-    assert reference == command_of(Service.LIBRARY, {})
-    assert env_of(reference) == DEFAULT_ONLY_ENV
-
-
-def test_only_two_files_run_the_reference() -> None:
-    """The suite runs a default command beside the judged command in two files, and in no other.
-
-    A scenario of another file that ran the default command would look like
-    a scenario that judged the binary of the run. One function of the
-    `library` topology starts the reference, and only the two files call it.
-    """
-    assert _callers_of("reference_of") == {"proc_library.py", Path(__file__).name}
-    assert _callers_of("run_reference") == REFERENCE_FILES
 
 
 def test_an_empty_override_is_an_error() -> None:
@@ -339,33 +263,6 @@ def _verify_command(manifest: Path) -> tuple[str, ...]:
     document = yaml.safe_load(manifest.read_text(encoding="utf-8"))
 
     return tuple(str(word) for word in document["verify"]["command"])
-
-
-def _index_after(words: list[str], run: tuple[str, ...]) -> int:
-    """The index of the word that follows the first place of `run` in `words`."""
-    starts = range(len(words) - len(run))
-
-    return next(at for at in starts if tuple(words[at : at + len(run)]) == run) + len(run)
-
-
-def _callers_of(function: str) -> set[str]:
-    """The name of each Python file of this suite that calls a function of one name."""
-    found: set[str] = set()
-
-    for path in SUITE_DIR.glob("*.py"):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.Call) and _called_name(node.func) == function:
-                found.add(path.name)
-
-    return found
-
-
-def _called_name(func: ast.expr) -> str | None:
-    """The last name of what one call names: `f` of `f()`, and `f` of `x.f()`."""
-    if isinstance(func, ast.Name):
-        return func.id
-
-    return func.attr if isinstance(func, ast.Attribute) else None
 
 
 def _program(path: Path) -> Path:

@@ -55,13 +55,11 @@ the variable.
 |---|---|
 | service | A program of this repository that the suite starts: one row of the service table. |
 | root | The temporary directory of one test. Every file and every Unix socket of the test is in it. |
-| stand-in | A program that takes the place of a program the suite cannot run: `systemctl`, the LiteLLM key API, TEI, the vmm host API, and an upstream and the approval channel of the Rust chaperone. |
+| stand-in | A program that takes the place of a program the suite cannot run: `systemctl`, `chaperone check`, the LiteLLM key API, the vmm host API, and an upstream and the approval channel of the Rust chaperone. |
 | ACP | The Agent Client Protocol, version 1. A client and an agent send JSON-RPC 2.0 messages. |
-| TEI | The embedding service that the index builder dials. It gives one vector for each text. |
 | topology | The services that one fixture starts together. |
 | listener | A service that listens for HTTP requests: `attendance`, the noticeboard, and the `serve` command of the trigger door. |
 | judged command | The command that a run starts for a service: the default command, or the value of the variable of the service. |
-| reference | The default command of a service, when a scenario runs it beside the judged command. |
 
 ## The service table
 
@@ -75,7 +73,6 @@ command and the name of one environment variable.
 | `caregiver` | `caregiver` | `CRECHE_PROC_CAREGIVER` |
 | `noticeboard` | `noticeboard` | `CRECHE_PROC_NOTICEBOARD` |
 | `noticeboard-verify` | `noticeboard-verify` | `CRECHE_PROC_NOTICEBOARD_VERIFY` |
-| `library` | `index-scope` | `CRECHE_PROC_LIBRARY` |
 | `chaperone-rs` | `chaperone`, the pinned build | `CRECHE_PROC_CHAPERONE_RS` |
 
 The default command is the program and the first words of the unit's
@@ -88,10 +85,6 @@ No unit runs `noticeboard-verify`. It is the verify hook of the noticeboard
 command is the program of `verify.command` in `noticeboard/component.yaml`.
 `test_proc_table.py` compares the row and the words of the suite with that
 manifest.
-
-The row of `library` names no unit. The index unit runs `index-scope` in a
-sandbox, through `sbx exec` and a shell. `test_proc_table.py` reads the
-program and its words from the shell text of the unit.
 
 The row of `chaperone-rs` names no unit. It is the Rust chaperone of the
 repository `chaperone`, and the venv does not hold it. Its default is a
@@ -139,54 +132,20 @@ else.
 A variable that is set and empty is an error. A value with an open quote is
 an error. A variable that names no program is an error. The suite never
 returns to the default command. A run that judged the default would look
-like a run that judged the binary. One exception exists, and "The
-reference" below has its rules.
+like a run that judged the binary.
 
 Every variable of the suite starts with `CRECHE_PROC_`. A variable with that
 start that the suite does not read stops the run before the first test. A
 misspelled name would start the default command.
 
-### The reference
-
-Two programs can write one file. Each one must then read what the other
-one wrote. A scenario for such a file runs two commands:
-
-- The judged command. It is the default command of the row, or the value
-  of the variable.
-- The reference. It is the default command of the row, also when the
-  variable is set. `reference_of` of `proc_services.py` gives it, and that
-  function reads no variable.
-
-The store of an index is such a file. A host can go from the default
-program to another binary, and it can go back. One index directory then
-gets both writers.
-
-With no variable set, the judged command is the reference. A scenario then
-compares one program with itself. That run judges no binary. It proves that
-the comparison gives one result for one corpus.
-
-1. Only the scenarios of `test_proc_library_cross.py` run the reference.
-   `test_proc_table.py` has a test for this rule.
-2. A scenario that runs the reference has both commands in its name. The
-   name says `the reference` beside `the program`, or it says
-   `the two writers`, `the two programs` or `both writers`.
-3. Run the reference only through `run_reference` of `proc_library.py`.
-   The reference then gets what `run_index` gives the default command.
-   One scenario of `test_proc_library_cross.py` sets the variable of the
-   row. It holds that a run of the reference does not start the program
-   of the variable.
-4. Assert that the judged command and the reference give the same result.
-   The scenarios of `test_proc_library_build.py` hold each fixed text and
-   each fixed row, for the judged command.
-
-The header of a run prints the judged command of each row and its origin.
-It does not print the reference.
-
 ## What runs
 
-Seven topologies exist. Each one keeps its number. The second topology ran
+Six topologies exist. Each one keeps its number. The second topology ran
 the Python chaperone in front of `attendance`. It left with that chaperone
-in the phase 3 plan, row 22. The sixth left with the terminal door.
+in the phase 3 plan, row 22. The sixth left with the terminal door. The
+seventh ran the index builder. It left with the library index (phase 11,
+plan PR RT-4).
+
 `attendance` and the vmm stand-in are in the first topology. The vmm
 stand-in keeps the host session list and boots no VM (`standin_vmm.py`).
 
@@ -226,20 +185,6 @@ The fifth topology has a second program: the verify hook of the
 noticeboard. A test plays the release executor. It writes the env file of
 the unit and runs the hook to its end. The hook reads that file and asks the
 noticeboard for `/healthz`.
-
-The seventh topology starts no `attendance` and no sandbox. It runs the
-index builder, `index-scope`, beside the TEI stand-in.
-
-```
-a test (plays a systemd timer)
-  | runs index-scope <corpus> <index directory> [vault] to its end
-  v
-library ---- GET /info, POST /embed, loopback port ---> the TEI stand-in
-  | reads the corpus: vault/<name> in the root
-  | writes state/index/<name>/store.db, by one rename
-  v
-a test reads store.db with SQLite
-```
 
 The eighth topology, `proc_chaperone_rs.py`, starts the Rust chaperone and
 no `attendance`. The suite writes each file of chaperone `docs/design.md`
@@ -317,18 +262,11 @@ this suite can start that VM. The kvm job runs a turn of the real facade in
 a VM (`rust/crates/vmm/tests/kvm_facade.rs`). door-acp, the model stand-in
 and the ACP client of a test left with them.
 
-One file of the seventh topology runs one more program. A test starts
-it, and it runs to its end.
-
-| Program | A test starts it through | What it does |
-|---|---|---|
-| the reference | `run_reference` | It writes or updates a store, as the program does. |
-
 | File | Topology | What the scenarios check |
 |---|---|---|
 | `test_proc_caregiver_start.py` | `caregiver` alone | a start, a refused start, a signal, and the verbs that run to an end |
 | `test_proc_caregiver_files.py` | `caregiver` alone | each file that `caregiver` publishes, read as the next program reads it, and the seams of `integration/tests_manager` that assert on a file |
-| `test_proc_override.py` | `attendance` alone, and the last four topologies | a service starts through its variable: one that serves, one that runs to its end |
+| `test_proc_override.py` | `attendance` alone, the fourth and the fifth topology | a service starts through its variable: one that serves, one that runs to its end |
 | `test_proc_trigger_fire.py` | trigger door and `attendance` | the timer command: a refused family, `attendance` down, `--check`, a refused start. The jobs ran over the session API and left in phase 2 row 21 |
 | `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: the one 404, a body the door refuses, the bearer files, a start, a refused start, `SIGTERM`. The jobs ran over the session API and left in phase 2 row 21 |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1 that reads no session, a bad route parameter, the access key |
@@ -338,9 +276,6 @@ it, and it runs to its end.
 | `test_proc_board_form.py` | noticeboard | each kind of control of the edit form, a locked field, a save that changes nothing, a save that `git` refuses, the marks of the commit, what a save leaves in the checkout |
 | `test_proc_board_restart.py` | noticeboard | two starts on one root and one port: a saved family, and a form that stays open across the restart |
 | `test_proc_board_verify.py` | noticeboard and its verify hook | the hook of contract 06 §4: a pass, a failure, the env file, no secret in the output |
-| `test_proc_library_build.py` | library and the TEI stand-in | a build, an update, the hash rule, a removed file, a new model, the two profiles, the store schema, the columns of a row of `files`, the order of the files, how a text file is read, the publish of the store |
-| `test_proc_library_start.py` | library and the TEI stand-in | a refused command line, the address of TEI, the preflight, `SIGTERM`, `SIGKILL`, a store that the program cannot read |
-| `test_proc_library_cross.py` | library, the reference and the TEI stand-in | one store under two writers: equal content after a build, after an update by the other writer, after three runs in turns, after a backfill of `chunks_emb`, after a killed run and after a new model. Equal embed calls. An equal first line of the report. The reference with the variable of the row set. The comparison itself: one changed copy of a store for each part, the tolerance of a rank, a store that the comparison refuses |
 | `test_proc_edges.py` | `attendance` alone, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a body that is not JSON, `HEAD`, the socket file of a killed process, `SIGINT`, `SIGHUP` |
 | `test_proc_chaperone_rs.py` | the Rust chaperone and its two effect stand-ins | the tools of the stand-in upstream, and the audit records of one allowed call |
 | `test_proc_install_draft.py` | `chaperone check` of the Rust chaperone | the install draft of the fixture registry passes, and caregiver's fleet policy passes on top of it |
@@ -358,12 +293,11 @@ it, and it runs to its end.
 1. A test names a `Service`. It never names a program, a module or a
    language.
 2. A test imports no package of a service. It does not import `attendance`,
-   `caregiver`, `library`, a door or `agent_family`.
+   `caregiver`, a door or `agent_family`.
 3. A test reads only what crossed a process boundary:
    - an HTTP status, an HTTP body or the SSE stream
    - an exit code
-   - a file under the root: a journal, the audit file, a file in a mount,
-     the store of an index
+   - a file under the root: a journal, the audit file, a file in a mount
    - the record of a stand-in
    - the git repository of the registry, through `git`
    - what a command wrote on its stdout or its stderr
@@ -374,12 +308,11 @@ it, and it runs to its end.
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
    or in `proc_registry.py` makes it from a contract, never from a module of
-   a service. A corpus of the index builder is one exception. It is
-   test data with no contract, and a writer of `proc_library.py` makes it.
-   The policy file of `test_proc_policy_check.py` is the second. It joins
-   the golden files of `caregiver`, because the scenario judges that
-   rendering. The test reads the files as text and imports no `caregiver`.
-   The install draft of `test_proc_install_draft.py` is the third. It is
+   a service. The policy file of `test_proc_policy_check.py` is one
+   exception. It joins the golden files of `caregiver`, because the
+   scenario judges that rendering. The test reads the files as text and
+   imports no `caregiver`.
+   The install draft of `test_proc_install_draft.py` is the second. It is
    the golden print of `bin/chaperone-install-draft.py`, read as text.
    `end_token_overlap` changes one value of a credential file that
    `caregiver` wrote: the end of a token overlap. No flag of `caregiver`
@@ -428,8 +361,9 @@ it, and it runs to its end.
     `time_limit`. At the limit, SIGALRM raises `TimeLimitError` in the code
     that waits, so the test fails with the line of the hang. Its fixtures
     still end its processes, and the run goes on. A wait of a test has a
-    deadline of its own under the limit: the 120 s of `INDEX_DEADLINE_S` is
-    the longest. A test sets SIGALRM and its timer only through `time_limit`.
+    deadline of its own under the limit: the 150 s of `BUILD_TIMEOUT_S` in
+    `test_proc_vmm_upgrade.py` is the longest. A test sets SIGALRM and its
+    timer only through `time_limit`.
 
 ## The `caregiver` topology
 
@@ -478,71 +412,6 @@ flags that the unit does not have:
 seconds after its last pass. No flag changes the 20 seconds. So a scenario
 that needs a second pass with no edit takes 20 seconds or more.
 
-## The `library` topology
-
-`proc_library.py` holds the topology. The fixture `library` starts the TEI
-stand-in. The fixture `library_prepared` starts nothing. A test runs the
-program itself: `run_index` runs it to its end, and `start_index` returns
-while it runs.
-
-1. Give the program `PATH` and one address variable. The program needs no
-   other variable of the image of an index sandbox. The default command
-   also gets the variables of `DEFAULT_ONLY_ENV` in `proc_services.py`.
-   `run_index` does this.
-2. Write a corpus with a writer of `proc_library.py`. A vault scope is
-   `vault/<name>` in the root.
-3. Keep the index directory outside the corpus: `state/index/<name>` in the
-   root. Do not make that directory. The program makes it.
-4. Read the store through `Store`. Its connection is read-only, so a reader
-   never changes the file.
-5. Assert on a boundary of the program:
-   - the exit status
-   - the first line of stdout, through `report_of`
-   - the path in an error line of stdout
-   - the store file
-   - the record of the TEI stand-in
-   - the names in the index directory after a run
-
-   Do not read `store.work.db`. It is the private state of a run.
-6. Do not assert on the sentence of an error. Assert on the path that the
-   line names, or on the name of a variable.
-7. Compute each expected path from the resolved corpus directory. The
-   program stores resolved paths, and the temporary directory of macOS is
-   behind a link.
-8. Do not write two file names that differ only in case. The file system of
-   macOS has one file for the two names.
-9. Do not compare the text of a PDF chunk with a fixed text. Two PDF readers
-   can give the text of one page with other spaces. Assert on one word,
-   through `Store.matches`.
-10. To act during a run, use `start_held_update`. It returns while the
-    stand-in holds the last embed call of the run. `release_hold` ends the
-    hold. For a corpus of your own, put `HELD_TEXT` into the last file in
-    path order. Then use `start_held`.
-11. To compare two writers, give one corpus two index directories. Only
-    the reference writes the first one. The program writes or updates the
-    second one.
-12. In such a scenario, do each step for both index directories before you
-    change the corpus. A row of `files` holds the mtime of its file.
-13. Compare two stores with `store_content`. Its `differences` gives one
-    line for each part that differs. The content holds no time of a run
-    and no form of `chunks_vec`. When you add a part to `StoreContent`, add
-    a change of that part to
-    `test_the_comparison_sees_a_change_in_each_part`.
-14. Write no PDF with text into a corpus of two writers. Rule 9 gives the
-    reason. `write_mixed` writes one PDF that no program can read, so each
-    writer reports it.
-15. Retired with the index reader of the agent module (phase 11, plan PR
-    RT-1). The number stays, so that other documents keep their
-    references.
-16. Change a store only through `copy_store` and `change_store`. The first
-    one makes a copy in a new index directory, and the second one changes
-    that copy. One function is the exception: `drop_plain_vectors` changes
-    the store of a run.
-
-The index unit gives the command. `test_proc_table.py` holds the words of
-`index_words` against the shell text of the unit. No scenario runs
-`sbx exec`, the shell or the `sleep` of that text.
-
 ## Add a stand-in program
 
 A stand-in takes the place of a program that a service starts or dials, and
@@ -571,8 +440,8 @@ verbs, its files and its tunings.
 |---|---|---|
 | `standin_vmm.py` | the vmm host API on `vmm.sock`: the create, list, drop and `acp` routes, with the wire types of `creche_wire`. It boots no VM | by the path in `ATTENDANCE_VMM_SOCKET` and `CAREGIVER_VMM_SOCKET` |
 | `standin_systemctl.py` | `systemctl --user` | by name, through `PATH` |
+| `standin_chaperone.py` | `chaperone check`, the one verb of the Rust chaperone that `caregiver` runs. It checks less than the real one | by the path in the `--chaperone-bin` flag of `caregiver` |
 | `standin_litellm.py` | the key API of LiteLLM | by an address in an argument |
-| `standin_tei.py` | TEI, with the two routes that the index builder asks | by an address in a variable |
 | `standin_upstream.py` | an upstream of the Rust chaperone, with the tools `echo` and `gated_echo` | by the absolute path in the `command` of its manifest |
 | `standin_approval.py` | the approval channel of the Rust chaperone. A file that the test writes answers each gate | by the absolute path in the `command` of its manifest |
 
@@ -591,39 +460,20 @@ service that runs a new command fails here and gets no silent success.
 that a scenario relies on. Add a test there when you add a rule. The two
 effect stand-ins have a test file of their own.
 
-The TEI stand-in gives each text a vector that depends on the text alone.
-`vector_blob` of `proc_library.py` gives the blob that a store must hold for
-a chunk. The stand-in has six tunings. `proc_standins.py` has a name for
-each one.
-
-| Tuning of `standin_tei.py` | What it changes |
-|---|---|
-| `model` | The model id that `GET /info` gives. |
-| `no-model-id` | The answer of `GET /info` holds no `model_id`. |
-| `dims` | The count of values in each vector. The default is 768. |
-| `fail-info` | `GET /info` answers 503. |
-| `fail-embed` | The tuning holds a text. A call whose inputs hold that text answers 500. |
-| `hold-embed` | The tuning holds a text. A call whose inputs hold that text waits until the file is gone. |
-
 A test answers a gate of the approval stand-in with `answer_gate`. The name
 of the answer file is the gate ID or the exposed name of the tool. The
 stand-in holds the call of the chaperone until the file exists. The record
 `requests.jsonl` holds the call before the call waits, so a scenario waits
 for that line before it answers.
 
-A call holds a text when the text is a part of one of its inputs. The line
-of a held call is in `calls.jsonl` before the call waits. A scenario waits
-for that line before it acts.
-
 ## Add a topology
 
-1. Add a module that holds a class on `Stack` in `proc_stack.py`. A topology
-   with no `attendance` holds a class of its own. `proc_library.py` is the
-   pattern.
+1. Add a module that holds a class on `Stack` in `proc_stack.py`. For a
+   topology with no `attendance`, `proc_chaperone_rs.py` is the pattern.
 2. Give the class a function that returns the environment of each new
    service. Use the variables of the unit file and no others.
 3. Write each new file of the root in `proc_tree.py`, from its contract.
-   Rule 6 names the one exception.
+   Rule 6 names the two exceptions.
 4. Start a service that listens on a port with `start_on_port`.
 5. Add a fixture to `conftest.py`. Make it depend on `supervisor`, which ends
    every process.
@@ -637,9 +487,8 @@ rename. Use the form of the table for a new topology.
 | a mapping | `family_body` and `write_family_file` of `proc_tree.py` | the third and the ninth. `caregiver` reads the file, and a scenario changes one field of it. |
 | a text with a comment line | `family_text` and `write_family` of `proc_registry.py` | the fourth and the fifth. A save of the noticeboard must keep the comment. |
 
-The first, the seventh and the eighth topology have no
-registry. `write_server_file` of `proc_tree.py` puts a server file in the
-registry of the ninth.
+The first and the eighth topology have no registry. `write_server_file`
+of `proc_tree.py` puts a server file in the registry of the ninth.
 
 A service that cannot start without a code change stops the work. Report the
 file, the constant and the variable that is missing. Do not change product
@@ -668,10 +517,6 @@ the text of the failure. Work down this list.
    its own session. The teardown sends no signal to that pid.
 6. `a test left a process behind`: a test started a process outside the
    `supervisor` fixture. This is a defect of the test.
-7. A scenario of `test_proc_library_cross.py` fails with a list of lines:
-   the two stores differ. Each line names one table or one FTS5 query, and
-   the first row that differs. `here` is the store of the reference, and
-   `there` is the store of the program.
 
 ## Known gaps
 
@@ -1051,133 +896,12 @@ the text of the failure. Work down this list.
   same applies when `/proc` lists a process and does not give the state of
   that process.
 - **The suite declares no dependency of its own.** The suite imports
-  PyYAML, `httpx` and `sqlite_vec`, and the `dev` group of the root
-  `pyproject.toml` names none of them. The product packages bring the three
-  into the venv, and only `library` brings `sqlite_vec`. When the last
-  package that needs one of the three leaves the workspace, the suite stops
-  at its imports. Add the name to the `dev` group in the pull request that
-  removes that package. The change moves `uv.lock`, and `uv.lock` moves each
-  venv component.
-- **CONTRACT-QUESTION, the exit status of `index-scope`.** No contract names
-  one. The suite holds status 2 for a command line that the program
-  refuses, as the program returns today. It holds that status with a TEI
-  address and with none, because the program checks the command line
-  first. It accepts each status that is not 0 in four cases. The cases are
-  a start with no TEI address, a failed preflight, a signal, and a store
-  that the program cannot read. A change to one fixed status costs one
-  assertion per scenario in `test_proc_library_start.py`.
-- **CONTRACT-QUESTION, the report of `index-scope`.** No contract gives the
-  text that the program writes on stdout. The suite holds the first line as
-  the program writes it today, and the path at the start of each error
-  line. A person reads that text in the journal of the unit. A change costs
-  one pattern in `proc_library.py`.
-- **CONTRACT-QUESTION, the form of `chunks_vec`.** `library/AGENTS.md` gives
-  the table as a `vec0` table. Contract 03 §7.3 rule 6 has a reader take
-  the vectors from `chunks_emb`, and never from `chunks_vec`. The suite
-  holds one thing for `chunks_vec`: on a connection with `sqlite-vec`, the
-  statement `SELECT rowid, embedding FROM chunks_vec` gives the vector of
-  each chunk. A scenario that holds the form of the table costs one
-  assertion in `test_proc_library_build.py`.
-- **CONTRACT-QUESTION, what a store holds for a corpus.**
-  `library/AGENTS.md` gives the schema and six rules. No contract gives the
-  order of the chunk ids, the text or the `ord` of a chunk, or the values of
-  a row of `files`. The suite holds the program as it is:
-  - The chunk ids follow the order of the file paths, part by part.
-  - The `ord` of a chunk is its place in its file, and the first place is 0.
-  - A text file is UTF-8. Each bad sequence becomes U+FFFD, and each line
-    end becomes one line feed.
-  - A paragraph of more than 1000 characters, alone in its file, gives
-    pieces of 1000 characters at most. Each piece starts with the last 200
-    characters of the piece before it.
-  - A file with no text has a row in `files` and no chunk.
-  - The program does not follow a link to a directory.
-  - A profile reads a suffix in upper case as the same suffix in lower case.
-  - Each stored path starts with the resolved corpus directory.
-  - The `hash` of a file is a BLAKE2b digest of 16 bytes, as hex text in
-    lower case.
-  - The `mtime` of a row is the mtime of its file, and `indexed_at` is the
-    time of the run. Each one is a count of seconds.
-
-  A change costs the scenario of that point in
-  `test_proc_library_build.py`.
-- **CONTRACT-QUESTION, the address of TEI.** `library/AGENTS.md` names the
-  variable `TEI_URL` and the build argument `AGENT_LAN_ADDRESS`. No contract
-  gives the rule between the two. The suite holds the program as it is:
-  - `TEI_URL` wins.
-  - With `AGENT_LAN_ADDRESS` alone, the program dials port 8085 of that
-    address.
-  - With neither one, the program names `AGENT_LAN_ADDRESS` on stderr and
-    makes no call.
-
-  A change costs three scenarios in `test_proc_library_start.py`.
-- **CONTRACT-QUESTION, a store file that is no store.** No contract says
-  what `index-scope` does with a `store.db` that is no SQLite database, or
-  with one of 0 bytes. The suite holds the program as it is: the run ends
-  with a status that is not 0, and the file keeps its bytes. A program that
-  builds a new store in that place fails two scenarios of
-  `test_proc_library_start.py`. A change costs those two scenarios.
-- **CONTRACT-QUESTION, a TEI that names no model.** No contract gives the
-  answer of `GET /info`. The suite holds the program as it is: for an
-  answer with no `model_id`, the store records the model `unknown`. A
-  change costs one scenario in `test_proc_library_start.py`.
-- **The TEI stand-in copies facts that no test of this suite can check.**
-  The stand-in refuses a call with more than 32 texts with status 413. It
-  refuses a route that it does not know, a body of another shape, and a
-  body with no `Content-Length` header. Its answer of `GET /info` holds the
-  key `max_client_batch_size` beside `model_id`, because the real service
-  answers more keys than the index builder reads. No run of the real
-  service checked those answers for this suite. A change costs one check in
-  `standin_tei.py` and its test.
-- **No scenario dials TEI on the LAN address.** With `AGENT_LAN_ADDRESS`
-  alone, the program dials port 8085 of that address. No test can listen
-  there. `test_the_url_is_built_from_the_lan_address` gives a host name
-  that no resolver knows, and it reads the target on stderr.
-- **No sandbox and no unit around the index builder.** No scenario runs
-  `sbx exec`, the shell text or the time limit of an index unit. No scenario
-  has the egress policy of an index sandbox.
-- **No scenario compares the text of a PDF.** One scenario holds that a word
-  of a PDF page is a word of the index. No scenario holds the text of a
-  whole page or the order of the pages.
-- **No scenario for a time limit of the TEI client.** A call that TEI never
-  answers ends only at the limit of the client. A scenario would wait that
-  long.
-- **The reference is the Python program.** Each scenario of
-  `test_proc_library_cross.py` needs the default command of the `library`
-  row. The pull request that removes the Python package `library` removes
-  that command. That pull request first records what the reference gives
-  in each of those scenarios, as data in this directory. Each scenario
-  then compares the program with the recorded data.
-- **CONTRACT-QUESTION, a store under two writers.** `library/AGENTS.md`
-  gives the schema and six rules for one writer. No contract names a second
-  writer of one store. The suite holds the strict reading. For one corpus,
-  the program and the reference give:
-  - equal rows in `meta`, `files`, `chunks`, `chunks_fts` and `chunks_emb`,
-    with equal chunk ids
-  - an equal statement for each of those five tables
-  - equal rows for one `SELECT` on `chunks_vec`
-  - an equal order of the rows of three FTS5 queries, and equal ranks
-  - equal embed calls
-  - an equal first line of the report
-
-  The suite does not compare `updated_at`, `indexed_at`, the form of
-  `chunks_vec` or the sentence of an error line. A change costs one part
-  of `StoreContent` in `proc_library.py`.
-- **CONTRACT-QUESTION, what a killed run leaves.** No contract names the
-  files of an index directory. The suite holds one thing. After a kill of
-  the program, the next run of the reference leaves `store.db` alone in
-  that directory. A program that leaves a file that the reference does not
-  remove fails one scenario of `test_proc_library_cross.py`. A change costs
-  one assertion there.
-- **CONTRACT-QUESTION, the form of a time of a run.** `library/AGENTS.md`
-  names `updated_at` and `indexed_at` and gives neither one a form.
-  `store_content` holds the program as it is. `updated_at` is a text of
-  digits, one period and digits. `indexed_at` is a REAL value. Each one is
-  a finite count of seconds. A change costs one check in `proc_library.py`.
-- **What the comparison of two stores does not see.** `store_content`
-  reads the statement of five tables. It reads no index, no trigger and no
-  view that a writer adds. No scenario compares the mode of `store.db`. The
-  report scenario compares the first line of stdout. It reads a later line
-  only when that line names a file with an error.
+  PyYAML and `httpx`, and the `dev` group of the root `pyproject.toml`
+  names neither one. The product packages bring the two into the venv.
+  When the last package that needs one of the two leaves the workspace, the
+  suite stops at its imports. Add the name to the `dev` group in the pull
+  request that removes that package. The change moves `uv.lock`, and
+  `uv.lock` moves each venv component.
 
 ## Layout
 
@@ -1190,11 +914,11 @@ the text of the failure. Work down this list.
 | `proc_ids.py` | the ids that a door mints |
 | `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the wrapper of each stand-in, the record each one leaves, and the readers of its state |
-| `standin_vmm.py`, `standin_systemctl.py`, `standin_litellm.py`, `standin_tei.py`, `standin_upstream.py`, `standin_approval.py` | the six stand-in programs of this directory |
+| `standin_vmm.py`, `standin_systemctl.py`, `standin_chaperone.py`, `standin_litellm.py`, `standin_upstream.py`, `standin_approval.py` | the six stand-in programs of this directory |
 | `standin_mcp.py` | the MCP server over stdio of the two effect stand-ins |
 | `proc_strict.py` | the strict reader of one JSON text |
 | `proc_stack.py` | `attendance`, its environment, the vmm stand-in, and the start of a service on a free port |
-| `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_library.py`, `proc_chaperone_rs.py`, `proc_exit.py` | one topology each |
+| `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_chaperone_rs.py`, `proc_exit.py` | one topology each |
 | `proc_chaperone_pin.py`, `chaperone.pin` | the commit of the Rust chaperone, its build and its cache |
 | `proc_board_reports.py` | a start of the noticeboard with a changed environment, the readers of a report, of a paging link and of the cookie, the check of a JSON body, and a post of an exact size |
 | `proc_chat.py`, `proc_sse.py` | the session id of a chat and `until`, and how a test reads the SSE stream back |

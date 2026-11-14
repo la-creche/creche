@@ -11,10 +11,6 @@ A test names a `Service`. It never names a program, a module or a language.
 `test_proc_table.py` holds each default against the unit file, so the table
 cannot drift from what the host starts.
 
-`reference_of` gives the default of a row and reads no variable. Two
-programs can write one file, and a scenario then runs the default beside
-the judged command to compare what each one writes.
-
 Every variable of this suite starts with `CRECHE_PROC_`. `unknown_variables`
 finds a name with that start that the suite does not read. A misspelled
 override would leave the default in place, and the run would look like a
@@ -45,7 +41,6 @@ class Service(StrEnum):
     CHAPERONE_RS = "chaperone-rs"
     NOTICEBOARD = "noticeboard"
     NOTICEBOARD_VERIFY = "noticeboard-verify"
-    LIBRARY = "library"
 
 
 class Build(StrEnum):
@@ -77,7 +72,6 @@ class StartEntry:
     #: The unit files under `systemd/` whose `ExecStart` is this command.
     #: Empty for a command that no unit runs: the operator runs it by hand,
     #: or the release executor runs it as a verify hook (contract 06 §4).
-    #: Empty also for a command that a unit runs inside a sandbox.
     units: tuple[str, ...]
     #: Where the default program comes from.
     build: Build = Build.VENV
@@ -130,15 +124,6 @@ SERVICES: Final[dict[Service, StartEntry]] = {
         program="noticeboard-verify",
         selector=(),
         override="CRECHE_PROC_NOTICEBOARD_VERIFY",
-        units=(),
-    ),
-    # The index unit runs the program in a sandbox: `sbx exec`, then
-    # `sh -c`. The program is not the first word of its `ExecStart`, so
-    # the row names no unit. `test_proc_table.py` reads the `sh -c` text.
-    Service.LIBRARY: StartEntry(
-        program="index-scope",
-        selector=(),
-        override="CRECHE_PROC_LIBRARY",
         units=(),
     ),
 }
@@ -207,30 +192,6 @@ def command_of(service: Service, environ: Mapping[str, str] | None = None) -> St
 
     # A service starts in the root of its test. A relative path names another file there.
     return StartCommand(words=(os.path.abspath(program), *words[1:]), origin=Origin.OVERRIDE)
-
-
-def reference_of(service: Service) -> StartCommand:
-    """The default command of `service`, also when its variable names another program.
-
-    It is the reference: the second writer of a store that two programs must
-    write alike. Only a scenario that compares the judged command with the
-    reference runs it. `integration/proc/AGENTS.md`, "The reference", names
-    the two files that do.
-
-    This function reads no variable. A run with the variable of the row set
-    then has two commands for one row, and the reference is never the
-    judged one.
-    """
-    entry = SERVICES[service]
-    program = _default_program(entry)
-
-    if not program.is_file():
-        raise CommandError(
-            f"{service.value} has no reference: {program} is missing. "
-            "Run `uv sync`. No variable replaces the reference."
-        )
-
-    return _default_words(program, entry)
 
 
 def env_of(command: StartCommand) -> dict[str, str]:
