@@ -294,9 +294,10 @@ def test_a_denied_set_stays_quiet(host: _Host) -> None:
     assert host.taken() == 1
 
 
-@pytest.mark.parametrize("verdict", [Verdict.TIMEOUT, Verdict.EXPIRED])
+@pytest.mark.parametrize("verdict", [Verdict.TIMEOUT, Verdict.EXPIRED, Verdict.UNDELIVERABLE])
 def test_a_tap_nobody_gave_is_asked_again_after_the_hold(host: _Host, verdict: Verdict) -> None:
-    """The phone was out of reach for fifteen minutes. That is not a no."""
+    """The phone was out of reach for fifteen minutes, or the hook did not
+    take the push. That is not a no."""
     host.install(BOARD, LIVE)
     host.tag(BOARD, NEXT)
     host.follow(BOARD)
@@ -313,7 +314,8 @@ def test_a_tap_nobody_gave_is_asked_again_after_the_hold(host: _Host, verdict: V
     assert host.taken() == 1
 
 
-def test_an_unanswered_set_is_asked_a_fixed_number_of_times(host: _Host) -> None:
+@pytest.mark.parametrize("verdict", [Verdict.TIMEOUT, Verdict.UNDELIVERABLE])
+def test_an_unanswered_set_is_asked_a_fixed_number_of_times(host: _Host, verdict: Verdict) -> None:
     host.install(BOARD, LIVE)
     host.tag(BOARD, NEXT)
     host.follow(BOARD)
@@ -321,7 +323,7 @@ def test_an_unanswered_set_is_asked_a_fixed_number_of_times(host: _Host) -> None
     for _ in range(MAX_ASKS + 3):
         host.follow(BOARD)
         if host.filed():
-            host.answer(Verdict.TIMEOUT)
+            host.answer(verdict)
 
         host.now += AGAIN_S
 

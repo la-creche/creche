@@ -19,10 +19,11 @@ from typing import cast
 
 import pytest
 from handover.catalog import CATALOG, CATALOG_BY_NAME
-from handover.executor.approval import Decision, Summary, Verdict, gate_id
+from handover.executor.approval import Decision, Summary, Verdict, gate_id, not_granted
 from handover.executor.drain import Counter, drain, handle, repair_unfinished
 from handover.executor.host import Command
 from handover.executor.live_state import STAMP_FILE, installed_version
+from handover.executor.phone import make_transport
 from handover.executor.quiet import Busy
 from handover.executor.spool import DONE_DIR, REQUESTS_DIR, Spool, SwitchNote
 from handover.executor.steps import NOTHING_TO_DO, QUIESCE_WAIT_S, Wiring
@@ -293,6 +294,52 @@ def test_a_denied_tap_touches_nothing(bench: Bench) -> None:
     assert bench.ledger()["refused_check"] == "approval"
     assert installed_version(bench.components / "caregiver") == LIVE_VERSION
     assert not bench.run.ran("systemctl")
+
+
+def _with_hook(bench: Bench, *, takes_push: bool) -> Wiring:
+    """The production transport, wired to a hook fake. The hook takes the
+    push or not. Each poll answers with a deny tap for the gate it names."""
+
+    def post(body: dict[str, object]) -> dict[str, object] | None:
+        if body["kind"] == "approval":
+            return {} if takes_push else None
+
+        return {"gate": body["gate"], "decision": "deny", "at": bench.wiring.host.clock()}
+
+    transport = make_transport(
+        "https://hook.invalid/x", "t", lambda _: None, bench.wiring.host.clock, post
+    )
+
+    return Wiring(
+        host=bench.wiring.host,
+        transport=transport,
+        readers=bench.wiring.readers,
+        api=bench.wiring.api,
+    )
+
+
+def test_a_push_the_hook_does_not_take_is_refused_as_undeliverable(bench: Bench) -> None:
+    """Contract 04 §8.4: no phone showed the push, so root denies at once.
+    The ledger names the cause, and `follow` reads it as no answer."""
+    bench.wiring = _with_hook(bench, takes_push=False)
+    _run_one(bench)
+    entry = bench.ledger()
+
+    assert entry["refused_check"] == "approval"
+    assert entry["reason"] == not_granted(Verdict.UNDELIVERABLE)
+    assert installed_version(bench.components / "caregiver") == LIVE_VERSION
+
+
+def test_a_deny_tap_is_refused_as_denied(bench: Bench) -> None:
+    """The push went out and the operator tapped deny. The ledger says
+    `denied`, which `follow` holds as final."""
+    bench.wiring = _with_hook(bench, takes_push=True)
+    _run_one(bench)
+    entry = bench.ledger()
+
+    assert entry["refused_check"] == "approval"
+    assert entry["reason"] == not_granted(Verdict.DENIED)
+    assert installed_version(bench.components / "caregiver") == LIVE_VERSION
 
 
 def test_an_approval_for_another_hash_is_refused(bench: Bench) -> None:
