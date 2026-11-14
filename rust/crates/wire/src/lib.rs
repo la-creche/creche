@@ -17,6 +17,7 @@ mod ports;
 mod routes;
 #[cfg(test)]
 mod schema;
+pub mod spool;
 mod strict_json;
 #[cfg(test)]
 mod vectors;
@@ -2051,6 +2052,33 @@ pub struct FamilyRepos {
 }
 
 object_only!(FamilyRepos);
+
+/// The name of the git platform grant file of a family:
+/// `git-platform.json` in the family dir, beside `config/` and
+/// `repos.json` (decision CH3, phase 12 PR2). caregiver writes it, and the
+/// vmm reads it. An absent file grants nothing.
+pub const FAMILY_GIT_PLATFORM_FILE: &str = "git-platform.json";
+
+/// The git platform grant of one family: the file
+/// `FAMILY_GIT_PLATFORM_FILE` (decision CH3). caregiver writes it from the
+/// grant `tools.git-platform` of the family file. A grant of `all` grants
+/// both. The vmm binds host port 1105, the spool of `spool`, only for a
+/// file that grants one of the two, and it reads the file again for each
+/// request. A get needs `fetch`, and a put needs `push`.
+///
+/// No route reaches the type, so it needs no new `HOST_API_PROTOCOL`
+/// (decision CH33 rule 8).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct FamilyGitPlatform {
+    /// The family may get a bundle of the `fetch` tool of the upstream.
+    pub fetch: bool,
+    /// The family may put a bundle for the `push` tool of the upstream.
+    pub push: bool,
+}
+
+object_only!(FamilyGitPlatform);
 
 /// What a client sends to ask the vmm whether a family may reach a target
 /// (decisions CH6-3, CH69 rule 1): the request of the route `check`.

@@ -127,6 +127,30 @@ table of the three vmm crates.
   every 2 s, and reads the list only after a change (decision CH69
   rule 11). An absent family dir or file has no bytes, and its list is
   empty.
+- `family::FamilyRoot::read_git_platform` reads the git platform grant
+  `git-platform.json` of a family (decision CH3, phase 12 PR2) as
+  `read_repos` reads `repos.json`, with the cap `GIT_PLATFORM_CAP` (256
+  bytes), as `FamilyGitPlatform`. An absent family dir or file grants
+  nothing. `read_git_platform_bytes` takes the bytes for the edit follow.
+  `rust/crates/wire/vectors/family.json` holds the cap, and
+  `the_git_platform_cap_matches_the_wire_vectors` holds the two equal.
+- `spool::SpoolRoot` is the file side of the git platform spool of host
+  port 1105 (decision CH3). The protocol is `creche_wire::spool`.
+  1. `create_push` mints a `BundleId` from the wall time and 80 bits of
+     `/dev/urandom`, and opens `push/.<id>.part` with `O_CREAT`,
+     `O_EXCL` and `O_NOFOLLOW`. It sets the mode 0640 with `fchmod`,
+     because the vmm unit has `UMask=0077`, and checks it.
+  2. `PushFile::commit` syncs the file and renames it to `push/<id>`. The
+     drop of a file that did not commit removes it.
+  3. `open_fetch` opens `fetch/<id>` with `O_NOFOLLOW` and `O_NONBLOCK`,
+     and takes only a regular file of at most `BUNDLE_CAP` bytes. A
+     symlink, a dir and an absent file are each `FetchFault::NotFound`.
+  4. `remove_push` removes one bundle, and `sweep_push` removes each
+     bundle and each temporary file of `push/`. It keeps every other name
+     and each dir. An absent `push/` holds nothing.
+  The vmm never writes or removes a file of `fetch/`. `tests/spool.rs`
+  proves each step on a scratch spool, the mode under the umask 0077 of
+  the vmm unit among them.
 - `mirror::MirrorRoot::git_dir` gives `<root>/<name>/.git` of a repo of
   the mirror (decisions CH46 rule 4, CH69 rules 16 and 17). It opens the
   root, then `<name>` and `.git`, each from the handle before it with
@@ -234,8 +258,11 @@ table of the three vmm crates.
   from the snapshot. The check trusts that a snapshot comes only from a
   boot that passed the check (decision CH42 rule 2). The run dir holds
   exactly the `vsock.sock_<port>` listeners of the host ports that the
-  vmm bound for the family: 1100, 1101 and 1102, plus 1104 for a family
-  whose `egress.json` lists a host (decision CH49 rule 3, plan PR E2).
+  vmm bound for the family: 1100, 1101 and 1102, plus 1103 for a family
+  whose `repos.json` lists a repo (decision CH69 rule 13), 1104 for a
+  family whose `egress.json` lists a host (decision CH49 rule 3, plan PR
+  E2) and 1105 for a family whose `git-platform.json` grants a tool
+  (decision CH3).
   The vmm takes that set from the listeners it bound at the start. Any
   failure is the fault `egress_assert_failed`.
 - `admission::decide` is a pure decision (decisions CH8-6, CH8-7, CH58

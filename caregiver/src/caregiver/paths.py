@@ -55,6 +55,10 @@ EGRESS_FILE: Final = "egress.json"
 #: `egress.json`. `FAMILY_REPOS_FILE` of `creche-wire` in Rust spells the
 #: same name, and the vmm reads it (decision CH69 rule 4).
 REPOS_FILE: Final = "repos.json"
+#: The git platform grant of the vmm spool, beside `repos.json`.
+#: `FAMILY_GIT_PLATFORM_FILE` of `creche-wire` in Rust spells the same
+#: name, and the vmm reads it (decision CH3).
+GIT_PLATFORM_FILE: Final = "git-platform.json"
 APPLIED_DIR: Final = "applied"
 APPLIED_META_FILE: Final = "applied.json"
 POLICY_FRAGMENT_SUFFIX: Final = ".toml"
@@ -105,6 +109,12 @@ def repos_path(root: Path, family: str) -> Path:
     """Contract 01 §6.1.1: `repos.json` in the family dir, beside
     `egress.json` and outside `config/` (decision CH69 rules 4 and 6)."""
     return family_dir(root, family) / REPOS_FILE
+
+
+def git_platform_path(root: Path, family: str) -> Path:
+    """`git-platform.json` in the family dir, beside `repos.json` and
+    outside `config/` (decision CH3)."""
+    return family_dir(root, family) / GIT_PLATFORM_FILE
 
 
 def applied_dir(root: Path, family: str) -> Path:

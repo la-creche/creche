@@ -222,6 +222,7 @@ def _apply_valid(
     # clone list of the vmm, as a pass writes them.
     reach_files.write_egress_file(egress_file, state_root)
     reach_files.write_repos_file(family, state_root)
+    reach_files.write_git_platform_file(family, state_root)
     # Contract 05 §6.4, invariant 16: a declared webhook opens a live route
     # with no second, hand-made act. Beside the other credentials
     # (invariant 13).

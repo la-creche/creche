@@ -18,7 +18,8 @@
 #                         that runs this repository's own test suites. All
 #                         installed at BUILD time, so a run needs no network
 #   agent-sandbox-coding  the coding flavor of code and creche (CH7-1): the
-#                         python flavor plus uv, pnpm and cargo
+#                         python flavor plus uv, pnpm, cargo and the git
+#                         platform spool helper
 #   creche-test-venv      build-only: it resolves uv.lock and installs the
 #                         test venv and the 3.12 interpreter. It ships in
 #                         no image. Only the coding flavor copies its uv
@@ -327,12 +328,23 @@ RUN tarball="rust-${RUST_VERSION}-x86_64-unknown-linux-gnu" \
 RUN corepack enable pnpm \
     && corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
-# Fail the BUILD, not the first switch: each installer starts.
+# The guest end of the git platform spool (CH3, phase 12): an agent moves
+# a branch as a git bundle through guest 127.0.0.1:1105, and the
+# git-platform tools push and fetch it. It runs on python3.12 with -I, so a
+# module in the repo under work never loads. playpen/AGENTS.md has the flow.
+# The mode is set by chmod, not by a COPY flag: the bundles test of
+# handover reads each COPY word as a copied path.
+COPY playpen/guest/creche_git_spool.py /usr/local/bin/creche-git-spool
+RUN chmod 0755 /usr/local/bin/creche-git-spool
+
+# Fail the BUILD, not the first switch: each installer starts, and so does
+# the spool helper.
 RUN uv --version \
     && cargo --version && rustc --version \
     && cargo fmt --version && cargo clippy --version \
     && pnpm --version \
-    && python3.12 --version
+    && python3.12 --version \
+    && creche-git-spool --help >/dev/null
 
 # The egress proxy of the tools: guest init bridges guest 127.0.0.1:3128 to
 # the host proxy (CH46 rule 1). No tool reads this name. The agent gives its

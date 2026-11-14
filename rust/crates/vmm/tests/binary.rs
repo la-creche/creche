@@ -21,7 +21,7 @@ use creche_vmm::config::{
 };
 use creche_vmm::egress::proxy;
 use creche_vmm::image_root::DIGESTS_FILE;
-use creche_vmm::{family_state, mirror, planes};
+use creche_vmm::{family_state, mirror, planes, spool};
 use creche_vmm_confine::vmm_unit::VmmUnit;
 
 /// The exit status of a refused start.
@@ -32,7 +32,7 @@ const TRUE: &str = "/usr/bin/true";
 
 /// Each key with a good value. The paths need not exist: the config
 /// checks their form only.
-const GOOD: [(&str, &str); 21] = [
+const GOOD: [(&str, &str); 22] = [
     ("VMM_STATE_ROOT", "/srv/vmm/state"),
     ("RUNTIME_DIRECTORY", "/run/user/1000/vmm"),
     ("VMM_FAMILY_ROOT", "/srv/families"),
@@ -57,6 +57,7 @@ const GOOD: [(&str, &str); 21] = [
     ("VMM_EGRESS_LOG", "/srv/vmm/egress.jsonl"),
     ("VMM_MIRROR_ROOT", "/srv/agents/code"),
     ("VMM_GIT_PROGRAM", "/usr/bin/git"),
+    ("VMM_GIT_SPOOL_ROOT", "/var/lib/creche-git-platform"),
 ];
 
 /// The CH fixture of the version check (gap G10). Each scratch dir gets a
@@ -144,6 +145,7 @@ impl Scratch {
                     "VMM_IMAGE_ROOT" => self.path("images"),
                     "VMM_EGRESS_LOG" => self.path("egress.jsonl"),
                     "VMM_MIRROR_ROOT" => self.path("mirror"),
+                    "VMM_GIT_SPOOL_ROOT" => self.path("spool"),
                     key if key.ends_with("_GIB") || key.ends_with("_ADDR") => good.to_owned(),
                     key => match PROGRAMS.iter().find(|program| program.0 == key) {
                         Some((_, file)) => self.path(&format!("bin/{file}")),
@@ -217,7 +219,7 @@ fn sudo(command: &[&str], path: &Path) {
     assert!(status.success(), "sudo {command:?}: {status}");
 }
 
-/// A hard `RLIMIT_NOFILE` below the fd need of the vmm (102720), and
+/// A hard `RLIMIT_NOFILE` below the fd need of the vmm (103552), and
 /// below the hard limit of each host that runs the tests.
 const SHORT_NOFILE: &str = "1024";
 
@@ -440,8 +442,12 @@ fn kvm_a_short_hard_fd_limit_refuses_before_the_bind() {
         .collect();
 
     let (output, stderr) = serve(&env);
-    let need = planes::fd_need() + family_state::fd_need() + mirror::fd_need() + proxy::fd_need();
-    assert_eq!(need, 102_720);
+    let need = planes::fd_need()
+        + family_state::fd_need()
+        + mirror::fd_need()
+        + proxy::fd_need()
+        + spool::fd_need();
+    assert_eq!(need, 103_552);
     assert_eq!(output.status.code(), Some(EX_CONFIG), "{stderr}");
     let unit = match VmmUnit::of_self() {
         Ok(_) => String::new(),

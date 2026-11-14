@@ -152,6 +152,7 @@ fn serve(session: &OsString, family: &OsString) -> Result<(), Failure> {
             root: config.mirror_root,
             git: config.git,
         },
+        spool: config.git_spool_root,
     };
     let control = Arc::new(Mutex::new(ControlState::default()));
     let hook = ColdBoot::new(

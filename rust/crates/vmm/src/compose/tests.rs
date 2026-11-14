@@ -193,6 +193,7 @@ impl Scratch {
             ("VMM_EGRESS_LOG", text(dir.join("egress.jsonl"))),
             ("VMM_MIRROR_ROOT", text(dir.join("mirror"))),
             ("VMM_GIT_PROGRAM", text(dir.join("bin/git"))),
+            ("VMM_GIT_SPOOL_ROOT", text(dir.join("spool"))),
         ]);
         Self { dir, env }
     }

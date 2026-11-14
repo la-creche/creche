@@ -40,6 +40,10 @@
 //! The edit follow of the vmm compares those bytes every 2 s and reads
 //! the list only after a change (decision CH69 rule 11).
 //!
+//! `read_git_platform` reads the git platform grant `git-platform.json`
+//! of a family (decision CH3, phase 12 PR2) as `read_repos` reads
+//! `repos.json`. An absent family dir or file grants nothing.
+//!
 //! Decision CH50 rule 9 sets the number of tries, the pause between two
 //! tries and the size cap of `shape.json`: `READ_TRIES` (5),
 //! `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB). A read blocks its thread
@@ -56,10 +60,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use creche_vmm_store::layout::RootError;
 use creche_wire::{
-    FAMILY_EGRESS_FILE, FAMILY_REPOS_FILE, FAMILY_SHAPE_FILE, FAMILY_STATE_CAP, FamilyConfig,
-    FamilyCreds, FamilyEgress, FamilyName, FamilyRepos, FamilyShape, FamilySkills, FamilyState,
-    FamilyStateReply, LitellmKey, ModelAlias, PepToken, SandboxGrant, SystemPrompt, UnixMillis,
-    strict,
+    FAMILY_EGRESS_FILE, FAMILY_GIT_PLATFORM_FILE, FAMILY_REPOS_FILE, FAMILY_SHAPE_FILE,
+    FAMILY_STATE_CAP, FamilyConfig, FamilyCreds, FamilyEgress, FamilyGitPlatform, FamilyName,
+    FamilyRepos, FamilyShape, FamilySkills, FamilyState, FamilyStateReply, LitellmKey, ModelAlias,
+    PepToken, SandboxGrant, SystemPrompt, UnixMillis, strict,
 };
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
 use rustix::io::Errno;
@@ -109,6 +113,13 @@ pub const EGRESS_CAP: u64 = 64 * 1024;
 /// caregiver, and a test of each side holds it equal.
 pub const REPOS_CAP: u64 = 4 * 1024;
 
+/// The most bytes of `git-platform.json`: 256. caregiver writes the
+/// indented form of two bools, at most 38 bytes, so a file that caregiver
+/// writes always fits. A larger file is `ReachFault::TooLarge`, so the vmm
+/// grants nothing. `rust/crates/wire/vectors/family.json` holds the same
+/// value for caregiver, and a test of each side holds it equal.
+pub const GIT_PLATFORM_CAP: u64 = 256;
+
 /// The flags of each directory open. `O_NOFOLLOW` refuses a symlink as the
 /// last part of the path (decision CH23 (3)).
 pub(crate) const DIR_FLAGS: OFlags = OFlags::RDONLY
@@ -150,26 +161,29 @@ impl From<Errno> for FamilyError {
     }
 }
 
-/// Why a reach file of a family, `egress.json` or `repos.json`, does not
-/// read. Each fault allows no egress or no clone.
+/// Why a reach file of a family, `egress.json`, `repos.json` or
+/// `git-platform.json`, does not read. Each fault allows no egress, no
+/// clone or no spool request.
 #[derive(Debug)]
 pub enum ReachFault {
     /// The family dir is a symlink or not a dir.
     NotDir,
     /// The file is a symlink or not a regular file.
     NotFile,
-    /// The file has more bytes than its cap: `EGRESS_CAP` or `REPOS_CAP`.
+    /// The file has more bytes than its cap: `EGRESS_CAP`, `REPOS_CAP` or
+    /// `GIT_PLATFORM_CAP`.
     TooLarge,
-    /// The bytes are not one `FamilyEgress` or `FamilyRepos` of strict
-    /// JSON.
+    /// The bytes are not one `FamilyEgress`, `FamilyRepos` or
+    /// `FamilyGitPlatform` of strict JSON.
     NotValid,
     /// Any other error of the file system.
     Io(io::Error),
 }
 
 /// The bytes of one reach file of a family, as the checked read of
-/// `FamilyRoot` takes them: `egress.json` for `ReachBytes<FamilyEgress>`
-/// and `repos.json` for `ReachBytes<FamilyRepos>`. The edit follow of the
+/// `FamilyRoot` takes them: `egress.json` for `ReachBytes<FamilyEgress>`,
+/// `repos.json` for `ReachBytes<FamilyRepos>` and `git-platform.json` for
+/// `ReachBytes<FamilyGitPlatform>`. The edit follow of the
 /// vmm compares them every 2 s (decision CH69 rule 11), and `list` reads
 /// them with the strict reader (decision CH65 rule 2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +225,18 @@ impl ReachBytes<FamilyRepos> {
     /// `NotValid` when the bytes are not one `FamilyRepos`.
     pub fn list(&self) -> Result<FamilyRepos, ReachFault> {
         self.read(FamilyRepos::default())
+    }
+}
+
+impl ReachBytes<FamilyGitPlatform> {
+    /// The git platform grant of the bytes. An absent file grants
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// `NotValid` when the bytes are not one `FamilyGitPlatform`.
+    pub fn list(&self) -> Result<FamilyGitPlatform, ReachFault> {
+        self.read(FamilyGitPlatform::default())
     }
 }
 
@@ -473,6 +499,32 @@ impl FamilyRoot {
         family: &FamilyName,
     ) -> Result<ReachBytes<FamilyRepos>, ReachFault> {
         self.read_reach(family, FAMILY_REPOS_FILE, REPOS_CAP)
+    }
+
+    /// The git platform grant of `family`, from `git-platform.json` in its
+    /// family dir (decision CH3): `read_git_platform_bytes`, then
+    /// `ReachBytes::list`. An absent family dir or file grants nothing.
+    ///
+    /// # Errors
+    ///
+    /// A `ReachFault` when the family dir or the file is present and does
+    /// not read.
+    pub fn read_git_platform(&self, family: &FamilyName) -> Result<FamilyGitPlatform, ReachFault> {
+        self.read_git_platform_bytes(family)?.list()
+    }
+
+    /// The bytes of `git-platform.json` of `family`, read as
+    /// `read_egress_bytes` reads `egress.json`, with a cap of
+    /// `GIT_PLATFORM_CAP`.
+    ///
+    /// # Errors
+    ///
+    /// The faults of `read_egress_bytes`.
+    pub fn read_git_platform_bytes(
+        &self,
+        family: &FamilyName,
+    ) -> Result<ReachBytes<FamilyGitPlatform>, ReachFault> {
+        self.read_reach(family, FAMILY_GIT_PLATFORM_FILE, GIT_PLATFORM_CAP)
     }
 
     /// The bytes of the reach file `file` of `family`: one `openat` of the
