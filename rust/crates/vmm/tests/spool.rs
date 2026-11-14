@@ -370,12 +370,17 @@ fn the_drop_of_the_server_removes_its_bundles() {
 }
 
 /// A closed listener keeps its open links, and a reopen serves the same
-/// spool (decision CH74 rule 2).
+/// spool (decision CH74 rule 2). A put that is in its body at the close
+/// ends with `ok` after the reopen.
 #[test]
 fn a_reopen_keeps_the_bundles_of_the_vm() {
     let scratch = Scratch::new("reopen");
     let server = scratch.serve();
     let id = put_id(&scratch.put(b"bundle"));
+    let mut open = scratch.dial();
+    open.write_all(b"put 6\nbun").unwrap();
+    // The temporary file shows that the link is in its body.
+    scratch.wait_for_push(2);
     let draining = scratch.runtime.block_on(server.close());
     fs::remove_file(scratch.run.host_listener(HostPort::GitPlatformSpool)).unwrap();
     let bound = bind(&scratch.run).unwrap();
@@ -383,9 +388,16 @@ fn a_reopen_keeps_the_bundles_of_the_vm() {
         let _runtime = scratch.runtime.enter();
         draining.reopen(bound).unwrap()
     };
-    assert_eq!(scratch.names(PUSH_DIR), [id.to_string()]);
+    open.write_all(b"dle").unwrap();
+    open.shutdown(Shutdown::Write).unwrap();
+    let mut answer = String::new();
+    open.read_to_string(&mut answer).unwrap();
+    let held = put_id(&answer);
+    let mut both = vec![id.to_string(), held.to_string()];
+    both.sort();
+    assert_eq!(scratch.names(PUSH_DIR), both);
     put_id(&scratch.put(b"second"));
-    assert_eq!(scratch.names(PUSH_DIR).len(), 2);
+    scratch.wait_for_push(PUSH_KEEP);
     drop(reopened);
     scratch.wait_for_push(0);
 }
