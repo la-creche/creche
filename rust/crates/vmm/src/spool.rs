@@ -20,7 +20,10 @@
 //! 4. A put of more than `BUNDLE_CAP` bytes is refused before any file is
 //!    made. A put writes `push/.<id>.part`, then renames it to
 //!    `push/<id>` with the mode 0640 (`creche_vmm_confine::spool`). A put
-//!    that ends early or passes `BODY_WAIT` removes its file.
+//!    that ends early or passes `BODY_WAIT` removes its file. Any other
+//!    refused put reads and drops the rest of its body after the reply
+//!    line, at most `BUNDLE_CAP` bytes within `BODY_WAIT`. A close with
+//!    unread bytes resets the stream, and CH can then drop the reply.
 //! 5. The family of each id is the family of the VM that this listener
 //!    serves, never a value of the guest bytes. A get of an id of another
 //!    family is refused, and the path of a get is built from a checked
@@ -378,6 +381,10 @@ async fn serve_link(guest: UnixStream, spool: Arc<Spool>) {
     let Some(request) = request else {
         return refuse(&guest, &spool, Refusal::BadRequest).await;
     };
+    let body = match request {
+        Request::Put(size) => size,
+        Request::Get(_) => 0,
+    };
     let grant = spool.grant().await;
     let outcome = match request {
         Request::Put(_) if !grant.push => Err(Refusal::NotGranted.into()),
@@ -393,7 +400,31 @@ async fn serve_link(guest: UnixStream, spool: Arc<Spool>) {
         // A guest that is gone gets no reply, and its note still goes out.
         let _ = reply(&guest, ERR, refusal.word()).await;
         spool.note(&note);
+        if refusal != Refusal::ShortBody {
+            discard(&guest, body).await;
+        }
     }
+}
+
+/// Reads and drops what the guest still sends of a refused put of `size`
+/// bytes, after the reply line: at most `BUNDLE_CAP` bytes, until the
+/// guest closes, within `BODY_WAIT`. A close with unread bytes resets the
+/// stream, and Cloud Hypervisor can then drop the reply line before the
+/// guest reads it.
+async fn discard(guest: &UnixStream, size: u64) {
+    let mut left = size.min(BUNDLE_CAP);
+    let mut buffer = vec![0; CHUNK];
+    let _ = timeout(BODY_WAIT, async {
+        while left > 0 {
+            let want = usize::try_from(left).map_or(CHUNK, |left| left.min(CHUNK));
+            let free = buffer.get_mut(..want).unwrap_or_default();
+            match read_some(guest, free).await {
+                Ok(0) | Err(_) => return,
+                Ok(read) => left = left.saturating_sub(u64::try_from(read).unwrap_or(u64::MAX)),
+            }
+        }
+    })
+    .await;
 }
 
 /// Answers a refused request and writes its note.

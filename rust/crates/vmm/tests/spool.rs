@@ -205,6 +205,28 @@ fn a_put_over_the_cap_is_refused_and_leaves_no_file() {
     assert!(scratch.names(PUSH_DIR).is_empty());
 }
 
+/// A refused put reads and drops the body that the guest still sends, so
+/// the guest sends its whole body and then reads the reply. A close with
+/// unread bytes resets the stream, and CH can then drop the reply line.
+#[test]
+fn a_refused_put_takes_its_body_before_the_close() {
+    let scratch = Scratch::new("put-drain");
+    let _server = scratch.serve();
+    let body = vec![b'x'; 4 * 1024 * 1024];
+    let request = |size: u64| {
+        let mut request = format!("put {size}\n").into_bytes();
+        request.extend_from_slice(&body);
+        request
+    };
+    let size = u64::try_from(body.len()).unwrap();
+    scratch.grant(r#"{"fetch":true,"push":false}"#);
+    assert_eq!(scratch.ask(&request(size)), b"err not_granted\n");
+    scratch.grant(BOTH);
+    assert_eq!(scratch.ask(&request(BUNDLE_CAP + 1)), b"err too_large\n");
+    fs::remove_dir(scratch.dir.join("spool").join(PUSH_DIR)).unwrap();
+    assert_eq!(scratch.ask(&request(size)), b"err spool_fault\n");
+}
+
 /// A put whose guest stops before its size gets `short_body`, and its
 /// temporary file goes.
 #[test]

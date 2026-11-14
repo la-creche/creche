@@ -1121,6 +1121,10 @@ follow").
    through `creche_vmm_confine::spool`, then renames it to `push/<id>`
    with the mode 0640, and answers `ok <id>`. A put that ends early or
    passes `BODY_WAIT` (120 s) gets `err short_body`, and its file goes.
+   Any other refused put reads and drops the rest of its body after the
+   reply line, at most `BUNDLE_CAP` bytes within `BODY_WAIT`, until the
+   guest closes. A close with unread bytes resets the Unix stream, and
+   CH can then send the guest a reset before the reply line.
 5. Each id is `<family>-<ulid>.bundle`, and its family is the family of
    the VM, never a value of the guest bytes. A get of a malformed id gets
    `err bad_id`, of another family `err other_family`, and of no file
@@ -1165,7 +1169,7 @@ spool helper").
 `tests/spool.rs` runs the spool on a real Unix socket over a scratch
 family root and a scratch spool: a put and the name and the mode of its
 file, a put of many chunks, a put past the cap and a short put that each
-leave no file, the grant of each request, a get, a get of another family,
+leave no file, a refused put that takes its whole body, the grant of each request, a get, a get of another family,
 of a missing id and of a malformed id, each bad request line,
 `PUSH_KEEP`, the removal at the drop of `Server`, a reopen, the link cap
 and the fd need. `tests/start.rs` proves the bound set with the grant, an
