@@ -33,7 +33,10 @@
 //!       Each new put removes the bundles of its VM past the TTL and then
 //!       the oldest past `PUSH_KEEP`.
 //!    2. The end of the VM removes each bundle that it put: the drop of
-//!       the last link and the listener of the VM.
+//!       the last link and the listener of the VM. One blocking task
+//!       renames a bundle and records it, and that task holds the spool.
+//!       So a link that the end of the VM cuts during the rename leaves no
+//!       bundle.
 //!    3. `vmm serve` removes each bundle and each temporary file of
 //!       `push/` at its start, before any VM runs
 //!       (`SpoolRoot::sweep_push`). So a crash leaves no file for long.
@@ -297,13 +300,18 @@ impl Spool {
             .unwrap_or_default()
     }
 
-    /// Records the put of `id`, then removes the bundles of this VM past
-    /// `PUSH_TTL` and the oldest past `PUSH_KEEP` (step 6.1).
-    async fn keep(self: &Arc<Self>, id: BundleId) {
+    /// Records the put of `id`, so the drop of the spool removes it.
+    fn record(&self, id: BundleId) {
+        let mut puts = self.puts.lock().unwrap_or_else(PoisonError::into_inner);
+        puts.push_back((id, Instant::now()));
+    }
+
+    /// Removes the bundles of this VM past `PUSH_TTL` and the oldest past
+    /// `PUSH_KEEP` (step 6.1).
+    async fn prune(self: &Arc<Self>) {
         let now = Instant::now();
         let gone: Vec<BundleId> = {
             let mut puts = self.puts.lock().unwrap_or_else(PoisonError::into_inner);
-            puts.push_back((id, now));
             let mut gone = Vec::new();
             while let Some((_, at)) = puts.front() {
                 let old = now.saturating_duration_since(*at) >= PUSH_TTL;
@@ -413,13 +421,21 @@ async fn put(guest: &UnixStream, spool: &Arc<Spool>, size: u64) -> Result<(), No
     let file = timeout(BODY_WAIT, receive(guest, file, size))
         .await
         .map_err(|_| Note::Refused(Refusal::ShortBody))??;
-    let id = spawn_blocking(move || file.commit())
-        .await
-        .map_err(|_| Note::Fault("renaming the bundle", io::ErrorKind::Other))?
-        .map_err(|error| Note::Fault("renaming the bundle", error.kind()))?;
+    // The rename and its record run in one blocking task, which an abort of
+    // the link does not stop. The task holds the spool, so the drop of the
+    // spool runs after the record and removes the bundle (step 6.2).
+    let holder = Arc::clone(spool);
+    let id = spawn_blocking(move || {
+        let id = file.commit()?;
+        holder.record(id.clone());
+        Ok::<_, io::Error>(id)
+    })
+    .await
+    .map_err(|_| Note::Fault("renaming the bundle", io::ErrorKind::Other))?
+    .map_err(|error| Note::Fault("renaming the bundle", error.kind()))?;
     // The bundle stays until its TTL, also when the guest is gone.
     let sent = reply(guest, OK, id.as_str()).await;
-    spool.keep(id).await;
+    spool.prune().await;
     sent.map_err(|error| Note::Fault("replying", error.kind()))
 }
 

@@ -1133,7 +1133,9 @@ follow").
       minutes, the TTL of `fetch/`), then the oldest past `PUSH_KEEP`
       (2). One VM holds at most `PUSH_KEEP` + `LINK_CAP` bundles.
    2. The end of the VM removes each bundle that it put: the drop of the
-      last link and the listener.
+      last link and the listener. One blocking task renames a bundle and
+      records it, and that task holds the spool. So a link that the end
+      of the VM cuts during the rename leaves no bundle.
    3. Each start of `vmm serve` removes each bundle and temporary file of
       `push/` (see "The compose step").
    The upstream removes each file of `fetch/` after its TTL. The vmm
