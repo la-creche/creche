@@ -41,8 +41,23 @@ RestartMaxDelaySec=120s
 # Exit 78: the config or the host stops the start. Restarting changes
 # nothing until the operator fixes it (bin/systemd-proof.sh, the rule).
 RestartPreventExitStatus=78
+# THE STOP (memory/AGENTS.md, the stop). SIGTERM goes to the main process
+# only. It cancels the sync, waits for the statement that the graph worker
+# runs now, checkpoints and closes the graph database, and that close ends
+# the worker. With the default KillMode=control-group, the worker got the
+# SIGTERM too and died where it stood. A death inside a checkpoint can leave
+# a graph file that no open repairs (4 of 20 such stops in the test of the
+# change, 11 of 70 kills in the test of 2026-11-09).
+KillMode=mixed
 KillSignal=SIGTERM
-TimeoutStopSec=20
+# The SIGKILL at the end of this time is the one stop that can still kill
+# the graph, so the time is generous. Measured on 2026-11-13 with a graph of
+# 110 to 185 MiB and statements of 200,000 rows (a 23 MB WAL, far over the
+# 2,000 rows of one Cognee write): the close took 1.1 to 2.3 s and the whole
+# stop 1.9 to 3.1 s. The stop waits at most 10 s for the tasks of the store
+# loop to end, then for the close. 60 s covers that with a margin for a
+# slower disk and a larger WAL. The journal prints the time of each close.
+TimeoutStopSec=60
 # The store and Cognee's tree. The spike did not measure the memory use, so
 # this is a first limit, to tune after the first full sync.
 MemoryMax=2G

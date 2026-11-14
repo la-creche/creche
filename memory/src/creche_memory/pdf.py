@@ -147,7 +147,7 @@ class PdfTexts:
         return text
 
     def warm(self, root: Path, folders: list[str]) -> None:
-        """Read every new or changed PDF now. The sync calls it in a worker
+        """Read every new or changed PDF now. The sync calls it in a daemon
         thread, so the store loop keeps answering searches."""
         for rel in list_pdfs(root, folders):
             self.text(root, rel)

@@ -4,7 +4,10 @@
 socket server. `creche-memory --check` reads the config and checks the host,
 opens no socket, and exits. A deploy runs it before it swaps the unit.
 
-Exit 0 after a stop by SIGTERM or SIGINT. Exit 78 (EX_CONFIG) for a config
+Exit 0 after a stop by SIGTERM or SIGINT. The stop closes the socket, ends
+every task of the store loop, then checkpoints and closes the graph database
+(`stop_store`). The systemd unit sends SIGTERM to this process only, so the
+graph worker runs until the close ends it. Exit 78 (EX_CONFIG) for a config
 or a host that stops the start, so systemd does not restart the unit in a
 loop (systemd/creche-caregiver.service, the restart policy). Exit 78 too for
 a graph database that does not open, at the start or after a failed sync
@@ -22,7 +25,7 @@ from concurrent.futures import Future, wait
 from types import FrameType
 
 from .config import Config, ConfigError, check, from_env
-from .graph import Dead, NotAVerdict, cognee_graph_state
+from .graph import Dead, NotAVerdict, close_cognee_graph, cognee_graph_state
 from .search import STOP_TIMEOUT_S, Searcher, StoreLoop
 from .server import MemoryServer, Service
 from .store import configure
@@ -65,10 +68,10 @@ def _broke(what: str, error: BaseException) -> int:
 
 def ended(syncing: Future[Dead | None], timeout_s: float) -> int:
     """The exit status from the end of the sync loop, after the stop. A loop
-    that has not ended within `timeout_s` is still in a sync after a stop by
-    signal: exit 0."""
+    that the stop cancelled, or that has not ended within `timeout_s`, was in
+    a sync at the stop by signal: exit 0."""
     done, _ = wait([syncing], timeout_s)
-    if not done:
+    if not done or syncing.cancelled():
         return EX_OK
 
     error = syncing.exception()
@@ -80,6 +83,59 @@ def ended(syncing: Future[Dead | None], timeout_s: float) -> int:
     return EX_OK if dead is None else _dead(dead)
 
 
+def stop_signals(stop: threading.Event) -> None:
+    """Set `stop` at SIGTERM or SIGINT. Install it before the first call into
+    Cognee, so a signal never ends the process inside a write."""
+
+    def on_signal(signum: int, frame: FrameType | None) -> None:
+        stop.set()
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+
+
+def stop_store(loop: StoreLoop, syncing: Future[Dead | None] | None) -> int:
+    """End the store after a stop, and return the exit status.
+
+    1. Read the end of the sync loop. A loop that ended before the stop
+       stopped the service, and its end gives the status. A loop that still
+       runs is in a stop by signal: exit 0.
+    2. Cancel every task of the loop. No new statement reaches the graph
+       worker. The statement that it runs now goes on to its end.
+    3. Close the graph database (`close_graph`): wait for the current
+       statement, checkpoint, then close. The close ends the worker
+       process. After a checkpoint of this open that did not end, the
+       database stays open and gets no statement. A dead graph is not
+       closed: it never opened.
+    4. Stop the loop.
+
+    The close has no deadline of its own. `TimeoutStopSec` of the unit
+    bounds the whole stop (`systemd/creche-memory.service`)."""
+    status = EX_OK
+    if syncing is not None and syncing.done():
+        status = ended(syncing, 0.0)
+
+    if not loop.cancel():
+        _say(f"a task of the store loop still ran {STOP_TIMEOUT_S:.0f} s after the stop.")
+
+    if status != EX_CONFIG:
+        try:
+            closed = loop.spawn(close_cognee_graph()).result()
+        except Exception as error:
+            # Only the type: a message can hold the URL of a service.
+            _say(f"the close of the graph database failed: {type(error).__name__}.")
+        else:
+            _say(closed.report())
+
+    loop.stop()
+
+    return status
+
+
+def _say(line: str) -> None:
+    print(f"creche-memory: {line}", file=sys.stderr, flush=True)
+
+
 def _serve(config: Config) -> int:
     from .cognee_search import cognee_backend, cognee_paths
 
@@ -87,10 +143,14 @@ def _serve(config: Config) -> int:
     places.store_root.mkdir(mode=STORE_MODE, exist_ok=True)
     configure(config.store)
 
+    # The sync loop sets `stop` when it ends, so a dead graph or an error
+    # ends the wait below and stops the service.
+    stop = threading.Event()
+    stop_signals(stop)
     loop = StoreLoop()
     loop.start()
     # The first open of the graph database. A dead one stops the start
-    # before the socket opens.
+    # before the socket opens. A signal in the check waits for its end.
     try:
         state = loop.spawn(cognee_graph_state()).result()
     except Exception as error:
@@ -100,6 +160,9 @@ def _serve(config: Config) -> int:
     if isinstance(state, Dead):
         loop.stop()
         return _dead(state)
+
+    if stop.is_set():
+        return stop_store(loop, None)
 
     syncer = Syncer(places.vault_root, cognee_ingest(places.vault_root), cognee_graph_state)
     searcher = Searcher(syncer.ready, cognee_backend, cognee_paths)
@@ -113,16 +176,7 @@ def _serve(config: Config) -> int:
         search=search,
         wrote=syncer.request,
     )
-    stop = threading.Event()
 
-    def on_signal(signum: int, frame: FrameType | None) -> None:
-        stop.set()
-
-    signal.signal(signal.SIGTERM, on_signal)
-    signal.signal(signal.SIGINT, on_signal)
-
-    # The sync loop sets `stop` when it ends, so a dead graph or an error
-    # ends the wait below and stops the service.
     syncing = loop.spawn(syncer.run(stop))
     server = MemoryServer(places.socket_path, service, places.peer_uid)
     serving = threading.Thread(target=server.serve_forever, daemon=True)
@@ -133,10 +187,8 @@ def _serve(config: Config) -> int:
     server.shutdown()
     server.server_close()
     syncer.wake()
-    status = ended(syncing, STOP_TIMEOUT_S)
-    loop.stop()
 
-    return status
+    return stop_store(loop, syncing)
 
 
 def main(argv: list[str] | None = None) -> int:
