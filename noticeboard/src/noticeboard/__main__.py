@@ -84,6 +84,7 @@ def _report(config: Config) -> None:
     print(f"registry      {_where(config.registry_dir)}")
     print(f"noticeboard token {_where(config.view_token_file)}")
     print(f"attendance      {_attendance(config)}")
+    print(f"approval page {_approval(config)}")
 
 
 def _key_state(config: Config) -> str:
@@ -102,6 +103,14 @@ def _attendance(config: Config) -> str:
         return config.attendance_url
 
     return _where(config.attendance_socket)
+
+
+def _approval(config: Config) -> str:
+    """Whether the approval page can decide. No part of the token."""
+    if not config.approval_url or config.approval_token_file is None:
+        return "off (NOTICEBOARD_APPROVAL_URL or NOTICEBOARD_APPROVAL_TOKEN_FILE is not set)"
+
+    return f"{config.approval_url}, token {_where(config.approval_token_file)}"
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

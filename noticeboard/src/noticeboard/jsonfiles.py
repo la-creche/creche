@@ -68,6 +68,12 @@ class Surface(enum.StrEnum):
     AUDIT_LINE = "audit.line"
     #: The body of an answer of `attendance`.
     SESSION_ANSWER = "session.answer"
+    #: The body of an answer of the approval plugin (`approvals.py`).
+    #
+    # CONTRACT-QUESTION: no contract names the surface word of this answer
+    # in a notice. The reading here gives it a word of its own. A change
+    # costs this member.
+    APPROVAL_ANSWER = "approval.answer"
 
 
 def read_object(
