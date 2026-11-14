@@ -94,7 +94,11 @@ class Searcher:
 
 
 class StoreLoop:
-    """One asyncio loop in one thread. Every call into Cognee runs here."""
+    """One asyncio loop in one thread. Every call into Cognee runs here.
+
+    Cognee starts its graph worker from this thread. On Linux the worker
+    gets SIGTERM when this thread ends (`PR_SET_PDEATHSIG`), so `stop` comes
+    after the close of the graph database."""
 
     def __init__(self) -> None:
         self._loop = asyncio.new_event_loop()
@@ -118,9 +122,20 @@ class StoreLoop:
             # Only the type: a message can hold a URL.
             return _refused(Refusal.INTERNAL, f"the search failed: {type(error).__name__}")
 
+    def cancel(self) -> bool:
+        """Cancel each task and wait for it to end. `False`: a task was still
+        running after `STOP_TIMEOUT_S`. The loop keeps running."""
+        cancelling = asyncio.run_coroutine_threadsafe(_cancel_tasks(), self._loop)
+        try:
+            cancelling.result(STOP_TIMEOUT_S)
+        except FutureTimeout:
+            return False
+
+        return True
+
     def stop(self) -> None:
         """Cancel each task, wait for it to end, then stop and close the loop."""
-        asyncio.run_coroutine_threadsafe(_cancel_tasks(), self._loop).result(STOP_TIMEOUT_S)
+        self.cancel()
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join()
         self._loop.close()

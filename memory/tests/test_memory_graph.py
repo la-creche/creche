@@ -211,9 +211,15 @@ def test_the_check_after_a_failed_checkpoint_keeps_every_row(tmp_path: Path) -> 
     lines = fill_through_cognee(store)
 
     # The open engine answers. The check does not close it: a close after
-    # the failed checkpoint makes a file that does not open.
-    assert lines == ["Usable()", "full: True", "Usable()"]
-    # The child exits with no close. A new process opens the file with
-    # every row.
+    # the failed checkpoint makes a file that does not open. The close of
+    # the stop sees the shadow of the failed checkpoint and writes nothing.
+    assert lines == [
+        "Usable()",
+        "full: True",
+        "Usable()",
+        f"LeftOpen(reason='a checkpoint did not end ({GRAPH_NAME}.shadow)')",
+    ]
+    # The child exits as the service does, and its exit hooks end the idle
+    # worker with no close. A new process opens the file with every row.
     graph_file = store / "system" / "databases" / GRAPH_NAME
     assert count_rows(graph_file, "F") == FILL_ROWS

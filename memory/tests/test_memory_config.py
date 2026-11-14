@@ -17,11 +17,12 @@ from pathlib import Path
 import pytest
 from creche_memory.cli import EX_CONFIG, EX_OK, EX_TEMPFAIL, ended, main
 from creche_memory.config import ConfigError, check, from_env
-from creche_memory.graph import GraphCheck, GraphState
+from creche_memory.graph import GraphCheck, GraphState, side_files
 from creche_memory.search import STOP_TIMEOUT_S, StoreLoop
 from creche_memory.sync import Syncer
 from memory_graph_helpers import (
     GRAPH_NAME,
+    group_left,
     held_open,
     kill_graph,
     ladybug_check,
@@ -128,6 +129,7 @@ def _start(root: Path) -> subprocess.Popen[str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        start_new_session=True,
     )
 
 
@@ -157,6 +159,12 @@ def test_the_service_serves_a_read_and_stops_on_sigterm(host: Path) -> None:
     assert reply["text"] == "Oak St.\n"
     assert service.returncode == EX_OK, err[-2000:]
     assert KEY not in err
+    # The stop closed the graph database, and the close ended its worker.
+    lines = [one for one in err.splitlines() if one.startswith("creche-memory: ")]
+    assert len(lines) == 1, err[-2000:]
+    assert lines[0].startswith("creche-memory: The graph database closed in ")
+    assert not group_left(service.pid)
+    assert side_files(_graph_file(host)) == ()
 
 
 def test_a_dead_graph_stops_the_start_with_exit_78_and_one_line(host: Path) -> None:

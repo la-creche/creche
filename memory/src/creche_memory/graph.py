@@ -19,12 +19,19 @@ Cognee's engine, and that build runs three `CREATE ... IF NOT EXISTS`
 statements. Their commit can write a `.wal` and can checkpoint a replayed
 WAL (`memory/AGENTS.md`, known gaps).
 
+The stop of the service is the one place that closes the engine
+(`close_graph`). It runs `CHECKPOINT` first, and it closes only after that
+checkpoint ends well. After a failed checkpoint of the same open, both a
+checkpoint and a close leave a file that does not open, so the stop then
+writes nothing.
+
 An error of the open is a verdict only when ladybug raises it for the
 file. An error of Cognee's worker process, a lock that another opener
 still holds, or an error of the host such as a full disk says nothing
 about the file. A restart can clear it, so the check passes it to the
 caller."""
 
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -177,3 +184,107 @@ async def cognee_graph_state() -> GraphState:
         return await engine.query("RETURN 1", {})  # pyright: ignore[reportUnknownMemberType]
 
     return await graph_state(graph_file, query)
+
+
+@dataclass(frozen=True)
+class Closed:
+    """The stop folded the WAL into the database file, then closed it."""
+
+    #: The seconds from the start of the close to its end. They count the
+    #: wait for the current statement.
+    seconds: float
+
+    def report(self) -> str:
+        return f"The graph database closed in {self.seconds:.1f} s."
+
+
+@dataclass(frozen=True)
+class LeftOpen:
+    """The stop did not close the database. It runs no statement after the
+    current one, and the worker ends with the service. The next start
+    replays the WAL."""
+
+    #: Why: the files of a checkpoint that did not end, or the type of the
+    #: error of a statement. Only the type: a message can hold the URL of a
+    #: service.
+    reason: str
+
+    def report(self) -> str:
+        return (
+            f"The graph database stays open until the service exits: {self.reason}. "
+            "The next start replays its WAL."
+        )
+
+
+type GraphClose = Closed | LeftOpen
+
+#: A call that runs one statement, or the close, on the open engine.
+type GraphCall = Callable[[], Awaitable[object]]
+
+
+def unfinished_files(graph_file: Path) -> tuple[str, ...]:
+    """The side files of a checkpoint that did not end: each one from
+    `SIDE_SUFFIXES` except the WAL itself."""
+    wal = graph_file.name + ".wal"
+
+    return tuple(name for name in side_files(graph_file) if name != wal)
+
+
+async def close_graph(
+    graph_file: Path, probe: GraphCall, checkpoint: GraphCall, close: GraphCall
+) -> GraphClose:
+    """Close the graph database at the stop, or leave it open when a close
+    could kill it.
+
+    1. `probe` (`RETURN 1`) writes nothing. The worker runs one statement
+       at a time, so the probe ends after the statement that runs now. Then
+       the worker is idle.
+    2. A file of a checkpoint that did not end, beside the database, means
+       that a checkpoint of this open failed. A checkpoint or a close after
+       that leaves a file that does not open, and no write keeps every row
+       (`memory/AGENTS.md`, the stop). So the database stays open.
+    3. `checkpoint` folds the WAL into the file. After it ends well,
+       `close` closes the database. After a failed one, the database stays
+       open, as in step 2."""
+    started = time.monotonic()
+    try:
+        await probe()
+    except Exception as error:
+        return LeftOpen(f"the last statement failed ({type(error).__name__})")
+
+    left = unfinished_files(graph_file)
+    if left:
+        return LeftOpen(f"a checkpoint did not end ({', '.join(left)})")
+
+    try:
+        await checkpoint()
+    except Exception as error:
+        return LeftOpen(f"the checkpoint of the stop failed ({type(error).__name__})")
+
+    await close()
+
+    return Closed(time.monotonic() - started)
+
+
+async def close_cognee_graph() -> GraphClose:
+    """`close_graph` on Cognee's cached engine. Call it only after the
+    start check, and after every task that writes has ended."""
+    from cognee.infrastructure.databases.graph import get_graph_config, get_graph_engine
+
+    graph_file = Path(get_graph_config().graph_file_path)
+    engine = await get_graph_engine()
+
+    async def probe() -> object:
+        # The interface types `params` as a bare `dict`.
+        return await engine.query("RETURN 1", {})  # pyright: ignore[reportUnknownMemberType]
+
+    async def checkpoint() -> object:
+        return await engine.query("CHECKPOINT", {})  # pyright: ignore[reportUnknownMemberType]
+
+    async def close() -> None:
+        # The ladybug adapter waits for its queries, closes the connection
+        # and the database, and ends its worker process. The interface of a
+        # graph engine has no `close`.
+        await engine.close()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
+    return await close_graph(graph_file, probe, checkpoint, close)

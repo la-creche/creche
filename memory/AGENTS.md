@@ -17,7 +17,7 @@ service of the vault. The service hosts the memory store and answers the
 | `src/creche_memory/writes.py` | `Writer`: it creates inbox notes and rewrites whole files in the agent areas. |
 | `src/creche_memory/store.py` | `StoreSettings` and `configure`: the settings of the memory store, as the env that Cognee reads. |
 | `src/creche_memory/sync.py` | `Syncer`: the checks of the vault and the syncs into the store. |
-| `src/creche_memory/graph.py` | The graph check: it tells a dead graph database from one that opens. |
+| `src/creche_memory/graph.py` | The graph check: it tells a dead graph database from one that opens. The close of the stop. |
 | `src/creche_memory/pdf.py` | The PDFs of the vault as a second source of the store: the listing, the rows, the cache of texts. |
 | `src/creche_memory/pdftext.py` | The child process that reads the text of one PDF, with its limits. |
 | `src/creche_memory/search.py` | `Searcher` and `StoreLoop`: the search, and the one asyncio loop in which Cognee runs. |
@@ -32,7 +32,8 @@ service of the vault. The service hosts the memory store and answers the
 | `tests/test_memory_store.py` | The tests of the settings. One test imports Cognee in a process of its own and reads its settings back. |
 | `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure and a dead graph. |
 | `tests/test_memory_graph.py` | The tests of the graph check, on real ladybug databases. |
-| `tests/memory_graph_helpers.py` | Real ladybug databases for the tests: a clean one, a dead one and one that recovers. The check through Cognee in a child process, after a failed checkpoint. |
+| `tests/test_memory_stop.py` | The tests of the stop: a SIGTERM in a checkpoint, a sync that ignores its cancel, the close rules, the unit lines and the daemon thread. |
+| `tests/memory_graph_helpers.py` | Real ladybug databases for the tests: a clean one, a dead one and one that recovers. The check and the close through Cognee in a child process, after a failed checkpoint. A writer through Cognee that gets SIGTERM in a checkpoint, and one that ignores its first cancel. |
 | `tests/test_memory_pdf.py` | The tests of the PDFs: the listing, the rows, the cap, the cache, the child and the real source. |
 | `tests/test_memory_search.py` | The tests of the search: `not_ready`, the paths, the caps, a slow search and a failed one. |
 | `tests/test_memory_server.py` | The tests of the socket: the peer check, the line rules and the dispatch. |
@@ -128,8 +129,8 @@ after it reads `json`, or `null` when the type refuses `json`.
 ## The command
 
 1. `creche-memory` starts the store loop, checks the graph database, then
-   starts the syncer and the socket server. SIGTERM or SIGINT stops each one
-   in turn, and the command exits 0.
+   starts the syncer and the socket server. SIGTERM or SIGINT stops the
+   service as "The stop" says, and the command exits 0.
 2. `creche-memory --check` reads the config and checks the host. It opens
    no socket. The unit runs it as `ExecStartPre`.
 3. A config or a host that stops the start exits 78. A dead graph database
@@ -225,7 +226,8 @@ every sync and every search fails. Cognee's own repair removes only the
    or leave a file that does not open. A close after a failed checkpoint
    can leave a file that does not open. The first call builds Cognee's
    engine, and that build writes (gap 6). The checks after a failed sync
-   use the cached engine and write nothing.
+   use the cached engine and write nothing. Only the stop closes the engine
+   ("The stop").
 2. Ladybug usually raises a `RuntimeError` or an `IndexError` for a file
    that does not open, and the check calls that a dead graph. Some dead
    files raise a `MemoryError` instead (gap 7). Three kinds of error
@@ -243,7 +245,7 @@ every sync and every search fails. Cognee's own repair removes only the
 4. The service checks the graph at the start, before the socket opens, and
    after each failed sync. A search does not check it. Cognee's search
    writes nothing to the graph while `ENABLE_LAST_ACCESSED` is off, which
-   is its default. So a graph dies in a sync or in a stop, and the next
+   is its default. So a graph dies in a sync or in a kill, and the next
    check after it is the failed sync or the next start.
 5. A dead graph prints one line: the database, the error, the files beside
    it before the open, and the recovery. The check lists the files before
@@ -263,6 +265,62 @@ The operator's recovery:
 
 The time of a full rebuild is not measured. A search gets `not_ready` until
 the first sync ends.
+
+## The stop
+
+A worker process of ladybug that dies inside a checkpoint can leave a graph
+file that no open repairs. On 2026-11-09, 11 of 70 kills in a checkpoint
+left one. So the stop never ends the graph worker in a statement.
+
+1. The unit sends SIGTERM to the main process only (`KillMode=mixed`). With
+   `control-group`, the default, the graph worker got the SIGTERM too and
+   died where it stood. On 2026-11-13, the old stop with `control-group`
+   left a dead graph in 4 of 20 stops in a checkpoint.
+2. The command sets its signal handler before the first call into Cognee.
+   A SIGTERM in the start check waits for the end of the check.
+3. The stop closes the socket, then cancels every task of the store loop.
+   No new statement reaches the graph worker. The worker ends the statement
+   that it runs now. A task that still runs 10 s after its cancel can still
+   send a statement or a checkpoint. Then the stop writes nothing, as in
+   step 4, and ends the process at once (`os._exit`). A normal exit hangs
+   on Linux: Cognee's graph worker sets `PR_SET_PDEATHSIG`, so the end of
+   the loop thread kills it, and Cognee starts a new worker that the exit
+   waits on.
+4. `close_graph` sends `RETURN 1`. The worker runs one statement at a time,
+   so the probe ends after the current one. Then the close reads the files
+   beside the database. A `.shadow`, a `.wal.checkpoint` or a checkpoint
+   lock means that a checkpoint of this open did not end. Then the stop
+   writes nothing.
+5. Otherwise the close runs `CHECKPOINT`, then closes the database. The
+   close ends the worker process. A failed `CHECKPOINT` leaves the database
+   open, as in step 4.
+6. A database that stays open ends with the process. The exit ends the idle
+   worker with no close. The next start replays the WAL with every committed
+   row (`test_the_check_after_a_failed_checkpoint_keeps_every_row`).
+7. One journal line says what the stop did:
+   `The graph database closed in <s> s.`, or
+   `The graph database stays open until the service exits: <reason>. The next start replays its WAL.`, or
+   `a task of the store loop still ran 10 s after the stop. The graph database stays open until the service exits. The next start replays its WAL.`
+8. The PDF reads run in a daemon thread, so the exit does not wait for them.
+   systemd kills a `pdftext.py` child that still runs after the main process
+   exits. The child only reads.
+9. The stop waits at most 10 s for the tasks of the loop, then for the
+   close, with no deadline of its own. `TimeoutStopSec=60` bounds it. On
+   2026-11-13 the close took 1.1 to 2.3 s and the whole stop 1.9 to 3.1 s,
+   with a graph of 110 to 185 MiB and statements of 200,000 rows.
+
+Why the stop writes nothing after a failed checkpoint, from runs on
+2026-11-13 through Cognee's engine, with a checkpoint that failed on
+`KUZU_MAX_DB_SIZE`:
+
+| After the failed checkpoint | The next open |
+|---|---|
+| No other statement, then the exit | opens, with every row |
+| A second `CHECKPOINT`, which reports success | does not open: `The file is not a valid Lbug database file!` |
+| A close | does not open, with the same error |
+
+After the failed checkpoint, the files beside the open database were
+`.shadow` and `.wal`.
 
 ## Not a workspace member
 
@@ -286,28 +344,42 @@ root `uv.lock`, because a change there moves every venv component
 1. No script installs the unit yet. The operator installs it once, before
    the first release of the component.
 
-Gaps 2 to 4 and gap 6 come from ladybug and Cognee, not from the
+Gaps 2 to 4, gap 6 and gap 8 come from ladybug and Cognee, not from the
 dead-graph check. Gaps 5 and 7 belong to the exit 75 of the check.
 
 2. Ladybug 0.19.0 replays a `.wal.checkpoint` only into memory, and it
-   removes the file. A stop before the next successful checkpoint loses
-   those rows. The fix belongs to the stop path, not to the check.
+   removes the file. The stop checkpoints before it closes, so a stop with
+   a checkpoint that ends well keeps those rows. A kill, a crash, or a stop
+   whose checkpoint fails, before the next checkpoint that ends well, still
+   loses them.
 3. Cognee's open removes `<db>.wal` when ladybug's open error names the
    WAL. Then it opens again. A WAL file can hold committed writes.
-4. A stop that kills the worker inside a checkpoint can leave a file that
-   does not open. The unit gives a stop 20 s (`TimeoutStopSec=20`).
+4. A kill of the worker inside a checkpoint can leave a file that does not
+   open. A stop no longer kills it ("The stop"). systemd still kills it
+   when a stop takes over 60 s (`TimeoutStopSec=60`). An OOM kill at
+   `MemoryMax=2G` or a crash of the host can kill it too.
 5. An exit-75 loop never reaches the `failed` state, so the watchdog's
    `is-failed` check does not see it. The journal line names the cause.
 6. The first check of a process builds Cognee's engine. In subprocess
    mode, the default, that build runs three `CREATE ... IF NOT EXISTS`
    statements. Each one commits a write. The commit can write a `.wal`.
    After a large write that no checkpoint ended, the commit can run
-   ladybug's auto-checkpoint inside the start check. A full disk or a kill
-   inside that checkpoint can then lose rows or leave a file that does not
-   open (gaps 2 and 4).
+   ladybug's auto-checkpoint inside the start check. A full disk, a
+   SIGKILL or a crash inside that checkpoint can then lose rows or leave a
+   file that does not open (gaps 2 and 4). A SIGTERM waits for the end of
+   the check.
 7. Some dead files make ladybug raise `MemoryError('std::bad_alloc')`. One
    such file is a database whose bytes after the first 4096 are garbage.
    The check passes a `MemoryError` up, because host memory pressure
    raises it too. So the service exits 75 on every start, and gap 5 hides
    the loop from the watchdog. The journal line names only the type,
    `MemoryError`.
+8. After a failed checkpoint of one open, the next checkpoint of the same
+   open reports success and leaves a file that does not open ("The stop",
+   the table). The stop writes nothing then. The sync does not know it:
+   after a sync whose checkpoint failed, the check still says `Usable`, and
+   Cognee checkpoints again after the next write of the next sync.
+9. The stop does not close the vector store. Cognee's exit hook sends
+   SIGTERM to its worker 2 s after the exit begins, after the cancel of
+   step 3 of "The stop". No test of this change stops that worker in a
+   write.

@@ -28,6 +28,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
+from typing import cast
 
 from .graph import Dead, GraphCheck
 from .pdf import PDF_SUFFIX, PdfTexts, pdf_source
@@ -163,6 +164,44 @@ async def _remember(source: object) -> None:
     )
 
 
+async def in_daemon_thread[T](work: Callable[[], T]) -> T:
+    """The result of `work`, run in a daemon thread of its own.
+
+    `asyncio.to_thread` runs in a pool thread, and the exit of the process
+    waits for each pool thread. A cancel does not end a thread. So a stop in
+    a long read would wait for its end. The exit does not wait for a daemon
+    thread."""
+    loop = asyncio.get_running_loop()
+    done: asyncio.Future[T] = loop.create_future()
+
+    def settle(result: T | None, error: BaseException | None) -> None:
+        if done.cancelled():
+            return
+
+        if error is not None:
+            done.set_exception(error)
+        else:
+            done.set_result(cast(T, result))
+
+    def run() -> None:
+        result: T | None = None
+        error: BaseException | None = None
+        try:
+            result = work()
+        except BaseException as caught:
+            error = caught
+
+        try:
+            loop.call_soon_threadsafe(settle, result, error)
+        except RuntimeError:
+            # The stop closed the loop first. Nothing waits for the result.
+            return
+
+    threading.Thread(target=run, daemon=True).start()
+
+    return await done
+
+
 def cognee_ingest(root: Path) -> Ingest:
     """The sync through Cognee's Obsidian connector, then the PDFs. An edited
     note or PDF replaces its old document, and a removed one is forgotten."""
@@ -173,10 +212,11 @@ def cognee_ingest(root: Path) -> Ingest:
 
         await _remember(obsidian_source(vault_path=root, resource_name=RESOURCE, folders=folders))
 
-        # Each PDF is read in a child process. The reads run in a worker
-        # thread first, so the store loop keeps answering searches.
+        # Each PDF is read in a child process. The reads run in a daemon
+        # thread first, so the store loop keeps answering searches, and a
+        # stop does not wait for the PDFs that are left.
         cut = texts.cut
-        await asyncio.to_thread(texts.warm, root, folders)
+        await in_daemon_thread(lambda: texts.warm(root, folders))
         if texts.cut > cut:
             print(f"memory: {texts.cut - cut} PDF(s) cut at the character cap", file=sys.stderr)
 
