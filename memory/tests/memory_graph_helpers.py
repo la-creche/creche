@@ -94,10 +94,10 @@ FULL_DB_BYTES = 1 << 25
 #: A child that runs the check of the service through Cognee's engine and
 #: prints the state. A checkpoint through the same open engine then fills
 #: the database past `KUZU_MAX_DB_SIZE`, and the child prints the state
-#: again. Then it runs the close of the stop and prints what it did, and it
-#: exits with no other close.
+#: again. Then it runs the close of the stop and prints what it did. Then
+#: the interpreter exits as the service does, with its exit hooks.
 _FILL = f"""
-import asyncio, os, sys
+import asyncio, sys
 from pathlib import Path
 from creche_memory.store import StoreSettings, configure
 
@@ -123,7 +123,6 @@ async def main():
     print(repr(await cognee_graph_state()), flush=True)
     # The close of the stop, after the failed checkpoint.
     print(repr(await close_cognee_graph()), flush=True)
-    os._exit(0)
 
 asyncio.run(main())
 """
