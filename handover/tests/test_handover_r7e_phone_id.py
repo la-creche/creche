@@ -141,6 +141,38 @@ def test_a_push_whose_id_the_flow_would_drop_never_goes_out() -> None:
     assert sent == []
 
 
+def test_a_push_the_hook_does_not_take_is_undeliverable() -> None:
+    """Contract 04 §8.4: an undeliverable push denies at once. The verdict
+    says no phone showed it, so `follow` can ask again."""
+    sent: list[dict[str, object]] = []
+
+    def post(body: dict[str, object]) -> dict[str, object] | None:
+        sent.append(body)
+
+        return None
+
+    transport = make_transport("https://hook.invalid/x", "t", lambda _: None, lambda: 0.0, post)
+    decision = transport(action_id_of(REQUEST_ID), GATE, _summary(), 900.0)
+
+    assert decision == Decision(Verdict.UNDELIVERABLE, GATE)
+    assert [body["kind"] for body in sent] == ["approval"]
+
+
+def test_a_deny_tap_after_the_push_is_denied() -> None:
+    """The push went out and the operator said no. That stays `denied`."""
+
+    def post(body: dict[str, object]) -> dict[str, object] | None:
+        if body["kind"] == "approval":
+            return {}
+
+        return {"gate": GATE, "decision": "deny", "at": 5.0}
+
+    transport = make_transport("https://hook.invalid/x", "t", lambda _: None, lambda: 0.0, post)
+    decision = transport(action_id_of(REQUEST_ID), GATE, _summary(), 900.0)
+
+    assert decision == Decision(Verdict.DENIED, GATE, 5.0)
+
+
 def test_deny_all_still_names_the_gate_it_was_asked_about() -> None:
     """The fail-closed transport keeps its contract under the new shape."""
     decision = deny_all(action_id_of(REQUEST_ID), GATE, _summary(), 900.0)

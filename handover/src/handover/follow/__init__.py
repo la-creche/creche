@@ -28,9 +28,12 @@ Nine rules hold its shape, each with the reason it is a rule.
 5. **A tap nobody gave is not an answer.** The gate closes after fifteen
    minutes. A phone out of reach must not send the operator to a terminal,
    which is the step this module removes. So that one outcome is asked
-   again after `AGAIN_S`, and `MAX_ASKS` times in all. Check P6 with the
-   reason `ArtifactRefusal.VERIFIER_UNAVAILABLE` is asked again in the
-   same way: the verifier gave root no answer about the signature.
+   again after `AGAIN_S`, and `MAX_ASKS` times in all. Two more outcomes
+   are asked again in the same way. A push the hook did not take
+   (`Verdict.UNDELIVERABLE`) reached no phone, so nobody said no. Check P6
+   with the reason `ArtifactRefusal.VERIFIER_UNAVAILABLE` means the
+   verifier gave root no answer about the signature. A tap that said no
+   stays final (rule 4).
 6. **The marker goes down BEFORE the request.** A request with no marker
    behind it is filed again on the next run, and each one is a push. In
    this order a marker that cannot be written costs no request at all.
@@ -157,12 +160,13 @@ WAIT_KEYS: Final = frozenset({"version", "since"})
 Moving = dict[str, str]
 
 #: The check and the reason of each ledger entry that nobody answered
-#: (rule 5): the gate closed with no tap, or check P6 got no answer from
-#: the verifier.
+#: (rule 5): the gate closed with no tap, the hook did not take the push,
+#: or check P6 got no answer from the verifier.
 _NOBODY_ANSWERED: Final = frozenset(
     {
         (str(RefusalCode.APPROVAL), not_granted(Verdict.TIMEOUT)),
         (str(RefusalCode.APPROVAL), not_granted(Verdict.EXPIRED)),
+        (str(RefusalCode.APPROVAL), not_granted(Verdict.UNDELIVERABLE)),
         (str(RefusalCode.P6), str(ArtifactRefusal.VERIFIER_UNAVAILABLE)),
     }
 )
@@ -186,8 +190,8 @@ class Answer(StrEnum):
 
     #: No entry: the request waits in `requests/`, or the gate is open.
     NONE = "none"
-    #: The gate closed with no tap, or check P6 got no answer from the
-    #: verifier.
+    #: The gate closed with no tap, the hook did not take the push, or
+    #: check P6 got no answer from the verifier.
     UNANSWERED = "unanswered"
     #: Every other entry: a success, a denial, a refusal, a failure.
     FINAL = "final"

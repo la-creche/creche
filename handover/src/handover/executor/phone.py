@@ -33,7 +33,8 @@ Three rules this module keeps.
    bearer rides one header. A failure logs the status, never the body.
 3. **Fail closed.** An unreachable hook, an unparseable answer, an answer
    for another gate: all deny. Contract 04 §8.4 already says an
-   undeliverable push denies at once.
+   undeliverable push denies at once. That deny carries the verdict
+   `undeliverable`, not `denied`, so the follower asks again.
 
 A body and an answer are strict JSON (`strictjson.py`, a module of the
 standard library). A body with no strict text is not sent, and it reads as
@@ -241,8 +242,9 @@ def make_transport(
             }
         )
         if pushed is None:
-            # Contract 04 §8.4: an undeliverable push denies at once.
-            return Decision(Verdict.DENIED, gate, None)
+            # Contract 04 §8.4: an undeliverable push denies at once. The
+            # verdict says why, so `follow` asks again: nobody said no.
+            return Decision(Verdict.UNDELIVERABLE, gate, None)
 
         return _wait(send, gate, wait_s, sleep, clock)
 

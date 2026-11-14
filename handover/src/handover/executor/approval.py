@@ -66,9 +66,13 @@ class Verdict(StrEnum):
     """What came back from the phone. Anything but `granted` stops step 5."""
 
     GRANTED = "granted"
+    #: The operator tapped deny, or root refused the push before it went out.
     DENIED = "denied"
     EXPIRED = "expired"
     TIMEOUT = "timeout"
+    #: The hook did not take the push, so no phone showed it. Contract 04
+    #: §8.4 denies at once. Nobody said no, so `follow` asks again.
+    UNDELIVERABLE = "undeliverable"
 
 
 @dataclass(frozen=True)
@@ -86,7 +90,9 @@ def not_granted(verdict: Verdict) -> str:
 
     One function, because two sides read the words: `check_decision` writes
     them and `follow` reads them back out of `done/<ULID>.json`, to tell a
-    tap nobody gave from a tap that said no.
+    tap nobody gave from a tap that said no. A push the hook did not take
+    reads `the gate answered undeliverable`. A ledger entry written before
+    that verdict existed reads `denied` for it, and stays final.
     """
     return f"the gate answered {verdict}"
 
