@@ -29,7 +29,8 @@ The `coding` flavor of `code` and `creche` is the python flavor plus uv,
 pnpm through corepack, and cargo with Rust 1.92.0, rustfmt and clippy
 (CH7-1, for now). Agents install a repo's locked dependencies through the
 egress proxy and run its checks. Its `SandboxFlavor` member joined before
-the cut (CH79 rule 1).
+the cut (CH79 rule 1). It also holds `creche-git-spool`, the guest end of
+the git platform spool (see "The git platform spool helper").
 
 The Python flavor ships no Python package installer. `pip`, `uv` and
 `ensurepip` exist in build steps only. The test venv excludes `nodeenv`.
@@ -73,6 +74,56 @@ CI builds the image from the repository root, with `playpen/Dockerfile`.
 Do not build it on a development machine. CI builds each flavor on each
 code change (`bin/playpen-ci`).
 
+## The git platform spool helper
+
+`guest/creche_git_spool.py` is `/usr/local/bin/creche-git-spool` in the
+coding flavor (CH3, phase 12 PR3). A VM has no route to GitHub and holds
+no token, so the `git-platform` tools of chaperone push and fetch for it.
+A git bundle carries each branch between the VM and the tools. One MCP
+result holds at most 1 MiB, so the bundle goes through the spool of the
+host instead.
+
+A push, end to end:
+
+1. The agent runs `creche-git-spool push <branch>` in its clone. The
+   helper runs `git bundle create` of `refs/heads/<branch>` over the
+   remote-tracking refs, so the commits that GitHub already holds stay
+   out and become prerequisites. A head that the remote already holds
+   gets a bundle of that one commit over its parents.
+2. The helper dials guest 127.0.0.1:1105 and sends `put <size>` and the
+   bundle. Guest init splices the link to host port 1105.
+3. The vmm checks the `push` grant, writes the bundle in `push/` of the
+   spool and answers `ok <id>`. The helper prints the id on stdout.
+4. The agent calls the `push` tool of `git-platform` with the repo, the
+   branch and the id. The upstream reads the bundle, fetches its
+   prerequisites, runs `git bundle verify` and pushes its head to
+   `refs/heads/<branch>`. It refuses `main`, `master`, a tag and a force.
+
+A fetch, end to end:
+
+1. The agent calls the `fetch` tool of `git-platform` with the repo and
+   the branch. The upstream writes a bundle of the whole branch in
+   `fetch/` and answers its id.
+2. The agent runs `creche-git-spool fetch <id>`. The helper sends `get
+   <id>`, and the vmm checks the `fetch` grant and the family of the id
+   and sends `ok <size>` and the bytes.
+3. The helper runs `git bundle verify` and fetches the one branch of the
+   bundle into a local branch of the same name, or into `--branch`. The
+   refspec has no `+`, so a branch that does not fast-forward stays.
+
+A family with no grant has no host listener on 1105. Guest init then
+closes each link with no reply, and the helper says so. The helper checks
+only the size cap and the line cap before it dials. The vmm and the
+upstream check every rule again. It runs on `python3.12 -I`, so no module
+of the repo under work loads. `rust/crates/wire/src/spool.rs` holds the
+protocol.
+
+`bin/tests/test_playpen_git_spool.py` runs the helper as a program on
+real git repos, against a listener on 127.0.0.1:1105 that speaks the
+protocol of the vmm over two scratch folders. It holds the port, the caps
+and the reason words equal to `creche_wire`. The kvm test
+`kvm_guest_init_bridges_the_spool_port` proves the guest init row.
+
 ## The release
 
 This tree has no release of its own. The `disks` row ships what it builds
@@ -103,3 +154,4 @@ This tree has no release of its own. The `disks` row ships what it builds
 | `bin/playpen-rootfs` | the tar export of one flavor, the input of its root disk |
 | `bin/playpen-disk`, `disk/Dockerfile` | the root disk of one flavor from its tar, in the pinned trixie stage |
 | `bin/playpen-kernel` | the pinned CH guest kernel, compressed to ship like the disks |
+| `guest/creche_git_spool.py` | `creche-git-spool` of the coding flavor, the guest end of the git platform spool |

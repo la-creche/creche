@@ -455,7 +455,12 @@ caps, the reason words and `BundleId`, as plain Rust with no serde and no
 schema entry (decision CH14). The vmm serves it in
 `rust/crates/vmm/src/spool.rs`, and the guest side reads the module doc
 of `spool.rs` of this crate. `BUNDLE_CAP` equals the cap of the
-`git-platform` upstream, 64 MiB.
+`git-platform` upstream, 64 MiB. In the guest, `guest::GIT_SPOOL_PORT`
+(1105) is the loopback port that guest init splices to host port 1105.
+`vectors/guest.json` lists it as `git_spool_port`.
+`playpen/guest/creche_git_spool.py` is the guest client, and
+`bin/tests/test_playpen_git_spool.py` holds its port, its caps and its
+reason words equal to this crate.
 
 ## A route error on the wire
 

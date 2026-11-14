@@ -1153,6 +1153,13 @@ follow").
     stream and 2 more fds (a folder and a file): 13 per slot, 832 for all
     `SLOTS`. The raised soft limit is 103552.
 
+The guest end: guest init splices each link of guest 127.0.0.1:1105 to
+host port 1105 in every VM (`rust/crates/guest-init/AGENTS.md`, the host
+rows), so the listener of the vmm is the one guard. The coding flavor's
+`creche-git-spool` puts and gets the bundles, and the agent passes each
+id to the `git-platform` tools (`playpen/AGENTS.md`, "The git platform
+spool helper").
+
 `tests/spool.rs` runs the spool on a real Unix socket over a scratch
 family root and a scratch spool: a put and the name and the mode of its
 file, a put of many chunks, a put past the cap and a short put that each
