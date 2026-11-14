@@ -22,7 +22,8 @@ A fetch takes two steps too:
    the branch. The tool answers with a bundle id.
 2. `creche-git-spool fetch <bundle id>` gets the bundle from the spool,
    runs `git bundle verify` and fetches its one branch into a local
-   branch.
+   branch. When that branch is checked out, a fast-forward merge moves
+   the branch and its work tree.
 
 The link: guest init splices each TCP link of guest 127.0.0.1:1105 to host
 port 1105, and the vmm serves the spool there (`creche_wire::spool`,
@@ -279,10 +280,49 @@ def fetch(repo: Path, bundle_id: str, branch: str | None) -> tuple[str, str]:
         _git(repo, "bundle", "verify", "--quiet", str(bundle))
         ref, sha = _source(repo, bundle)
         local = branch if branch is not None else _branch(repo, ref.removeprefix("refs/heads/"))
-        # No `+`: git refuses an update that is not a fast-forward.
-        _git(repo, "fetch", "--quiet", "--no-tags", str(bundle), f"{ref}:refs/heads/{local}")
+        if _checked_out(repo, local):
+            # git refuses to fetch into the checked-out branch, so the
+            # fetch takes only the objects and a merge moves the branch.
+            _git(repo, "fetch", "--quiet", "--no-tags", str(bundle), ref)
+            _fast_forward(repo, local, sha)
+        else:
+            # No `+`: git refuses an update that is not a fast-forward.
+            _git(repo, "fetch", "--quiet", "--no-tags", str(bundle), f"{ref}:refs/heads/{local}")
 
     return local, sha
+
+
+def _checked_out(repo: Path, local: str) -> bool:
+    """True when `local` is the branch of HEAD in `repo`."""
+    done = subprocess.run(
+        ["git", "-C", str(repo), "symbolic-ref", "--quiet", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return done.returncode == 0 and done.stdout.strip() == f"refs/heads/{local}"
+
+
+def _fast_forward(repo: Path, local: str, sha: str) -> None:
+    """Moves the checked-out branch `local` and its work tree to `sha`. A
+    branch that does not fast-forward to `sha` stays."""
+    held = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if held.returncode == 0:
+        ahead = subprocess.run(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", "HEAD", sha],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if ahead.returncode != 0:
+            raise Failed(f"the checked-out branch {local} does not fast-forward to {sha}")
+
+    _git(repo, "merge", "--quiet", "--ff-only", sha)
 
 
 def _parser() -> argparse.ArgumentParser:

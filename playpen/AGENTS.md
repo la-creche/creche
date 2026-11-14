@@ -109,7 +109,10 @@ A fetch, end to end:
    and sends `ok <size>` and the bytes.
 3. The helper runs `git bundle verify` and fetches the one branch of the
    bundle into a local branch of the same name, or into `--branch`. The
-   refspec has no `+`, so a branch that does not fast-forward stays.
+   refspec has no `+`, so a branch that does not fast-forward stays. git
+   refuses to fetch into the checked-out branch. For that branch the
+   helper fetches only the objects and runs `git merge --ff-only`, so the
+   branch and its work tree move together.
 
 A family with no grant has no host listener on 1105. Guest init then
 closes each link with no reply, and the helper says so. The helper checks

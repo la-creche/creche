@@ -446,6 +446,40 @@ def test_fetch_never_forces_a_branch(spool: Spool, repos: Repos, tmp_path: Path)
     assert git(repos.work, "rev-parse", "other") == side
 
 
+def test_fetch_moves_the_checked_out_branch(spool: Spool, repos: Repos, tmp_path: Path) -> None:
+    """A clone has `main` checked out. A fetch of `main` fast-forwards the
+    branch and its work tree."""
+    seed = tmp_path / "ahead"
+    git(tmp_path, "clone", "--quiet", str(repos.remote), str(seed))
+    commit(seed, "five")
+    git(seed, "push", "--quiet", "origin", "main")
+    bundle_id, sha = published(spool, repos.remote, "main", tmp_path / "upstream")
+
+    done = run(repos.work, "fetch", bundle_id)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == f"main {sha}\n"
+    assert git(repos.work, "symbolic-ref", "HEAD") == "refs/heads/main"
+    assert git(repos.work, "rev-parse", "HEAD") == sha
+    assert (repos.work / "five").read_text(encoding="utf-8") == "five\n"
+    assert git(repos.work, "status", "--porcelain") == ""
+
+
+def test_fetch_never_forces_the_checked_out_branch(
+    spool: Spool, repos: Repos, tmp_path: Path
+) -> None:
+    """A checked-out branch that does not fast-forward to the bundle stays,
+    and so does its work tree."""
+    bundle_id, _ = published(spool, repos.remote, "main", tmp_path / "upstream")
+    git(repos.work, "reset", "--quiet", "--hard", "HEAD~1")
+    side = commit(repos.work, "side")
+
+    done = run(repos.work, "fetch", bundle_id)
+    assert done.returncode == 1
+    assert "creche-git-spool: the checked-out branch main does not fast-forward" in done.stderr
+    assert git(repos.work, "rev-parse", "HEAD") == side
+    assert git(repos.work, "status", "--porcelain") == ""
+
+
 def test_fetch_refusals_leave_the_repo_as_it_was(
     spool: Spool, repos: Repos, tmp_path: Path
 ) -> None:
