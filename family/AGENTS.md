@@ -182,7 +182,7 @@ refuses each one, and so does the validator.
 |---|---|
 | Unknown fields | refused on every model |
 | `name` | `[a-z][a-z0-9-]{1,30}`, equal to the directory name |
-| `tools` | the server is declared, and each tool is in its catalog. Only a platform family of the host holds `github-platform` |
+| `tools` | the server is declared, and each tool is in its catalog. Only a platform family of the host holds a server of the platform token: `github-platform`, and each server whose `run.env` names `secret:github_token_platform` (`PLATFORM_SECRET`) |
 | Tool name | `[A-Za-z][A-Za-z0-9_-]{0,63}`, in a family file and in a server file |
 | `run.env` name | `[A-Z][A-Z0-9_]{0,63}` |
 | `install.version` | `[0-9][0-9A-Za-z.]{0,63}`: no `+`, no `-` and no range sign |
@@ -250,3 +250,8 @@ uv run pytest family/tests
      The two readers have one form for a tool name, for the name of a
      variable and for a version. `grammar.py` holds the three forms of this
      validator. `handover.mcpserver` holds the three patterns of root.
+  4. `validate.py`, `_check_platform`, contract 01 §5.5 rules 1 and 7. The
+     contract names `github-platform` and says nothing of another server of
+     its token. The check fences `github-platform` by its name and each
+     server whose `run.env` names `secret:github_token_platform`. Rule 7
+     withholds the merge on each of them. The contract says the name only.

@@ -42,6 +42,7 @@ from .grammar import (
     MEMORY_MAX_MB,
     MEMORY_MIN_MB,
     MODEL_ALIAS,
+    PLATFORM_SECRET,
     PLATFORM_SERVER,
     PLATFORM_WITHHELD,
     PROBE_FAMILY,
@@ -226,7 +227,7 @@ def _check_tools(family: FamilyFile, index: Index, issues: Issues, fences: Fence
         if declared is None:
             issues.error(loc, f"'{server}' has no mcp/{server}/{SERVER_FILE}")
 
-        _check_withheld(family, index, server, loc, issues, fences)
+        _check_platform(family, index, server, declared, loc, issues, fences)
         if isinstance(grant, str):
             _check_all_grant(grant, kind, loc, issues)
             continue
@@ -234,20 +235,47 @@ def _check_tools(family: FamilyFile, index: Index, issues: Issues, fences: Fence
         _check_named_tools(grant, declared, server, loc, issues)
 
 
-def _check_withheld(
-    family: FamilyFile, index: Index, server: str, loc: str, issues: Issues, fences: Fences | None
+def _check_platform(
+    family: FamilyFile,
+    index: Index,
+    server: str,
+    declared: McpServerFile | None,
+    loc: str,
+    issues: Issues,
+    fences: Fences | None,
 ) -> None:
-    """§5.5 rule 7: the operator lands every platform change. `main` may carry no
-    branch protection, so a family holding the platform server's merge could land
-    a registry change, its own grants included, that `caregiver` then applies.
-    `all` is checked through its expansion: a server file that declares the
-    merge again must not re-grant it quietly."""
-    if server != PLATFORM_SERVER:
+    """§5.5 rule 1, read to follow the token: only a platform family holds a
+    server of the platform token. The fence holds for each server whose file
+    names `PLATFORM_SECRET`. `PLATFORM_SERVER` is fenced by its name too, so
+    a file of it that names no token still fails closed. Rule 7 runs inside
+    the fence only: a family outside it gets one error."""
+    # CONTRACT-QUESTION: contract 01 §5.5 rules 1 and 7 name the server
+    # `github-platform` and say nothing of another server of its token. This
+    # check takes the conservative reading. It fences `github-platform` by its
+    # name and each server whose `run.env` names `secret:github_token_platform`.
+    # Rule 7 withholds the merge on each of them. A reader built from the
+    # contract text alone fences the name only. To fence the name only costs
+    # the fence on `git-platform`: any family could then hold the token.
+    holds_token = declared is not None and PLATFORM_SECRET in declared.secret_keys()
+    if server != PLATFORM_SERVER and not holds_token:
         return
 
     if not _inside_platform_fence(family, loc, f"'{server}'", issues, fences):
         return
 
+    _check_withheld(family, index, server, loc, issues)
+
+
+def _check_withheld(
+    family: FamilyFile, index: Index, server: str, loc: str, issues: Issues
+) -> None:
+    """§5.5 rule 7: the operator lands every platform change. `main` may carry no
+    branch protection, so a family holding the platform server's merge could land
+    a registry change, its own grants included, that `caregiver` then applies.
+    `all` is checked through its expansion: a server file that declares the
+    merge again must not re-grant it quietly. The rule follows the token like
+    rule 1: `_check_platform` calls it for each server it fences, so a second
+    server of the token does not re-grant the merge either."""
     reason = "a platform change lands only when the operator merges it (§5.5 rule 7)"
     if family.grants_all(server):
         for tool in index.granted_tools(family, server):

@@ -7,8 +7,9 @@ start and passes it to `load_registry`. A reader with no fences (registry
 CI, the `agent-family` command) gets one downgraded warning for each fence
 check instead (`validate.py`).
 
-`AGENT_PLATFORM_FAMILIES`: the families that may hold the platform server
-and the `release` verb, separated by commas. Absent or empty: none.
+`AGENT_PLATFORM_FAMILIES`: the families that may hold a server of the
+platform token and the `release` verb, separated by commas. Absent or
+empty: none. `validate.py` says which servers hold the token.
 
 Contract 01 minor 18 drops `files`, the allowed mount roots and the key
 `AGENT_MOUNT_ROOTS` that held them (decision CH10-10). A VM mounts no host

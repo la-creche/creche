@@ -7,9 +7,9 @@ from __future__ import annotations
 import pytest
 from agent_family.fences import PLATFORM_FAMILIES_KEY, FenceError, Fences, read_fences
 from agent_family.grammar import PLATFORM_SERVER
-from agent_family.report import Issues
+from agent_family.report import Issue, Issues, Severity
 from agent_family.validate import check_family
-from family_helpers import edited, full_index, host
+from family_helpers import GIT_PLATFORM, edited, full_index, git_platform, host, index_with
 
 
 def test_the_site_key_reads_as_fences() -> None:
@@ -60,3 +60,33 @@ def test_with_no_fences_each_fence_check_is_a_downgraded_warning() -> None:
     assert not any("platform fence" in issue.msg for issue in found)
     downgraded = {issue.msg for issue in found if issue.downgraded}
     assert f"no host fences: who may hold '{PLATFORM_SERVER}' was not checked" in downgraded
+
+
+def _token_server_issues(fences: Fences | None) -> tuple[Issue, ...]:
+    """`chat` granted `git-platform`, a second server of the platform token."""
+    family = edited("chat", tools={GIT_PLATFORM: "all"})
+    issues = Issues()
+    check_family(family, "chat", index_with(git_platform()), issues, host(), fences)
+    return issues.frozen()
+
+
+def test_no_platform_family_on_the_host_refuses_a_second_token_server() -> None:
+    found = _token_server_issues(Fences(platform_families=frozenset()))
+
+    refusal = f"'chat' is outside the platform fence; only no family may hold '{GIT_PLATFORM}'"
+    assert refusal in {issue.msg for issue in found if issue.severity is Severity.ERROR}
+
+
+def test_the_host_names_who_holds_a_second_token_server() -> None:
+    """The fence is host config: a host that names `chat` lets `chat` hold it."""
+    found = _token_server_issues(Fences(platform_families=frozenset({"chat"})))
+
+    assert not any(issue.severity is Severity.ERROR for issue in found)
+
+
+def test_with_no_fences_a_second_token_server_is_a_downgraded_warning() -> None:
+    found = _token_server_issues(None)
+
+    assert not any(issue.severity is Severity.ERROR for issue in found)
+    downgraded = {issue.msg for issue in found if issue.downgraded}
+    assert f"no host fences: who may hold '{GIT_PLATFORM}' was not checked" in downgraded

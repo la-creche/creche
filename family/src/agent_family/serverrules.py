@@ -332,11 +332,7 @@ def _check_shared(server: McpServerFile, issues: Issues) -> None:
     here is a declaration that could not be acted on whatever the other
     file says.
     """
-    named = {
-        value[len(SECRET_PREFIX) :]
-        for value in server.run.env.values()
-        if value.startswith(SECRET_PREFIX)
-    }
+    named = server.secret_keys()
     # CONTRACT-QUESTION: contract 01b §4.3 gives no count of entries. Root
     # and this validator take 8 entries at most.
     _check_count("shared_secrets", len(server.shared_secrets), MAX_SHARED, issues)
