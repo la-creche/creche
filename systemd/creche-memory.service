@@ -46,8 +46,8 @@ RestartPreventExitStatus=78
 # runs now, checkpoints and closes the graph database, and that close ends
 # the worker. With the default KillMode=control-group, the worker got the
 # SIGTERM too and died where it stood. A death inside a checkpoint can leave
-# a graph file that no open repairs (4 of 20 such stops in the test of the
-# change, 11 of 70 kills in the test of 2026-11-09).
+# a graph file that no open repairs (4 of 20 stops in a checkpoint with the
+# old stop on 2026-11-13, 11 of 70 kills in the test of 2026-11-09).
 KillMode=mixed
 KillSignal=SIGTERM
 # The SIGKILL at the end of this time is the one stop that can still kill

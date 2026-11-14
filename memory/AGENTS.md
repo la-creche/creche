@@ -32,8 +32,8 @@ service of the vault. The service hosts the memory store and answers the
 | `tests/test_memory_store.py` | The tests of the settings. One test imports Cognee in a process of its own and reads its settings back. |
 | `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure and a dead graph. |
 | `tests/test_memory_graph.py` | The tests of the graph check, on real ladybug databases. |
-| `tests/test_memory_stop.py` | The tests of the stop: a SIGTERM in a checkpoint, the close rules, the unit lines and the daemon thread. |
-| `tests/memory_graph_helpers.py` | Real ladybug databases for the tests: a clean one, a dead one and one that recovers. The check and the close through Cognee in a child process, after a failed checkpoint. A writer through Cognee that gets SIGTERM in a checkpoint. |
+| `tests/test_memory_stop.py` | The tests of the stop: a SIGTERM in a checkpoint, a sync that ignores its cancel, the close rules, the unit lines and the daemon thread. |
+| `tests/memory_graph_helpers.py` | Real ladybug databases for the tests: a clean one, a dead one and one that recovers. The check and the close through Cognee in a child process, after a failed checkpoint. A writer through Cognee that gets SIGTERM in a checkpoint, and one that ignores its first cancel. |
 | `tests/test_memory_pdf.py` | The tests of the PDFs: the listing, the rows, the cap, the cache, the child and the real source. |
 | `tests/test_memory_search.py` | The tests of the search: `not_ready`, the paths, the caps, a slow search and a failed one. |
 | `tests/test_memory_server.py` | The tests of the socket: the peer check, the line rules and the dispatch. |
@@ -280,7 +280,9 @@ left one. So the stop never ends the graph worker in a statement.
    A SIGTERM in the start check waits for the end of the check.
 3. The stop closes the socket, then cancels every task of the store loop.
    No new statement reaches the graph worker. The worker ends the statement
-   that it runs now.
+   that it runs now. A task that still runs 10 s after its cancel can still
+   send a statement or a checkpoint. Then the stop writes nothing, as in
+   step 4, and the stop of the loop freezes the task.
 4. `close_graph` sends `RETURN 1`. The worker runs one statement at a time,
    so the probe ends after the current one. Then the close reads the files
    beside the database. A `.shadow`, a `.wal.checkpoint` or a checkpoint
@@ -294,7 +296,8 @@ left one. So the stop never ends the graph worker in a statement.
    row (`test_the_check_after_a_failed_checkpoint_keeps_every_row`).
 7. One journal line says what the stop did:
    `The graph database closed in <s> s.`, or
-   `The graph database stays open until the service exits: <reason>. The next start replays its WAL.`
+   `The graph database stays open until the service exits: <reason>. The next start replays its WAL.`, or
+   `a task of the store loop still ran 10 s after the stop. The graph database stays open until the service exits. The next start replays its WAL.`
 8. The PDF reads run in a daemon thread, so the exit does not wait for them.
    systemd kills a `pdftext.py` child that still runs after the main process
    exits. The child only reads.

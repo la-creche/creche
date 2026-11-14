@@ -21,10 +21,12 @@ import ladybug
 import pytest
 from creche_memory.cli import EX_OK
 from creche_memory.graph import Closed, LeftOpen, close_graph, side_files, unfinished_files
+from creche_memory.search import STOP_TIMEOUT_S
 from creche_memory.sync import in_daemon_thread
 from memory_graph_helpers import (
     BUFFER_POOL,
     GRAPH_NAME,
+    STUBBORN_ROWS,
     WRITE_ROWS,
     count_rows,
     leave_recoverable,
@@ -60,6 +62,29 @@ def test_a_sigterm_in_a_checkpoint_closes_the_graph_and_keeps_every_row(
     # whole or absent.
     assert rows >= run.committed
     assert rows % WRITE_ROWS == 0
+
+
+def test_a_sync_that_ignores_its_cancel_gets_no_checkpoint_or_close_of_the_stop(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "store"
+    run = stop_in_a_checkpoint(store, 1, 0.0, rows=STUBBORN_ROWS, ignores_the_cancel=True)
+
+    assert run.ignored, run.stderr[-3000:]
+    assert run.returncode == EX_OK, run.stderr[-3000:]
+    # One line, and no line of a close: the sync still wrote when the stop
+    # would have checkpointed.
+    assert run.lines == [
+        f"creche-memory: a task of the store loop still ran {STOP_TIMEOUT_S:.0f} s after the "
+        "stop. The graph database stays open until the service exits. "
+        "The next start replays its WAL."
+    ], run.stderr[-3000:]
+    assert not run.group_left
+    graph_file = store / "system" / "databases" / GRAPH_NAME
+    # The next open replays the WAL. A statement is whole or absent.
+    rows = count_rows(graph_file, "F")
+    assert rows >= run.committed
+    assert rows % STUBBORN_ROWS == 0
 
 
 def _probe(conn: ladybug.Connection) -> object:

@@ -109,6 +109,11 @@ def stop_store(loop: StoreLoop, syncing: Future[Dead | None] | None) -> int:
        closed: it never opened.
     4. Stop the loop.
 
+    A task that still runs `STOP_TIMEOUT_S` after its cancel can still send
+    statements, a checkpoint among them. A checkpoint or a close of the stop
+    could then follow a failed checkpoint of that task. So the stop then
+    writes nothing: the database stays open, and step 4 freezes the task.
+
     The close has no deadline of its own. `TimeoutStopSec` of the unit
     bounds the whole stop (`systemd/creche-memory.service`)."""
     status = EX_OK
@@ -116,9 +121,12 @@ def stop_store(loop: StoreLoop, syncing: Future[Dead | None] | None) -> int:
         status = ended(syncing, 0.0)
 
     if not loop.cancel():
-        _say(f"a task of the store loop still ran {STOP_TIMEOUT_S:.0f} s after the stop.")
-
-    if status != EX_CONFIG:
+        _say(
+            f"a task of the store loop still ran {STOP_TIMEOUT_S:.0f} s after the stop. "
+            "The graph database stays open until the service exits. "
+            "The next start replays its WAL."
+        )
+    elif status != EX_CONFIG:
         try:
             closed = loop.spawn(close_cognee_graph()).result()
         except Exception as error:
