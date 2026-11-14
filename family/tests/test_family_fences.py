@@ -353,6 +353,23 @@ def test_the_platform_family_holds_a_second_token_server(grant: object) -> None:
     assert not errors(report), messages(report)
 
 
+def test_a_second_token_server_never_grants_the_merge_through_all() -> None:
+    """Rule 7 follows the token like rule 1. A second server of the token that
+    declares the merge must not grant it to a family inside the fence."""
+    index = index_with(git_platform(MERGE_ENTRY))
+    report = _check_against(index, "code", tools={GIT_PLATFORM: "all"})
+
+    assert "never granted" in messages(report)
+    assert f"tools.{GIT_PLATFORM}" in {issue.loc for issue in errors(report)}
+
+
+def test_a_second_token_server_never_grants_the_merge_by_name() -> None:
+    index = index_with(git_platform(MERGE_ENTRY))
+    report = _check_against(index, "code", tools={GIT_PLATFORM: ["fetch", MERGE]})
+
+    assert f"tools.{GIT_PLATFORM}[1]" in {issue.loc for issue in errors(report)}
+
+
 def test_the_platform_server_is_fenced_with_no_token() -> None:
     """A file of `github-platform` that names no token still fails closed:
     the name fences it too."""

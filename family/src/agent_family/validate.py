@@ -266,11 +266,9 @@ def _check_withheld(
     branch protection, so a family holding the platform server's merge could land
     a registry change, its own grants included, that `caregiver` then applies.
     `all` is checked through its expansion: a server file that declares the
-    merge again must not re-grant it quietly. The rule names `PLATFORM_SERVER`
-    only, because the withheld tools are tools of that server."""
-    if server != PLATFORM_SERVER:
-        return
-
+    merge again must not re-grant it quietly. The rule follows the token like
+    rule 1: `_check_platform` calls it for each server it fences, so a second
+    server of the token does not re-grant the merge either."""
     reason = "a platform change lands only when the operator merges it (§5.5 rule 7)"
     if family.grants_all(server):
         for tool in index.granted_tools(family, server):

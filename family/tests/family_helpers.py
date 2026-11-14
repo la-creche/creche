@@ -181,8 +181,11 @@ shared_secrets = [
 """
 
 
-def git_platform() -> McpServerFile:
-    server, issues = parse_server(_GIT_PLATFORM_TEXT, Markup.TOML)
+def git_platform(*extra_tools: dict[str, Any]) -> McpServerFile:
+    """`git-platform`, with each entry of `extra_tools` added to its tools."""
+    body = tomllib.loads(_GIT_PLATFORM_TEXT)
+    body["tools"] = [*body["tools"], *extra_tools]
+    server, issues = parse_server(toml_text(body), Markup.TOML)
     assert server is not None, issues
     return server
 
