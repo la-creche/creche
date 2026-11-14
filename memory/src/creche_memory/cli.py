@@ -18,6 +18,7 @@ loop and is not a verdict on the database, such as a worker that did not
 start, a lock that another opener holds, or a full disk. systemd restarts
 the unit, and the check at the next start decides."""
 
+import os
 import signal
 import sys
 import threading
@@ -112,7 +113,13 @@ def stop_store(loop: StoreLoop, syncing: Future[Dead | None] | None) -> int:
     A task that still runs `STOP_TIMEOUT_S` after its cancel can still send
     statements, a checkpoint among them. A checkpoint or a close of the stop
     could then follow a failed checkpoint of that task. So the stop then
-    writes nothing: the database stays open, and step 4 freezes the task.
+    writes nothing and ends the process at once (`os._exit`). The task gets
+    no further statement, and the database stays open until the exit. The
+    next start replays its WAL. A normal exit would wait: Python joins
+    Cognee's query threads at the exit. And on Linux the end of the loop
+    thread sends SIGTERM to the graph worker (`PR_SET_PDEATHSIG`), and
+    Cognee answers a dead worker with a new one, which opens the database
+    again.
 
     The close has no deadline of its own. `TimeoutStopSec` of the unit
     bounds the whole stop (`systemd/creche-memory.service`)."""
@@ -126,7 +133,10 @@ def stop_store(loop: StoreLoop, syncing: Future[Dead | None] | None) -> int:
             "The graph database stays open until the service exits. "
             "The next start replays its WAL."
         )
-    elif status != EX_CONFIG:
+        sys.stdout.flush()
+        os._exit(status)
+
+    if status != EX_CONFIG:
         try:
             closed = loop.spawn(close_cognee_graph()).result()
         except Exception as error:

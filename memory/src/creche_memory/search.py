@@ -94,7 +94,11 @@ class Searcher:
 
 
 class StoreLoop:
-    """One asyncio loop in one thread. Every call into Cognee runs here."""
+    """One asyncio loop in one thread. Every call into Cognee runs here.
+
+    Cognee starts its graph worker from this thread. On Linux the worker
+    gets SIGTERM when this thread ends (`PR_SET_PDEATHSIG`), so `stop` comes
+    after the close of the graph database."""
 
     def __init__(self) -> None:
         self._loop = asyncio.new_event_loop()

@@ -274,7 +274,8 @@ class StopInAWrite:
     lines: list[str]
     #: The rows that a checkpoint had made durable before the SIGTERM.
     committed: int
-    #: Whether a process of the child's group still ran after the child's exit.
+    #: Whether a process of the child's group still ran `GROUP_END_S` after
+    #: the child's exit.
     group_left: bool
     #: Whether the sync ignored its first cancel.
     ignored: bool
@@ -288,6 +289,25 @@ def _group_alive(pgid: int) -> bool:
         return False
 
     return True
+
+
+#: How long a process that the main process started may outlive it. The
+#: resource tracker of `multiprocessing` ends only when it reads the end of
+#: its pipe, and that comes with the exit of the main process.
+GROUP_END_S = 10.0
+
+
+def group_left(pgid: int) -> bool:
+    """Whether a process of the group `pgid` still runs `GROUP_END_S` after
+    the exit of its main process."""
+    deadline = time.monotonic() + GROUP_END_S
+    while _group_alive(pgid):
+        if time.monotonic() >= deadline:
+            return True
+
+        time.sleep(0.05)
+
+    return False
 
 
 def stop_in_a_checkpoint(
@@ -326,7 +346,7 @@ def stop_in_a_checkpoint(
         time.sleep(delay_s)
         writer.send_signal(signal.SIGTERM)
         out, err = writer.communicate(timeout=120)
-        left = _group_alive(writer.pid)
+        left = group_left(writer.pid)
     finally:
         # systemd kills what is left of the unit after the main process.
         if _group_alive(writer.pid):

@@ -22,6 +22,7 @@ from creche_memory.search import STOP_TIMEOUT_S, StoreLoop
 from creche_memory.sync import Syncer
 from memory_graph_helpers import (
     GRAPH_NAME,
+    group_left,
     held_open,
     kill_graph,
     ladybug_check,
@@ -132,15 +133,6 @@ def _start(root: Path) -> subprocess.Popen[str]:
     )
 
 
-def _group_alive(pgid: int) -> bool:
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return False
-
-    return True
-
-
 def _graph_file(root: Path) -> Path:
     return root / "store" / "system" / "databases" / GRAPH_NAME
 
@@ -171,7 +163,7 @@ def test_the_service_serves_a_read_and_stops_on_sigterm(host: Path) -> None:
     lines = [one for one in err.splitlines() if one.startswith("creche-memory: ")]
     assert len(lines) == 1, err[-2000:]
     assert lines[0].startswith("creche-memory: The graph database closed in ")
-    assert not _group_alive(service.pid)
+    assert not group_left(service.pid)
     assert side_files(_graph_file(host)) == ()
 
 
