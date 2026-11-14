@@ -232,11 +232,12 @@ LOCAL_HOUR_MAX: Final = 23
 # `fences.py` reads them from the site file. Minor 18 drops the allowed
 # mount roots with `files` (decision CH10-10).
 
-#: Contract 01 §5.5 rule 1: the secret key of the platform token. Each server
-#: whose `run.env` names `secret:` and this key is inside the platform fence,
-#: whatever its name, for example `git-platform`. A new server of the token
-#: is thus fenced with no change here. `validate.py` also fences
-#: `PLATFORM_SERVER` by its name.
+#: Contract 01 §5.5 rule 1, read to follow the token: the secret key of the
+#: platform token. Each server whose `run.env` names `secret:` and this key is
+#: inside the platform fence, whatever its name, for example `git-platform`. A
+#: new server of the token is thus fenced with no change here. `validate.py`
+#: also fences `PLATFORM_SERVER` by its name. The contract names only
+#: `github-platform`: see the CONTRACT-QUESTION at `_check_platform`.
 PLATFORM_SECRET: Final = "github_token_platform"
 
 #: Contract 01 §5.5 rule 7: the platform's own GitHub server, and the tools no
