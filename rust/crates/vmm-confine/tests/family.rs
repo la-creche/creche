@@ -15,12 +15,13 @@ use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use creche_vmm_confine::family::{
-    EGRESS_CAP, FamilyError, FamilyRoot, READ_TRIES, REPOS_CAP, RETRY_PAUSE, ReachFault, SHAPE_CAP,
-    ShapeFault, StateFault, StateRead,
+    EGRESS_CAP, FamilyError, FamilyRoot, GIT_PLATFORM_CAP, READ_TRIES, REPOS_CAP, RETRY_PAUSE,
+    ReachFault, SHAPE_CAP, ShapeFault, StateFault, StateRead,
 };
 use creche_vmm_store::layout::RootError;
 use creche_wire::{
-    FAMILY_STATE_CAP, FamilyEgress, FamilyName, FamilyRepos, FamilyShape, FamilyStateReply,
+    FAMILY_STATE_CAP, FamilyEgress, FamilyGitPlatform, FamilyName, FamilyRepos, FamilyShape,
+    FamilyStateReply,
 };
 use serde_json::{Value, json};
 
@@ -28,6 +29,7 @@ const SHAPE: &str = r#"{"cpus":2,"flavor":"base","memory_mib":2048}"#;
 const BIGGER: &str = r#"{"cpus":4,"flavor":"python","memory_mib":8192}"#;
 const EGRESS: &str = r#"{"hosts":[{"host":"github.com","port":443}]}"#;
 const REPOS: &str = r#"{"repos":["chaperone","creche"]}"#;
+const GIT_PLATFORM: &str = r#"{"fetch":false,"push":true}"#;
 
 // Each helper with `cfg(test)` may unwrap (rust/clippy.toml).
 
@@ -724,6 +726,17 @@ fn the_repos_cap_matches_the_wire_vectors() {
     assert_eq!(family_vectors()["repos_cap"], json!(REPOS_CAP));
 }
 
+/// caregiver writes `git-platform.json` with no refusal of its own,
+/// because each grant fits the cap. The two sides read one value from
+/// `vectors/family.json` of the wire crate, as for `repos_cap`.
+#[test]
+fn the_git_platform_cap_matches_the_wire_vectors() {
+    assert_eq!(
+        family_vectors()["git_platform_cap"],
+        json!(GIT_PLATFORM_CAP)
+    );
+}
+
 /// `vectors/family.json` of the wire crate: the caps that the vmm and
 /// caregiver share. The file holds no other key.
 #[cfg(test)]
@@ -731,7 +744,7 @@ fn family_vectors() -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../wire/vectors/family.json");
     let file: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     let keys: Vec<&String> = file.as_object().unwrap().keys().collect();
-    assert_eq!(keys, ["egress_cap", "repos_cap"]);
+    assert_eq!(keys, ["egress_cap", "git_platform_cap", "repos_cap"]);
     file
 }
 
@@ -872,4 +885,86 @@ fn read_repos_refuses_past_its_cap() {
     write_repos(&root, &format!("{at_cap} "));
     let read = root.families().read_repos(&code());
     assert!(matches!(read, Err(ReachFault::TooLarge)), "{read:?}");
+}
+
+/// Writes `git-platform.json` of the family `code`.
+#[cfg(test)]
+fn write_git_platform(root: &Root, text: &str) -> PathBuf {
+    fs::create_dir_all(root.0.join("code")).unwrap();
+    let path = root.0.join("code/git-platform.json");
+    fs::write(&path, text).unwrap();
+    path
+}
+
+#[test]
+fn read_git_platform_reads_the_grant() {
+    let root = Root::new("git-platform");
+    write_git_platform(&root, GIT_PLATFORM);
+    let read = root.families().read_git_platform(&code()).unwrap();
+    assert_eq!(
+        read,
+        FamilyGitPlatform {
+            fetch: false,
+            push: true
+        }
+    );
+}
+
+/// An absent family dir and an absent file both grant nothing (decision
+/// CH3), with no wait.
+#[test]
+fn an_absent_git_platform_file_grants_nothing() {
+    let root = Root::new("git-platform-absent");
+    let families = root.families();
+    assert_eq!(
+        families.read_git_platform(&code()).unwrap(),
+        FamilyGitPlatform::default()
+    );
+    fs::create_dir_all(root.0.join("code/config")).unwrap();
+    assert_eq!(
+        families.read_git_platform(&code()).unwrap(),
+        FamilyGitPlatform {
+            fetch: false,
+            push: false
+        }
+    );
+}
+
+/// The byte read takes the bytes as the one of `repos.json` does, with
+/// the cap `GIT_PLATFORM_CAP`. A symlink, a bad grant and a file past the
+/// cap are each refused.
+#[test]
+fn read_git_platform_bytes_compares_bytes_and_refuses() {
+    let root = Root::new("git-platform-bytes");
+    let families = root.families();
+    let path = write_git_platform(&root, GIT_PLATFORM);
+    let first = families.read_git_platform_bytes(&code()).unwrap();
+    fs::write(&path, format!("{GIT_PLATFORM}\n")).unwrap();
+    let second = families.read_git_platform_bytes(&code()).unwrap();
+    assert_ne!(second, first);
+    assert_eq!(second.list().unwrap(), first.list().unwrap());
+
+    let cap = usize::try_from(GIT_PLATFORM_CAP).unwrap();
+    let at_cap = format!("{GIT_PLATFORM}{}", " ".repeat(cap - GIT_PLATFORM.len()));
+    write_git_platform(&root, &at_cap);
+    assert!(families.read_git_platform(&code()).is_ok());
+    write_git_platform(&root, &format!("{at_cap} "));
+    let read = families.read_git_platform(&code());
+    assert!(matches!(read, Err(ReachFault::TooLarge)), "{read:?}");
+
+    for text in [r#"{"fetch":true}"#, r#"{"fetch":1,"push":1}"#, ""] {
+        write_git_platform(&root, text);
+        let read = families.read_git_platform(&code());
+        assert!(
+            matches!(read, Err(ReachFault::NotValid)),
+            "{text}: {read:?}"
+        );
+    }
+
+    fs::remove_file(&path).unwrap();
+    let other = root.0.join("other.json");
+    fs::write(&other, GIT_PLATFORM).unwrap();
+    symlink(&other, &path).unwrap();
+    let read = families.read_git_platform(&code());
+    assert!(matches!(read, Err(ReachFault::NotFile)), "{read:?}");
 }

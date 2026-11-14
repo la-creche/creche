@@ -165,6 +165,14 @@ file would pass the cap. `caregiver/tests/test_reach_files.py` holds its
 `EGRESS_CAP` equal to the same file. Change the value in all three places
 together.
 
+The file also holds `git_platform_cap`, the most bytes of
+`git-platform.json` that the vmm reads (decision CH3). The vmm defines it
+as `GIT_PLATFORM_CAP` in the same `family.rs`, and
+`the_git_platform_cap_matches_the_wire_vectors` holds the two equal.
+caregiver has no copy. Each grant renders to at most 38 bytes, and
+`caregiver/tests/test_reach_files.py` reads `git_platform_cap` from the
+file to hold that bound.
+
 The file also holds `repos_cap`, the most bytes of `repos.json` that the
 vmm reads (decision CH73 rule 2). The vmm defines it as `REPOS_CAP` in
 the same `family.rs`, and `the_repos_cap_matches_the_wire_vectors` holds
@@ -423,6 +431,32 @@ it for each clone on host port 1103. No route reaches the type.
    caregiver (plan PR C2) refuse it before any file is written (decision
    CH73 rule 3, Known gap 4).
 
+### The git platform grant file
+
+`FamilyGitPlatform` is the file `git-platform.json`
+(`FAMILY_GIT_PLATFORM_FILE`) in each family dir, beside `repos.json`
+(decision CH3, phase 12 PR2). caregiver writes it from the grant
+`tools.git-platform` of the family file, and the vmm reads it for each
+request on host port 1105. No route reaches the type.
+
+1. The file is `{fetch: bool, push: bool}`. A grant of `all` sets both.
+2. A family with no grant gets `{fetch: false, push: false}`. An absent
+   file grants nothing too.
+3. The vmm binds 1105 only for a file that sets one of the two, or that
+   is present and does not read. A get needs `fetch`, and a put needs
+   `push`.
+
+## The spool link
+
+Host port 1105 carries the git platform spool (decision CH3). It is not
+a JSON link: one request line, one reply line and the raw bytes of one
+git bundle. `rust/crates/wire/src/spool.rs` holds the protocol, the
+caps, the reason words and `BundleId`, as plain Rust with no serde and no
+schema entry (decision CH14). The vmm serves it in
+`rust/crates/vmm/src/spool.rs`, and the guest side reads the module doc
+of `spool.rs` of this crate. `BUNDLE_CAP` equals the cap of the
+`git-platform` upstream, 64 MiB.
+
 ## A route error on the wire
 
 Each route has a typed error (decision CH26 rule 4). A caller matches it on
@@ -551,8 +585,8 @@ key or an added route too, because the match of the number is exact.
    deleted and written again fails too.
 6. A change of a type that no route reaches needs no new number:
    `FamilyStateReply`, `TurnEvent`, `ControlHello`, `ControlCommand`,
-   `GuestEvent`, `FamilyShape`, `FamilyEgress`, `FamilyRepos` and the
-   types that only they reach. A change of a `description` needs none either.
+   `GuestEvent`, `FamilyShape`, `FamilyEgress`, `FamilyRepos`,
+   `FamilyGitPlatform` and the types that only they reach. A change of a `description` needs none either.
 
 ## The vsock JSON links
 
@@ -613,8 +647,9 @@ line.
    reads each turn event strictly. A refused line closes the link, and
    guest init then kills the facade (decisions CH32 rule 7 and CH62 rule
    11). An event that comes while no control link is open is dropped,
-   with no buffer. No guest init is deployed yet, so these new lines keep
-   `GUEST_INIT_PROTOCOL` at 1 (rule 7).
+   with no buffer. No guest init was deployed when these lines came, so
+   they kept `GUEST_INIT_PROTOCOL` at 1 (rule 7). Protocol 2 adds host
+   port 1105, so each snapshot of protocol 1 cold-boots (decision CH14).
 
 ## Change a wire type
 

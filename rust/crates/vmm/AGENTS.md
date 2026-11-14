@@ -84,7 +84,10 @@ component of this repository") holds its rules. In short:
    Then `guest_init::write_initramfs` writes the one guest init
    initramfs of this vmm start (see "The guest init initramfs"). Then
    `FaultBook::start` clears every fault file (contract 05 §3.3.1 rule
-   8), and `Rows::open` loads the rows.
+   8), and `Rows::open` loads the rows. `SpoolRoot::sweep_push` removes
+   each bundle of `push/` of the git platform spool, because no VM runs
+   yet (decision CH3). A failed sweep writes one stderr line and blocks
+   no start.
 3. The digest store, the session disks, the spawner, `ChTools` and one
    `ColdBoot`. The vmm reads its own unit with `VmmUnit::of_self`
    (decision CH60 rule 1, no config key). In no service unit of a user
@@ -225,6 +228,7 @@ A fault names the key and never the value, as in `env/AGENTS.md`.
 | `VMM_EGRESS_LOG` | `${AGENT_OPERATOR_HOME}/.local/state/creche-vmm-egress.jsonl` | `egress::log::Log`, the JSONL log of host port 1104 (decision CH69 rule 10) |
 | `VMM_MIRROR_ROOT` | `/srv/agents/code` | `mirror::Mirror::root`, the mirror of host port 1103 (decision CH69 rule 17, fact 13) |
 | `VMM_GIT_PROGRAM` | `/usr/bin/git` | `mirror::Mirror::git`, the `upload-pack` of each clone (decisions CH67 rule 1, CH69 rule 17) |
+| `VMM_GIT_SPOOL_ROOT` | `/var/lib/creche-git-platform` | `StartConfig::spool`, the git platform spool of host port 1105, and the sweep of its `push/` at each start (decision CH3) |
 
 Each path is absolute with no `..` component. The run root holds no
 `:`, because systemd joins the paths of more than one
@@ -833,19 +837,21 @@ connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
    `net` types. `copy_bidirectional` needs the tokio feature `io-util`,
    which adds a lock entry, so the vmm does not use it.
 5. `Vm::listeners` holds the bridges, the family-state reply and the
-   follow, which holds the mirror and the egress proxy (see "The edit
-   follow"). The drop of the entry, when the VM leaves the table, ends
+   follow, which holds the mirror, the egress proxy and the spool (see
+   "The edit follow"). The drop of the entry, when the VM leaves the table, ends
    each listener task and each open splice. A VM that the vmm killed
    drops them at the kill.
 6. The deny check gets 1100, the ports of `Upstreams::rows`, 1103 for
-   a family with a clone list and 1104 for a family with egress as its
-   bound set, so a listener of any other port fails it (decisions CH6-3,
-   CH49 rule 3, CH69 rule 13).
+   a family with a clone list, 1104 for a family with egress and 1105
+   for a family with the git platform grant as its bound set, so a
+   listener of any other port fails it (decisions CH3, CH6-3, CH49 rule
+   3, CH69 rule 13).
 7. A full row holds 129 fds: its listener and two streams per splice.
    `planes::fd_need` is that for both rows of all `SLOTS` (64), plus a
    headroom of 4096: 20608. `vmm serve` raises its soft `RLIMIT_NOFILE`
-   to it plus `family_state::fd_need`, `mirror::fd_need` and
-   `proxy::fd_need` after its start checks and before it serves (step 4
+   to it plus `family_state::fd_need`, `mirror::fd_need`,
+   `proxy::fd_need` and `spool::fd_need` after its start checks and
+   before it serves (step 4
    of "The compose step", see also "The family-state reply", "The git
    mirror" and "The egress proxy"), and a
    hard limit below the sum exits 78
@@ -967,8 +973,9 @@ and removes it after each edit (see "The edit follow").
 9. `proxy::fd_need` counts per slot the listener, and per link its
    stream and 4 more fds (the family dir and `egress.json` of the read, a
    resolver socket, the upstream socket): 321 per slot, 20544 for all
-   `SLOTS`. With the 1103 need of "The git mirror", the raised soft
-   limit is 102720 (decision CH69 rule 14).
+   `SLOTS`. With the 1103 need of "The git mirror" and the 1105 need of
+   "The git platform spool", the raised soft limit is 103552 (decision
+   CH69 rule 14).
 
 `src/egress/log.rs` writes the log of `VMM_EGRESS_LOG` (decisions CH6-4,
 CH69 rules 10 and 24). The compose step opens it at the start, for
@@ -1064,8 +1071,8 @@ removes it after each edit (see "The edit follow").
 10. `mirror::fd_need` counts per slot the listener, and per link its
     stream and 7 more fds (the spawn holds both ends of two pipes,
     `/dev/null` and both ends of the exec pipe of std): 513 per slot,
-    32832 for all `SLOTS`. The raised soft limit is 102720 (decision
-    CH69 rule 14, Known gap 28).
+    32832 for all `SLOTS`. The raised soft limit is 103552 with the 1105
+    need (decision CH69 rule 14, Known gap 28).
 
 `tests/mirror.rs` runs the mirror on a real Unix socket over a scratch
 family root and a scratch mirror of real repos. A forward in the test
@@ -1088,17 +1095,86 @@ the bind at a restore. Its test
 binary as a child: a clone on a list that does not read gets `DENIED`
 and one stderr line that names `not_valid` (decision CH73 rule 1).
 
+## The git platform spool
+
+`src/spool.rs` serves the git platform spool on host port 1105 (decision
+CH3, phase 12 PR2). `creche_wire::spool` (`rust/crates/wire/src/spool.rs`)
+holds the protocol that the guest side reads: one `put <size>` or `get
+<id>` line, one `ok` or `err <reason>` line, and the raw bundle bytes. CH
+connects each dial to `vsock.sock_1105` (decision CH24). The vmm binds it
+only for a family whose `git-platform.json` grants `fetch` or `push`, or
+is present and does not read, as for 1103 (decision CH73 rule 1). On a
+running VM the follow binds and removes it after each edit (see "The edit
+follow").
+
+1. `spool::bind` binds the listener beside the plane listeners, with
+   their lifecycle: after `link_vm` and `remove_stale`, before CH starts,
+   for a cold boot and for each restore.
+2. Each link reads one request line within `LINE_WAIT` (10 s), at most
+   `LINE_CAP` (128) bytes. The read takes no byte past the LF. Every
+   other line gets `err bad_request`.
+3. Each request reads `git-platform.json` again. A put needs `push` and
+   a get needs `fetch`, or it gets `err not_granted`. A file that does
+   not read grants nothing.
+4. A put past `BUNDLE_CAP` (64 MiB, the cap of the upstream) gets `err
+   too_large` before any file is made. A put writes `push/.<id>.part`
+   through `creche_vmm_confine::spool`, then renames it to `push/<id>`
+   with the mode 0640, and answers `ok <id>`. A put that ends early or
+   passes `BODY_WAIT` (120 s) gets `err short_body`, and its file goes.
+5. Each id is `<family>-<ulid>.bundle`, and its family is the family of
+   the VM, never a value of the guest bytes. A get of a malformed id gets
+   `err bad_id`, of another family `err other_family`, and of no file
+   `err not_found`. A good get answers `ok <size>`, then the bytes of
+   `fetch/<id>`, within `BODY_WAIT`.
+6. The vmm removes what it wrote in `push/`. The upstream copies a
+   bundle before it pushes, so a bundle is no longer needed once the
+   `push` tool returns. The vmm cannot see that call, so:
+   1. Each put removes the bundles of its VM older than `PUSH_TTL` (15
+      minutes, the TTL of `fetch/`), then the oldest past `PUSH_KEEP`
+      (2). One VM holds at most `PUSH_KEEP` + `LINK_CAP` bundles.
+   2. The end of the VM removes each bundle that it put: the drop of the
+      last link and the listener.
+   3. Each start of `vmm serve` removes each bundle and temporary file of
+      `push/` (see "The compose step").
+   The upstream removes each file of `fetch/` after its TTL. The vmm
+   never writes there.
+7. A refused or faulted request writes one stderr line that names the
+   family, the session and the reason, at most `NOTE_CAP` (100) per
+   `NOTE_WINDOW` (10 s) for one VM, with the counter of the mirror. A
+   good request writes none.
+8. At most `LINK_CAP` (4) links. A link past the cap is accepted and
+   closed at once. A failed accept is logged by kind, then the loop
+   pauses `ACCEPT_PAUSE` (decision CH40 rule 1). The links that drain
+   after `Server::close` count against the cap of `Draining::reopen`
+   (decision CH74 rule 2).
+9. A link sets no `last_use` and blocks no snapshot, as on 1103 (decision
+   CH69 rule 20).
+10. `spool::fd_need` counts per slot the listener, and per link its
+    stream and 2 more fds (a folder and a file): 13 per slot, 832 for all
+    `SLOTS`. The raised soft limit is 103552.
+
+`tests/spool.rs` runs the spool on a real Unix socket over a scratch
+family root and a scratch spool: a put and the name and the mode of its
+file, a put of many chunks, a put past the cap and a short put that each
+leave no file, the grant of each request, a get, a get of another family,
+of a missing id and of a malformed id, each bad request line,
+`PUSH_KEEP`, the removal at the drop of `Server`, a reopen, the link cap
+and the fd need. `tests/start.rs` proves the bound set with the grant, an
+absent file, a grant of neither tool and a bad file, the bind at a
+restore, and an edit that binds 1105 and a removal that removes it.
+
 ## The edit follow
 
-`src/egress/watch.rs` follows `egress.json` and `repos.json` of the
-family on each running VM (plan PR E3, decisions CH6-3, CH49 rules 3
+`src/egress/watch.rs` follows `egress.json`, `repos.json` and
+`git-platform.json` of the family on each running VM (plan PR E3, decisions CH6-3, CH49 rules 3
 and 4, CH69 rules 11, 12, 13 and 28, CH72 rule 3, CH73 rule 1, CH74
 rules 1 and 2). The start commits the VM with one `Watch`, a task that
 starts from the reading of the launch, so an edit since the launch acts
 at the first poll.
 
-1. Every `POLL` (2 s) the task reads the bytes of both files with
-   `FamilyRoot::read_repos_bytes` and `FamilyRoot::read_egress_bytes`,
+1. Every `POLL` (2 s) the task reads the bytes of each file with
+   `FamilyRoot::read_repos_bytes`, `FamilyRoot::read_egress_bytes` and
+   `FamilyRoot::read_git_platform_bytes`,
    in `spawn_blocking` (decisions CH36 G21, CH69 rule 11). The task
    compares bytes (`Reach::same`). Bytes equal to the last ones change
    nothing and run no check. New bytes are a new reading, also when
@@ -1107,10 +1183,11 @@ at the first poll.
    takes no bytes (a symlink, a file that is not regular, a file past
    its cap, an error) has nothing to compare, so it is a new reading at
    each poll. The task reads the list of the bytes only to bind.
-2. A new reading binds or removes the listeners of 1103 and 1104 by
-   the rule of the start, `Reach::mirror` and `Reach::egress`: a list
-   that holds an entry binds, and so does a present file that does not
-   read. An absent file or an empty list binds none. A new listener
+2. A new reading binds or removes the listeners of 1103, 1104 and 1105
+   by the rule of the start, `Reach::mirror`, `Reach::egress` and
+   `Reach::spool`: a list that holds an entry or a grant of a tool binds,
+   and so does a present file that does not read. An absent file, an
+   empty list or a grant of neither tool binds none. A new listener
    gets the server of the start (`mirror::Bound::serve`,
    `proxy::Bound::serve`). A removed listener closes with
    `Server::close`, and then its socket file goes, so no new link
@@ -1805,7 +1882,7 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
     `vmm.env` that `bin/fleet-up up` writes must hold them before this
     vmm starts on a host, or the start exits 78. Root must own the file
     of `VMM_GIT_PROGRAM` (`/usr/bin/git` of Ubuntu). The hard
-    `RLIMIT_NOFILE` of the user unit must hold 102720 (decision CH67
+    `RLIMIT_NOFILE` of the user unit must hold 103552 (decision CH67
     rule 4, plan risk 3).
 11. Closed by plan PR E3 (decision CH69 rules 11 and 13): plan PR M1
     binds 1103 at each boot and each restore from the clone list of that

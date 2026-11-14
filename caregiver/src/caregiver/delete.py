@@ -37,7 +37,7 @@ def delete_family(
        with no table for it. The table carries the digest of the token, so
        its removal revokes the token.
     3. The family files: `creds.json`, `egress.json`, `repos.json`,
-       `config/` and the webhook bearers. A create of a session for a
+       `git-platform.json`, `config/` and the webhook bearers. A create of a session for a
        family with no `config/` is refused (decision CH33 rule 3).
     4. The drop of every session of the family on the vmm (decisions
        CH21-10, CH33 rule 3).
@@ -60,6 +60,7 @@ def delete_family(
     # §6.1.1 rule 7, decision CH69 rule 23).
     paths.egress_path(state_root, family_name).unlink(missing_ok=True)
     paths.repos_path(state_root, family_name).unlink(missing_ok=True)
+    paths.git_platform_path(state_root, family_name).unlink(missing_ok=True)
     config = paths.config_dir(state_root, family_name)
     if config.exists():
         shutil.rmtree(config)

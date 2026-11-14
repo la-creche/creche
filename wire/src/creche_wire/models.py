@@ -1292,6 +1292,32 @@ class FamilyEgress(BaseModel):
     ]
 
 
+class FamilyGitPlatform(BaseModel):
+    """
+    The git platform grant of one family: the file
+    `FAMILY_GIT_PLATFORM_FILE` (decision CH3). caregiver writes it from the
+    grant `tools.git-platform` of the family file. A grant of `all` grants
+    both. The vmm binds host port 1105, the spool of `spool`, only for a
+    file that grants one of the two, and it reads the file again for each
+    request. A get needs `fetch`, and a put needs `push`.
+
+    No route reaches the type, so it needs no new `HOST_API_PROTOCOL`
+    (decision CH33 rule 8).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    fetch: Annotated[
+        StrictBool,
+        Field(description="The family may get a bundle of the `fetch` tool of the upstream."),
+    ]
+    push: Annotated[
+        StrictBool,
+        Field(description="The family may put a bundle for the `push` tool of the upstream."),
+    ]
+
+
 class FamilyMemoryMib(RootModel[StrictInt]):
     root: Annotated[
         StrictInt,

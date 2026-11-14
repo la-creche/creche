@@ -144,10 +144,23 @@ fn an_extra_listener_fails() {
     }
 }
 
+/// The spool listener of 1105 passes only when the vmm bound it for a
+/// family with the git platform grant (decision CH3).
+#[test]
+fn the_spool_listener_passes_only_when_bound() {
+    let fake = Fake::new("spool", BOOT);
+    fake.listen(&[HostPort::GitPlatformSpool]);
+    fake.check(&boot(), &[HostPort::GitPlatformSpool]).unwrap();
+    match fake.check(&boot(), &[]) {
+        Err(EgressAssertFailed::Extra(name)) => assert_eq!(name, "vsock.sock_1105"),
+        other => panic!("expected Extra, got {other:?}"),
+    }
+}
+
 #[test]
 fn a_listener_of_a_number_with_no_port_fails() {
     let fake = Fake::new("unknown", BOOT);
-    fs::write(fake.run.path().join("vsock.sock_1105"), "").unwrap();
+    fs::write(fake.run.path().join("vsock.sock_1106"), "").unwrap();
     assert!(matches!(
         fake.check(&boot(), &[]),
         Err(EgressAssertFailed::Extra(_))

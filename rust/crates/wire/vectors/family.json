@@ -1,4 +1,5 @@
 {
   "egress_cap": 65536,
+  "git_platform_cap": 256,
   "repos_cap": 4096
 }

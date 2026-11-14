@@ -43,6 +43,7 @@ use creche_vmm_confine::landlock::{HostPath, Start};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::mirror::MirrorRoot;
 use creche_vmm_confine::spawner::SpawnError;
+use creche_vmm_confine::spool::SpoolRoot;
 use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::{ChRemoteError, VmInfo};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
@@ -77,14 +78,18 @@ const TURN: &str =
 const STARTING: &str = r#"{"facade":{"starting":{"last_turn_end":null,"pid":42,"starts":1}}}"#;
 /// As `READY`, with the end of a turn that the row has not seen.
 const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","updated_at":1793577700000},"pid":42,"starts":1,"turn_running":false}}}"#;
-/// The listeners at the launch of a family with no egress and no clone
-/// list: 1100, 1101 and 1102, and no 1103 or 1104.
-const NO_EGRESS: [bool; 5] = [true, true, true, false, false];
+/// The listeners at the launch of a family with no egress, no clone list
+/// and no git platform grant: 1100, 1101 and 1102, and no 1103, 1104 or
+/// 1105.
+const NO_EGRESS: [bool; 6] = [true, true, true, false, false, false];
 /// The listeners at the launch of a family with egress and no clone list.
-const EGRESS_ONLY: [bool; 5] = [true, true, true, false, true];
+const EGRESS_ONLY: [bool; 6] = [true, true, true, false, true, false];
 /// The listeners at the launch of a family with a clone list and no
 /// egress.
-const REPOS_ONLY: [bool; 5] = [true, true, true, true, false];
+const REPOS_ONLY: [bool; 6] = [true, true, true, true, false, false];
+/// The listeners at the launch of a family with the git platform grant
+/// only (decision CH3).
+const SPOOL_ONLY: [bool; 6] = [true, true, true, false, false, true];
 /// The allowlist of a family with egress (decision CH49 rule 3).
 const EGRESS: &str = r#"{"hosts":[{"host":"github.com","port":443}]}"#;
 /// The clone list of a family with repos (decision CH69 rule 13).
@@ -169,9 +174,9 @@ struct Fake {
     /// Adds a `vsock.sock_<port>` listener of this port to each run dir,
     /// a port that the vmm does not bind.
     extra: Mutex<Option<u32>>,
-    /// For each launch: whether a dial of 1100, 1101, 1102, 1103 and 1104
-    /// connected at the launch, before CH would start.
-    listening: Mutex<Vec<[bool; 5]>>,
+    /// For each launch: whether a dial of 1100, 1101, 1102, 1103, 1104
+    /// and 1105 connected at the launch, before CH would start.
+    listening: Mutex<Vec<[bool; 6]>>,
     /// Fails each launch.
     fail: AtomicBool,
     /// Holds each launch until the test clears it.
@@ -223,7 +228,7 @@ impl Fake {
             args.push("--net".to_owned());
         }
         let run = launch.files().run_dir().path();
-        let listening = [1100, 1101, 1102, 1103, 1104].map(|port| {
+        let listening = [1100, 1101, 1102, 1103, 1104, 1105].map(|port| {
             let listener = run.join(format!("vsock.sock_{port}"));
             UnixStream::connect(listener).is_ok()
         });
@@ -489,6 +494,7 @@ impl Test {
                 root: MirrorRoot::new(dir.join("mirror")).unwrap(),
                 git: Program::new(PathBuf::from("/usr/bin/git")).unwrap(),
             },
+            spool: SpoolRoot::new(dir.join("spool")).unwrap(),
         };
         edit(&mut config);
 
@@ -2765,7 +2771,10 @@ fn a_family_with_repos_and_egress_binds_1103_and_1104() {
     fs::write(test.dir.join("families/chat/repos.json"), REPOS).unwrap();
     fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
     assert_eq!(test.start(0), Ok(()));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 5]]);
+    assert_eq!(
+        *test.fake.listening.lock().unwrap(),
+        [[true, true, true, true, true, false]]
+    );
     assert!(test.fault_codes().is_empty());
 }
 
@@ -2878,6 +2887,63 @@ fn a_restore_binds_1103_again() {
     assert_eq!(test.start(0), Ok(()));
     assert!(test.restored(1));
     assert_eq!(*test.fake.listening.lock().unwrap(), [REPOS_ONLY; 2]);
+}
+
+/// The git platform grant of a family with the `push` tool (decision
+/// CH3).
+const PUSH_GRANT: &str = r#"{"fetch":false,"push":true}"#;
+
+/// A family whose `git-platform.json` grants a tool gets 1105 at the
+/// launch, and the deny check names it (decision CH3).
+#[test]
+fn the_egress_check_names_1105_for_a_family_with_the_grant() {
+    let test = Test::new("spool-deny", |_| {});
+    fs::write(test.dir.join("families/chat/git-platform.json"), PUSH_GRANT).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [SPOOL_ONLY]);
+    assert_eq!(
+        listeners(&test, 0),
+        [
+            "vsock.sock_1100",
+            "vsock.sock_1101",
+            "vsock.sock_1102",
+            "vsock.sock_1105"
+        ]
+    );
+    assert!(test.fault_codes().is_empty());
+}
+
+/// An absent file and a grant of neither tool bind no 1105, and a present
+/// file that does not read binds it, as for 1103 (decisions CH3, CH73
+/// rule 1).
+#[test]
+fn only_a_grant_or_a_bad_file_binds_1105() {
+    let test = Test::new("spool-none", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let file = test.dir.join("families/chat/git-platform.json");
+    fs::write(&file, r#"{"fetch":false,"push":false}"#).unwrap();
+    assert_eq!(test.start(1), Ok(()));
+    fs::write(&file, "{").unwrap();
+    assert_eq!(test.start(2), Ok(()));
+    let listening = test.fake.listening.lock().unwrap().clone();
+    assert_eq!(listening, [NO_EGRESS, NO_EGRESS, SPOOL_ONLY]);
+    assert!(test.fault_codes().is_empty());
+}
+
+/// A restore binds 1105 again before CH starts, as each plane listener
+/// (decisions CH3, CH62 rule 14).
+#[test]
+fn a_restore_binds_1105_again() {
+    let test = Test::new("spool-restore", |_| {});
+    fs::write(test.dir.join("families/chat/git-platform.json"), PUSH_GRANT).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    test.snapshot(0, Some(&test.key()));
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(1));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [SPOOL_ONLY; 2]);
 }
 
 /// The listeners of a VM of a family with no egress and no clone list.
@@ -3107,6 +3173,31 @@ fn an_emptied_repos_list_removes_1103() {
     fs::write(&file, r#"{"repos":[]}"#).unwrap();
     test.follow(|| !test.listener(0, 1103).exists() || test.stopped(0));
     assert_eq!(listeners(&test, 0), PLANES);
+    assert!(test.runs_clean(0));
+}
+
+/// A grant on a running VM binds 1105 at the next poll, and the spool
+/// serves it: a get with no `fetch` grant gets `not_granted`. The removal
+/// of the file removes 1105 and its socket file, and the deny check
+/// without 1105 passes (decision CH3).
+#[test]
+fn a_grant_binds_1105_and_its_removal_removes_it() {
+    let test = Test::new("follow-spool", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(listeners(&test, 0), PLANES);
+    test.pause();
+    let file = test.dir.join("families/chat/git-platform.json");
+    fs::write(&file, PUSH_GRANT).unwrap();
+    test.follow(|| test.listener(0, 1105).exists());
+    let id = "chat-01JC9Z6A0B1C2D3E4F5G6H7J8K.bundle";
+    let answer = test.ask(0, 1105, format!("get {id}\n").as_bytes());
+    assert_eq!(answer, b"err not_granted\n");
+    assert!(test.runs_clean(0));
+
+    fs::remove_file(&file).unwrap();
+    test.follow(|| !test.listener(0, 1105).exists() || test.stopped(0));
+    assert_eq!(listeners(&test, 0), PLANES);
+    assert!(UnixStream::connect(test.listener(0, 1105)).is_err());
     assert!(test.runs_clean(0));
 }
 

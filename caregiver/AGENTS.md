@@ -7,7 +7,8 @@ family it:
 - mints the LiteLLM key and the chaperone token,
 - writes the table of the family in `policy.toml` and the family config
   directory,
-- writes `egress.json` and `repos.json`, which the vmm reads,
+- writes `egress.json`, `repos.json` and `git-platform.json`, which the
+  vmm reads,
 - generates the timers an autonomous family asks for,
 - asks the vmm to drop the sessions of a deleted family.
 
@@ -26,7 +27,7 @@ host where something has gone wrong.
 | `paths.py`, `clock.py`, `atomic.py` | every host path, the one timestamp, the atomic write and the JSON read |
 | `lan.py` | the LAN address from the site file |
 | `litellm_keys.py`, `credentials.py`, `config_mount.py` | the key, the token, the config directory |
-| `reach_files.py` | `egress.json` and `repos.json` beside the config directory (contract 01 §6.1.1) |
+| `reach_files.py` | `egress.json`, `repos.json` and `git-platform.json` beside the config directory (contract 01 §6.1.1) |
 | `vmm.py` | the one call this service makes to the vmm: the drop of a family (decisions CH20, CH21-10, CH25) |
 | `policy_file.py` | the types and the text of `policy.toml`, and `build_app` |
 | `policy_fleet.py` | one fragment per family, and the checked assembly of the one `policy.toml` |
@@ -61,7 +62,8 @@ host where something has gone wrong.
   exit code 1.
 - Credentials die before processes. `delete.py` removes the LiteLLM key,
   then the fragment of `policy.toml` and its table, then `creds.json`,
-  `egress.json`, `repos.json`, `config/` and the webhook bearers, then
+  `egress.json`, `repos.json`, `git-platform.json`, `config/` and the
+  webhook bearers, then
   asks the vmm to drop every session of the family, then removes the
   state directory (contract 05 §4.4, decisions CH21-10, CH33 rule 3, CH69
   rule 23). `test_delete.py` checks the order from inside the fake vmm.
@@ -105,6 +107,17 @@ host where something has gone wrong.
   under the 4 KiB `REPOS_CAP` of the vmm (decision CH73 rule 2), so the
   file has no refusal of its own. `test_reach_files.py` holds that bound
   with `repos_cap` of `rust/crates/wire/vectors/family.json`.
+- Each pass and `apply-once` also write `git-platform.json` of the
+  family, next to `repos.json` (decision CH3, phase 12 PR2). It is
+  `FamilyGitPlatform` of `creche-wire`: whether the grant
+  `tools.git-platform` names `fetch` and `push`. A grant of `all` names
+  both. A family with no grant gets `{"fetch": false, "push": false}`,
+  and the vmm then binds no spool listener on host port 1105. Mode, byte
+  compare and step name are those of `repos.json`. The file renders to at
+  most 38 bytes, under the 256-byte `GIT_PLATFORM_CAP` of the vmm, so it
+  has no refusal of its own. `test_reach_files.py` holds that bound with
+  `git_platform_cap` of `rust/crates/wire/vectors/family.json`. The
+  delete of a family removes it with the other reach files.
 - No secret on argv, in a URL or in a log line. The master key comes from
   `LITELLM_MASTER_KEY` in the environment.
 - Each verb that applies the registry (`serve`, `reconcile-once`,

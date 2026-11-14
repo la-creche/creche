@@ -21,7 +21,9 @@
 //!    lists a repo or does not read (plan PR M1, decisions CH69 rule 13,
 //!    CH73 rule 1), and the egress
 //!    proxy listener binds when `egress.json` of the family lists a host
-//!    (plan PR E2, decision CH49 rule 3). Then the kernel, the initramfs and the root disk
+//!    (plan PR E2, decision CH49 rule 3). The spool listener binds when
+//!    `git-platform.json` of the family grants `fetch` or `push` or does
+//!    not read (decision CH3). Then the kernel, the initramfs and the root disk
 //!    pass the store check (PR D6, decision CH44 rule 2), the session disk exists (PR D7, decision
 //!    CH21-4), the run dir `vm/<id>/` links to the slot of the start (PR
 //!    D16), `snapshots/` exists, and `sessions/<id>/serial.log` in the
@@ -32,15 +34,16 @@
 //!    ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8, CH30, CH55).
 //! 4. The plane bridges serve their listeners (`planes`), the
 //!    family-state reply serves its own (`family_state`), and so do the
-//!    mirror (`mirror`) and the egress proxy (`egress::proxy`). A restore
+//!    mirror (`mirror`), the egress proxy (`egress::proxy`) and the spool
+//!    (`spool`). A restore
 //!    only: `ch-remote info` must say `Paused`, the device check passes,
 //!    then `ch-remote resume` (decision CH50 rule 10).
 //! 5. The first `ControlReady` (plan PR L10). It clears the faults of the
 //!    family (contract 05 §3.3.1 rule 8).
 //! 6. The deny check (PR C8, decision CH6-3), with the family-state port,
-//!    the plane ports, and the mirror port and the egress port when each
-//!    one is bound, as the bound set (decisions CH49 rule 3, CH69 rule
-//!    13).
+//!    the plane ports, and the mirror port, the egress port and the spool
+//!    port when each one is bound, as the bound set (decisions CH3, CH49
+//!    rule 3, CH69 rule 13).
 //! 7. The dial of guest port 1201 (decision CH50 rule 2).
 //! 8. The VM joins the table, and the follow of its reach files starts
 //!    (`egress::watch`, plan PR E3, decisions CH49 rule 3, CH69 rules 11
@@ -85,6 +88,7 @@ use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::limits::VmLimits;
 use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
+use creche_vmm_confine::spool::SpoolRoot;
 use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::ChRemoteError;
 use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
@@ -121,6 +125,7 @@ use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
 use crate::shutdown::{Taken, VmSet};
 use crate::sleep::SERIAL_CAP;
+use crate::spool;
 use crate::stop::{VmProcess, stop};
 
 /// The mode of the run dir and the snapshots dir of a VM.
@@ -194,6 +199,8 @@ pub struct StartConfig {
     /// The mirror root and the `git` that the mirror of each VM runs
     /// (decision CH69 rule 17).
     pub mirror: Mirror,
+    /// The git platform spool of host port 1105 (decision CH3).
+    pub spool: SpoolRoot,
 }
 
 /// The start of a launch step. `Spawner` is the one of the vmm, and a
@@ -258,8 +265,9 @@ struct Vm<P> {
 /// The served host listeners of one VM: the plane bridges (plan PR V6),
 /// the family-state reply (plan PR V8), and the follow of the reach files
 /// (plan PR E3), which holds the mirror of a family with a clone list
-/// (plan PR M1) and the egress proxy of a family with a list (plan PR
-/// E2). The drop closes each one.
+/// (plan PR M1), the egress proxy of a family with a list (plan PR E2)
+/// and the spool of a family with the git platform grant (decision CH3).
+/// The drop closes each one.
 #[derive(Debug)]
 struct Listeners {
     _planes: Planes,
@@ -1797,6 +1805,9 @@ struct Booted<P> {
     /// whose list holds a host or does not read (decisions CH49 rule 3,
     /// CH72 rule 3).
     egress: Option<proxy::Bound>,
+    /// The spool listener, bound before CH started for a family whose
+    /// grant names `fetch` or `push` or does not read (decision CH3).
+    spool: Option<spool::Bound>,
 }
 
 /// Step 3: the link of `vm/<id>` to `slot`, the files of the boot, the
@@ -1841,6 +1852,14 @@ fn launch<L: Launcher>(
     };
     let egress = if reach.egress() {
         let bound = proxy::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
+        Some(bound)
+    } else {
+        None
+    };
+    // Decision CH3: the spool listener has the same lifecycle, for a
+    // family whose grant names `fetch` or `push` or does not read.
+    let spool = if reach.spool() {
+        let bound = spool::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
         Some(bound)
     } else {
         None
@@ -1923,6 +1942,7 @@ fn launch<L: Launcher>(
         reach,
         mirror,
         egress,
+        spool,
     })
 }
 
@@ -1992,6 +2012,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
                     booted.reach,
                     booted.mirror,
                     booted.egress,
+                    booted.spool,
                 ),
             ))
         })
@@ -2004,8 +2025,9 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let vsock = pending.run.vsock_socket();
         let link = self.control().replace(id);
         // A fault from here on drops `served`, which closes the bridges,
-        // the family-state listener, the mirror and the egress proxy.
-        let (planes, state, reach, mirror, egress) = bound;
+        // the family-state listener, the mirror, the egress proxy and the
+        // spool.
+        let (planes, state, reach, mirror, egress, spool) = bound;
         let families = &self.config.families;
         let served = planes.serve().and_then(|planes| {
             let family_state = state.serve(families.clone(), family.clone(), id.clone())?;
@@ -2019,12 +2041,19 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             let egress = egress
                 .map(|bound| bound.serve(families.clone(), family.clone(), id.clone(), log))
                 .transpose()?;
+            let spool = spool
+                .map(|bound| {
+                    let root = self.config.spool.clone();
+                    bound.serve(root, families.clone(), family.clone(), id.clone())
+                })
+                .transpose()?;
             Ok((
                 planes,
                 family_state,
                 Served {
                     mirror: mirror.into(),
                     egress: egress.into(),
+                    spool: spool.into(),
                 },
             ))
         });
@@ -2064,6 +2093,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             planes: self.config.planes,
             mirror: self.config.mirror.clone(),
             log: Arc::clone(&self.config.egress_log),
+            spool: self.config.spool.clone(),
             cmdline,
             ch: self.config.ch.clone(),
             start,
@@ -2076,9 +2106,10 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // The bound set is the family-state port 1100 (plan PR V8), the
         // plane ports 1101 and 1102 (plan PR V6), 1103 for a family whose
         // clone list holds a repo or does not read (plan PR M1, decisions
-        // CH69 rule 13, CH73 rule 1), and 1104 for a family whose list
-        // holds a host or does not read (plan PR E2, decisions CH49 rule
-        // 3, CH72 rule 3).
+        // CH69 rule 13, CH73 rule 1), 1104 for a family whose list holds a
+        // host or does not read (plan PR E2, decisions CH49 rule 3, CH72
+        // rule 3), and 1105 for a family whose grant names `fetch` or
+        // `push` or does not read (decision CH3).
         let denied = follow.check(&reach).await;
         if let Err(message) = denied {
             let egress = StartCode::Egress;

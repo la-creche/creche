@@ -25,6 +25,7 @@ pub mod root_owned;
 pub mod server;
 pub mod shutdown;
 pub mod sleep;
+pub mod spool;
 pub mod start;
 pub mod stop;
 pub mod verify;

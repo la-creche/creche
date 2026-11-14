@@ -289,7 +289,8 @@ def _converge(
     # (decision CH69 rule 6). The vmm reads both files (decision CH6-5).
     egress_moved = reach_files.write_egress_file(egress_file, state_root)
     repos_moved = reach_files.write_repos_file(family, state_root)
-    if egress_moved or repos_moved:
+    spool_moved = reach_files.write_git_platform_file(family, state_root)
+    if egress_moved or repos_moved or spool_moved:
         ran.append(ReconcileStep.SET_EGRESS)
 
     timers = apply_timers(family, actors.units)

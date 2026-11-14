@@ -31,6 +31,7 @@ use creche_vmm_confine::admission::{GIB, Limits};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::launch::Program;
 use creche_vmm_confine::mirror::MirrorRoot;
+use creche_vmm_confine::spool::SpoolRoot;
 use creche_vmm_store::layout::{RootError, RunRoot, StateRoot};
 
 use crate::planes::Upstreams;
@@ -86,6 +87,9 @@ pub const MIRROR_ROOT: &str = "VMM_MIRROR_ROOT";
 /// The `git` that runs `upload-pack` for each clone on host port 1103
 /// (decision CH69 rule 17).
 pub const GIT: &str = "VMM_GIT_PROGRAM";
+/// The git platform spool that host port 1105 serves: `push/` and
+/// `fetch/` (decision CH3).
+pub const GIT_SPOOL_ROOT: &str = "VMM_GIT_SPOOL_ROOT";
 
 /// What the vmm reads from its env.
 #[derive(Debug)]
@@ -133,6 +137,10 @@ pub struct Config {
     /// `VMM_GIT_PROGRAM`. The compose step checks its file with
     /// `root_owned::check_program` (decision CH69 rule 17, as CH67 rule 1).
     pub git: Program,
+    /// `VMM_GIT_SPOOL_ROOT`. The config checks its form only. The compose
+    /// step sweeps its `push/`, and each request opens a folder of it
+    /// (`SpoolRoot`).
+    pub git_spool_root: SpoolRoot,
 }
 
 /// What is wrong with one key. A fault never holds the value, as in
@@ -241,6 +249,8 @@ impl Config {
             mirror_root: MirrorRoot::new(path_of(MIRROR_ROOT)?)
                 .map_err(|e| root(MIRROR_ROOT, e))?,
             git: program_of(GIT)?,
+            git_spool_root: SpoolRoot::new(path_of(GIT_SPOOL_ROOT)?)
+                .map_err(|e| root(GIT_SPOOL_ROOT, e))?,
         })
     }
 }

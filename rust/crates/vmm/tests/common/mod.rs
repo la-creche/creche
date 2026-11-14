@@ -399,6 +399,9 @@ pub fn boot_with<V>(
         // `repos.json` (decision CH69 rule 13).
         (config::MIRROR_ROOT, work.join("mirror")),
         (config::GIT, PathBuf::from(HOST_GIT)),
+        // A request opens a folder of the spool, and the start sweeps its
+        // `push/` when it is there (decision CH3).
+        (config::GIT_SPOOL_ROOT, work.join("spool")),
     ];
     let mut env: Vec<(&str, &OsStr)> = paths
         .iter()

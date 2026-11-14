@@ -2380,6 +2380,53 @@
       "note": "null"
     }
   ],
+  "FamilyGitPlatform": [
+    {
+      "json": "{\"fetch\":true,\"push\":true}",
+      "written": "{\"fetch\":true,\"push\":true}",
+      "note": "both granted"
+    },
+    {
+      "json": "{\"fetch\":false,\"push\":false}",
+      "written": "{\"fetch\":false,\"push\":false}",
+      "note": "no grant"
+    },
+    {
+      "json": "{\"push\":true,\"fetch\":false}",
+      "written": "{\"fetch\":false,\"push\":true}",
+      "note": "push only, in the other key order"
+    },
+    {
+      "json": "{\"fetch\":true}",
+      "written": null,
+      "note": "no push key"
+    },
+    {
+      "json": "{\"fetch\":1,\"push\":0}",
+      "written": null,
+      "note": "an integer for a bool"
+    },
+    {
+      "json": "{\"fetch\":\"true\",\"push\":true}",
+      "written": null,
+      "note": "a string for a bool"
+    },
+    {
+      "json": "{\"fetch\":true,\"push\":true,\"tag\":true}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "[true,true]",
+      "written": null,
+      "note": "the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "FamilyMemoryMib": [
     {
       "json": "256",

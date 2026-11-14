@@ -90,7 +90,7 @@ use crate::root_owned::{ProgramError, check_program};
 use crate::server::{Stop, run_routes_ready};
 use crate::shutdown::{self, Ended};
 use crate::start::{ColdBoot, Digests, StartConfig};
-use crate::{family_state, planes, sleep};
+use crate::{family_state, planes, sleep, spool};
 
 /// The bound of `cloud-hypervisor --version` at the start (decision CH44
 /// rule 3: the caller sets each timeout).
@@ -261,13 +261,15 @@ pub async fn serve(config: Config) -> Result<(), StartError> {
 }
 
 /// The fds of step 4: the bridges (decision CH67 rule 4), the 1100 links
-/// (CH68 rule 2), and the 1103 and 1104 links (CH69 rule 14) of every VM.
-/// The soft limit of systemd (1024) holds those of a few busy guests only.
+/// (CH68 rule 2), the 1103 and 1104 links (CH69 rule 14) and the 1105
+/// links (decision CH3) of every VM. The soft limit of systemd (1024)
+/// holds those of a few busy guests only.
 fn fd_need() -> u64 {
     planes::fd_need()
         .saturating_add(family_state::fd_need())
         .saturating_add(mirror::fd_need())
         .saturating_add(proxy::fd_need())
+        .saturating_add(spool::fd_need())
 }
 
 /// Step 2 and 3: the blocking start steps, then the parts. Blocks.
@@ -359,6 +361,14 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
     if let Err(error) = &vmm_unit {
         eprintln!("vmm: {error}, so every VM launch refuses");
     }
+    // Decision CH3: no VM runs yet, so no guest waits for a bundle of
+    // `push/`. A failed sweep blocks no start: the next start sweeps
+    // again.
+    match config.git_spool_root.sweep_push() {
+        Ok(0) => {}
+        Ok(removed) => eprintln!("vmm: removed {removed} files of the git platform spool"),
+        Err(error) => eprintln!("vmm: the git platform spool sweep failed: {}", error.kind()),
+    }
     let state = config.state.clone();
     let start = StartConfig {
         images,
@@ -380,6 +390,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
             root: config.mirror_root,
             git: config.git,
         },
+        spool: config.git_spool_root,
     };
     let relays = Relays::default();
     let control = Arc::new(Mutex::new(ControlState::default()));
