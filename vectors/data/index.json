@@ -122,7 +122,7 @@
   {"accepted":7,"entry":"attendance.ids.is_attachment","path":"ids/attachment_name.attendance.json","raised":0,"refused":18,"surface":"id.attachment_name.attendance","vectors":25},
   {"accepted":9,"entry":"agent_family.load_registry","path":"family_file.host.json","raised":0,"refused":1,"surface":"family_file.host","vectors":10},
   {"accepted":50,"entry":"agent_family.load_registry","path":"family_file.toml.json","raised":0,"refused":139,"surface":"family_file.toml","vectors":189},
-  {"accepted":47,"entry":"agent_family.load_registry","path":"server_file.toml.json","raised":0,"refused":118,"surface":"server_file.toml","vectors":165},
+  {"accepted":49,"entry":"agent_family.load_registry","path":"server_file.toml.json","raised":0,"refused":120,"surface":"server_file.toml","vectors":169},
   {"accepted":77,"entry":"agent_family.classify","path":"family_file.classify.json","raised":0,"refused":0,"surface":"family_file.classify","vectors":77},
   {"accepted":27,"entry":"agent_family.cli.main","path":"family_file.cli.json","raised":0,"refused":19,"surface":"family_file.cli","vectors":46},
   {"accepted":37,"entry":"attendance.lines.LineSplitter.feed","path":"channel/frame.json","raised":0,"refused":0,"surface":"channel.frame","vectors":37},

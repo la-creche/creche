@@ -56,6 +56,12 @@ A reviewer should find each of these either enforced below or refused.
    (contract 01b §3.3). The key stays in
    `INSTALL_KEYS` so the refusal says which rule it broke rather than
    "unknown key".
+16. `install.format` is optional and belongs to `github-release` only
+    (contract 01b §3.2). `tar` (the default) unpacks the asset. `binary`
+    names an asset that IS the program, as many Rust projects publish
+    one: root places the hashed file itself as `bin/<entrypoint>`, and
+    nothing is unpacked. Any other value, or the key under another
+    source, is refused.
 14. `lock` is a REPOSITORY-relative path with no leading `/`, no `..`
     component, no `//` and no trailing `/`. It names the committed closure
     root installs from (contract 01b §3.4). Where the file is opened,
@@ -193,7 +199,7 @@ REQUIRED_KEYS: Final = frozenset({"name", "identity", "install", "run"})
 OPTIONAL_KEYS: Final = frozenset({"tools", "arg_allows", "arg_denies", "shared_secrets"})
 
 INSTALL_KEYS: Final = frozenset(
-    {"source", "package", "version", "lock", "python", "repo", "asset", "sha256", "ref"}
+    {"source", "package", "version", "lock", "python", "repo", "asset", "sha256", "ref", "format"}
 )
 RUN_KEYS: Final = frozenset({"entrypoint", "args", "env", "state_dir", "state_dir_env"})
 TOOL_KEYS: Final = frozenset({"name", "description", "write"})
@@ -220,6 +226,13 @@ class Source(StrEnum):
     PYPI = "pypi"
     GITHUB_RELEASE = "github-release"
     AGENT_MCP = "agent-mcp"
+
+
+class AssetFormat(StrEnum):
+    """Contract 01b §3.2: what a `github-release` asset is (rule 16)."""
+
+    TAR = "tar"
+    BINARY = "binary"
 
 
 class Markup(StrEnum):
@@ -264,6 +277,8 @@ class ServerPin:
     repo: str | None = None
     asset: str | None = None
     sha256: str | None = None
+    #: Rule 16. Only a `github-release` pin carries anything but the default.
+    format: AssetFormat = AssetFormat.TAR
 
     def requirement(self) -> str:
         """`<dist>==<version>`: one artifact, one `==`, no range."""
@@ -621,8 +636,9 @@ def _install(name: str, value: Any) -> ServerPin:
         raise _refuse(name, f"install has unknown key {safe_token(sorted(unknown)[0])}")
 
     source = _source(name, body.get("source"))
-    _check_pin_fields(name, source, frozenset(body) - {"source", "python"})
+    _check_pin_fields(name, source, frozenset(body) - {"source", "python", "format"})
     python = _python(name, body.get("python", DEFAULT_PYTHON))
+    asset_format = _asset_format(name, source, body)
     pin = ServerPin(
         source=source,
         python=python,
@@ -632,9 +648,24 @@ def _install(name: str, value: Any) -> ServerPin:
         repo=_optional(name, body, "repo", REPO_RE),
         asset=_optional(name, body, "asset", ASSET_RE),
         sha256=_optional(name, body, "sha256", SHA256_RE),
+        format=asset_format,
     )
 
     return pin
+
+
+def _asset_format(name: str, source: Source, body: dict[str, Any]) -> AssetFormat:
+    """Rule 16: optional, `github-release` only, one of two values."""
+    if "format" not in body:
+        return AssetFormat.TAR
+
+    if source is not Source.GITHUB_RELEASE:
+        raise _refuse(name, f"install.format does not belong to {source}")
+
+    try:
+        return AssetFormat(body["format"])
+    except ValueError:
+        raise _refuse(name, "install.format is not tar or binary") from None
 
 
 def _source(name: str, value: Any) -> Source:

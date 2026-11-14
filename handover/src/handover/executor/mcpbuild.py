@@ -59,8 +59,10 @@ own module.
    a `Content-Length` cap AND an `RLIMIT_FSIZE` the kernel enforces as the
    bytes are written, hashed
    here with `hashlib`, and compared with the declared `sha256` before
-   `tarfile` opens it. A `pypi` server installs from the closure committed
-   beside its `server.yaml` (contract 01b §3.4), with `--require-hashes` and
+   `tarfile` opens it. A `format: binary` asset is never opened at all:
+   after the hash, root moves that one file to `bin/<entrypoint>`.
+   A `pypi` server installs from the closure committed beside its
+   `server.yaml` (contract 01b §3.4), with `--require-hashes` and
    no resolution step, and `agent-mcp` from that tree's own `uv.lock` with
    `uv sync --frozen --no-editable --no-dev`. A mismatch fails at step 8
    with nothing swapped.
@@ -177,7 +179,7 @@ from pathlib import Path
 from typing import Final
 
 from ..errors import Refusal, RefusalCode, safe_token
-from ..mcpserver import ServerFile, Source
+from ..mcpserver import AssetFormat, ServerFile, Source
 from .host import As, Command, Host
 from .install import (
     BUILD_TIMEOUT_S,
@@ -534,7 +536,9 @@ class McpBuilder:
         return ServerBuild(server.name, paths, requirement, closure)
 
     def _from_release(self, server: ServerFile, paths: ServerPaths, staging: Path) -> ServerBuild:
-        """Contract 01b §3.2. Download, HASH, then unpack. In that order."""
+        """Contract 01b §3.2. Download, HASH, then unpack. In that order.
+        A `format: binary` asset IS the program: after the hash it is
+        placed as it is, and nothing is unpacked."""
         url = server.pin.asset_url()
         archive = staging / str(server.pin.asset)
         self._must(
@@ -557,6 +561,10 @@ class McpBuilder:
                 f"{safe_token(str(server.pin.asset))} hashes to {measured}, "
                 f"the file pins {declared}",
             )
+
+        if server.pin.format is AssetFormat.BINARY:
+            self._place_file(archive, paths.new / "bin" / server.entrypoint)
+            return ServerBuild(server.name, paths, url, (f"sha256:{declared}",))
 
         unpacked = staging / "unpacked"
         try:
@@ -695,7 +703,11 @@ class McpBuilder:
         if found is None:
             raise _refuse(server.name, f"the asset holds no {safe_token(server.entrypoint)}")
 
-        target = new / "bin" / server.entrypoint
+        self._place_file(found, new / "bin" / server.entrypoint)
+
+    @staticmethod
+    def _place_file(found: Path, target: Path) -> None:
+        """Move one checked file to `target` as a 0755 program."""
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(found, target)
         target.chmod(0o755)
