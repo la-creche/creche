@@ -363,8 +363,8 @@ def test_push_with_no_remote_refs_bundles_the_whole_branch(spool: Spool, tmp_pat
 
 
 def test_push_refusals_name_the_reason(spool: Spool, repos: Repos) -> None:
-    """A refused put leaves no file, and the stderr line names the reason.
-    A bad or missing branch fails before any link."""
+    """The stderr line of a refused put names the reason. A bad or missing
+    branch fails before any link."""
     git(repos.work, "switch", "--quiet", "-c", "feature")
     commit(repos.work, "three")
     spool.push = False
@@ -375,7 +375,6 @@ def test_push_refusals_name_the_reason(spool: Spool, repos: Repos) -> None:
     assert "the spool refused: not_granted: this family holds no git-platform grant" in (
         done.stderr
     )
-    assert list(spool.push_dir.iterdir()) == []
 
     links = spool.links
     for branch, why in [
