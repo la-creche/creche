@@ -35,8 +35,14 @@ export const FLUE_ENV = [
   "TEMP",
 ] as const;
 
-/** The names that the agent copies from its env into each tool, when set. */
-export const TOOL_ENV = ["MPLBACKEND"] as const;
+/**
+ * The names that the agent copies from its env into each tool, when set.
+ * `PLAYWRIGHT_BROWSERS_PATH` names the browser the coding flavor bakes
+ * (playpen/Dockerfile). A repo on another Playwright version overrides it
+ * for its own commands, which is why the name reaches a tool instead of
+ * stopping at the facade.
+ */
+export const TOOL_ENV = ["MPLBACKEND", "PLAYWRIGHT_BROWSERS_PATH"] as const;
 
 /**
  * An image name, and the tool names it becomes. The coding flavor names

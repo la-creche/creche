@@ -26,10 +26,19 @@ On `PATH`, `pytest` runs the venv. `python3` stays the 3.11 interpreter of
 the analysis stack.
 
 The `coding` flavor of `code` and `creche` is the python flavor plus uv,
-pnpm through corepack, and cargo with Rust 1.92.0, rustfmt and clippy
-(CH7-1, for now). Agents install a repo's locked dependencies through the
-egress proxy and run its checks. Its `SandboxFlavor` member joined before
-the cut (CH79 rule 1).
+pnpm through corepack, cargo with Rust 1.92.0, rustfmt and clippy, and
+Chromium (CH7-1, for now). Agents install a repo's locked dependencies
+through the egress proxy and run its checks. Its `SandboxFlavor` member
+joined before the cut (CH79 rule 1).
+
+Chromium is two halves, both at build time: the Debian packages one needs,
+and one browser at the Playwright version the image pins. The image sets
+`PLAYWRIGHT_BROWSERS_PATH` to `/opt/ms-playwright` and places that name in
+`TOOL_ENV` of `agent/src/tool-env.ts`. A browser matches the Playwright that
+launches it, so a repo on another version overrides the name for its own
+commands and fetches the revision it wants through the egress proxy. The
+root disk is read-only, so the baked browser is read there and written
+nowhere.
 
 The Python flavor ships no Python package installer. `pip`, `uv` and
 `ensurepip` exist in build steps only. The test venv excludes `nodeenv`.
