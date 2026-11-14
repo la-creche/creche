@@ -34,9 +34,11 @@ schemars = { version = "1.2.3", default-features = false, features = ["std", "de
 # adds it.
 tokio = { version = "1.54.1", default-features = false, features = ["rt", "rt-multi-thread"] }
 # The HTTP/1.1 server of the vmm host API (decisions CH20, CH26). `server`
-# and `http1` only: the vmm serves one Unix socket and owns its accept loop.
+# and `http1`: the vmm serves one Unix socket and owns its accept loop.
+# `client`: the plane proxies of ports 1101 and 1102 forward each request
+# to the plane upstream (openshell ideas plan, idea 1, PR P1).
 # The version is the one in chaperone's Cargo.lock (decision CH26).
-hyper = { version = "1.12.0", default-features = false, features = ["server", "http1"] }
+hyper = { version = "1.12.0", default-features = false, features = ["client", "server", "http1"] }
 # The tokio glue of hyper (decision CH26 rule 1). `tokio` only, for TokioIo.
 # It also turns on the tokio feature `time`. The vmm owns its accept loop
 # (decision CH26), so no `server-auto`. Shutdown uses tokio::sync (decision
