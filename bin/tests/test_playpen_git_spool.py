@@ -303,10 +303,13 @@ def test_the_constants_are_the_wire_ones() -> None:
 def test_the_coding_flavor_ships_the_helper() -> None:
     """Only the coding flavor copies the helper, and its build runs it."""
     text = DOCKERFILE.read_text(encoding="utf-8")
-    line = "COPY --chmod=0755 playpen/guest/creche_git_spool.py /usr/local/bin/creche-git-spool"
+    line = "COPY playpen/guest/creche_git_spool.py /usr/local/bin/creche-git-spool"
+    mode = "RUN chmod 0755 /usr/local/bin/creche-git-spool"
     assert text.count(line) == 1
+    assert text.count(mode) == 1
     coding = text.split("FROM agent-sandbox-python AS agent-sandbox-coding", 1)[1]
     assert line in coding
+    assert mode in coding
     assert "creche-git-spool --help >/dev/null" in coding
     assert HELPER.read_text(encoding="utf-8").startswith("#!/usr/local/bin/python3.12 -I\n")
 

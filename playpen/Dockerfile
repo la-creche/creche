@@ -332,7 +332,10 @@ RUN corepack enable pnpm \
 # a branch as a git bundle through guest 127.0.0.1:1105, and the
 # git-platform tools push and fetch it. It runs on python3.12 with -I, so a
 # module in the repo under work never loads. playpen/AGENTS.md has the flow.
-COPY --chmod=0755 playpen/guest/creche_git_spool.py /usr/local/bin/creche-git-spool
+# The mode is set by chmod, not by a COPY flag: the bundles test of
+# handover reads each COPY word as a copied path.
+COPY playpen/guest/creche_git_spool.py /usr/local/bin/creche-git-spool
+RUN chmod 0755 /usr/local/bin/creche-git-spool
 
 # Fail the BUILD, not the first switch: each installer starts, and so does
 # the spool helper.
