@@ -1,23 +1,36 @@
-"""`agent-family validate <registry path> [--family NAME] [--json]`.
+"""`agent-family validate <registry path> [--family NAME] [--json]` and
+`agent-family reach --base <base path> <head path>`.
 
-Exit 0 when every report is clean, 1 when any error was found, 2 on a usage
-mistake. The report is the product (invariant 19), so it prints either way."""
+`validate` exits 0 when every report is clean, 1 when any error was found,
+2 on a usage mistake. The report is the product (invariant 19), so it prints
+either way.
+
+`reach` prints one Markdown report of the reach diff (`reach.py`). It also
+appends the report to the file that `GITHUB_STEP_SUMMARY` names, when the
+variable is set: a GitHub Actions step shows that file on its run page. It
+exits 1 when any family gains reach or a head file is unread, 0 when the
+change only narrows or changes nothing, and 2 on a usage mistake."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
+from .reach import markdown, reach_diff
 from .registry import load_registry
 from .report import Report, Severity
 
 EXIT_OK: Final = 0
 EXIT_INVALID: Final = 1
 EXIT_USAGE: Final = 2
+
+#: The file of the step summary of a GitHub Actions step. GitHub sets it.
+STEP_SUMMARY_ENV: Final = "GITHUB_STEP_SUMMARY"
 
 #: The codec for an escaped line when the output stream names none.
 _FALLBACK_ENCODING: Final = "utf-8"
@@ -32,6 +45,9 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("registry", type=Path, help="the registry root, holding families/")
     validate.add_argument("--family", help="report this family only")
     validate.add_argument("--json", action="store_true", help="print the report as JSON")
+    reach = sub.add_parser("reach", help="print what each family gains from base to head")
+    reach.add_argument("--base", type=Path, required=True, help="the base registry root")
+    reach.add_argument("head", type=Path, help="the head registry root")
     return parser
 
 
@@ -70,6 +86,9 @@ def _print_text(reports: tuple[Report, ...]) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "reach":
+        return _reach(Path(args.base), Path(args.head))
+
     root = Path(args.registry)
     if not root.is_dir():
         print(f"agent-family: {root} is not a directory", file=sys.stderr)
@@ -96,6 +115,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_text(reports)
 
     return EXIT_OK if all(report.ok for report in reports) else EXIT_INVALID
+
+
+def _reach(base: Path, head: Path) -> int:
+    for root in (base, head):
+        if not root.is_dir():
+            print(f"agent-family: {root} is not a directory", file=sys.stderr)
+            return EXIT_USAGE
+
+    result = reach_diff(base, head)
+    report = markdown(result)
+    for line in report.splitlines():
+        _emit(line)
+
+    summary = os.environ.get(STEP_SUMMARY_ENV)
+    if summary:
+        with Path(summary).open("a", encoding="utf-8") as handle:
+            handle.write(report)
+
+    return EXIT_INVALID if result.widens else EXIT_OK
 
 
 if __name__ == "__main__":
