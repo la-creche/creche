@@ -42,6 +42,7 @@ from .grammar import (
     MEMORY_MAX_MB,
     MEMORY_MIN_MB,
     MODEL_ALIAS,
+    PLATFORM_SECRET,
     PLATFORM_SERVER,
     PLATFORM_WITHHELD,
     PROBE_FAMILY,
@@ -226,7 +227,7 @@ def _check_tools(family: FamilyFile, index: Index, issues: Issues, fences: Fence
         if declared is None:
             issues.error(loc, f"'{server}' has no mcp/{server}/{SERVER_FILE}")
 
-        _check_withheld(family, index, server, loc, issues, fences)
+        _check_platform(family, index, server, declared, loc, issues, fences)
         if isinstance(grant, str):
             _check_all_grant(grant, kind, loc, issues)
             continue
@@ -234,18 +235,40 @@ def _check_tools(family: FamilyFile, index: Index, issues: Issues, fences: Fence
         _check_named_tools(grant, declared, server, loc, issues)
 
 
+def _check_platform(
+    family: FamilyFile,
+    index: Index,
+    server: str,
+    declared: McpServerFile | None,
+    loc: str,
+    issues: Issues,
+    fences: Fences | None,
+) -> None:
+    """§5.5 rule 1: only a platform family holds a server of the platform
+    token. The fence follows the token, so it holds for each server whose
+    file names `PLATFORM_SECRET`. `PLATFORM_SERVER` is fenced by its name
+    too, so a file of it that names no token still fails closed. Rule 7
+    runs inside the fence only: a family outside it gets one error."""
+    holds_token = declared is not None and PLATFORM_SECRET in declared.secret_keys()
+    if server != PLATFORM_SERVER and not holds_token:
+        return
+
+    if not _inside_platform_fence(family, loc, f"'{server}'", issues, fences):
+        return
+
+    _check_withheld(family, index, server, loc, issues)
+
+
 def _check_withheld(
-    family: FamilyFile, index: Index, server: str, loc: str, issues: Issues, fences: Fences | None
+    family: FamilyFile, index: Index, server: str, loc: str, issues: Issues
 ) -> None:
     """§5.5 rule 7: the operator lands every platform change. `main` may carry no
     branch protection, so a family holding the platform server's merge could land
     a registry change, its own grants included, that `caregiver` then applies.
     `all` is checked through its expansion: a server file that declares the
-    merge again must not re-grant it quietly."""
+    merge again must not re-grant it quietly. The rule names `PLATFORM_SERVER`
+    only, because the withheld tools are tools of that server."""
     if server != PLATFORM_SERVER:
-        return
-
-    if not _inside_platform_fence(family, loc, f"'{server}'", issues, fences):
         return
 
     reason = "a platform change lands only when the operator merges it (§5.5 rule 7)"

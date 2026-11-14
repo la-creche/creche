@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 from agent_family import grammar, serverrules
-from agent_family.grammar import PLATFORM_SERVER, PROBE_FAMILY
+from agent_family.grammar import PLATFORM_SECRET, PLATFORM_SERVER, PROBE_FAMILY
 from agent_family.parse import Markup, parse_family
 from agent_family.registry import load_registry
 from agent_family.report import Issues, Report
@@ -22,6 +22,7 @@ from agent_family.validate import Index, check_family
 from family_helpers import (
     FENCES,
     FIXTURES,
+    GIT_PLATFORM,
     check,
     check_no_host,
     edited,
@@ -29,7 +30,9 @@ from family_helpers import (
     errors,
     family_text,
     full_index,
+    git_platform,
     host,
+    index_with,
     load,
     load_server,
     messages,
@@ -319,6 +322,45 @@ def test_github_code_keeps_its_merge() -> None:
     the platform repos at all (contract 01b §8.2)."""
     report = check("code", tools={"github-code": [MERGE]})
     assert not errors(report), messages(report)
+
+
+# --- 5.5 rule 1: every server of the platform token --------------------------
+
+GIT_PLATFORM_GRANTS = ("all", ["push", "fetch"], ["fetch"])
+
+
+def test_the_second_token_server_is_a_valid_server_file() -> None:
+    issues = Issues()
+    serverrules.check_server(git_platform(), GIT_PLATFORM, issues)
+
+    assert not issues.frozen()
+
+
+@pytest.mark.parametrize("grant", GIT_PLATFORM_GRANTS)
+def test_a_second_token_server_is_for_the_platform_family_only(grant: object) -> None:
+    """The fence follows the token, not the name. `git-platform` holds the
+    platform token, so `chat` may not hold it by name or through `all`."""
+    report = _check_against(index_with(git_platform()), "chat", tools={GIT_PLATFORM: grant})
+
+    assert "outside the platform fence" in messages(report)
+    assert f"tools.{GIT_PLATFORM}" in {issue.loc for issue in errors(report)}
+
+
+@pytest.mark.parametrize("grant", GIT_PLATFORM_GRANTS)
+def test_the_platform_family_holds_a_second_token_server(grant: object) -> None:
+    report = _check_against(index_with(git_platform()), "code", tools={GIT_PLATFORM: grant})
+
+    assert not errors(report), messages(report)
+
+
+def test_the_platform_server_is_fenced_with_no_token() -> None:
+    """A file of `github-platform` that names no token still fails closed:
+    the name fences it too."""
+    tokenless = edited_server(PLATFORM_SERVER, run={"entrypoint": "github-mcp-server"})
+    report = _check_against(index_with(tokenless), "chat", tools={PLATFORM_SERVER: "all"})
+
+    assert PLATFORM_SECRET not in tokenless.secret_keys()
+    assert "outside the platform fence" in messages(report)
 
 
 # --- 3.6 delegates -----------------------------------------------------------
