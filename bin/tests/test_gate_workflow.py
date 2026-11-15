@@ -76,8 +76,10 @@ job can pass.
 
 The `kvm` job runs `bin/vm-smoke-setup.sh`, then each ignored test of
 rust/ whose name holds `kvm_` (decisions CH8-4, CH36 G19). The test run
-names no crate and no file, so a new kvm_ test needs no workflow edit. A
-step before the run fails the job when no such test exists.
+names no crate and no file, so a new kvm_ test needs no workflow edit. The
+job has two shards. The shard `disk-swap` runs the one test that waits
+about 5 minutes, and the shard `main` runs every other kvm_ test. A step
+before the run fails a shard that matches no test.
 
 The `vmm-archive` job is the one job of the gate alone (decision CH76 rule
 4). It builds the vmm archive with the `artifacts` job's script, after the
@@ -197,18 +199,29 @@ RUST_RUNS = [
 ]
 
 #: The KVM smoke job, the script that readies the runner, and the one test
-#: run: each ignored test whose name holds `kvm_`, in every crate. The run
-#: has `--no-fail-fast`, so one red test binary does not hide the next.
+#: run: the ignored tests of the shard, in every crate. The run has
+#: `--no-fail-fast`, so one red test binary does not hide the next.
 KVM_JOB = "kvm"
 KVM_SETUP = "bin/vm-smoke-setup.sh"
-KVM_RUN = "cargo test --locked --no-fail-fast -- --ignored kvm_"
+KVM_RUN = "cargo test --locked --no-fail-fast -- --ignored $KVM_TESTS"
+
+#: The test that waits for the follow of `vmm serve` and for its idle
+#: timeout, about 5 minutes, with the one vmm lock of its binary. The shard
+#: `disk-swap` runs it alone, and the shard `main` runs each other kvm_
+#: test.
+KVM_SLOW_TEST = "kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk"
+KVM_SLOW_FILE = "rust/crates/vmm/tests/kvm_reach.rs"
+KVM_SHARDS = [
+    {"shard": "main", "tests": f"kvm_ --skip {KVM_SLOW_TEST}"},
+    {"shard": "disk-swap", "tests": f"--exact {KVM_SLOW_TEST}"},
+]
 
 #: The step before the test run. `cargo test` exits 0 when its filter
-#: matches no test, so this list fails the job when no ignored kvm_ test
-#: exists.
+#: matches no test, so this list fails a shard that matches no ignored
+#: test.
 KVM_COUNT = (
-    "count=$(cargo test --locked -q -- --ignored --list kvm_ | grep -c ': test$' || true)\n"
-    'echo "ignored kvm_ tests: $count"\n'
+    "count=$(cargo test --locked -q -- --ignored --list $KVM_TESTS | grep -c ': test$' || true)\n"
+    'echo "ignored kvm_ tests of the shard: $count"\n'
     'test "$count" -ge 1\n'
 )
 KVM_ENV = {"CRECHE_KVM_DIR": "${{ runner.temp }}/kvm"}
@@ -1898,11 +1911,12 @@ def test_the_kvm_job_readies_the_runner_then_runs_every_kvm_test(
     job = jobs[KVM_JOB]
     checkout, setup, toolchain, count, run = job["steps"]
 
-    assert set(job) == {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"}
+    assert set(job) == {"needs", "if", "runs-on", "timeout-minutes", "strategy", "env", "steps"}
     assert job["needs"] == "scope"
     assert job["if"] == ONLY_CODE
     assert job["runs-on"] == "ubuntu-24.04"
-    assert job["env"] == {"CARGO_INCREMENTAL": 0}
+    assert job["strategy"] == {"fail-fast": False, "matrix": {"include": KVM_SHARDS}}
+    assert job["env"] == {"CARGO_INCREMENTAL": 0, "KVM_TESTS": "${{ matrix.tests }}"}
     assert checkout["with"] == {"fetch-depth": 0}
     assert setup == {"run": KVM_SETUP, "env": KVM_ENV}
     assert (REPO / KVM_SETUP).is_file()
@@ -1910,6 +1924,19 @@ def test_the_kvm_job_readies_the_runner_then_runs_every_kvm_test(
     assert "rustup toolchain install --no-self-update" in toolchain["run"]
     assert count == {"name": "count the kvm tests", "working-directory": RUST_DIR, "run": KVM_COUNT}
     assert run == {"run": KVM_RUN, "working-directory": RUST_DIR, "env": KVM_ENV}
+
+
+def test_the_slow_kvm_test_of_the_shards_exists() -> None:
+    """The two shards name the slow test. A rename leaves the shard
+    `disk-swap` with no test, and its count step fails in CI. This test
+    fails first, on any machine: the file must hold the test, ignored, as a
+    `kvm_` test that the shard `main` would run with no `--skip`."""
+    text = (REPO / KVM_SLOW_FILE).read_text(encoding="utf-8")
+    ignored = rf"^#\[test\]\n#\[ignore = [^\n]*\]\nfn {KVM_SLOW_TEST}\(\)"
+    test = re.search(ignored, text, re.MULTILINE)
+
+    assert KVM_SLOW_TEST.startswith("kvm_")
+    assert test is not None, f"{KVM_SLOW_FILE} has no ignored test {KVM_SLOW_TEST}"
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
