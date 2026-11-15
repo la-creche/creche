@@ -4,11 +4,12 @@
  1 intake      parse the request as hostile bytes (§3.2)
  2 resolve     manifests at their tags + the live state -> contract 06 §9
  3 provenance  P1-P6 per deploying component, plus monotonic
- 4 contracts   rules C1 to C5 over the resolved set
+ 4 contracts   rules C1 to C5 over the resolved set, then the env plan
  5 approve     one tap, bound to manifest_sha256 (§2.5)
  6 lock        flock: two requests run one after the other
  7 quiesce     no prompt in flight, or the cap
- 8 stage       re-resolve, compare the hash, fetch, build into <to>.new
+ 8 stage       re-resolve, compare the hash, fetch, build into <to>.new,
+               then append each absent env key
  9 switch      keep the unit, swap, refresh the unit in place, restart, verify
 10 restore     put the previous tree and unit back, or record the success
 ```
@@ -72,6 +73,7 @@ from .approval import (
     gate_id,
 )
 from .artifact import Copied, CopiedFiles, CopyResult, NoCopy, copy_from_store
+from .envfill import Verb, append_fill, plan_fill
 from .host import Host, distrusted
 from .install import (
     UNIT_KEPT_SUFFIX,
@@ -1058,6 +1060,7 @@ class Release:
             raise contract_refusal
 
         plan = self._require_plan()
+        self._plan_env(plan)
         unprovided = plan.resolution.unprovided
         if not unprovided:
             return f"{len(plan.resolution.contracts)} contracts, 0 refused"
@@ -1070,6 +1073,51 @@ class Release:
             f"{len(plan.resolution.contracts)} contracts, 0 refused, "
             f"{len(unprovided)} requirement(s) not verified"
         )
+
+    def _plan_env(self, plan: Plan) -> None:
+        """The env fill, the half before the push (`envfill.py`). Each
+        component of the set whose manifest has an `env` table gets one log
+        line. A fault refuses the release here, so no phone asks for a
+        release that would stop at its first restart.
+
+        It runs at step 4, and not at the end of step 2: step 3 verified
+        the commit of the clone, and root reads the catalog out of that
+        clone (`handover/AGENTS.md`, "The env fill", rule 5). Step 5 is the
+        push."""
+        for name in plan.order:
+            decl = plan.manifest(name).env
+            if decl is None:
+                continue
+
+            with self._blame(name):
+                fill = plan_fill(name, decl, self._clone_of(name), self._operator_uid())
+
+            self.entry.say(fill.line(Verb.ADDS))
+
+    def _fill_env(self, plan: Plan) -> None:
+        """The env fill, the half after the tap and before any swap. Root
+        appends each key that is still absent, and changes no line.
+
+        A restore keeps each added key: the previous program reads only the
+        keys that it names, so a key that it does not name costs nothing."""
+        for name in plan.order:
+            decl = plan.manifest(name).env
+            if decl is None:
+                continue
+
+            with self._blame(name):
+                fill = append_fill(name, decl, self._clone_of(name), self._operator_uid())
+
+            self.entry.say(fill.line(Verb.WROTE))
+
+    def _clone_of(self, name: str) -> Path:
+        """Root's clone of the commit that this release deploys for `name`
+        (`_fetched_manifest`)."""
+        return self.wiring.host.work_root / self.request.id / name
+
+    def _operator_uid(self) -> int:
+        """The operator's uid: the owner of the corpus (`host.Host`)."""
+        return self.wiring.host.source_owner_uid
 
     # -- 5 approve ------------------------------------------------------
 
@@ -1214,6 +1262,10 @@ class Release:
         for name in plan.order:
             with self._blame(name):
                 self._stage_one(plan, name)
+
+        # After every build and before any swap. A stage that fails writes
+        # no key.
+        self._fill_env(plan)
 
         return f"staged in order: {', '.join(plan.order)}"
 

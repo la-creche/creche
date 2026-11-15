@@ -77,6 +77,12 @@ class RefusalCode(StrEnum):
     #: repository is wrong: the HOST's own configuration is, and a reader
     #: told `manifest` or `source` would look in a checkout.
     SITE = "site"
+    #: The env fill (`executor/envfill.py`): the env file of a unit is
+    #: absent or fails rule 5a, or a key that the release adds to it has no
+    #: value in the catalog and the site file. Its own code, because the
+    #: fault is in a file on the host that `bin/fleet-up` wrote, and a
+    #: reader told `site` would open the wrong file.
+    ENV = "env"
 
 
 #: What a value may look like before it is quoted into a message. A manifest
