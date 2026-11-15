@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 from agent_family import grammar, serverrules
-from agent_family.grammar import PLATFORM_SECRET, PLATFORM_SERVER, PROBE_FAMILY
+from agent_family.grammar import PLATFORM_SECRETS, PLATFORM_SERVERS, PROBE_FAMILY
 from agent_family.parse import Markup, parse_family
 from agent_family.registry import load_registry
 from agent_family.report import Issues, Report
@@ -22,13 +22,16 @@ from agent_family.validate import Index, check_family
 from family_helpers import (
     FENCES,
     FIXTURES,
+    FORGEJO_PLATFORM,
     GIT_PLATFORM,
+    GITHUB_PLATFORM,
     check,
     check_no_host,
     edited,
     edited_server,
     errors,
     family_text,
+    forgejo_platform,
     full_index,
     git_platform,
     host,
@@ -260,7 +263,7 @@ def test_the_platform_server_is_for_the_platform_family_only() -> None:
     """§5.5 rule 1: only a family of the allowlist holds the platform's
     GitHub server. The allowlist is a constant in code, so a registry edit
     cannot add a family to it."""
-    report = check("chat", tools={PLATFORM_SERVER: "all"})
+    report = check("chat", tools={GITHUB_PLATFORM: "all"})
     assert "outside the platform fence" in messages(report)
 
 
@@ -273,10 +276,10 @@ MERGE_ENTRY = {"name": MERGE, "description": "Merge a pull request.", "write": T
 def _merge_declared() -> Index:
     """The fixture registry with the platform server declaring its merge tool
     again: what an edit to that server file restoring it looks like."""
-    body = tomllib.loads(server_text(PLATFORM_SERVER))
-    server = edited_server(PLATFORM_SERVER, tools=[*body["tools"], MERGE_ENTRY])
+    body = tomllib.loads(server_text(GITHUB_PLATFORM))
+    server = edited_server(GITHUB_PLATFORM, tools=[*body["tools"], MERGE_ENTRY])
     index = full_index()
-    return Index(index.kinds, {**index.servers, PLATFORM_SERVER: server}, index.skills)
+    return Index(index.kinds, {**index.servers, GITHUB_PLATFORM: server}, index.skills)
 
 
 def _check_against(index: Index, fixture: str, **changes: Any) -> Report:
@@ -290,22 +293,22 @@ def test_the_platform_merge_is_never_granted_by_name() -> None:
     """`main` may carry no branch protection, so a family that could merge on
     agent-registry would land its own grants, and `caregiver` would apply them
     with nobody looking."""
-    report = _check_against(_merge_declared(), "code", tools={PLATFORM_SERVER: [MERGE]})
+    report = _check_against(_merge_declared(), "code", tools={GITHUB_PLATFORM: [MERGE]})
     assert "never granted" in messages(report)
-    assert f"tools.{PLATFORM_SERVER}[0]" in {issue.loc for issue in errors(report)}
+    assert f"tools.{GITHUB_PLATFORM}[0]" in {issue.loc for issue in errors(report)}
 
 
 def test_the_platform_merge_is_never_granted_through_all() -> None:
     """`all` expands against the server file at read time (§3.4 rule 4), so a
     server file that declares the merge again must not re-grant it quietly."""
-    report = _check_against(_merge_declared(), "code", tools={PLATFORM_SERVER: "all"})
+    report = _check_against(_merge_declared(), "code", tools={GITHUB_PLATFORM: "all"})
     assert "never granted" in messages(report)
 
 
 def test_no_family_holds_the_platform_merge() -> None:
     """A family outside the allowlist does not get as far as the merge: it may
     not hold the server at all."""
-    report = _check_against(_merge_declared(), "chat", tools={PLATFORM_SERVER: [MERGE]})
+    report = _check_against(_merge_declared(), "chat", tools={GITHUB_PLATFORM: [MERGE]})
     assert "outside the platform fence" in messages(report)
 
 
@@ -314,7 +317,7 @@ def test_the_platform_family_keeps_every_other_github_tool() -> None:
     grants every tool it does declare."""
     report = check("code")
     assert not errors(report), messages(report)
-    assert MERGE not in load_server(PLATFORM_SERVER).tool_names()
+    assert MERGE not in load_server(GITHUB_PLATFORM).tool_names()
 
 
 def test_github_code_keeps_its_merge() -> None:
@@ -373,11 +376,92 @@ def test_a_second_token_server_never_grants_the_merge_by_name() -> None:
 def test_the_platform_server_is_fenced_with_no_token() -> None:
     """A file of `github-platform` that names no token still fails closed:
     the name fences it too."""
-    tokenless = edited_server(PLATFORM_SERVER, run={"entrypoint": "github-mcp-server"})
-    report = _check_against(index_with(tokenless), "chat", tools={PLATFORM_SERVER: "all"})
+    tokenless = edited_server(GITHUB_PLATFORM, run={"entrypoint": "github-mcp-server"})
+    report = _check_against(index_with(tokenless), "chat", tools={GITHUB_PLATFORM: "all"})
 
-    assert PLATFORM_SECRET not in tokenless.secret_keys()
+    assert PLATFORM_SECRETS.isdisjoint(tokenless.secret_keys())
     assert "outside the platform fence" in messages(report)
+
+
+# --- 5.5 rules 1 and 7: the platform's Forgejo server ------------------------
+
+#: A server that holds the Forgejo platform token under a name that is not in
+#: `PLATFORM_SERVERS`. The fence finds it by its token.
+FORGE_BUNDLE = "forge-bundle"
+
+
+def test_the_fence_names_both_forges() -> None:
+    assert {GITHUB_PLATFORM, FORGEJO_PLATFORM} == PLATFORM_SERVERS
+    assert {"github_token_platform", "forgejo_token_platform"} == PLATFORM_SECRETS
+
+
+def test_the_forgejo_platform_server_is_a_valid_server_file() -> None:
+    issues = Issues()
+    serverrules.check_server(forgejo_platform(), FORGEJO_PLATFORM, issues)
+
+    assert not issues.frozen()
+
+
+@pytest.mark.parametrize("name", [FORGEJO_PLATFORM, FORGE_BUNDLE])
+def test_a_forgejo_token_server_is_for_the_platform_family_only(name: str) -> None:
+    index = index_with(forgejo_platform(name=name))
+    report = _check_against(index, "chat", tools={name: "all"})
+
+    assert "outside the platform fence" in messages(report)
+    assert f"tools.{name}" in {issue.loc for issue in errors(report)}
+
+
+@pytest.mark.parametrize("name", [FORGEJO_PLATFORM, FORGE_BUNDLE])
+def test_the_platform_family_holds_a_forgejo_token_server(name: str) -> None:
+    index = index_with(forgejo_platform(name=name))
+    report = _check_against(index, "code", tools={name: "all"})
+
+    assert not errors(report), messages(report)
+
+
+@pytest.mark.parametrize("name", [FORGEJO_PLATFORM, FORGE_BUNDLE])
+def test_a_forgejo_token_server_never_grants_the_merge_by_name(name: str) -> None:
+    """Forgejo names its merge tool `merge_pull_request` too, so rule 7
+    withholds it with no change to `PLATFORM_WITHHELD`."""
+    index = index_with(forgejo_platform(MERGE_ENTRY, name=name))
+    report = _check_against(index, "code", tools={name: ["get_file_content", MERGE]})
+
+    assert "never granted" in messages(report)
+    assert f"tools.{name}[1]" in {issue.loc for issue in errors(report)}
+
+
+@pytest.mark.parametrize("name", [FORGEJO_PLATFORM, FORGE_BUNDLE])
+def test_a_forgejo_token_server_never_grants_the_merge_through_all(name: str) -> None:
+    index = index_with(forgejo_platform(MERGE_ENTRY, name=name))
+    report = _check_against(index, "code", tools={name: "all"})
+
+    assert "never granted" in messages(report)
+    assert f"tools.{name}" in {issue.loc for issue in errors(report)}
+
+
+def test_the_forgejo_platform_server_is_fenced_with_no_platform_token() -> None:
+    """A file of `forgejo-platform` that holds another token still fails
+    closed: the name fences it too."""
+    other = forgejo_platform(MERGE_ENTRY, token="forgejo_token_code")
+    index = index_with(other)
+
+    assert PLATFORM_SECRETS.isdisjoint(other.secret_keys())
+    assert "outside the platform fence" in messages(
+        _check_against(index, "chat", tools={FORGEJO_PLATFORM: "all"})
+    )
+    assert "never granted" in messages(
+        _check_against(index, "code", tools={FORGEJO_PLATFORM: [MERGE]})
+    )
+
+
+def test_a_server_with_no_platform_name_and_no_platform_token_is_not_fenced() -> None:
+    """The fence keeps its shape: a name of `PLATFORM_SERVERS` or a key of
+    `PLATFORM_SECRETS`. A server with neither keeps its merge."""
+    other = forgejo_platform(MERGE_ENTRY, name=FORGE_BUNDLE, token="forgejo_token_code")
+    index = index_with(other)
+
+    assert not errors(_check_against(index, "chat", tools={FORGE_BUNDLE: [MERGE]}))
+    assert not errors(_check_against(index, "code", tools={FORGE_BUNDLE: "all"}))
 
 
 # --- 3.6 delegates -----------------------------------------------------------

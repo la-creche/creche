@@ -42,8 +42,8 @@ from .grammar import (
     MEMORY_MAX_MB,
     MEMORY_MIN_MB,
     MODEL_ALIAS,
-    PLATFORM_SECRET,
-    PLATFORM_SERVER,
+    PLATFORM_SECRETS,
+    PLATFORM_SERVERS,
     PLATFORM_WITHHELD,
     PROBE_FAMILY,
     QUIET_FLOOR_MAX_HOURS,
@@ -245,19 +245,20 @@ def _check_platform(
     fences: Fences | None,
 ) -> None:
     """§5.5 rule 1, read to follow the token: only a platform family holds a
-    server of the platform token. The fence holds for each server whose file
-    names `PLATFORM_SECRET`. `PLATFORM_SERVER` is fenced by its name too, so
-    a file of it that names no token still fails closed. Rule 7 runs inside
-    the fence only: a family outside it gets one error."""
-    # CONTRACT-QUESTION: contract 01 §5.5 rules 1 and 7 name the server
-    # `github-platform` and say nothing of another server of its token. This
-    # check takes the conservative reading. It fences `github-platform` by its
-    # name and each server whose `run.env` names `secret:github_token_platform`.
+    server of a platform token. The fence holds for each server whose file
+    names a key of `PLATFORM_SECRETS`. Each of `PLATFORM_SERVERS` is fenced
+    by its name too, so a file of it that names no token still fails closed.
+    Rule 7 runs inside the fence only: a family outside it gets one error."""
+    # CONTRACT-QUESTION: contract 01 §5.5 rules 1 and 7 name the servers
+    # `github-platform` and `forgejo-platform` and say little of another
+    # server of their tokens. This check takes the conservative reading. It
+    # fences the two servers by their names and each server whose `run.env`
+    # names `secret:github_token_platform` or `secret:forgejo_token_platform`.
     # Rule 7 withholds the merge on each of them. A reader built from the
-    # contract text alone fences the name only. To fence the name only costs
+    # contract text alone fences the names only. To fence the names only costs
     # the fence on `git-platform`: any family could then hold the token.
-    holds_token = declared is not None and PLATFORM_SECRET in declared.secret_keys()
-    if server != PLATFORM_SERVER and not holds_token:
+    holds_token = declared is not None and not PLATFORM_SECRETS.isdisjoint(declared.secret_keys())
+    if server not in PLATFORM_SERVERS and not holds_token:
         return
 
     if not _inside_platform_fence(family, loc, f"'{server}'", issues, fences):
