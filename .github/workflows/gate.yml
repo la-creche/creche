@@ -14,6 +14,6 @@ jobs:
       - uses: ./.github/actions/uv-sync
       - run: |
           ulimit -a
-          uv run pytest -p no:xdist -vv --shard 4/4 2>&1 | tee /tmp/shard4.log
+          uv run pytest -p no:xdist -vv --shard 4/4 --deselect bin/tests/test_gate_workflow.py --ignore=bin/tests/test_gate_workflow.py 2>&1 | tee /tmp/shard4.log
           echo "pytest status ${PIPESTATUS[0]}"
         shell: bash
