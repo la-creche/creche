@@ -17,8 +17,6 @@ args = ["--requests-dir", "/var/lib/creche-handover/releases/requests"]
 args = ["--hook-url", "http://127.0.0.1:1881/hook/approval", "--listen", "192.0.2.10:8310"]
 secrets = { APPROVAL_TOKEN = "approval-token", RESUME_TOKEN = "resume-token" }
 
-[plugins.ha-entities]
-
 [plugins.board-lead]
 user = "mcp-board-lead"
 secret_delivery = "env"

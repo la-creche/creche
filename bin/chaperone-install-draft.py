@@ -20,11 +20,8 @@ writes nothing else. The operator reviews the draft and installs it as root.
    spool, and `ha-approval` with its hook and the address of
    `--approval-listen`. `release` takes the requester of each request from
    the app ID of its call, so the draft names no family.
-3. The fence `ha-entities`, with no entry of its own. caregiver gives it a
-   section in `policy.toml` for each app that holds a grant to a server
-   whose file declares `entity_domains`.
-4. The slot `approval_channel`, filled by `ha-approval`.
-5. One entry for each server: the user `mcp-<name>`, `secret_delivery =
+3. The slot `approval_channel`, filled by `ha-approval`.
+4. One entry for each server: the user `mcp-<name>`, `secret_delivery =
    "env"`, and each secret of the server.
 
 The plugin `ha-call` is not in the draft.
@@ -268,7 +265,6 @@ def render_install(servers: Sequence[Server], roots: Roots, listen: str) -> str:
         "\n[plugins.ha-approval]\n"
         f"args = {_array(['--hook-url', HOOK_URL, '--listen', listen])}\n"
         f"secrets = {_inline(APPROVAL_SECRETS)}\n",
-        "\n[plugins.ha-entities]\n",
     ]
 
     for server in servers:
