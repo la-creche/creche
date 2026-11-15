@@ -192,7 +192,7 @@ def _check_pin_values(server: McpServerFile, issues: Issues) -> None:
     # `repo`, `asset` and `python`. This validator and root take one form
     # for a version: `EXACT_VERSION_FORM`. For the other four, this
     # validator takes the rules of root: a letter or a digit at the start, a
-    # cap on each length, and 3.12 or 3.13 for `python`.
+    # cap on each length, and 3.12, 3.13 or 3.14 for `python`.
     install = server.install
     version = install.version
     if version is not None and (

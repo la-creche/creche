@@ -45,7 +45,7 @@ install:
   package: kagimcp
   version: 1.0.2
   lock: {KAGI_LOCK_PATH}
-  python: "3.12"
+  python: "3.14"
 run:
   entrypoint: kagimcp
   env:

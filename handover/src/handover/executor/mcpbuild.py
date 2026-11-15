@@ -214,8 +214,8 @@ UV_CACHE_DIR_NAME: Final = "uv-cache"
 #: root's, `0755` all the way down, shared by every server tree that names
 #: that minor. A dot name, so nothing that globs `/opt/mcp/*` for server
 #: trees sees it, and under the MCP root so every `mcp-<name>` can reach
-#: it. A server can require a minor the host lacks — `ha-mcp` requires
-#: `>=3.13` and the host has 3.12 — and a build child may not download,
+#: it. A server can name a minor the host lacks — `ha` names 3.13 and
+#: the host has 3.14 — and a build child may not download,
 #: so without this the build dies at `No interpreter found for Python
 #: 3.13`. `UV_PYTHON_INSTALL_DIR` names it and the tree is opened
 #: `a+rX`, by the release, so a new server needing a new minor is still
@@ -391,7 +391,7 @@ class McpBuilder:
 
         Root asks `uv python find` first, with downloads off and the
         shared directory in view: the host's own interpreter answers for
-        3.12, an earlier release's for a minor already installed. Only a
+        3.14, an earlier release's for a minor already installed. Only a
         minor nobody provides is installed, by ROOT — the one child of
         this module that fetches from the network, and it fetches an
         interpreter build whose sha256 the host's `uv` release carries in

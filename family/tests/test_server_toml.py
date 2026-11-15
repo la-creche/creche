@@ -449,7 +449,7 @@ def test_the_base_server_of_the_rules_of_root_passes() -> None:
         (
             {"install": {**PYPI, "python": "3.11"}},
             "install.python",
-            "'3.11' is not a Python version in use; use one of 3.12, 3.13",
+            "'3.11' is not a Python version in use; use one of 3.12, 3.13, 3.14",
         ),
         (
             {"run": _run(entrypoint="bin/kagimcp")},

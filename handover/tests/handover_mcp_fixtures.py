@@ -32,7 +32,7 @@ install:
   package: kagimcp
   version: 1.0.2
   lock: {lock}
-  python: "3.12"
+  python: "3.14"
 run:
   entrypoint: kagimcp
   env:
@@ -178,8 +178,8 @@ class McpFake:
     #: Where `uv sync --frozen` was told to build, read off the child's env.
     venv_env: str = ""
     #: The minors the host itself provides (`uv python find` answers for
-    #: them). 3.12 is the host's; `ha-mcp` wants 3.13, which it does not have.
-    pythons_on_host: tuple[str, ...] = ("3.12",)
+    #: them). 3.14 is the host's; `ha-mcp` wants 3.13, which it does not have.
+    pythons_on_host: tuple[str, ...] = ("3.14",)
     #: `UV_PYTHON_INSTALL_DIR`, read off a child's env.
     python_root: Path | None = None
     #: A path OUTSIDE the tree that the install leaves in a `.pth`, the way
@@ -282,7 +282,7 @@ class McpFake:
         script.chmod(0o755)
         # What a real install leaves beside the script: the site-packages
         # `check_tree` walks. Empty is self-contained.
-        site = venv / "lib" / "python3.12" / "site-packages"
+        site = venv / "lib" / "python3.14" / "site-packages"
         site.mkdir(parents=True, exist_ok=True)
         if self.pth_outside:
             (site / "_editable_impl_agent_mcp.pth").write_text(
