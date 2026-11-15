@@ -16,6 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use creche_vmm::family_state::{HOLD_CAP, LINK_CAP, Server, bind, fd_need};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_store::layout::{RunRoot, Slot, VmRunDir};
+use creche_vmm_store::placeholder::Placeholders;
 use creche_wire::{FAMILY_STATE_CAP, HostPort, SessionId, strict};
 use tokio::net::UnixStream;
 use tokio::runtime::{Builder, Runtime};
@@ -27,6 +28,18 @@ const CREDS: &str = r#"{"epoch":3,"litellm_key":"sk-test-key","pep_token":"ababa
 
 /// The bound of a test that waits for a change on the host.
 const TRIES: u32 = 500;
+
+/// The placeholders of the session, which each `state` reply carries in
+/// place of the values of `creds.json` (openshell ideas plan, idea 1).
+const LITELLM_PLACEHOLDER: &str = "sk-PlaceHolder_LiteLLM-12";
+const PEP_PLACEHOLDER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+#[cfg(test)]
+fn placeholders() -> Placeholders {
+    let text =
+        serde_json::json!({"litellm_key": LITELLM_PLACEHOLDER, "pep_token": PEP_PLACEHOLDER});
+    serde_json::from_value(text).unwrap()
+}
 
 /// The session of the VM of each test.
 const SESSION: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
@@ -96,7 +109,9 @@ impl Scratch {
         let families = FamilyRoot::new(self.dir.join("families")).unwrap();
         let id: SessionId = SESSION.parse().unwrap();
         let _runtime = self.runtime.enter();
-        bound.serve(families, "chat".parse().unwrap(), id).unwrap()
+        bound
+            .serve(families, "chat".parse().unwrap(), id, placeholders())
+            .unwrap()
     }
 
     /// A guest dial of 1100, as CH makes it.
@@ -203,9 +218,15 @@ fn answers_each_pull_line_on_one_link() {
     scratch.runtime.block_on(async {
         let mut guest = scratch.dial().await;
         let reply = guest.pull().await;
-        assert_eq!(reply["state"]["creds"]["litellm_key"], "sk-test-key");
+        assert_eq!(reply["state"]["creds"]["litellm_key"], LITELLM_PLACEHOLDER);
+        assert_eq!(reply["state"]["creds"]["pep_token"], PEP_PLACEHOLDER);
         assert_eq!(reply["state"]["config"]["instructions"], "Be brief.");
-        assert!(!reply.to_string().contains("cdcdcd"));
+        // No real value of creds.json reaches the guest: not the key, not
+        // the token, not the old token.
+        let text = reply.to_string();
+        assert!(
+            !text.contains("sk-test-key") && !text.contains("abab") && !text.contains("cdcdcd")
+        );
         assert_eq!(guest.pull().await, reply);
 
         guest.send(b"{}\n{}\n{}\n").await;

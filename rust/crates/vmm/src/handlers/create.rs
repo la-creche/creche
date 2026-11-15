@@ -62,7 +62,9 @@ fn create(
     // the same row, and a different one gives `conflict` 409.
     rows.create(request).map_err(|error| match error {
         rows::CreateError::Conflict => CreateError::Conflict {},
-        rows::CreateError::OrderSpent | rows::CreateError::Write(_) => {
+        rows::CreateError::OrderSpent
+        | rows::CreateError::Random(_)
+        | rows::CreateError::Write(_) => {
             eprintln!("vmm: create of {id}: {error}");
             CreateError::Internal {}
         }

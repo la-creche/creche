@@ -775,5 +775,5 @@ fn the_fd_need_holds_every_full_mirror() {
         + mirror::fd_need()
         + proxy::fd_need()
         + spool::fd_need();
-    assert_eq!(raise, 103_552);
+    assert_eq!(raise, 128_128);
 }

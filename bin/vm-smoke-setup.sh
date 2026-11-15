@@ -30,7 +30,7 @@
 #      of the job reach the user manager, as the vmm unit does. First a
 #      drop-in gives user@.service and the units of the user manager the
 #      hard RLIMIT_NOFILE of Hyperion's user manager, 1048576. The runner
-#      gives 65536, and `vmm serve` exits 78 below its need of 103552
+#      gives 65536, and `vmm serve` exits 78 below its need of 128128
 #      (decision CH67 rule 4, which keeps the vmm unit free of a
 #      LimitNOFILE= line). fs.nr_open must hold that limit, and a
 #      limits.d line for the runner user lifts the 65536 that pam_limits
