@@ -142,6 +142,7 @@ fn serve(session: &OsString, family: &OsString) -> Result<(), Failure> {
         families: config.families,
         ch: config.ch,
         systemd_run: config.systemd_run,
+        systemctl: config.systemctl,
         vmm_unit: VmmUnit::of_self(),
         limits: config.limits,
         budget: config.budget,

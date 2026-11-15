@@ -212,6 +212,13 @@ table of the three vmm crates.
   failed scope blocks `systemd-run --unit` with its name. The last list
   decides: a unit still loaded then is an error. The vmm config gives the
   path of `systemctl`, like the path of `systemd-run`.
+- `leftovers::stop_one` is the same stop for one unit, by its full name.
+  `start.rs` calls it with `creche-vm-<id>.scope` just before each
+  launch: the table holds no VM of that session then, so a loaded scope
+  with the name is a leftover. On 2026-11-15 a dropped start left one
+  loaded and `active` with an empty cgroup (systemd 259), and every later
+  launch of the session failed with "already loaded" until a user
+  `daemon-reload` three hours later.
 - `leftovers::kill_all` is the mode `vmm kill-scopes`, the `ExecStopPost=`
   step of the vmm unit (decisions CH61 rule 1, CH63). It lists the same
   units as `stop_all` and runs `systemctl --user kill --signal=SIGKILL`

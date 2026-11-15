@@ -402,6 +402,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         families: config.families.clone(),
         ch: config.ch,
         systemd_run: config.systemd_run,
+        systemctl: config.systemctl,
         vmm_unit,
         limits: config.limits,
         budget: config.budget,
