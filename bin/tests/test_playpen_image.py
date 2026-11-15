@@ -55,12 +55,17 @@ def _facade_bins() -> dict[str, str]:
 
 
 def test_the_targets_are_the_flavors_ci_builds() -> None:
-    """playpen/AGENTS.md rule 3: the targets and the flavors are one list."""
+    """playpen/AGENTS.md rule 3: the targets are one list with the flavors,
+    then the service images, that CI builds."""
     targets = [name for name in STAGE_RE.findall(_text()) if name not in BUILD_ONLY_STAGES]
-    checked = re.search(r'^FLAVORS="([^"]*)"$', CI.read_text(encoding="utf-8"), re.MULTILINE)
+    ci = CI.read_text(encoding="utf-8")
+    flavors = re.search(r'^FLAVORS="([^"]*)"$', ci, re.MULTILINE)
+    services = re.search(r'^SERVICES="([^"]*)"$', ci, re.MULTILINE)
 
-    assert checked is not None
-    assert targets == [pair.split(":", 1)[1] for pair in checked.group(1).split()]
+    assert flavors is not None
+    assert services is not None
+    pairs = [*flavors.group(1).split(), *services.group(1).split()]
+    assert targets == [pair.split(":", 1)[1] for pair in pairs]
     assert "FROM agent-sandbox AS agent-sandbox-python" in _text()
 
 
@@ -115,7 +120,7 @@ def test_the_image_fixes_no_address() -> None:
 
 
 def test_the_test_venv_installs_the_locked_dependencies() -> None:
-    """The python flavor holds a second venv, /opt/test: CPython 3.12 and
+    """The python flavor holds a second venv, /opt/test: CPython 3.14 and
     the locked test dependencies of this workspace. The pins come from
     uv.lock, installed at build time, and the workspace's own code stays
     out, so a test imports the code of the clone under test."""
@@ -155,7 +160,7 @@ def test_the_build_inputs_are_content_pinned() -> None:
 
     assert re.search(r"^ARG NODE_IMAGE=node:24-bookworm@sha256:[0-9a-f]{64}$", text, re.MULTILINE)
     assert re.search(
-        r"^ARG PYTHON_IMAGE=python:3\.12-slim-bookworm@sha256:[0-9a-f]{64}$",
+        r"^ARG PYTHON_IMAGE=python:3\.14-slim-bookworm@sha256:[0-9a-f]{64}$",
         text,
         re.MULTILINE,
     )
@@ -180,7 +185,7 @@ def test_the_final_stage_keeps_the_interpreter_links() -> None:
 
     assert "COPY --from=creche-test-venv /usr/local/bin/python /usr/local/bin/" in stage
     assert "COPY --from=creche-test-venv /usr/local/bin/python3 /usr/local/bin/" in stage
-    assert "COPY --from=creche-test-venv /usr/local/bin/python3.12 /usr/local/bin/" in stage
+    assert "COPY --from=creche-test-venv /usr/local/bin/python3.14 /usr/local/bin/" in stage
 
 
 def test_the_wrappers_do_not_import_from_the_current_directory() -> None:
@@ -215,9 +220,9 @@ def test_the_image_ships_no_installer() -> None:
     assert "python3-pip-whl python3-setuptools-whl" in stage
     assert "/usr/lib/python3.11/ensurepip" in stage
     assert "/usr/share/python-wheels" in stage
-    assert "rm -rf /usr/local/lib/python3.12/site-packages/pip*" in venv_stage
-    assert "/usr/local/lib/python3.12/site-packages/uv*" in venv_stage
-    assert "/usr/local/lib/python3.12/ensurepip" in venv_stage
+    assert "rm -rf /usr/local/lib/python3.14/site-packages/pip*" in venv_stage
+    assert "/usr/local/lib/python3.14/site-packages/uv*" in venv_stage
+    assert "/usr/local/lib/python3.14/ensurepip" in venv_stage
     assert 'ENV PATH="/opt/py/bin:/opt/test/bin:${PATH}"' in stage
     assert "/opt/test/bin/pytest --version" in stage
     assert "the image ships pip in /usr/local" in stage

@@ -28,7 +28,11 @@
 //! one handle above. The two are two reads with no cross-check, so a
 //! caregiver write between them gives a mixed reply that the next pull
 //! fixes (decision CH62 rule 21). caregiver replaces `creds.json` with one
-//! `rename`, so that read needs no retry.
+//! `rename`, so that read needs no retry. The reply carries the
+//! placeholders of the session, not the values of `creds.json`
+//! (openshell ideas plan, idea 1). The read of `creds.json` still decides
+//! `CredsMissing` and `NotValid`. `read_creds` gives the real values to
+//! the plane proxies of ports 1101 and 1102, one read per request.
 //!
 //! `read_egress` reads the egress allowlist `egress.json` of a family
 //! (decisions CH6-4, CH69 rules 3 and 5), and `read_repos` reads its clone
@@ -39,6 +43,10 @@
 //! takes the bytes first (`ReachBytes`), through the same checked open.
 //! The edit follow of the vmm compares those bytes every 2 s and reads
 //! the list only after a change (decision CH69 rule 11).
+//!
+//! `read_git_platform` reads the git platform grant `git-platform.json`
+//! of a family (decision CH3, phase 12 PR2) as `read_repos` reads
+//! `repos.json`. An absent family dir or file grants nothing.
 //!
 //! Decision CH50 rule 9 sets the number of tries, the pause between two
 //! tries and the size cap of `shape.json`: `READ_TRIES` (5),
@@ -55,11 +63,12 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use creche_vmm_store::layout::RootError;
+use creche_vmm_store::placeholder::Placeholders;
 use creche_wire::{
-    FAMILY_EGRESS_FILE, FAMILY_REPOS_FILE, FAMILY_SHAPE_FILE, FAMILY_STATE_CAP, FamilyConfig,
-    FamilyCreds, FamilyEgress, FamilyName, FamilyRepos, FamilyShape, FamilySkills, FamilyState,
-    FamilyStateReply, LitellmKey, ModelAlias, PepToken, SandboxGrant, SystemPrompt, UnixMillis,
-    strict,
+    FAMILY_EGRESS_FILE, FAMILY_GIT_PLATFORM_FILE, FAMILY_REPOS_FILE, FAMILY_SHAPE_FILE,
+    FAMILY_STATE_CAP, FamilyConfig, FamilyCreds, FamilyEgress, FamilyGitPlatform, FamilyName,
+    FamilyRepos, FamilyShape, FamilySkills, FamilyState, FamilyStateReply, LitellmKey, ModelAlias,
+    PepToken, SandboxGrant, SystemPrompt, UnixMillis, strict,
 };
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
 use rustix::io::Errno;
@@ -109,6 +118,13 @@ pub const EGRESS_CAP: u64 = 64 * 1024;
 /// caregiver, and a test of each side holds it equal.
 pub const REPOS_CAP: u64 = 4 * 1024;
 
+/// The most bytes of `git-platform.json`: 256. caregiver writes the
+/// indented form of two bools, at most 38 bytes, so a file that caregiver
+/// writes always fits. A larger file is `ReachFault::TooLarge`, so the vmm
+/// grants nothing. `rust/crates/wire/vectors/family.json` holds the same
+/// value for caregiver, and a test of each side holds it equal.
+pub const GIT_PLATFORM_CAP: u64 = 256;
+
 /// The flags of each directory open. `O_NOFOLLOW` refuses a symlink as the
 /// last part of the path (decision CH23 (3)).
 pub(crate) const DIR_FLAGS: OFlags = OFlags::RDONLY
@@ -150,26 +166,29 @@ impl From<Errno> for FamilyError {
     }
 }
 
-/// Why a reach file of a family, `egress.json` or `repos.json`, does not
-/// read. Each fault allows no egress or no clone.
+/// Why a reach file of a family, `egress.json`, `repos.json` or
+/// `git-platform.json`, does not read. Each fault allows no egress, no
+/// clone or no spool request.
 #[derive(Debug)]
 pub enum ReachFault {
     /// The family dir is a symlink or not a dir.
     NotDir,
     /// The file is a symlink or not a regular file.
     NotFile,
-    /// The file has more bytes than its cap: `EGRESS_CAP` or `REPOS_CAP`.
+    /// The file has more bytes than its cap: `EGRESS_CAP`, `REPOS_CAP` or
+    /// `GIT_PLATFORM_CAP`.
     TooLarge,
-    /// The bytes are not one `FamilyEgress` or `FamilyRepos` of strict
-    /// JSON.
+    /// The bytes are not one `FamilyEgress`, `FamilyRepos` or
+    /// `FamilyGitPlatform` of strict JSON.
     NotValid,
     /// Any other error of the file system.
     Io(io::Error),
 }
 
 /// The bytes of one reach file of a family, as the checked read of
-/// `FamilyRoot` takes them: `egress.json` for `ReachBytes<FamilyEgress>`
-/// and `repos.json` for `ReachBytes<FamilyRepos>`. The edit follow of the
+/// `FamilyRoot` takes them: `egress.json` for `ReachBytes<FamilyEgress>`,
+/// `repos.json` for `ReachBytes<FamilyRepos>` and `git-platform.json` for
+/// `ReachBytes<FamilyGitPlatform>`. The edit follow of the
 /// vmm compares them every 2 s (decision CH69 rule 11), and `list` reads
 /// them with the strict reader (decision CH65 rule 2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +230,18 @@ impl ReachBytes<FamilyRepos> {
     /// `NotValid` when the bytes are not one `FamilyRepos`.
     pub fn list(&self) -> Result<FamilyRepos, ReachFault> {
         self.read(FamilyRepos::default())
+    }
+}
+
+impl ReachBytes<FamilyGitPlatform> {
+    /// The git platform grant of the bytes. An absent file grants
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// `NotValid` when the bytes are not one `FamilyGitPlatform`.
+    pub fn list(&self) -> Result<FamilyGitPlatform, ReachFault> {
+        self.read(FamilyGitPlatform::default())
     }
 }
 
@@ -475,6 +506,32 @@ impl FamilyRoot {
         self.read_reach(family, FAMILY_REPOS_FILE, REPOS_CAP)
     }
 
+    /// The git platform grant of `family`, from `git-platform.json` in its
+    /// family dir (decision CH3): `read_git_platform_bytes`, then
+    /// `ReachBytes::list`. An absent family dir or file grants nothing.
+    ///
+    /// # Errors
+    ///
+    /// A `ReachFault` when the family dir or the file is present and does
+    /// not read.
+    pub fn read_git_platform(&self, family: &FamilyName) -> Result<FamilyGitPlatform, ReachFault> {
+        self.read_git_platform_bytes(family)?.list()
+    }
+
+    /// The bytes of `git-platform.json` of `family`, read as
+    /// `read_egress_bytes` reads `egress.json`, with a cap of
+    /// `GIT_PLATFORM_CAP`.
+    ///
+    /// # Errors
+    ///
+    /// The faults of `read_egress_bytes`.
+    pub fn read_git_platform_bytes(
+        &self,
+        family: &FamilyName,
+    ) -> Result<ReachBytes<FamilyGitPlatform>, ReachFault> {
+        self.read_reach(family, FAMILY_GIT_PLATFORM_FILE, GIT_PLATFORM_CAP)
+    }
+
     /// The bytes of the reach file `file` of `family`: one `openat` of the
     /// file with `O_NOFOLLOW` and `O_NONBLOCK`, and a cap of `cap` bytes.
     /// An absent family dir or file gives no bytes.
@@ -510,15 +567,21 @@ impl FamilyRoot {
     /// (decisions CH5a, CH23): `creds/creds.json`, then `config/` through
     /// `with_config`, as two reads with no cross-check (decision CH62
     /// rule 21). It keeps no last good state, so each fault is the reply
-    /// of that pull (decision CH53 rule 2).
+    /// of that pull (decision CH53 rule 2). The creds of the reply are
+    /// `placeholders`, so no real value reaches the guest.
     ///
     /// # Errors
     ///
     /// `CredsMissing` first, whatever `config/` holds (decision CH31
     /// rule 4). Then `ConfigMissing`, `NotValid`, or `TooLarge` when the
     /// reply passes `FAMILY_STATE_CAP`.
-    pub fn read_state(&self, family: &FamilyName) -> Result<StateRead, StateFault> {
-        let creds = self.read_creds(family)?;
+    pub fn read_state(
+        &self,
+        family: &FamilyName,
+        placeholders: &Placeholders,
+    ) -> Result<StateRead, StateFault> {
+        self.read_creds(family)?;
+        let creds = placeholders.creds();
         let (config, model_live_at) = match self.with_config(family, read_config) {
             Ok(read) => read?,
             Err(FamilyError::Unknown) => return Err(StateFault::ConfigMissing),
@@ -543,8 +606,14 @@ impl FamilyRoot {
     }
 
     /// The key and the token of `creds/creds.json` of `family`, one capped
-    /// `O_NOFOLLOW` read (decision CH62 rule 21).
-    fn read_creds(&self, family: &FamilyName) -> Result<FamilyCreds, StateFault> {
+    /// `O_NOFOLLOW` read (decision CH62 rule 21). The plane proxies read
+    /// it once per request, so a rotation reaches the next request.
+    ///
+    /// # Errors
+    ///
+    /// `CredsMissing` for an absent family dir, `creds/` or file, else
+    /// `NotValid`.
+    pub fn read_creds(&self, family: &FamilyName) -> Result<FamilyCreds, StateFault> {
         let opened = |dir: Result<OwnedFd, FamilyError>| match dir {
             Ok(dir) => Ok(dir),
             Err(FamilyError::Unknown) => Err(StateFault::CredsMissing),

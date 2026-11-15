@@ -464,15 +464,15 @@ REFUSALS: Final[tuple[Refusal, ...]] = (
         turn=TURN,
     ),
     Refusal(
-        "forbidden", ErrorCode.FORBIDDEN, "no", detail={"principal": "door-owui", "kind": "thin"}
+        "forbidden", ErrorCode.FORBIDDEN, "no", detail={"principal": "door-trigger", "kind": "thin"}
     ),
     Refusal(
-        "forbidden-prefix",
+        "forbidden-door",
         ErrorCode.FORBIDDEN,
         "no",
         family=FAMILY,
         session=OTHER_SESSION,
-        detail={"principal": "door-owui", "expected_prefix": "owui-"},
+        detail={"principal": "door-trigger"},
     ),
     Refusal(
         "idempotency-mismatch-other-family",

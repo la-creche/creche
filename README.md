@@ -3,9 +3,11 @@
 A control plane for agents that run in deny-by-default microVMs. One file
 defines an agent family. The plane converges the host to that file.
 
-The source is public. The deployment it was built for is private. The design
-documents and the contracts of that deployment are in a private repository.
-A citation such as `docs/rework/spec.md` or `contract 04 §6` resolves there.
+The source is public. The deployment it was built for is private. The
+invariants, the decisions, three contracts and the design notes are in
+[docs/](docs/README.md). The other documents of that deployment are in a
+private repository. A citation such as `docs/rework/spec.md` or
+`contract 04 §6` resolves there.
 
 **Documentation standard.** Every Markdown document in this repository is
 written in ASD-STE100 Simplified Technical English. This is a rule, not a
@@ -42,7 +44,7 @@ The noticeboard edits the same file from a form.
 ## 3. The components
 
 Every kind of agent is one call: create a session in a family, then run a
-turn. The `attendance` service takes that call from four doors.
+turn. The `attendance` service takes that call from three doors: ACP, dispatch and trigger.
 
 | Directory | Component | Unit | What it owns | Read |
 |---|---|---|---|---|
@@ -54,8 +56,8 @@ turn. The `attendance` service takes that call from four doors.
 | `playpen/` | in `disks` | none, a build input | The image that each root disk of `disks` is built from: the ACP facade and the agent module. | [playpen/AGENTS.md](playpen/AGENTS.md) |
 | `handover/` | `handover` | `creche-handover.{path,service}`, system, root | The release tool: resolver, tag allocator, executor, requester, follower. | [handover/AGENTS.md](handover/AGENTS.md) |
 | `family/` | in `caregiver` | none, a library | The `family.toml` and `server.toml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
-| `memory/` | none yet | `creche-memory.service`, user | The memory service: the store of the vault, its sync, the search and every agent write. | [memory/AGENTS.md](memory/AGENTS.md) |
-| `rust/crates/vmm/` | `vmm` | `creche-vmm.service`, user | Every Cloud Hypervisor VM of the playpen. Not installed yet. | [rust/crates/vmm/AGENTS.md](rust/crates/vmm/AGENTS.md) |
+| `memory/` | `memory` | `creche-memory.service`, user | The memory service: the store of the vault, its sync, the search and every agent write. | [memory/AGENTS.md](memory/AGENTS.md) |
+| `rust/crates/vmm/` | `vmm` | `creche-vmm.service`, user | Every Cloud Hypervisor VM of the playpen. | [rust/crates/vmm/AGENTS.md](rust/crates/vmm/AGENTS.md) |
 
 The chaperone is the Rust program of the `chaperone` repository. Its unit,
 `creche-chaperone.service`, ships from that repository.
@@ -72,7 +74,7 @@ The other directories:
 | `integration/` | The cross-package suites. The process-level suite runs each service as a process. A second suite runs the `caregiver` writers against their readers. | [integration/AGENTS.md](integration/AGENTS.md) |
 | `githooks/` | `pre-commit` and `pre-push`. They run `bin/quality-gate.sh`. | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | `.github/` | The pull request gate, the release run and `!retest`. | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| `docs/` | The writing standard. | [docs/writing-standard.md](docs/writing-standard.md) |
+| `docs/` | The writing standard, the invariants, the decisions, three contracts and the design notes. | [docs/README.md](docs/README.md) |
 
 ## 4. Where to look for a capability
 
@@ -96,7 +98,7 @@ The other directories:
 
 ## 5. Develop
 
-Prerequisites: Python 3.12, `uv`, and for `agent/` and `facade/` Node 24
+Prerequisites: Python 3.14, `uv`, and for `agent/` and `facade/` Node 24
 with `pnpm`.
 
 ```bash
@@ -117,7 +119,7 @@ The two verbs differ, and the difference is a security property.
 
 - **A deploy** puts this repository at `/opt/creche` and fills its venv. It
   restarts no unit. `sudo creche-deploy <ref>` is the single sudoers entry
-  on the host.
+  on the host. It asks for the operator's password.
 - **A release** replaces one component tree under `/opt/components/<name>`
   or `~/.local/components/<name>`, then restarts that component's unit.
   The `handover` executor does this as root, from a request file, after a
@@ -137,7 +139,7 @@ component the pull request changes. The root `pyproject.toml` stays at
 
 ## 7. Invariants
 
-The design holds twenty invariants. The ten that most code cites:
+The design holds twenty invariants, in [docs/invariants.md](docs/invariants.md). The ten that most code cites:
 
 1. Authority lives only in the control plane.
 2. Deny by default on every axis: mounts, egress, tools, approvals.

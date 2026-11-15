@@ -9,6 +9,7 @@ from handover.catalog import CATALOG, MAX_REQUEST_COMPONENTS, Action, ContractId
 from handover.errors import Refusal, RefusalCode
 from handover.manifest import ComponentManifest, Markup, parse_manifest
 from handover.resolve import (
+    HANDOVER_ALONE,
     build_document,
     canonical_json,
     parse_request,
@@ -129,6 +130,27 @@ def test_a_name_outside_the_catalog_is_refused() -> None:
 
     assert refusal.code is RefusalCode.REQUEST
     assert "contract 06 §1 lists" in refusal.detail
+
+
+def test_a_set_of_handover_and_another_is_refused() -> None:
+    """`handover` releases alone (`catalog.RELEASES_ALONE`)."""
+    refusal = _refusal({"handover": "0.4.0", "chaperone": "2.1.0"})
+
+    assert refusal.code is RefusalCode.REQUEST
+    assert refusal.detail == HANDOVER_ALONE
+
+
+def test_handover_alone_resolves() -> None:
+    resolution = resolve(_rows(), _state(), {"handover": "0.4.0"})
+
+    assert resolution.order == ("handover",)
+
+
+def test_handover_at_its_live_version_beside_another_resolves() -> None:
+    """Only a deploy row counts: `handover` at 0.3.0 is `unchanged`."""
+    resolution = resolve(_rows(), _state(), {"handover": "0.3.0", "chaperone": "2.1.0"})
+
+    assert resolution.deploying == frozenset({"chaperone"})
 
 
 def test_the_data_component_can_never_be_released() -> None:
@@ -257,11 +279,11 @@ def test_the_document_has_contract_06_paragraph_9_fields() -> None:
 #: The hash of two documents, as the writer before the strict writer gave
 #: it. The approval binds to the hash, so the strict writer gives each
 #: strict document the bytes of before. Each document holds the version
-#: text of the manifest contract, 0.26, so a new version moves both hashes.
+#: text of the manifest contract, 0.27, so a new version moves both hashes.
 #: Each document also lists every row of the catalog, so a row that leaves
 #: or arrives moves both hashes too.
-HASH_OF_TWO = "sha256:e704e5e353b37cb52b8c362562f7ad2637ec266890f4b0ef798d861591edf2e0"
-HASH_OF_A_FRACTION = "sha256:52c3820263b27c7da5f34e4626ea40e9e3d03f57233a12202dbb22798c28a970"
+HASH_OF_TWO = "sha256:e793cb26a9ab0b2e65f64195a4bff50fdb7402e54f78dc8bc1a57fe6952b6036"
+HASH_OF_A_FRACTION = "sha256:cafe837b31a891fb9d4bad2423496bcc29191f9b9f6de7f219e3301c5472fe00"
 
 
 def test_the_hash_of_a_document_is_the_hash_of_before() -> None:

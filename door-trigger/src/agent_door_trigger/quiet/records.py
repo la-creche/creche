@@ -147,7 +147,7 @@ class HostRecords:
                     continue
 
                 body: object = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, RecursionError):
+            except OSError, ValueError, RecursionError:
                 continue
 
             yield as_object(body)
@@ -205,7 +205,7 @@ def _audit_line(raw: bytes) -> AuditLine | None:
     try:
         body = as_object(json.loads(raw))
         time = datetime.fromisoformat(field_text(body, "time"))
-    except (ValueError, RecursionError):
+    except ValueError, RecursionError:
         # RecursionError: a line that nests too deep is not a ValueError.
         return None
 

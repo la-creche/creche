@@ -17,7 +17,7 @@
 //! vsock path in a snapshot holds across a restore into another slot.
 
 use std::fmt;
-use std::fs::{self, DirBuilder};
+use std::fs::{self, DirBuilder, File, TryLockError};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, symlink};
 use std::path::{Component, Path, PathBuf};
@@ -167,6 +167,15 @@ fn check_root(path: &Path) -> Result<(), RootError> {
     Ok(())
 }
 
+/// The mode of a state root that `StateRoot::lock` makes: only the vmm
+/// user reads it.
+const STATE_ROOT_MODE: u32 = 0o700;
+
+/// The exclusive lock of a state root (`StateRoot::lock`). The drop frees
+/// it.
+#[derive(Debug)]
+pub struct StateLock(#[expect(dead_code, reason = "the open dir holds the lock")] File);
+
 /// The state root: an absolute path with no `..` component.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateRoot(PathBuf);
@@ -186,6 +195,47 @@ impl StateRoot {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.0
+    }
+
+    /// Takes the exclusive lock of the state root dir, and waits while
+    /// another process holds it. `vmm serve` holds it from its start to
+    /// its exit, and `vmm gc --apply` for its removes, so the two never
+    /// change the state root at once. It makes the root with mode 0700
+    /// when it is absent. The lock is an `flock` of the dir itself, so it
+    /// adds no file to the layout of decision CH39 rule 3, and the kernel
+    /// frees it when the holder exits.
+    ///
+    /// # Errors
+    ///
+    /// A failed make, open or lock of the dir.
+    pub fn lock(&self) -> io::Result<StateLock> {
+        let dir = self.open_for_lock()?;
+        dir.lock()?;
+        Ok(StateLock(dir))
+    }
+
+    /// Takes the lock of `lock` only when no other holder has it. `None`
+    /// when another open of the dir holds it.
+    ///
+    /// # Errors
+    ///
+    /// A failed make, open or lock of the dir.
+    pub fn try_lock(&self) -> io::Result<Option<StateLock>> {
+        let dir = self.open_for_lock()?;
+        match dir.try_lock() {
+            Ok(()) => Ok(Some(StateLock(dir))),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(error)) => Err(error),
+        }
+    }
+
+    /// Makes the root when it is absent, then opens it.
+    fn open_for_lock(&self) -> io::Result<File> {
+        DirBuilder::new()
+            .recursive(true)
+            .mode(STATE_ROOT_MODE)
+            .create(&self.0)?;
+        File::open(&self.0)
     }
 
     // Decision CH39 rule 3 names the files under the state root:

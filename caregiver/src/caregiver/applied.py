@@ -108,7 +108,7 @@ def _read_copy(state_root: Path, family_name: str) -> str | None:
     copy cannot be read."""
     try:
         return paths.applied_family_path(state_root, family_name).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return None
 
 

@@ -1,6 +1,6 @@
-"""`egress.json` and `repos.json` beside the config directory (contract 01
-§6.1.1, decisions CH69 rules 3 to 6, CH70 rule 4, CH71, CH73 rules 2 and
-3)."""
+"""`egress.json`, `repos.json` and `git-platform.json` beside the config
+directory (contract 01 §6.1.1, decisions CH3, CH69 rules 3 to 6, CH70 rule
+4, CH71, CH73 rules 2 and 3)."""
 
 from __future__ import annotations
 
@@ -17,12 +17,14 @@ from caregiver.reach_files import (
     EgressTooLargeError,
     render_egress_file,
     write_egress_file,
+    write_git_platform_file,
     write_repos_file,
 )
 from caregiver_helpers import chat_family
 from creche_wire import (
     EgressHost,
     FamilyEgress,
+    FamilyGitPlatform,
     FamilyRepos,
     HostName,
     RepoList,
@@ -43,10 +45,12 @@ FAMILY_VECTORS: Final = (
 )
 
 
-def vmm_cap(key: Literal["egress_cap", "repos_cap"]) -> int:
+def vmm_cap(key: Literal["egress_cap", "git_platform_cap", "repos_cap"]) -> int:
     """One cap of the wire vectors: `egress_cap`, the most bytes of
     `egress.json` that the vmm reads (decision CH70 rule 1), or
-    `repos_cap`, the most bytes of `repos.json` (decision CH73 rule 2)."""
+    `repos_cap`, the most bytes of `repos.json` (decision CH73 rule 2), or
+    `git_platform_cap`, the most bytes of `git-platform.json` (decision
+    CH3)."""
     vectors = strictjson.loads(FAMILY_VECTORS.read_bytes(), cap=4096)
     assert isinstance(vectors, dict)
     cap = cast(dict[str, object], vectors)[key]
@@ -221,3 +225,62 @@ def test_the_longest_repos_list_fits_the_vmm_cap(tmp_path: Path) -> None:
     assert size == 3476
     assert size <= vmm_cap("repos_cap")
     assert repos_written(tmp_path) == names
+
+
+def git_platform_written(state_root: Path) -> FamilyGitPlatform:
+    """`git-platform.json` as the vmm reads it: strict JSON, then the wire
+    type."""
+    data = paths.git_platform_path(state_root, "chat").read_bytes()
+    return read(FamilyGitPlatform, data, cap=vmm_cap("git_platform_cap"))
+
+
+def test_the_git_platform_file_reads_back_through_creche_wire(tmp_path: Path) -> None:
+    write_git_platform_file(chat_family(tools={"git-platform": ["push", "fetch"]}), tmp_path)
+    assert git_platform_written(tmp_path) == FamilyGitPlatform(fetch=True, push=True)
+    mode = paths.git_platform_path(tmp_path, "chat").stat().st_mode
+    assert stat.S_IMODE(mode) == 0o640
+
+
+def test_a_grant_of_all_grants_both(tmp_path: Path) -> None:
+    write_git_platform_file(chat_family(tools={"git-platform": "all"}), tmp_path)
+    assert git_platform_written(tmp_path) == FamilyGitPlatform(fetch=True, push=True)
+
+
+def test_a_grant_of_one_tool_grants_that_one(tmp_path: Path) -> None:
+    write_git_platform_file(chat_family(tools={"git-platform": ["fetch"]}), tmp_path)
+    assert git_platform_written(tmp_path) == FamilyGitPlatform(fetch=True, push=False)
+
+
+def test_a_family_with_no_grant_gets_a_file_that_grants_nothing(tmp_path: Path) -> None:
+    """The vmm binds no spool listener for this file (decision CH3). A
+    grant of another server does not count."""
+    write_git_platform_file(chat_family(tools={"github-platform": "all"}), tmp_path)
+    data = paths.git_platform_path(tmp_path, "chat").read_bytes()
+    assert data == b'{\n  "fetch": false,\n  "push": false\n}\n'
+
+
+def test_a_grant_edit_rewrites_the_file_and_an_unchanged_one_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    write_git_platform_file(chat_family(tools={"git-platform": ["push", "fetch"]}), tmp_path)
+    path = paths.git_platform_path(tmp_path, "chat")
+    before = path.stat()
+    write_git_platform_file(chat_family(tools={"git-platform": ["fetch", "push"]}), tmp_path)
+    after = path.stat()
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    assert write_git_platform_file(chat_family(), tmp_path)
+    assert git_platform_written(tmp_path) == FamilyGitPlatform(fetch=False, push=False)
+    family_dir = paths.family_dir(tmp_path, "chat")
+    assert sorted(one.name for one in family_dir.iterdir()) == ["git-platform.json"]
+
+
+def test_the_largest_git_platform_file_fits_the_vmm_cap(tmp_path: Path) -> None:
+    """Each grant renders to at most 38 bytes, under `git_platform_cap`, so
+    caregiver needs no refusal of its own. The module docstring cites the
+    length."""
+    sizes: list[int] = []
+    for tools in ({}, {"git-platform": "all"}, {"git-platform": ["push"]}):
+        write_git_platform_file(chat_family(tools=tools), tmp_path)
+        sizes.append(paths.git_platform_path(tmp_path, "chat").stat().st_size)
+    assert max(sizes) == 38
+    assert max(sizes) <= vmm_cap("git_platform_cap")

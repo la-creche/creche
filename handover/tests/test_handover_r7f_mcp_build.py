@@ -44,6 +44,7 @@ from handover_mcp_fixtures import (
     VIKUNJA_YAML,
     McpFake,
     binary_server,
+    forge_server,
     github_server,
     hostile_tarball,
     kagi_server,
@@ -161,6 +162,38 @@ def test_a_github_release_server_is_downloaded_hashed_then_unpacked(tmp_path: Pa
     assert build.artifact.endswith("v1.12.0/github-mcp-server_Linux_x86_64.tar.gz")
     # The proven flags: a redirect to http or file: is refused by curl.
     assert any("--proto =https" in line for line in fake.argv_lines())
+
+
+def test_a_forge_release_server_takes_the_path_of_a_github_release(tmp_path: Path) -> None:
+    """One download, one hash, one unpack: the build of `github-release`.
+    Only the host of the URL differs, and the file names it."""
+    asset = release_tarball(entrypoint="forgejo-mcp")
+    fake = McpFake(asset_bytes=asset)
+    builder, work, source = _builder(tmp_path, fake)
+
+    build = builder.stage_one(forge_server(sha256_of(asset)), work, source)
+
+    url = (
+        "https://git.b4mad.industries/agentic-forges/forgejo-mcp/releases/download/"
+        "v3.4.1/forgejo-mcp_3.4.1_linux_amd64.tar.gz"
+    )
+    assert (build.paths.new / "bin" / "forgejo-mcp").is_file()
+    assert build.artifact == url
+    fetch = next(one for one in fake.seen if one.argv[0].endswith("/curl"))
+    assert fetch.argv[-1] == url
+    assert "--proto =https --tlsv1.2" in " ".join(fetch.argv)
+    # No venv: the tree is a binary, as the tree of a `github-release` is.
+    assert not any(one.argv[0].endswith("/uv") for one in fake.seen)
+
+
+def test_a_forge_release_asset_whose_hash_differs_is_refused(tmp_path: Path) -> None:
+    fake = McpFake(asset_bytes=release_tarball(entrypoint="forgejo-mcp"))
+    builder, work, source = _builder(tmp_path, fake)
+
+    with pytest.raises(Refusal, match="the file pins"):
+        builder.stage_one(forge_server("0" * 64), work, source)
+
+    assert not (builder.mcp_root / "forgejo-code.new" / "bin").exists()
 
 
 def test_a_binary_release_asset_is_hashed_then_placed_as_the_entrypoint(tmp_path: Path) -> None:
@@ -286,8 +319,8 @@ def test_a_failed_child_says_what_it_printed(tmp_path: Path) -> None:
 
 def ha_like_server() -> ServerFile:
     """A pypi server that wants a minor the host does not have. `ha-mcp`
-    requires `>=3.13,<3.15` and the host has 3.12."""
-    body = KAGI_YAML.format(lock=KAGI_LOCK_PATH).replace('python: "3.12"', 'python: "3.13"')
+    requires `>=3.13,<3.15` and the server file names 3.13. The host has 3.14."""
+    body = KAGI_YAML.format(lock=KAGI_LOCK_PATH).replace('python: "3.14"', 'python: "3.13"')
 
     return parse_server(body.encode("utf-8"), "kagi")
 
@@ -335,7 +368,7 @@ def test_a_minor_the_host_provides_is_not_installed(tmp_path: Path) -> None:
 
     builder.stage_all((kagi_server(),), work, source)
 
-    assert fake.ran("python find 3.12")
+    assert fake.ran("python find 3.14")
     assert not fake.ran("python install")
 
 

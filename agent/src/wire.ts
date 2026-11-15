@@ -1180,6 +1180,25 @@ export const wire = {
       ],
       "type": "object"
     },
+    "FamilyGitPlatform": {
+      "additionalProperties": false,
+      "description": "The git platform grant of one family: the file\n`FAMILY_GIT_PLATFORM_FILE` (decision CH3). caregiver writes it from the\ngrant `tools.git-platform` of the family file. A grant of `all` grants\nboth. The vmm binds host port 1105, the spool of `spool`, only for a\nfile that grants one of the two, and it reads the file again for each\nrequest. A get needs `fetch`, and a put needs `push`.\n\nNo route reaches the type, so it needs no new `HOST_API_PROTOCOL`\n(decision CH33 rule 8).",
+      "properties": {
+        "fetch": {
+          "description": "The family may get a bundle of the `fetch` tool of the upstream.",
+          "type": "boolean"
+        },
+        "push": {
+          "description": "The family may put a bundle for the `push` tool of the upstream.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "fetch",
+        "push"
+      ],
+      "type": "object"
+    },
     "FamilyMemoryMib": {
       "description": "The guest RAM of the family VM in MiB: `sandbox.memory` of the\nfamily file as `memory_mb` of `family/grammar.py` reads it, which\ncounts `1g` as 1024. The range is `MEMORY_MIN_MB` to\n`MEMORY_MAX_MB` there. The scope gets a memory cap above it\n(decision CH8-5).",
       "format": "uint64",

@@ -200,6 +200,19 @@ def test_a_pass_writes_the_repos_file(fleet: Fleet) -> None:
     assert json.loads(repos_path.read_bytes()) == {"repos": ["creche", "mcp"]}
 
 
+def test_a_pass_writes_the_git_platform_file(fleet: Fleet) -> None:
+    """Decision CH3: every pass writes the grant of the vmm spool, and a
+    new grant is the step `set_egress`."""
+    fleet.run()
+    spool_path = paths.git_platform_path(fleet.state_root, FAMILY)
+    assert json.loads(spool_path.read_bytes()) == {"fetch": False, "push": False}
+    write_git_platform_server(fleet.registry_root)
+    fleet.write(tools={GIT_PLATFORM: ["push", "fetch"]})
+    result = fleet.run()
+    assert "set_egress" in result.ran
+    assert json.loads(spool_path.read_bytes()) == {"fetch": True, "push": True}
+
+
 class Damage(StrEnum):
     """What happens to a reach file between two passes."""
 
@@ -209,7 +222,9 @@ class Damage(StrEnum):
 
 @pytest.mark.parametrize("damage", list(Damage))
 @pytest.mark.parametrize(
-    "reach_path", [paths.egress_path, paths.repos_path], ids=["egress.json", "repos.json"]
+    "reach_path",
+    [paths.egress_path, paths.repos_path, paths.git_platform_path],
+    ids=["egress.json", "repos.json", "git-platform.json"],
 )
 def test_a_pass_with_no_change_restores_a_reach_file(
     fleet: Fleet, reach_path: Callable[[Path, str], Path], damage: Damage
@@ -433,6 +448,24 @@ def write_server(registry_root: Path, tools: tuple[str, ...], identity: str = "S
         "tools": [{"name": tool, "description": f"{tool}."} for tool in tools],
     }
     directory = registry_root / "mcp" / SERVER
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "server.toml").write_text(toml_text(body), encoding="utf-8")
+
+
+#: The server of the git platform grant (decision CH3).
+GIT_PLATFORM = "git-platform"
+
+
+def write_git_platform_server(registry_root: Path) -> None:
+    """`mcp/git-platform/server.toml`, cut to what a grant reads."""
+    body = {
+        "name": GIT_PLATFORM,
+        "identity": "Git.",
+        "install": {"source": "agent-mcp"},
+        "run": {"entrypoint": "git-platform-mcp"},
+        "tools": [{"name": tool, "description": f"{tool}."} for tool in ("push", "fetch")],
+    }
+    directory = registry_root / "mcp" / GIT_PLATFORM
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "server.toml").write_text(toml_text(body), encoding="utf-8")
 

@@ -13,15 +13,18 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod guest;
 mod per_flavor;
+mod per_service;
 mod ports;
 mod routes;
 #[cfg(test)]
 mod schema;
+pub mod spool;
 mod strict_json;
 #[cfg(test)]
 mod vectors;
 
 pub use per_flavor::PerFlavor;
+pub use per_service::PerService;
 pub use ports::{GUEST_INIT_PROTOCOL, GuestPort, HostPort};
 pub use routes::{
     AcpError, AcpRoute, Body, CheckError, CheckRoute, CreateError, CreateRoute,
@@ -1799,6 +1802,38 @@ impl SandboxFlavor {
     }
 }
 
+/// The image of a service VM: a root disk of the disks row that no family
+/// file may choose (browser design 10.5.2). `SandboxFlavor` stays the
+/// closed set of contract 01 §3.9, so a service image is no flavor. It is
+/// a closed set of its own beside it. `digests.json` holds one entry for
+/// each value, with the wire name as its key, and `vmm check-images`
+/// refuses a file that lacks one (decision CH58 rule 4). The vmm start
+/// takes such a file and marks the image absent.
+///
+/// No message carries it, so the schema does not hold it.
+/// `handover/tests/test_handover_disk_flavors.py` holds
+/// `catalog.SERVICE_IMAGES` equal to it through the shared vector
+/// `vectors/digests.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceImage {
+    /// The root disk of the browser VM: Chrome and agent-browser.
+    Browser,
+}
+
+impl ServiceImage {
+    /// The wire name of the service image, as the serde derive writes it.
+    /// The match names each variant, so a new service image fails to
+    /// compile until it has a name. A test of `per_service.rs` holds it
+    /// equal to the derive.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Browser => "browser",
+        }
+    }
+}
+
 /// The family VM shape: the file `FAMILY_SHAPE_FILE` in the family's
 /// `config/` (decision CH36 G6). caregiver writes it from the family file.
 /// The vmm reads it before it starts a VM of the family (decision CH8-5).
@@ -2051,6 +2086,33 @@ pub struct FamilyRepos {
 }
 
 object_only!(FamilyRepos);
+
+/// The name of the git platform grant file of a family:
+/// `git-platform.json` in the family dir, beside `config/` and
+/// `repos.json` (decision CH3, phase 12 PR2). caregiver writes it, and the
+/// vmm reads it. An absent file grants nothing.
+pub const FAMILY_GIT_PLATFORM_FILE: &str = "git-platform.json";
+
+/// The git platform grant of one family: the file
+/// `FAMILY_GIT_PLATFORM_FILE` (decision CH3). caregiver writes it from the
+/// grant `tools.git-platform` of the family file. A grant of `all` grants
+/// both. The vmm binds host port 1105, the spool of `spool`, only for a
+/// file that grants one of the two, and it reads the file again for each
+/// request. A get needs `fetch`, and a put needs `push`.
+///
+/// No route reaches the type, so it needs no new `HOST_API_PROTOCOL`
+/// (decision CH33 rule 8).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct FamilyGitPlatform {
+    /// The family may get a bundle of the `fetch` tool of the upstream.
+    pub fetch: bool,
+    /// The family may put a bundle for the `push` tool of the upstream.
+    pub push: bool,
+}
+
+object_only!(FamilyGitPlatform);
 
 /// What a client sends to ask the vmm whether a family may reach a target
 /// (decisions CH6-3, CH69 rule 1): the request of the route `check`.

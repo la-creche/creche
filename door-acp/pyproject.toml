@@ -2,7 +2,7 @@
 name = "agent-door-acp"
 version = "0.1.0"
 description = "ACP front door: forwards ACP frames between a WebSocket client and attendance."
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = ["starlette==1.6.0", "uvicorn==0.52.4", "websockets==17.2"]
 
 [project.scripts]

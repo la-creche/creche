@@ -1,20 +1,22 @@
 //! The edit follow of a running VM (plan PR E3, decisions CH6-3, CH49
 //! rules 3 and 4, CH69 rules 11, 12, 13 and 28, CH72 rule 3, CH73 rule
-//! 1, CH74 rules 1 and 2). caregiver edits `egress.json` and `repos.json`
-//! of a family while its VMs run. One task per VM follows both files:
+//! 1, CH74 rules 1 and 2). caregiver edits `egress.json`, `repos.json` and
+//! `git-platform.json` of a family while its VMs run. One task per VM
+//! follows the three files:
 //!
-//! 1. Every `POLL` it reads the bytes of both files with the byte readers
+//! 1. Every `POLL` it reads the bytes of each file with the byte readers
 //!    of `FamilyRoot`, in `spawn_blocking` (decisions CH36 G21, CH69 rule
 //!    11). Bytes equal to the last ones change nothing. New bytes are a
 //!    new reading, also when they read as the same list, or when they do
 //!    not read before or after. A read that takes no bytes (a symlink, a
 //!    file that is not regular, a file past its cap, an error) has nothing
 //!    to compare, so it is a new reading at each poll.
-//! 2. A new reading binds or removes the listeners of host ports 1103 and
-//!    1104 by the rule of the start (`Reach`): a list that holds an
-//!    entry binds, and so does a present file that does not read. An
-//!    absent file or an empty list binds none (decisions CH49 rule 3,
-//!    CH69 rule 13, CH72 rule 3, CH73 rule 1). A new listener gets the
+//! 2. A new reading binds or removes the listeners of host ports 1103,
+//!    1104 and 1105 by the rule of the start (`Reach`): a list that holds
+//!    an entry or a grant of `fetch` or `push` binds, and so does a
+//!    present file that does not read. An absent file, an empty list or a
+//!    grant of neither binds none (decisions CH3, CH49 rule 3, CH69 rule
+//!    13, CH72 rule 3, CH73 rule 1). A new listener gets the
 //!    server of the start. A removed listener closes, and then its socket
 //!    file goes, so no new link starts. Each open tunnel or clone runs to
 //!    its own end (decision CH74 rule 2, contract 01 section 3.7 rule 11,
@@ -27,8 +29,9 @@
 //!    adds, or a failed removal of a socket file, does the same (decision
 //!    CH74 rule 1).
 //!
-//! A removed host or repo does not wait for the poll: the proxy and the
-//! mirror read their file at each link (decisions CH6-4, CH69 rule 16).
+//! A removed host, repo or grant does not wait for the poll: the proxy,
+//! the mirror and the spool read their file at each link (decisions
+//! CH6-4, CH69 rule 16).
 //! An added one waits one `POLL` at most. The follow assumes that Cloud
 //! Hypervisor connects each guest dial to `vsock.sock_<port>` at the dial
 //! (decision CH24), so it finds a listener that the follow bound after a
@@ -40,7 +43,7 @@
 //! the restore test fails, plan PR E3 takes the fallback of CH49 rule 4:
 //! a bound set fixed per boot and restore.
 //!
-//! The drop of `Watch` ends the task and drops both listeners, with each
+//! The drop of `Watch` ends the task and drops each listener, with each
 //! link that still drains. The VM entry of the start table holds it, so
 //! the follow ends with the VM, and no link outlives the VM.
 
@@ -54,8 +57,9 @@ use creche_vmm_confine::deny::check;
 use creche_vmm_confine::family::{FamilyRoot, ReachBytes};
 use creche_vmm_confine::landlock::Start;
 use creche_vmm_confine::launch::Program;
+use creche_vmm_confine::spool::SpoolRoot;
 use creche_vmm_store::layout::VmRunDir;
-use creche_wire::{FamilyEgress, FamilyName, FamilyRepos, HostPort, SessionId};
+use creche_wire::{FamilyEgress, FamilyGitPlatform, FamilyName, FamilyRepos, HostPort, SessionId};
 use tokio::task::{JoinHandle, spawn_blocking};
 use tokio::time::sleep;
 
@@ -63,34 +67,39 @@ use crate::egress::log::Log;
 use crate::egress::proxy;
 use crate::mirror::{self, Mirror};
 use crate::planes::{BindError, Upstreams};
+use crate::spool;
 use crate::start::blocking;
 
 /// The pause between two reads of the reach files of one VM (decision
 /// CH69 rule 11).
 pub const POLL: Duration = Duration::from_secs(2);
 
-/// What the follow compares of the two reach files of a family: the bytes
-/// of each (decision CH69 rule 11). `None` is a read that took no bytes.
+/// What the follow compares of the three reach files of a family: the
+/// bytes of each (decision CH69 rule 11). `None` is a read that took no
+/// bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Reach {
     repos: Option<ReachBytes<FamilyRepos>>,
     egress: Option<ReachBytes<FamilyEgress>>,
+    git_platform: Option<ReachBytes<FamilyGitPlatform>>,
 }
 
 impl Reach {
-    /// Reads the bytes of `repos.json` and `egress.json` of `family` in
-    /// `families`. It blocks.
+    /// Reads the bytes of `repos.json`, `egress.json` and
+    /// `git-platform.json` of `family` in `families`. It blocks.
     pub(crate) fn read(families: &FamilyRoot, family: &FamilyName) -> Self {
         Self {
             repos: families.read_repos_bytes(family).ok(),
             egress: families.read_egress_bytes(family).ok(),
+            git_platform: families.read_git_platform_bytes(family).ok(),
         }
     }
 
     /// Whether this reading has the bytes of `last`. A read that took no
     /// bytes has nothing to compare, so it is never the same.
     fn same(&self, last: &Self) -> bool {
-        self.repos.is_some() && self.egress.is_some() && self == last
+        let read = self.repos.is_some() && self.egress.is_some() && self.git_platform.is_some();
+        read && self == last
     }
 
     /// Whether the VM gets the mirror listener. A clone list that holds a
@@ -117,10 +126,21 @@ impl Reach {
             .is_none_or(|list| !list.hosts.is_empty())
     }
 
+    /// Whether the VM gets the spool listener. A grant of `fetch` or
+    /// `push` binds 1105 (decision CH3). A present `git-platform.json`
+    /// that does not read binds it too, as for 1103, so each request gets
+    /// `not_granted` and one stderr line.
+    pub(crate) fn spool(&self) -> bool {
+        self.git_platform
+            .as_ref()
+            .and_then(|bytes| bytes.list().ok())
+            .is_none_or(|grant| grant.fetch || grant.push)
+    }
+
     /// The bound set of the deny check: the family-state port 1100 (plan
-    /// PR V8), the plane ports of `planes` (plan PR V6), and 1103 and 1104
-    /// when this reading binds each (decisions CH6-3, CH49 rule 3, CH69
-    /// rule 13).
+    /// PR V8), the plane ports of `planes` (plan PR V6), and 1103, 1104
+    /// and 1105 when this reading binds each (decisions CH3, CH6-3, CH49
+    /// rule 3, CH69 rule 13).
     pub(crate) fn ports(&self, planes: Upstreams) -> Vec<HostPort> {
         let mut ports = vec![HostPort::FamilyState];
         ports.extend(planes.rows().map(|(port, _)| port));
@@ -129,6 +149,9 @@ impl Reach {
         }
         if self.egress() {
             ports.push(HostPort::Egress);
+        }
+        if self.spool() {
+            ports.push(HostPort::GitPlatformSpool);
         }
         ports
     }
@@ -152,11 +175,13 @@ impl<S, D> From<Option<S>> for Listener<S, D> {
     }
 }
 
-/// The reach listeners of one VM: the mirror and the egress proxy.
+/// The reach listeners of one VM: the mirror, the egress proxy and the
+/// git platform spool.
 #[derive(Debug)]
 pub(crate) struct Served {
     pub(crate) mirror: Listener<mirror::Server, mirror::Draining>,
     pub(crate) egress: Listener<proxy::Server, proxy::Draining>,
+    pub(crate) spool: Listener<spool::Server, spool::Draining>,
 }
 
 /// What the follow of one VM reads, binds, serves and checks.
@@ -176,6 +201,8 @@ pub(crate) struct Follow {
     pub(crate) mirror: Mirror,
     /// The egress log of each CONNECT.
     pub(crate) log: Arc<Log>,
+    /// The git platform spool of each request on 1105.
+    pub(crate) spool: SpoolRoot,
     /// The command line file of the CH process, for the deny check.
     pub(crate) cmdline: PathBuf,
     /// The CH program, for the deny check.
@@ -211,7 +238,7 @@ impl Follow {
         }))
     }
 
-    /// Reads the bytes of both files every `POLL`, and after a new reading
+    /// Reads the bytes of each file every `POLL`, and after a new reading
     /// moves the listeners and runs the deny check. It returns the text of
     /// the first fault, and its end drops `served`.
     async fn run(self, mut reach: Reach, mut served: Served) -> String {
@@ -238,7 +265,8 @@ impl Follow {
         }
     }
 
-    /// Binds or closes the mirror and the egress listener to match `now`.
+    /// Binds or closes the mirror, the egress and the spool listener to
+    /// match `now`.
     /// A failed bind, serve or removal is a failed deny check (decision
     /// CH74 rule 1): a path that is there fails the bind, and the deny
     /// check reads only names, so it would pass a listener that the vmm
@@ -285,6 +313,27 @@ impl Follow {
             (false, Listener::Open(server)) => {
                 let links = server.close().await;
                 self.remove(HostPort::Egress).await?;
+                Listener::Draining(links)
+            }
+            (_, kept) => kept,
+        };
+        served.spool = match (
+            now.spool(),
+            mem::replace(&mut served.spool, Listener::Unbound),
+        ) {
+            (true, Listener::Unbound) => {
+                let (families, family, session) = self.names();
+                let bound = self.bind(spool::bind).await?;
+                let server = bound.serve(self.spool.clone(), families, family, session);
+                Listener::Open(server.map_err(serving(1105))?)
+            }
+            (true, Listener::Draining(links)) => {
+                let bound = self.bind(spool::bind).await?;
+                Listener::Open(links.reopen(bound).map_err(serving(1105))?)
+            }
+            (false, Listener::Open(server)) => {
+                let links = server.close().await;
+                self.remove(HostPort::GitPlatformSpool).await?;
                 Listener::Draining(links)
             }
             (_, kept) => kept,

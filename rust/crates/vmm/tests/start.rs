@@ -43,6 +43,7 @@ use creche_vmm_confine::landlock::{HostPath, Start};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::mirror::MirrorRoot;
 use creche_vmm_confine::spawner::SpawnError;
+use creche_vmm_confine::spool::SpoolRoot;
 use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::{ChRemoteError, VmInfo};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
@@ -54,7 +55,7 @@ use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
 use creche_wire::{
     DropError, DropRoute, DropSession, DropTarget, Dropped, FacadeState, FamilyName, FamilyShape,
-    OpenAcp, PerFlavor, SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
+    OpenAcp, PerFlavor, PerService, SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
 };
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::watch;
@@ -77,14 +78,18 @@ const TURN: &str =
 const STARTING: &str = r#"{"facade":{"starting":{"last_turn_end":null,"pid":42,"starts":1}}}"#;
 /// As `READY`, with the end of a turn that the row has not seen.
 const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","updated_at":1793577700000},"pid":42,"starts":1,"turn_running":false}}}"#;
-/// The listeners at the launch of a family with no egress and no clone
-/// list: 1100, 1101 and 1102, and no 1103 or 1104.
-const NO_EGRESS: [bool; 5] = [true, true, true, false, false];
+/// The listeners at the launch of a family with no egress, no clone list
+/// and no git platform grant: 1100, 1101 and 1102, and no 1103, 1104 or
+/// 1105.
+const NO_EGRESS: [bool; 6] = [true, true, true, false, false, false];
 /// The listeners at the launch of a family with egress and no clone list.
-const EGRESS_ONLY: [bool; 5] = [true, true, true, false, true];
+const EGRESS_ONLY: [bool; 6] = [true, true, true, false, true, false];
 /// The listeners at the launch of a family with a clone list and no
 /// egress.
-const REPOS_ONLY: [bool; 5] = [true, true, true, true, false];
+const REPOS_ONLY: [bool; 6] = [true, true, true, true, false, false];
+/// The listeners at the launch of a family with the git platform grant
+/// only (decision CH3).
+const SPOOL_ONLY: [bool; 6] = [true, true, true, false, false, true];
 /// The allowlist of a family with egress (decision CH49 rule 3).
 const EGRESS: &str = r#"{"hosts":[{"host":"github.com","port":443}]}"#;
 /// The clone list of a family with repos (decision CH69 rule 13).
@@ -169,9 +174,9 @@ struct Fake {
     /// Adds a `vsock.sock_<port>` listener of this port to each run dir,
     /// a port that the vmm does not bind.
     extra: Mutex<Option<u32>>,
-    /// For each launch: whether a dial of 1100, 1101, 1102, 1103 and 1104
-    /// connected at the launch, before CH would start.
-    listening: Mutex<Vec<[bool; 5]>>,
+    /// For each launch: whether a dial of 1100, 1101, 1102, 1103, 1104
+    /// and 1105 connected at the launch, before CH would start.
+    listening: Mutex<Vec<[bool; 6]>>,
     /// Fails each launch.
     fail: AtomicBool,
     /// Holds each launch until the test clears it.
@@ -223,7 +228,7 @@ impl Fake {
             args.push("--net".to_owned());
         }
         let run = launch.files().run_dir().path();
-        let listening = [1100, 1101, 1102, 1103, 1104].map(|port| {
+        let listening = [1100, 1101, 1102, 1103, 1104, 1105].map(|port| {
             let listener = run.join(format!("vsock.sock_{port}"));
             UnixStream::connect(listener).is_ok()
         });
@@ -468,6 +473,7 @@ impl Test {
             digests: watch::channel(Digests {
                 kernel: empty,
                 roots: PerFlavor::every(|_| empty),
+                services: PerService::every(|_| Some(empty)),
             })
             .1,
             initramfs: empty,
@@ -489,6 +495,7 @@ impl Test {
                 root: MirrorRoot::new(dir.join("mirror")).unwrap(),
                 git: Program::new(PathBuf::from("/usr/bin/git")).unwrap(),
             },
+            spool: SpoolRoot::new(dir.join("spool")).unwrap(),
         };
         edit(&mut config);
 
@@ -822,7 +829,13 @@ fn each_flavor_boots_its_own_root_disk() {
                 other
             }
         });
-        config.digests = watch::channel(Digests { kernel, roots }).1;
+        let services = config.digests.borrow().services;
+        config.digests = watch::channel(Digests {
+            kernel,
+            roots,
+            services,
+        })
+        .1;
     });
     let shape = test.dir.join("families/chat/config/shape.json");
     for (index, flavor, digest) in [(0, "python", python), (1, "base", other)] {
@@ -1354,6 +1367,21 @@ fn the_sweep_skips_a_snapshot_in_use() {
     let reasons: Vec<Reason> = swept.dropped.iter().map(|each| each.reason).collect();
     assert_eq!(reasons, [Reason::Consumed]);
     assert!(!dir.exists());
+}
+
+/// The sweep drops a snapshot whose key names another CH rev: no start
+/// restores it (decision CH7-6), and its key would keep its images in
+/// the store. A snapshot with the key of the current images stays.
+#[test]
+fn the_sweep_drops_a_snapshot_with_a_stale_key() {
+    let test = Test::new("sweep-stale", |_| {});
+    let stale = test.snapshot(0, None);
+    let kept = test.snapshot(1, Some(&test.key()));
+    let swept = test.runtime.block_on(test.hook.sweep()).unwrap();
+    let reasons: Vec<Reason> = swept.dropped.iter().map(|each| each.reason).collect();
+    assert_eq!(reasons, [Reason::Stale]);
+    assert!(!stale.exists());
+    assert!(kept.is_dir());
 }
 
 /// The sweep reads the budget of `StartConfig`, the key
@@ -2537,40 +2565,68 @@ fn a_restore_binds_the_listeners_again() {
     assert_eq!(*test.fake.listening.lock().unwrap(), [NO_EGRESS; 2]);
 }
 
-/// A dial of 1101 reaches the plane of the config while the VM runs. The
-/// stop of the VM closes the listener (plan PR V6).
+/// A request on 1101 with the placeholder of the row reaches the plane of
+/// the config with the real key of the family while the VM runs, so the
+/// start hands the proxy the right session, family and root. The stop of
+/// the VM closes the listener (plan PR V6, openshell ideas plan idea 1).
 #[test]
 fn the_listeners_go_with_the_vm() {
     let plane = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = plane.local_addr().unwrap();
+    // The plane answers each request with its `Authorization` line.
     spawn(move || {
         for stream in plane.incoming() {
-            let mut stream = stream.unwrap();
+            let stream = stream.unwrap();
             spawn(move || {
-                let mut buffer = [0; 64];
-                while let Ok(read @ 1..) = stream.read(&mut buffer) {
-                    stream.write_all(&buffer[..read]).unwrap();
+                let mut authorization = String::new();
+                for line in BufReader::new(&stream).lines() {
+                    let line = line.unwrap();
+                    if line.is_empty() {
+                        break;
+                    }
+                    if line.to_ascii_lowercase().starts_with("authorization:") {
+                        authorization = line;
+                    }
                 }
+                let answer = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{authorization}",
+                    authorization.len()
+                );
+                (&stream).write_all(answer.as_bytes()).unwrap();
             });
         }
     });
     let test = Test::new("planes-stop", |config| config.planes.litellm = addr);
+    let family = test.dir.join("families/chat");
+    fs::create_dir_all(family.join("creds")).unwrap();
+    fs::write(family.join("creds/creds.json"), CREDS).unwrap();
     assert_eq!(test.start(0), Ok(()));
+    let id = &test.rows[0].id;
+    let placeholders = test.store.lock().unwrap().placeholders(id).unwrap().clone();
+    let placeholder = placeholders.litellm_key().reveal().to_owned();
     let listener = test.dir.join("run/slot/0/vsock.sock_1101");
     let path = listener.clone();
-    // The current-thread runtime runs the bridge only inside `block_on`,
+    // The current-thread runtime runs the proxy only inside `block_on`,
     // so the guest side runs in `spawn_blocking`.
-    let echoed = test.runtime.block_on(test.runtime.spawn_blocking(move || {
+    let answer = test.runtime.block_on(test.runtime.spawn_blocking(move || {
         let mut guest = UnixStream::connect(path).unwrap();
         guest
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        guest.write_all(b"ping").unwrap();
-        let mut back = [0; 4];
-        guest.read_exact(&mut back).unwrap();
-        back
+        let request = format!(
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1:4000\r\nAuthorization: Bearer {placeholder}\r\nConnection: close\r\n\r\n"
+        );
+        guest.write_all(request.as_bytes()).unwrap();
+        let mut answer = String::new();
+        guest.read_to_string(&mut answer).unwrap();
+        answer
     }));
-    assert_eq!(&echoed.unwrap(), b"ping");
+    let answer = answer.unwrap();
+    assert!(answer.starts_with("HTTP/1.1 200 OK"), "{answer}");
+    assert!(
+        answer.ends_with("Authorization: Bearer sk-start-key"),
+        "{answer}"
+    );
 
     let id = test.rows[0].id.clone();
     assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
@@ -2765,7 +2821,10 @@ fn a_family_with_repos_and_egress_binds_1103_and_1104() {
     fs::write(test.dir.join("families/chat/repos.json"), REPOS).unwrap();
     fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
     assert_eq!(test.start(0), Ok(()));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 5]]);
+    assert_eq!(
+        *test.fake.listening.lock().unwrap(),
+        [[true, true, true, true, true, false]]
+    );
     assert!(test.fault_codes().is_empty());
 }
 
@@ -2878,6 +2937,63 @@ fn a_restore_binds_1103_again() {
     assert_eq!(test.start(0), Ok(()));
     assert!(test.restored(1));
     assert_eq!(*test.fake.listening.lock().unwrap(), [REPOS_ONLY; 2]);
+}
+
+/// The git platform grant of a family with the `push` tool (decision
+/// CH3).
+const PUSH_GRANT: &str = r#"{"fetch":false,"push":true}"#;
+
+/// A family whose `git-platform.json` grants a tool gets 1105 at the
+/// launch, and the deny check names it (decision CH3).
+#[test]
+fn the_egress_check_names_1105_for_a_family_with_the_grant() {
+    let test = Test::new("spool-deny", |_| {});
+    fs::write(test.dir.join("families/chat/git-platform.json"), PUSH_GRANT).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [SPOOL_ONLY]);
+    assert_eq!(
+        listeners(&test, 0),
+        [
+            "vsock.sock_1100",
+            "vsock.sock_1101",
+            "vsock.sock_1102",
+            "vsock.sock_1105"
+        ]
+    );
+    assert!(test.fault_codes().is_empty());
+}
+
+/// An absent file and a grant of neither tool bind no 1105, and a present
+/// file that does not read binds it, as for 1103 (decisions CH3, CH73
+/// rule 1).
+#[test]
+fn only_a_grant_or_a_bad_file_binds_1105() {
+    let test = Test::new("spool-none", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let file = test.dir.join("families/chat/git-platform.json");
+    fs::write(&file, r#"{"fetch":false,"push":false}"#).unwrap();
+    assert_eq!(test.start(1), Ok(()));
+    fs::write(&file, "{").unwrap();
+    assert_eq!(test.start(2), Ok(()));
+    let listening = test.fake.listening.lock().unwrap().clone();
+    assert_eq!(listening, [NO_EGRESS, NO_EGRESS, SPOOL_ONLY]);
+    assert!(test.fault_codes().is_empty());
+}
+
+/// A restore binds 1105 again before CH starts, as each plane listener
+/// (decisions CH3, CH62 rule 14).
+#[test]
+fn a_restore_binds_1105_again() {
+    let test = Test::new("spool-restore", |_| {});
+    fs::write(test.dir.join("families/chat/git-platform.json"), PUSH_GRANT).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    test.snapshot(0, Some(&test.key()));
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(1));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [SPOOL_ONLY; 2]);
 }
 
 /// The listeners of a VM of a family with no egress and no clone list.
@@ -3107,6 +3223,31 @@ fn an_emptied_repos_list_removes_1103() {
     fs::write(&file, r#"{"repos":[]}"#).unwrap();
     test.follow(|| !test.listener(0, 1103).exists() || test.stopped(0));
     assert_eq!(listeners(&test, 0), PLANES);
+    assert!(test.runs_clean(0));
+}
+
+/// A grant on a running VM binds 1105 at the next poll, and the spool
+/// serves it: a get with no `fetch` grant gets `not_granted`. The removal
+/// of the file removes 1105 and its socket file, and the deny check
+/// without 1105 passes (decision CH3).
+#[test]
+fn a_grant_binds_1105_and_its_removal_removes_it() {
+    let test = Test::new("follow-spool", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(listeners(&test, 0), PLANES);
+    test.pause();
+    let file = test.dir.join("families/chat/git-platform.json");
+    fs::write(&file, PUSH_GRANT).unwrap();
+    test.follow(|| test.listener(0, 1105).exists());
+    let id = "chat-01JC9Z6A0B1C2D3E4F5G6H7J8K.bundle";
+    let answer = test.ask(0, 1105, format!("get {id}\n").as_bytes());
+    assert_eq!(answer, b"err not_granted\n");
+    assert!(test.runs_clean(0));
+
+    fs::remove_file(&file).unwrap();
+    test.follow(|| !test.listener(0, 1105).exists() || test.stopped(0));
+    assert_eq!(listeners(&test, 0), PLANES);
+    assert!(UnixStream::connect(test.listener(0, 1105)).is_err());
     assert!(test.runs_clean(0));
 }
 
@@ -3387,7 +3528,12 @@ fn a_pull_does_not_set_last_use() {
         reply
     }));
     let reply: serde_json::Value = serde_json::from_str(&reply.unwrap()).unwrap();
-    assert_eq!(reply["state"]["creds"]["litellm_key"], "sk-start-key");
+    // The reply carries the placeholder of the row, not the real key
+    // (openshell ideas plan, idea 1).
+    let id = &test.rows[0].id;
+    let placeholders = test.store.lock().unwrap().placeholders(id).unwrap().clone();
+    let key = &reply["state"]["creds"]["litellm_key"];
+    assert_eq!(key, placeholders.litellm_key().reveal());
     let at = started + IDLE_TIMEOUT + Duration::from_millis(100);
     let slept = test.runtime.block_on(test.hook.sleep_idle(at));
     assert_eq!(slept, [test.rows[0].id.clone()]);

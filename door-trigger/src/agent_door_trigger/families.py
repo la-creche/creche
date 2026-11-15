@@ -82,7 +82,7 @@ class StatusFiles:
 
         try:
             parsed: object = json.loads(raw.decode("utf-8"))
-        except (ValueError, RecursionError):
+        except ValueError, RecursionError:
             # ValueError covers bytes that are not UTF-8, text that is not
             # JSON and a number past the digit limit of the interpreter. A
             # document that nests too deep raises RecursionError.

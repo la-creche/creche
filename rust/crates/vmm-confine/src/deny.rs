@@ -13,7 +13,9 @@
 //!    `--landlock` gave a usage error that asks for `--kernel`).
 //! 2. The run directory of the VM holds exactly the listener files
 //!    `vsock.sock_<port>` of the host ports that the vmm bound for the
-//!    family (decisions CH14, CH24). That set is empty in phase 2.
+//!    family (decisions CH14, CH24): 1100 to 1102, and 1103, 1104 and
+//!    the git platform spool 1105 for a family that the vmm binds each one
+//!    for (decisions CH3, CH49 rule 3, CH69 rule 13).
 //!
 //! Decision CH42 rule 2: on a restore the command line shows no device, so
 //! part 1 cannot see a network card that the snapshot holds. The check

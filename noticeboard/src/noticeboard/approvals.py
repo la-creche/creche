@@ -184,7 +184,7 @@ class ApprovalChannel:
                 headers={"Authorization": f"Bearer {bearer}"},
                 timeout=_TIMEOUT,
             )
-        except (httpx.LocalProtocolError, httpx.InvalidURL, UnicodeEncodeError):
+        except httpx.LocalProtocolError, httpx.InvalidURL, UnicodeEncodeError:
             # The text of such an error can quote the header that holds the
             # bearer. The page gets a fixed sentence.
             return None, _NOT_SENT
@@ -206,7 +206,7 @@ def _token(path: Path) -> str:
     """The bearer, or empty for a file that cannot be read."""
     try:
         return path.read_text(encoding="utf-8").strip()
-    except (OSError, ValueError):
+    except OSError, ValueError:
         # A decode error quotes bytes of the file, so it reaches no page.
         return ""
 

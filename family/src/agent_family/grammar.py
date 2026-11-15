@@ -65,19 +65,31 @@ REPO_FORM: Final = "[A-Za-z0-9][A-Za-z0-9._-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,
 ASSET_FORM: Final = "[A-Za-z0-9][A-Za-z0-9._+-]{0,127}"
 ENTRYPOINT_FORM: Final = "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
 SECRET_NAME_FORM: Final = "[a-z][a-z0-9_]{1,62}"
+ENTITY_DOMAIN_FORM: Final = "[a-z0-9_]{1,64}"
 PACKAGE_RE: Final = re.compile(rf"^{PACKAGE_FORM}\Z")
 REPO_RE: Final = re.compile(rf"^{REPO_FORM}\Z")
 ASSET_RE: Final = re.compile(rf"^{ASSET_FORM}\Z")
 ENTRYPOINT_RE: Final = re.compile(rf"^{ENTRYPOINT_FORM}\Z")
 SECRET_NAME_RE: Final = re.compile(rf"^{SECRET_NAME_FORM}\Z")
-PYTHONS: Final = ("3.12", "3.13")
-DEFAULT_PYTHON: Final = "3.12"
+ENTITY_DOMAIN_RE: Final = re.compile(rf"^{ENTITY_DOMAIN_FORM}\Z")
+#: The host of a `forge-release` pin: a DNS name in lower case, with two
+#: labels at least and a last label that starts with a letter. It has no
+#: `_FORM`, because a message states the rule in words. `CODE_HOST` is the
+#: host that `github-release` reads, and `forge-release` refuses it.
+HOST_RE: Final = re.compile(
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?\Z"
+)
+MAX_HOST_CHARS: Final = 253
+CODE_HOST: Final = "github.com"
+PYTHONS: Final = ("3.12", "3.13", "3.14")
+DEFAULT_PYTHON: Final = "3.14"
 MAX_TOOLS: Final = 200
 MAX_ARGS: Final = 32
 MAX_ENV: Final = 32
 MAX_FENCES: Final = 64
 MAX_FENCE_VALUES: Final = 256
 MAX_SHARED: Final = 8
+MAX_ENTITY_DOMAINS: Final = 256
 MAX_ARG_CHARS: Final = 256
 MAX_VALUE_CHARS: Final = 256
 
@@ -187,7 +199,7 @@ class Verb(StrEnum):
 
 
 class AssetFormat(StrEnum):
-    """Contract 01b §3.2: what a `github-release` asset is."""
+    """Contract 01b §3.2: what a release asset is."""
 
     TAR = "tar"
     BINARY = "binary"
@@ -196,7 +208,14 @@ class AssetFormat(StrEnum):
 class InstallSource(StrEnum):
     PYPI = "pypi"
     GITHUB_RELEASE = "github-release"
+    FORGE_RELEASE = "forge-release"
     AGENT_MCP = "agent-mcp"
+
+
+#: The two sources whose pin is one release asset. `github-release` reads
+#: the asset from `CODE_HOST`. `forge-release` reads it from the Forgejo or
+#: Gitea host that `install.host` names (`handover.mcpserver` rule 17).
+ASSET_SOURCES: Final = frozenset({InstallSource.GITHUB_RELEASE, InstallSource.FORGE_RELEASE})
 
 
 #: Contract 01 §3.4: `all` means every tool the server file declares at read
@@ -232,10 +251,19 @@ LOCAL_HOUR_MAX: Final = 23
 # `fences.py` reads them from the site file. Minor 18 drops the allowed
 # mount roots with `files` (decision CH10-10).
 
+#: Contract 01 §5.5 rule 1, read to follow the token: the secret key of the
+#: platform token. Each server whose `run.env` names `secret:` and this key is
+#: inside the platform fence, whatever its name, for example `git-platform`. A
+#: new server of the token is thus fenced with no change here. `validate.py`
+#: also fences `PLATFORM_SERVER` by its name. The contract names only
+#: `github-platform`: see the CONTRACT-QUESTION at `_check_platform`.
+PLATFORM_SECRET: Final = "github_token_platform"
+
 #: Contract 01 §5.5 rule 7: the platform's own GitHub server, and the tools no
-#: family is ever granted from it. A registry's `main` may carry no branch
-#: protection, and a merge there lands a change `caregiver` applies with nobody
-#: looking. The platform family proposes and the operator lands.
+#: family is ever granted from it or from another server of `PLATFORM_SECRET`.
+#: A registry's `main` may carry no branch protection, and a merge there lands
+#: a change `caregiver` applies with nobody looking. The platform family
+#: proposes and the operator lands.
 PLATFORM_SERVER: Final = "github-platform"
 PLATFORM_WITHHELD: Final = frozenset({"merge_pull_request"})
 

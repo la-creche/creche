@@ -2,7 +2,7 @@
 name = "agent-family"
 version = "0.1.0"
 description = "family.toml schema v1, validation report and registry loader (docs/rework/contracts/01, 01b)."
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = ["pydantic>=2.8"]
 
 [project.scripts]

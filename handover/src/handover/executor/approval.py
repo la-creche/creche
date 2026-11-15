@@ -54,7 +54,8 @@ GATE_PURPOSE: Final = "release"
 #: §2.5: decisions expire after 15 minutes, and step 5 waits that long.
 APPROVAL_TTL_S: Final = 900.0
 
-#: §2.5: the summary is field first, at most this many characters per field.
+#: §2.5: each of the seven fields of the record has at most this many
+#: characters.
 FIELD_MAX_CHARS: Final = 120
 
 #: What a cut field ends with, so a reader never sees a short, clean line
@@ -117,9 +118,44 @@ def contracts_row(resolution: Resolution) -> str:
     return f"{len(resolution.contracts)} satisfied, {len(resolution.unprovided)} not verified"
 
 
+#: The title of the approval push, as the operator decided it.
+APPROVAL_TITLE: Final = "Release Approval"
+
+#: The two lines of the approval push, as the operator decided them. Each
+#: arrow is ASCII, so a phone with no glyph for `→` shows it.
+COMPONENTS_LABEL: Final = "Components:"
+UNSAFE_LABEL: Final = "Unsafe:"
+ARROW: Final = "->"
+ABSENT: Final = "absent"
+NONE_WORD: Final = "none"
+JOIN: Final = ", "
+
+
+@dataclass(frozen=True)
+class Move:
+    """One deploy row of the set: the component, the version that is live,
+    or None for a first install, and the version that the release installs."""
+
+    name: str
+    from_version: str | None
+    to_version: str
+
+    def text(self) -> str:
+        """`vmm 0.1.17 -> 0.1.19`, or `vmm absent -> 0.1.19`."""
+        return f"{self.name} {self.from_version or ABSENT} {ARROW} {self.to_version}"
+
+
 @dataclass(frozen=True)
 class Summary:
-    """§2.5's seven fields, in the order the operator reads them."""
+    """What root shows and records at step 5.
+
+    `moves` and `unsafe` make the message of the push (`message`). The
+    seven text fields are §2.5's record, in the order the operator reads
+    them: the log of the ledger entry keeps them, and the requester's
+    preview prints them. The push carries no one of the seven.
+
+    `unsafe` names each component that has no automatic rollback: its
+    restore mode is `manual`, or root could not verify its manifest."""
 
     review: str
     components: str
@@ -128,6 +164,21 @@ class Summary:
     restore: str
     requested_by: str
     manifest: str
+    moves: tuple[Move, ...]
+    unsafe: tuple[str, ...]
+
+    def message(self) -> str:
+        """The two lines of the push, each list in name order:
+
+        ```
+        Components: caregiver 0.1.90 -> 0.1.94, vmm 0.1.17 -> 0.1.19
+        Unsafe: none
+        ```
+        """
+        moves = JOIN.join(one.text() for one in sorted(self.moves, key=lambda one: one.name))
+        unsafe = JOIN.join(sorted(set(self.unsafe))) or NONE_WORD
+
+        return f"{COMPONENTS_LABEL} {moves}\n{UNSAFE_LABEL} {unsafe}"
 
     def as_dict(self) -> dict[str, str]:
         return {

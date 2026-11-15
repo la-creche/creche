@@ -15,19 +15,26 @@ from .grammar import (
     ALL_TOOLS,
     ASSET_FORM,
     ASSET_RE,
+    ASSET_SOURCES,
+    CODE_HOST,
     DESCRIPTION_MAX,
+    ENTITY_DOMAIN_FORM,
+    ENTITY_DOMAIN_RE,
     ENTRYPOINT_FORM,
     ENTRYPOINT_RE,
     ENV_VAR_NAME,
     ENV_VAR_NAME_FORM,
     EXACT_VERSION,
     EXACT_VERSION_FORM,
+    HOST_RE,
     IDENTITY_MAX,
     MAX_ARG_CHARS,
     MAX_ARGS,
+    MAX_ENTITY_DOMAINS,
     MAX_ENV,
     MAX_FENCE_VALUES,
     MAX_FENCES,
+    MAX_HOST_CHARS,
     MAX_SHARED,
     MAX_TOOLS,
     MAX_VALUE_CHARS,
@@ -55,13 +62,14 @@ from .server import FenceEntry, InstallBlock, McpServerFile
 _REQUIRED: Final[dict[InstallSource, tuple[str, ...]]] = {
     InstallSource.PYPI: ("package", "version", "lock"),
     InstallSource.GITHUB_RELEASE: ("repo", "version", "asset", "sha256"),
+    InstallSource.FORGE_RELEASE: ("host", "repo", "version", "asset", "sha256"),
     # Nothing. Contract 01b §3.3: the `mcp-servers` component tag is the
     # version of every server that repository ships, so an `agent-mcp`
     # file declares no pin at all and `ref` is refused like any other
     # source's field.
     InstallSource.AGENT_MCP: (),
 }
-_PINNING_FIELDS: Final = ("package", "version", "lock", "repo", "asset", "sha256", "ref")
+_PINNING_FIELDS: Final = ("package", "version", "lock", "host", "repo", "asset", "sha256", "ref")
 
 #: Contract 01b §3.4 rule 3: `install.lock` is a plain repository path, and
 #: `handover.mcpserver` refuses the same four shapes before it reads
@@ -92,6 +100,7 @@ def check_server(server: McpServerFile, directory: str, issues: Issues) -> None:
     _check_run(server, issues)
     _check_tools(server, issues)
     _check_fences(server, issues)
+    _check_entity_domains(server, issues)
     _check_shared(server, issues)
 
 
@@ -170,11 +179,11 @@ def _check_install(server: McpServerFile, issues: Issues) -> None:
 
 def _check_format(source: InstallSource, install: InstallBlock, issues: Issues) -> None:
     """Contract 01b §3.2: `install.format` is `tar` or `binary`, and only a
-    `github-release` takes it (`handover.mcpserver` rule 16)."""
+    source of `ASSET_SOURCES` takes it (`handover.mcpserver` rule 16)."""
     if install.format is None:
         return
 
-    if source is not InstallSource.GITHUB_RELEASE:
+    if source not in ASSET_SOURCES:
         issues.error("install.format", f"source '{source}' does not take 'install.format'")
         return
 
@@ -188,7 +197,7 @@ def _check_pin_values(server: McpServerFile, issues: Issues) -> None:
     # `repo`, `asset` and `python`. This validator and root take one form
     # for a version: `EXACT_VERSION_FORM`. For the other four, this
     # validator takes the rules of root: a letter or a digit at the start, a
-    # cap on each length, and 3.12 or 3.13 for `python`.
+    # cap on each length, and 3.12, 3.13 or 3.14 for `python`.
     install = server.install
     version = install.version
     if version is not None and (
@@ -204,10 +213,47 @@ def _check_pin_values(server: McpServerFile, issues: Issues) -> None:
         issues.error("install.sha256", "sha256 must be 64 lowercase hexadecimal characters")
 
     if install.repo is not None and REPO_RE.fullmatch(install.repo) is None:
-        issues.error("install.repo", f"'{install.repo}' is not <owner>/<name> on GitHub")
+        where = "the host" if install.source == InstallSource.FORGE_RELEASE else "GitHub"
+        issues.error("install.repo", f"'{install.repo}' is not <owner>/<name> on {where}")
 
+    _check_host(install, issues)
     _check_lock(server, issues)
     _check_root_pins(install, issues)
+
+
+def _check_host(install: InstallBlock, issues: Issues) -> None:
+    """The rules of root for `install.host` (`handover.mcpserver` rule 17).
+    `_check_install` holds which source takes the field."""
+    # CONTRACT-QUESTION: contract 01b §3 names no `forge-release` source and
+    # no `host` field. Root takes a DNS name in lower case, with two labels
+    # at least and a last label that starts with a letter, of 253
+    # characters at most, and it refuses the host of `github-release`. This
+    # validator takes the rules of root.
+    host = install.host
+    if host is None:
+        return
+
+    if len(host) > MAX_HOST_CHARS:
+        issues.error(
+            "install.host",
+            f"the host is {len(host)} characters; it may have {MAX_HOST_CHARS} at most",
+        )
+        return
+
+    if HOST_RE.fullmatch(host) is None:
+        issues.error(
+            "install.host",
+            f"'{collapse(host)}' is not a host; use a DNS name in lower case, with no "
+            "scheme, no port, no path, no user and no IP address",
+        )
+        return
+
+    if host == CODE_HOST:
+        issues.error(
+            "install.host",
+            f"'{CODE_HOST}' takes the source '{InstallSource.GITHUB_RELEASE}', "
+            f"not '{InstallSource.FORGE_RELEASE}'",
+        )
 
 
 def _check_root_pins(install: InstallBlock, issues: Issues) -> None:
@@ -332,11 +378,7 @@ def _check_shared(server: McpServerFile, issues: Issues) -> None:
     here is a declaration that could not be acted on whatever the other
     file says.
     """
-    named = {
-        value[len(SECRET_PREFIX) :]
-        for value in server.run.env.values()
-        if value.startswith(SECRET_PREFIX)
-    }
+    named = server.secret_keys()
     # CONTRACT-QUESTION: contract 01b §4.3 gives no count of entries. Root
     # and this validator take 8 entries at most.
     _check_count("shared_secrets", len(server.shared_secrets), MAX_SHARED, issues)
@@ -396,6 +438,25 @@ def _check_fences(server: McpServerFile, issues: Issues) -> None:
 
         for index, entry in enumerate(entries):
             _check_fence(entry, f"{field}[{index}]", declared, issues)
+
+
+def _check_entity_domains(server: McpServerFile, issues: Issues) -> None:
+    """The rules of root for `entity_domains`: at most `MAX_ENTITY_DOMAINS`
+    distinct domains, each of `ENTITY_DOMAIN_FORM`."""
+    domains = server.entity_domains
+    if domains is None:
+        return
+
+    _check_count("entity_domains", len(domains), MAX_ENTITY_DOMAINS, issues)
+    for index, domain in enumerate(domains):
+        if ENTITY_DOMAIN_RE.fullmatch(domain) is None:
+            issues.error(
+                f"entity_domains[{index}]",
+                f"'{collapse(domain)}' must match {ENTITY_DOMAIN_FORM}",
+            )
+
+    if len(set(domains)) != len(domains):
+        issues.error("entity_domains", "entity_domains names one domain twice")
 
 
 def _check_fence(entry: FenceEntry, loc: str, declared: tuple[str, ...], issues: Issues) -> None:

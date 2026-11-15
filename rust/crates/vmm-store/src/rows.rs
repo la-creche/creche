@@ -12,6 +12,11 @@
 //! The list route reads a page, newest stored first (decision CH21-5). A
 //! turn end sets `updated_at` and a first title (decisions CH21, CH32 rule
 //! 4). A drop removes the row last (PR D14).
+//!
+//! Each row file also holds the `Placeholders` of its session (openshell
+//! ideas plan, idea 1). A create makes them. A load of a file with none
+//! makes them and writes the file again, so every loaded row has them.
+//! They never reach a list page: `SessionRow` does not hold them.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -27,6 +32,7 @@ use creche_wire::{
 use serde::{Deserialize, Serialize};
 
 use crate::layout::StateRoot;
+use crate::placeholder::Placeholders;
 
 /// The most rows of one list page: the page size of `session-index.ts`
 /// today (gap G30 of the phase 2 plan, taken by decision CH36).
@@ -34,12 +40,18 @@ pub const PAGE_ROWS: usize = 50;
 
 /// What one row file holds. The place on the stored order is a
 /// `ListCursor`, so the list reply gives it as `next` with no conversion.
+/// A file of a vmm before the placeholders has no `placeholders`, so the
+/// load reads it as `None`.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RowFile<R> {
+struct RowFile<R, P> {
     order: ListCursor,
     row: R,
+    placeholders: P,
 }
+
+/// The file form of the load.
+type LoadedFile = RowFile<SessionRow, Option<Placeholders>>;
 
 /// Why a write of a row file failed.
 #[derive(Debug)]
@@ -89,6 +101,14 @@ pub enum LoadError {
     Misnamed(PathBuf),
     /// Two row files hold one place on the stored order.
     OrderTaken(PathBuf),
+    /// A row file had no placeholders, and the new ones were not made or
+    /// not written.
+    Placeholders {
+        /// The row file.
+        path: PathBuf,
+        /// Why they were not made or not written.
+        source: io::Error,
+    },
 }
 
 impl fmt::Display for LoadError {
@@ -100,6 +120,9 @@ impl fmt::Display for LoadError {
             Self::OrderTaken(path) => {
                 write!(formatter, "{} has the order of another row", path.display())
             }
+            Self::Placeholders { path, .. } => {
+                write!(formatter, "cannot give {} its placeholders", path.display())
+            }
         }
     }
 }
@@ -107,7 +130,7 @@ impl fmt::Display for LoadError {
 impl std::error::Error for LoadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io { source, .. } => Some(source),
+            Self::Io { source, .. } | Self::Placeholders { source, .. } => Some(source),
             Self::Parse { source, .. } => Some(source),
             Self::Misnamed(_) | Self::OrderTaken(_) => None,
         }
@@ -122,6 +145,8 @@ pub enum CreateError {
     Conflict,
     /// The stored order has no place left: 2^53 - 1 creates.
     OrderSpent,
+    /// The placeholders were not made: `/dev/urandom` did not read.
+    Random(io::Error),
     /// The row file may not have been written. The list has no new row.
     /// The file may still be on disk: a rename that succeeded before a
     /// failed dir sync leaves it. Its order is spent, so no other row
@@ -134,6 +159,7 @@ impl fmt::Display for CreateError {
         match self {
             Self::Conflict => formatter.write_str("a different create made the row of this id"),
             Self::OrderSpent => formatter.write_str("the stored order has no place left"),
+            Self::Random(_) => formatter.write_str("cannot make the placeholders"),
             Self::Write(error) => error.fmt(formatter),
         }
     }
@@ -143,6 +169,7 @@ impl std::error::Error for CreateError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Write(error) => Some(error),
+            Self::Random(error) => Some(error),
             Self::Conflict | Self::OrderSpent => None,
         }
     }
@@ -160,6 +187,8 @@ pub struct Rows {
     root: StateRoot,
     by_order: BTreeMap<ListCursor, SessionRow>,
     order_of: HashMap<SessionId, ListCursor>,
+    /// The placeholders of each row. Every row in `by_order` has them.
+    placeholders: HashMap<SessionId, Placeholders>,
     /// The newest place that this process loaded or handed out, or 0. It
     /// only grows, so a write that failed after its rename never gives its
     /// place to a second row file.
@@ -186,6 +215,7 @@ impl Rows {
             root,
             by_order: BTreeMap::new(),
             order_of: HashMap::new(),
+            placeholders: HashMap::new(),
             newest: 0,
         };
         for entry in fs::read_dir(&dir).map_err(read_error(&dir))? {
@@ -215,7 +245,7 @@ impl Rows {
             Ok(text) => text,
             Err(source) => return Err(LoadError::Io { path, source }),
         };
-        let file: RowFile<SessionRow> = match serde_json::from_slice(&text) {
+        let file: LoadedFile = match serde_json::from_slice(&text) {
             Ok(file) => file,
             Err(source) => return Err(LoadError::Parse { path, source }),
         };
@@ -225,7 +255,24 @@ impl Rows {
         if self.by_order.contains_key(&file.order) {
             return Err(LoadError::OrderTaken(path));
         }
-        self.order_of.insert(id, file.order);
+        let placeholders = match file.placeholders {
+            Some(placeholders) => placeholders,
+            None => {
+                let placeholders =
+                    Placeholders::fresh().map_err(|source| LoadError::Placeholders {
+                        path: path.clone(),
+                        source,
+                    })?;
+                self.write(file.order, &file.row, &placeholders)
+                    .map_err(|error| LoadError::Placeholders {
+                        path,
+                        source: error.source,
+                    })?;
+                placeholders
+            }
+        };
+        self.order_of.insert(id.clone(), file.order);
+        self.placeholders.insert(id, placeholders);
         self.by_order.insert(file.order, file.row);
         Ok(())
     }
@@ -241,6 +288,12 @@ impl Rows {
     pub fn get(&self, id: &SessionId) -> Option<&SessionRow> {
         let order = self.order_of.get(id)?;
         self.by_order.get(order)
+    }
+
+    /// The placeholders of the row of `id`, if one exists.
+    #[must_use]
+    pub fn placeholders(&self, id: &SessionId) -> Option<&Placeholders> {
+        self.placeholders.get(id)
     }
 
     /// Every row with its place on the stored order, newest stored first
@@ -267,6 +320,7 @@ impl Rows {
         }
 
         let order = self.next_order().ok_or(CreateError::OrderSpent)?;
+        let placeholders = Placeholders::fresh().map_err(CreateError::Random)?;
         // The place is spent before the write, so a failed write never
         // gives it out again.
         self.newest = order.get();
@@ -286,8 +340,9 @@ impl Rows {
             title: None,
             updated_at: created_at,
         };
-        self.write(order, &row)?;
+        self.write(order, &row, &placeholders)?;
         self.order_of.insert(row.id.clone(), order);
+        self.placeholders.insert(row.id.clone(), placeholders);
         self.by_order.insert(order, row.clone());
         Ok(row)
     }
@@ -388,7 +443,9 @@ impl Rows {
         let Some(order) = self.order_of.get(id).copied() else {
             return Ok(None);
         };
-        let Some(row) = self.by_order.get(&order) else {
+        let (Some(row), Some(placeholders)) =
+            (self.by_order.get(&order), self.placeholders.get(id))
+        else {
             return Ok(None);
         };
         let TurnEnd { title, updated_at } = end;
@@ -396,7 +453,7 @@ impl Rows {
         ended.updated_at = *updated_at;
         ended.title.get_or_insert_with(|| title.clone());
         if ended != *row {
-            self.write(order, &ended)?;
+            self.write(order, &ended, placeholders)?;
             self.by_order.insert(order, ended.clone());
         }
         Ok(Some(ended))
@@ -423,6 +480,7 @@ impl Rows {
         let dir = self.root.rows_dir();
         sync_dir(&dir).map_err(|source| RowWriteError { path: dir, source })?;
         self.order_of.remove(id);
+        self.placeholders.remove(id);
         Ok(self.by_order.remove(&order))
     }
 
@@ -435,8 +493,14 @@ impl Rows {
         ListCursor::try_from(self.newest.checked_add(1)?).ok()
     }
 
-    /// Writes the row file of `row`: temp file, sync, rename, dir sync.
-    fn write(&self, order: ListCursor, row: &SessionRow) -> Result<(), RowWriteError> {
+    /// Writes the row file of `row` and its `placeholders`: temp file,
+    /// sync, rename, dir sync.
+    fn write(
+        &self,
+        order: ListCursor,
+        row: &SessionRow,
+        placeholders: &Placeholders,
+    ) -> Result<(), RowWriteError> {
         let temp = self.root.row_temp_file(&row.id);
         let dir = self.root.rows_dir();
         let write_error = |path: &Path| {
@@ -444,7 +508,12 @@ impl Rows {
             move |source| RowWriteError { path, source }
         };
 
-        let mut text = serde_json::to_vec(&RowFile { order, row })
+        let file = RowFile {
+            order,
+            row,
+            placeholders,
+        };
+        let mut text = serde_json::to_vec(&file)
             .map_err(io::Error::from)
             .map_err(write_error(&temp))?;
         text.push(b'\n');

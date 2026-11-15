@@ -1,5 +1,5 @@
-//! The fixed paths, ports and waits inside the guest (decisions CH5e, CH46
-//! rules 1 and 4, CH62 rules 5, 6, 9, 10 and 13).
+//! The fixed paths, ports and waits inside the guest (decisions CH3, CH5e,
+//! CH46 rules 1 and 4, CH62 rules 5, 6, 9, 10 and 13).
 //!
 //! Guest init and the facade compile these values in. They are plain
 //! constants with no serde and no schema entry (decision CH14), so
@@ -59,6 +59,13 @@ pub const EGRESS_PROXY_PORT: u16 = 3128;
 /// guest init splices each link to host port 1103 (decision CH46 rule 4).
 pub const MIRROR_PORT: u16 = 9418;
 
+/// The guest loopback port of the git platform spool: guest init splices
+/// each link to host port 1105 (decision CH3, phase 12 PR3). The coding
+/// flavor's `creche-git-spool` dials it (`playpen/guest`), and a playpen
+/// test holds the two equal. It has the number of the host port, because
+/// the spool has no port of its own outside the VM.
+pub const GIT_SPOOL_PORT: u16 = 1105;
+
 /// How long the facade has to exit after the stop line on its local
 /// link, before guest init sends SIGTERM (decision CH62 rule 9, which
 /// amends CH19 rule 3 from 30 s to 25 s). The facade bounds its own stop
@@ -80,8 +87,8 @@ mod tests {
 
     use super::{
         CHAPERONE_PORT, EGRESS_PROXY_PORT, FACADE_PROGRAM, FACADE_STOP_WAIT, FAMILY_STATE_SOCKET,
-        FLUE_DB, LITELLM_PORT, LOCAL_LINK_SOCKET, MIRROR_PORT, RELAY_SOCKET, SESSION_DISK_MOUNT,
-        SESSION_ID_ENV, WORKSPACE,
+        FLUE_DB, GIT_SPOOL_PORT, LITELLM_PORT, LOCAL_LINK_SOCKET, MIRROR_PORT, RELAY_SOCKET,
+        SESSION_DISK_MOUNT, SESSION_ID_ENV, WORKSPACE,
     };
 
     /// The file, relative to the crate.
@@ -108,6 +115,7 @@ mod tests {
             ("chaperone_port", json!(CHAPERONE_PORT)),
             ("egress_proxy_port", json!(EGRESS_PROXY_PORT)),
             ("mirror_port", json!(MIRROR_PORT)),
+            ("git_spool_port", json!(GIT_SPOOL_PORT)),
             ("session_id_env", json!(SESSION_ID_ENV)),
         ]
         .into_iter()

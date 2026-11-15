@@ -16,6 +16,7 @@ import pytest
 from handover.catalog import CATALOG
 from handover.cli import EXIT_OK, EXIT_REFUSED, EXIT_USAGE, main
 from handover.executor.request import parse_request
+from handover.resolve import HANDOVER_ALONE
 from handover_fixtures import manifest_text, write_manifest
 
 SPOOL = "spool"
@@ -37,7 +38,7 @@ def _tree(tmp_path: Path) -> list[str]:
 
 def _state_file(tmp_path: Path) -> str:
     body = {
-        "live": {"noticeboard": "2.0.3", "attendance": "1.4.7"},
+        "live": {"noticeboard": "2.0.3", "attendance": "1.4.7", "handover": "0.1.6"},
         "provided": {},
         "latest": {"noticeboard": "2.1.0", "attendance": "1.5.0"},
         "facts": {},
@@ -126,9 +127,10 @@ def test_the_review_row_never_claims_safe(
         ["request", "noticeboard", *_tree(tmp_path), "--spool", str(_spool(tmp_path)), "--dry-run"]
     )
     printed = capsys.readouterr().out
+    review = next(line for line in printed.splitlines() if line.strip().startswith("review"))
 
-    assert "safe:" not in printed
-    assert "local:" in printed
+    assert "safe:" not in review
+    assert "local:" in review
 
 
 def test_a_component_the_catalog_does_not_list_is_refused(tmp_path: Path) -> None:
@@ -150,6 +152,22 @@ def test_a_malformed_version_is_refused_before_anything_is_written(tmp_path: Pat
     assert _filed(spool) == []
 
 
+def test_a_set_of_handover_and_another_is_refused_before_the_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Root's own reason (`resolve.check_alone`), before the file and the tap."""
+    spool = _spool(tmp_path)
+
+    code = main(
+        ["request", "handover@0.1.7", "noticeboard", *_tree(tmp_path), "--spool", str(spool)]
+    )
+
+    assert code == EXIT_REFUSED
+    assert _filed(spool) == []
+    printed = capsys.readouterr()
+    assert HANDOVER_ALONE in printed.out + printed.err
+
+
 def test_a_spool_this_host_does_not_have_is_a_usage_error(tmp_path: Path) -> None:
     """A refusal is what root would say about the request. A missing spool is
     this host's fault and gets a different exit code."""
@@ -168,7 +186,8 @@ def test_json_prints_one_object_with_the_id_and_the_path(
 
     assert report["ok"] is True
     assert report["filed"] == str(_filed(spool)[0])
-    assert set(report["phone"]) == {
+    assert set(report["phone"]) == {"title", "message"}
+    assert set(report["record"]) == {
         "review",
         "components",
         "contracts",

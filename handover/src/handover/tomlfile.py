@@ -111,7 +111,7 @@ def loads(data: bytes, kind: FileKind) -> dict[str, Any]:
 
     try:
         table = tomllib.loads(text, parse_float=_float_of)
-    except (ValueError, RecursionError):
+    except ValueError, RecursionError:
         raise TomlRefusal(NOT_TOML) from None
 
     if not _only_toml10(text) or not _ordered(table):

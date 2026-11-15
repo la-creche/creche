@@ -10,7 +10,7 @@ It is a requester like the other three (§3.1), and root believes it no more
 than it believes them: the request carries intent only, and `requested_by`
 is a claim.
 
-Nine rules hold its shape, each with the reason it is a rule.
+Ten rules hold its shape, each with the reason it is a rule.
 
 1. **It moves a tree forward and never makes the first one.** A component
    is followed only while its tree carries a release stamp. A first release
@@ -63,6 +63,17 @@ Nine rules hold its shape, each with the reason it is a rule.
    a tap too. A ceiling moves a component up to its version and never
    above it. The run prints one note for each newer tag a ceiling holds
    back, so a hold is never silent.
+10. **`handover` releases alone, and first** (`alone_first`). The executor
+    that runs a set is the installed `handover`. Only a newer one can know
+    how to stage a newer component: a new disk flavor, for example.
+    Root refuses a set that deploys `handover` and another component
+    (`resolve.check_alone`). So when the newer tags move `handover` and
+    more, the run takes `handover` alone into rules 2 to 7 and holds the
+    rest, with one line. A run after the stamp of `handover` reads its new
+    version no longer moves it, so the rest is a new set. While `handover`
+    still moves, each run splits again: a denial of the set of `handover`
+    holds the rest too (rule 4), and a newer tag of `handover` is a new set
+    of one.
 
 This package reads one ledger entry and writes one marker. When the ledger
 entry or the marker is not strict JSON (`strictjson.py`), the follower also
@@ -87,6 +98,7 @@ from typing import Final, cast
 
 from .. import notices, strictjson
 from ..artifacts import ArtifactRefusal
+from ..catalog import RELEASES_ALONE
 from ..errors import RefusalCode
 from ..executor.approval import Verdict, not_granted
 from ..executor.layout import OPERATOR_STATE_DIR, STATE_ROOT
@@ -151,6 +163,9 @@ RUN_DEADLINE_S: Final = 270
 #: The two lines of the wait rule (rule 7).
 WAITING: Final = "waiting: the artifact of {name} {version} is not in the store"
 OMITTED: Final = "omitted: {name} {version} has no artifact after {seconds} s"
+
+#: The line of the split (rule 10).
+SPLIT: Final = "split: {name} {version} goes alone first. Held until it is installed: {held}"
 
 #: The key of the waits in the marker, and the two keys of one wait.
 WAITS_KEY: Final = "waits"
@@ -332,6 +347,40 @@ def registry_moving(
         return {}
 
     return {REGISTRY_KEY: head}
+
+
+@dataclass(frozen=True)
+class Split:
+    """What rule 10 gives one run."""
+
+    #: The set that goes to the wait rule and to `decide`.
+    moving: Moving
+    #: Each member that waits until the installed `handover` moves. Empty
+    #: when the run files the set as it read it.
+    held: Moving
+
+    def lines(self) -> tuple[str, ...]:
+        if not self.held:
+            return ()
+
+        held = ", ".join(f"{name} {version}" for name, version in sorted(self.held.items()))
+        version = self.moving[RELEASES_ALONE]
+
+        return (SPLIT.format(name=RELEASES_ALONE, version=version, held=held),)
+
+
+def alone_first(moving: Mapping[str, str]) -> Split:
+    """Rule 10. Pure: the set of this run, and what it holds back.
+
+    A set that moves `handover` and another component becomes `handover`
+    alone, at the version `moving` names. Each other set is kept whole."""
+    version = moving.get(RELEASES_ALONE)
+    if version is None or len(moving) == 1:
+        return Split(moving=dict(moving), held={})
+
+    held = {name: target for name, target in moving.items() if name != RELEASES_ALONE}
+
+    return Split(moving={RELEASES_ALONE: version}, held=held)
 
 
 def decide(moving: Mapping[str, str], marker: Marker, answer: Answer, now: float) -> Step:
@@ -620,14 +669,17 @@ __all__ = [
     "REGISTRY_KEY",
     "REQUESTED_BY",
     "RUN_DEADLINE_S",
+    "SPLIT",
     "WAITING",
     "Answer",
     "ArtifactGate",
     "Marker",
     "Moving",
+    "Split",
     "Step",
     "Wait",
     "Waits",
+    "alone_first",
     "asked_marker",
     "decide",
     "default_marker",

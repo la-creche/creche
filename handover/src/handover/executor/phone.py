@@ -8,8 +8,11 @@ the same body shape, under the same kind of bearer, as the PEP's
 
 Contract 04 §8.4's four rules, and where each lands here:
 
-1. The push carries family, gate and summary. `_push` sends exactly those
-   plus `kind`, which is what the PEP's own notifier sends.
+1. The push carries family, gate and summary. The approval push sends
+   those plus `kind`, which is what the PEP's own notifier sends, and the
+   `label`, `title` and `message` that the flow shows. The live flow shows
+   `summary` until the operator imports the flow that reads `title` and
+   `message`, so `summary` stays: the message, cut to 200 characters.
 2. Node-RED sends the actionable push through Home Assistant.
 3. The tap raises `mobile_app_notification_action` on Node-RED's own
    outbound websocket. Nothing inbound reaches this process.
@@ -50,7 +53,7 @@ from collections.abc import Callable
 from typing import Any, Final, cast
 
 from .. import notices, strictjson
-from .approval import ACTION_RE, Decision, Summary, Verdict, release_action
+from .approval import ACTION_RE, APPROVAL_TITLE, Decision, Summary, Verdict, release_action
 from .notice import Notice
 
 #: Where root's own environment carries the hook. The wrapper decrypts
@@ -89,9 +92,17 @@ MAX_REPLY_BYTES: Final = 64 * 1024
 #: The surface word of a notice for an answer that is not strict JSON.
 SURFACE: Final = "hook.answer"
 
-#: Contract 04 §8.3 caps the whole summary. §2.5's seven fields ride
-#: beside it as `fields`, so the reader gets both the line and the table.
+#: Contract 04 §8.3 caps the whole summary.
 SUMMARY_MAX_CHARS: Final = 200
+
+#: The caps of the flow on the two texts that a card shows (`MESSAGE_MAX`
+#: and the title of a card).
+MESSAGE_MAX_CHARS: Final = 900
+TITLE_MAX_CHARS: Final = 60
+
+#: The title of the outcome push, as the operator decided it. The title of
+#: the approval push is `approval.APPROVAL_TITLE`.
+RESULT_TITLE: Final = "Release Result"
 
 HTTP_REDIRECT: Final = 300
 
@@ -106,15 +117,14 @@ UNREACHABLE: Final = "the approval push could not be delivered"
 PostFn = Callable[[dict[str, object]], dict[str, object] | None]
 
 
-def summary_line(summary: Summary) -> str:
-    """§2.5's seven fields as the one line a notification shows.
-
-    `review` first, because §2.5 puts the adversarial verdict first, then
-    what moves and what restarts. Capped at contract 04 §8.3's 200.
-    """
-    joined = " | ".join((summary.review, summary.components, summary.contracts, summary.restore))
-
-    return joined[:SUMMARY_MAX_CHARS]
+def _texts(title: str, message: str) -> dict[str, object]:
+    """The three texts of a push, each cut to the cap of the flow. The
+    `summary` is the message, cut to contract 04 §8.3's 200."""
+    return {
+        "title": title[:TITLE_MAX_CHARS],
+        "message": message[:MESSAGE_MAX_CHARS],
+        "summary": message[:SUMMARY_MAX_CHARS],
+    }
 
 
 def _post(url: str, token: str, body: dict[str, object]) -> dict[str, object] | None:
@@ -145,7 +155,7 @@ def _post(url: str, token: str, body: dict[str, object]) -> dict[str, object] | 
                 return None
 
             raw = reply.read(MAX_REPLY_BYTES + 1)
-    except (urllib.error.URLError, OSError, ValueError):
+    except urllib.error.URLError, OSError, ValueError:
         return None
 
     if len(raw) > MAX_REPLY_BYTES:
@@ -237,8 +247,7 @@ def make_transport(
                 "family": action_id,
                 "label": RELEASE_LABEL,
                 "gate": gate,
-                "summary": summary_line(summary),
-                "fields": summary.as_dict(),
+                **_texts(APPROVAL_TITLE, summary.message()),
             }
         )
         if pushed is None:
@@ -289,12 +298,13 @@ def make_notifier(
     def notify(notice: Notice) -> bool:
         # An outcome push is NOT actionable, so `ACTION_RE` never sees it
         # and the label may stay a word (§2.6's "one push, not actionable").
+        # The flow builds the tag of the card from `fields.id`.
         body: dict[str, object] = {
             "kind": OUTCOME_KIND,
             "family": RELEASE_LABEL,
             "label": RELEASE_LABEL,
-            "summary": notice.line(),
-            "fields": notice.as_dict(),
+            **_texts(RESULT_TITLE, notice.message),
+            "fields": {"id": notice.id},
         }
         if post is not None:
             return post(body) is not None

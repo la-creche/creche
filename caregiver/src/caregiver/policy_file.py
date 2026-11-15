@@ -5,7 +5,8 @@ side (chaperone design section 6).
 mirror the Rust types of `crates/core/src/policy.rs` one to one: `RawPolicy`
 is `PolicyFile`, `RawApp` is `App`, and `UpstreamGrant`, `ToolGrant`,
 `Limits` and `ArgumentFence` keep their names. `AttendanceSection` is the
-section that the `attendance` fence reads (design section 12). Each type
+section that the `attendance` fence reads, and `HaEntitiesSection` the one
+that the `ha-entities` fence reads (design section 12). Each type
 refuses a value that the Rust reader refuses for that one field, so a wrong
 file is hard to write. The rules across apps (a shared digest, one hop)
 stay with `chaperone check`.
@@ -55,6 +56,8 @@ _SLUG: Final = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 _TOOL: Final = re.compile(r"[A-Za-z0-9_.-]{1,128}")
 _DIGEST: Final = re.compile(r"[0-9a-f]{64}")
 _FAMILY: Final = re.compile(r"[a-z][a-z0-9-]{1,30}")
+#: The `ha-entities` fence reads a domain as 1 or more of `a-z`, `0-9` and `_`.
+_DOMAIN: Final = re.compile(r"[a-z0-9_]+")
 _PLUGIN_SEPARATOR: Final = "__"
 
 #: A TOML key that needs no quotes.
@@ -62,6 +65,7 @@ _BARE_KEY: Final = re.compile(r"[A-Za-z0-9_-]+")
 
 #: The plugin upstreams that serve the verbs (design section 12).
 ATTENDANCE: Final = "attendance"
+HA_ENTITIES: Final = "ha-entities"
 RELEASE: Final = "release"
 INVOKE_AGENT: Final = "invoke_agent"
 ENQUEUE: Final = "enqueue"
@@ -197,11 +201,29 @@ class AttendanceSection:
 
 
 @dataclass(frozen=True)
+class HaEntitiesSection:
+    """`[apps.<id>.plugins.ha-entities]`: the entity domains of each fenced
+    upstream. The fence refuses a section with no upstream."""
+
+    upstreams: Mapping[str, tuple[str, ...]]
+
+    def __post_init__(self) -> None:
+        if not self.upstreams:
+            raise PolicyShapeError("an ha-entities section needs one upstream at least")
+
+        for upstream, domains in self.upstreams.items():
+            _check_plugin(upstream)
+            for domain in domains:
+                _check_name(domain, _DOMAIN, "an entity domain")
+
+
+@dataclass(frozen=True)
 class PluginSections:
     """`RawApp.plugins`: one section per active fence. This writer knows
-    the section of `attendance` only."""
+    the sections of `attendance` and `ha-entities`."""
 
     attendance: AttendanceSection | None = None
+    ha_entities: HaEntitiesSection | None = None
 
 
 @dataclass(frozen=True)
@@ -285,7 +307,10 @@ def build_app(family: FamilyFile, index: Index, digests: tuple[str, ...], *, rev
         token_sha256=digests,
         limits=Limits(calls_per_minute=CALLS_PER_MINUTE, max_pending_gates=MAX_PENDING_GATES),
         grants=grants,
-        plugins=PluginSections(attendance=_attendance_section(family)),
+        plugins=PluginSections(
+            attendance=_attendance_section(family),
+            ha_entities=_ha_entities_section(granted, index),
+        ),
     )
 
 
@@ -459,6 +484,23 @@ def _attendance_section(family: FamilyFile) -> AttendanceSection | None:
     return section
 
 
+def _ha_entities_section(
+    granted: Mapping[str, tuple[str, ...]], index: Index
+) -> HaEntitiesSection | None:
+    """The domains of each granted server whose file declares
+    `entity_domains`, or None when no granted server declares them."""
+    upstreams: dict[str, tuple[str, ...]] = {}
+    for upstream in granted:
+        server = index.servers.get(upstream)
+        if server is not None and server.entity_domains is not None:
+            upstreams[upstream] = tuple(sorted(set(server.entity_domains)))
+
+    if not upstreams:
+        return None
+
+    return HaEntitiesSection(upstreams=upstreams)
+
+
 def render_policy(policy: PolicyFile) -> str:
     """The text of `policy.toml`: the version, then each app in ID order."""
     parts = [f"version = {POLICY_VERSION}\n"]
@@ -492,6 +534,14 @@ def render_app(app_id: str, app: App) -> str:
 
         if attendance.enqueue_targets:
             lines.append(f"enqueue_targets = {_array(attendance.enqueue_targets)}")
+
+    ha_entities = app.plugins.ha_entities
+    if ha_entities is not None:
+        lines.extend(("", f"[{prefix}.plugins.{HA_ENTITIES}.upstreams]"))
+        lines.extend(
+            f"{_key(upstream)} = {_array(ha_entities.upstreams[upstream])}"
+            for upstream in sorted(ha_entities.upstreams)
+        )
 
     return "\n".join(lines) + "\n"
 

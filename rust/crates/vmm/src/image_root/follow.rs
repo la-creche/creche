@@ -162,6 +162,9 @@ impl Follow {
             let _gate = lifecycle.write();
             set.import(&images)?
         };
+        if let Some(line) = absent_line(&set) {
+            eprintln!("vmm: {line}");
+        }
         let (current, receiver) = watch::channel(digests);
         let follow = Self {
             root: set.root,
@@ -286,11 +289,30 @@ impl Follow {
                     .iter()
                     .map(|(flavor, digest)| format!("{} {digest}", flavor.name())),
             )
+            .chain(digests.services.iter().filter_map(|(image, digest)| {
+                digest.map(|digest| format!("{} {digest}", image.name()))
+            }))
             .collect::<Vec<_>>()
             .join(", ");
+        let text = match absent_line(&set) {
+            Some(line) => format!("{text}. {line}"),
+            None => text,
+        };
         self.current.send_replace(digests);
         Ok(text)
     }
+}
+
+/// The one log line that names each service image with no entry in `set`,
+/// or `None` when each one has an entry (`image_root` module doc).
+fn absent_line(set: &ImageSet) -> Option<String> {
+    let absent = set.absent_services();
+    (!absent.is_empty()).then(|| {
+        format!(
+            "the {DIGESTS_FILE} names no disk of the service images {}, so no VM of them starts",
+            absent.join(", ")
+        )
+    })
 }
 
 #[cfg(test)]

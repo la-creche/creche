@@ -46,10 +46,13 @@
 //!    closes its link, so the answer is `closed` (decision CH62 rule 13).
 //!    Then the stand-in pulls once itself: one `FamilyStatePull` on that
 //!    socket, then one HTTP GET to guest 127.0.0.1:4000 and one to
-//!    :8300. It answers `pulled <its pid> <reply key> <status 4000>
-//!    <status 8300> <pull ms>`. A link that ends with no answer gives
-//!    `closed`, and each other fault `failed` (decisions CH5a, CH6-2,
-//!    CH62 rule 13).
+//!    :8300, each with `Authorization: Bearer` and the value of the pull
+//!    for that plane, then one GET to :4000 with a value that is not the
+//!    one of the pull. It answers `pulled <its pid> <reply key> <status
+//!    4000> <status 8300> <status of the wrong value> <pull ms>`. A link
+//!    that ends with no answer gives `closed`, and each other fault
+//!    `failed` (decisions CH5a, CH6-2, CH62 rule 13, openshell ideas plan
+//!    idea 1).
 //! 9. In mode `markers` it writes `MARKERS` files on the session disk,
 //!    each with its own line, and writes `markers written`. Then it stays
 //!    up. A fault exits with status 4. A kvm test syncs and kills CH,
@@ -109,8 +112,8 @@ use creche_wire::guest::{
     SESSION_DISK_MOUNT, SESSION_ID_ENV,
 };
 use creche_wire::{
-    ControlCommand, FAMILY_STATE_CAP, FamilyStatePull, FamilyStateReply, TurnEnd, TurnEvent,
-    TurnStart, UnixMillis,
+    ControlCommand, FAMILY_STATE_CAP, FamilyCreds, FamilyStatePull, FamilyStateReply, TurnEnd,
+    TurnEvent, TurnStart, UnixMillis,
 };
 
 /// The mode file of the test root disk.
@@ -483,13 +486,19 @@ fn pong(link: &UnixStream) -> io::Result<()> {
                 .status()?;
             say(&format!("family stranger {status}"));
             let started = Instant::now();
-            let reply = answer(pull());
+            let pulled = pull_state();
             let pull_ms = started.elapsed().as_millis();
-            let litellm = answer(get(LITELLM_PORT));
-            let chaperone = answer(get(CHAPERONE_PORT));
+            let creds = pulled.as_ref().ok().and_then(|(_, creds)| creds.clone());
+            let reply = answer(pulled.map(|(key, _)| key));
+            let bearer = |secret: Option<&str>| secret.map(|secret| format!("Bearer {secret}"));
+            let litellm_key = creds.as_ref().map(|creds| creds.litellm_key.reveal());
+            let pep_token = creds.as_ref().map(|creds| creds.pep_token.reveal());
+            let litellm = answer(get(LITELLM_PORT, bearer(litellm_key).as_deref()));
+            let chaperone = answer(get(CHAPERONE_PORT, bearer(pep_token).as_deref()));
+            let wrong = answer(get(LITELLM_PORT, Some(WRONG_BEARER)));
             writeln!(
                 &*link,
-                "pulled {pid} {reply} {litellm} {chaperone} {pull_ms}"
+                "pulled {pid} {reply} {litellm} {chaperone} {wrong} {pull_ms}"
             )?;
         } else {
             say(&format!("relay got {line:?}"));
@@ -532,6 +541,16 @@ fn answer(got: io::Result<Option<String>>) -> String {
 /// One pull on the family-state socket: the key of the reply, or `None`
 /// when the link ends with no line (decisions CH5a, CH62 rule 13).
 fn pull() -> io::Result<Option<String>> {
+    pull_state().map(|(key, _)| key)
+}
+
+/// The `Authorization` value of the GET that the plane must refuse: the
+/// format of a LiteLLM key, and not the value of the pull.
+const WRONG_BEARER: &str = "Bearer sk-not-the-placeholder";
+
+/// One pull on the family-state socket: the key of the reply, or `None`
+/// when the link ends with no line, and the creds of a `state` reply.
+fn pull_state() -> io::Result<(Option<String>, Option<FamilyCreds>)> {
     let link = UnixStream::connect(FAMILY_STATE_SOCKET)?;
     link.set_read_timeout(Some(PULL_WAIT))?;
     let mut line = serde_json::to_vec(&FamilyStatePull {})?;
@@ -543,26 +562,30 @@ fn pull() -> io::Result<Option<String>> {
     let cap = u64::try_from(FAMILY_STATE_CAP).map_err(io::Error::other)?;
     BufReader::new(&link).take(cap + 1).read_line(&mut reply)?;
     if reply.is_empty() {
-        return Ok(None);
+        return Ok((None, None));
     }
-    let key = match serde_json::from_str(reply.trim_end())? {
-        FamilyStateReply::State(_) => "state",
-        FamilyStateReply::CredsMissing(_) => "creds_missing",
-        FamilyStateReply::ConfigMissing(_) => "config_missing",
-        FamilyStateReply::NotValid(_) => "not_valid",
-        FamilyStateReply::TooLarge(_) => "too_large",
+    let (key, creds) = match serde_json::from_str(reply.trim_end())? {
+        FamilyStateReply::State(state) => ("state", Some(state.creds)),
+        FamilyStateReply::CredsMissing(_) => ("creds_missing", None),
+        FamilyStateReply::ConfigMissing(_) => ("config_missing", None),
+        FamilyStateReply::NotValid(_) => ("not_valid", None),
+        FamilyStateReply::TooLarge(_) => ("too_large", None),
     };
-    Ok(Some(key.to_owned()))
+    Ok((Some(key.to_owned()), creds))
 }
 
-/// One HTTP GET to the plane at guest 127.0.0.1:`port`: the status code
-/// of the answer, or `None` when the link ends with none (decision
-/// CH6-2).
-fn get(port: u16) -> io::Result<Option<String>> {
+/// One HTTP GET to the plane at guest 127.0.0.1:`port`, with the
+/// `Authorization` value `authorization` if any: the status code of the
+/// answer, or `None` when the link ends with none (decision CH6-2).
+fn get(port: u16, authorization: Option<&str>) -> io::Result<Option<String>> {
     let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))?;
     stream.set_read_timeout(Some(PULL_WAIT))?;
-    let request =
-        format!("GET /standin HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    let authorization = authorization
+        .map(|value| format!("Authorization: {value}\r\n"))
+        .unwrap_or_default();
+    let request = format!(
+        "GET /standin HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{authorization}Connection: close\r\n\r\n"
+    );
     // As in `pull`, the read names a close.
     let _ = (&stream).write_all(request.as_bytes());
     let mut status = String::new();

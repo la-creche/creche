@@ -91,8 +91,10 @@ impl Shape {
 }
 
 /// The LiteLLM key and the chaperone token of the family of each proof.
-pub const LITELLM_KEY: &str = "sk-test-key";
-pub const PEP_TOKEN: &str = "abababababababababababababababababababababababababababababababab";
+/// Each is a value that no file of a guest disk holds, so the snapshot
+/// read of `tests/snapshot_scan` finds it only if the guest got it.
+pub const LITELLM_KEY: &str = "sk-kvm-real-family-key-7f3e";
+pub const PEP_TOKEN: &str = "5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed";
 
 /// `creds.json` as caregiver writes it, as in `tests/family_state.rs`.
 fn creds() -> String {
@@ -165,7 +167,7 @@ pub fn sha256(path: &Path) -> String {
 
 /// The image root (decision CH57 rule 1): the guest kernel and the root
 /// disk that `disk` places in it. Root owns `digests.json`, which names
-/// that one disk for each flavor.
+/// that one disk for each flavor and each service image.
 fn image_root(work: &Path, disk: impl FnOnce(&Path, &Path) -> RootDisk) -> PathBuf {
     let root = work.join("image");
     fs::create_dir(&root).unwrap();
@@ -175,7 +177,7 @@ fn image_root(work: &Path, disk: impl FnOnce(&Path, &Path) -> RootDisk) -> PathB
     let disk = entry(&placed.file, &placed.sha256);
     let digests = root.join("digests.json");
     let text = format!(
-        r#"{{"kernel":{},"base":{disk},"python":{disk},"coding":{disk}}}"#,
+        r#"{{"kernel":{},"base":{disk},"python":{disk},"coding":{disk},"browser":{disk}}}"#,
         entry("vmlinux", &sha256(&root.join("vmlinux")))
     );
     fs::write(&digests, text).unwrap();
@@ -399,6 +401,9 @@ pub fn boot_with<V>(
         // `repos.json` (decision CH69 rule 13).
         (config::MIRROR_ROOT, work.join("mirror")),
         (config::GIT, PathBuf::from(HOST_GIT)),
+        // A request opens a folder of the spool, and the start sweeps its
+        // `push/` when it is there (decision CH3).
+        (config::GIT_SPOOL_ROOT, work.join("spool")),
     ];
     let mut env: Vec<(&str, &OsStr)> = paths
         .iter()

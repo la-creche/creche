@@ -32,7 +32,10 @@ use creche_vmm_confine::admission::GIB;
 use creche_vmm_store::images::ImageStore;
 use creche_vmm_store::initramfs::{Entry, Kind, pack};
 use creche_vmm_store::key::check_cloud_hypervisor;
-use creche_wire::{HOST_API_HEADER, HOST_API_PROTOCOL, PerFlavor, SandboxFlavor, SessionPage};
+use creche_wire::{
+    HOST_API_HEADER, HOST_API_PROTOCOL, PerFlavor, PerService, SandboxFlavor, ServiceImage,
+    SessionPage,
+};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
 
@@ -77,9 +80,9 @@ fn mismatch() -> String {
     format!(r#"{{"code":"protocol_mismatch","protocol":{HOST_API_PROTOCOL}}}"#)
 }
 
-/// The kernel and the root disk of each flavor, each with the SHA-256 of
-/// its bytes.
-const IMAGES: [(&str, &str, &str); 4] = [
+/// The kernel, the root disk of each flavor and the root disk of each
+/// service image, each with the SHA-256 of its bytes.
+const IMAGES: [(&str, &str, &str); 5] = [
     (
         "vmlinux",
         "",
@@ -99,6 +102,11 @@ const IMAGES: [(&str, &str, &str); 4] = [
         "coding.ext4",
         "coding",
         "9623c1ece5cf9eac8c087030d2c4be5747556cf40920ebfeba1fcc0cc976f123",
+    ),
+    (
+        "browser.ext4",
+        "browser",
+        "d4c3e8a11256ab82a4fc72560eb4a2b0e87bad820c290dd9b03616de240aa6db",
     ),
 ];
 
@@ -155,6 +163,7 @@ impl Scratch {
             "base": entry(IMAGES[1]),
             "python": entry(IMAGES[2]),
             "coding": entry(IMAGES[3]),
+            "browser": entry(IMAGES[4]),
         });
         fs::write(dir.join("images").join(DIGESTS_FILE), digests.to_string()).unwrap();
         fs::write(dir.join("bin/guest-init"), GUEST_INIT).unwrap();
@@ -193,6 +202,7 @@ impl Scratch {
             ("VMM_EGRESS_LOG", text(dir.join("egress.jsonl"))),
             ("VMM_MIRROR_ROOT", text(dir.join("mirror"))),
             ("VMM_GIT_PROGRAM", text(dir.join("bin/git"))),
+            ("VMM_GIT_SPOOL_ROOT", text(dir.join("spool"))),
         ]);
         Self { dir, env }
     }
@@ -347,14 +357,23 @@ fn kvm_build_wires_each_key_to_its_part() {
 
     // Decisions CH57 rule 1 and CH58 rule 4: the digests of
     // `digests.json`, each in the digest store of the state root.
-    let [kernel, base, python, coding] = IMAGES.map(|(_, _, sha256)| sha256.parse().unwrap());
+    let [kernel, base, python, coding, browser] =
+        IMAGES.map(|(_, _, sha256)| sha256.parse().unwrap());
     let roots = PerFlavor::every(|flavor| match flavor {
         SandboxFlavor::Base => base,
         SandboxFlavor::Python => python,
         SandboxFlavor::Coding => coding,
     });
-    assert_eq!(*start.digests.borrow(), Digests { kernel, roots });
-    for digest in [kernel, base, python, coding] {
+    let services = PerService::every(|image| match image {
+        ServiceImage::Browser => Some(browser),
+    });
+    let digests = Digests {
+        kernel,
+        roots,
+        services,
+    };
+    assert_eq!(*start.digests.borrow(), digests);
+    for digest in [kernel, base, python, coding, browser] {
         start.images.check(digest).unwrap();
     }
 

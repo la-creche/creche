@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::layout::StateRoot;
-use creche_wire::{PerFlavor, SandboxFlavor};
+use creche_wire::{PerFlavor, PerService, SandboxFlavor, ServiceImage};
 
 use super::{Follow, HOOK_TIMEOUT, POLL, RETRY_POLLS, SETTLE_POLLS};
 use crate::image_lifecycle::ImageLifecycle;
@@ -69,8 +69,8 @@ impl Root {
     }
 }
 
-/// A `digests.json` with the kernel `kernel` and each flavor on the root
-/// disk `root`, each `(file, sha256)`.
+/// A `digests.json` with the kernel `kernel`, and each flavor and each
+/// service image on the root disk `root`, each `(file, sha256)`.
 fn digests(kernel: (&str, &str), root: (&str, &str)) -> Vec<u8> {
     let entry =
         |(file, sha256): (&str, &str)| serde_json::json!({ "file": file, "sha256": sha256 });
@@ -79,14 +79,19 @@ fn digests(kernel: (&str, &str), root: (&str, &str)) -> Vec<u8> {
     for (_, &flavor) in PerFlavor::every(SandboxFlavor::name).iter() {
         json.insert(flavor.to_owned(), entry(root));
     }
+    for (_, &image) in PerService::every(ServiceImage::name).iter() {
+        json.insert(image.to_owned(), entry(root));
+    }
     serde_json::Value::Object(json).to_string().into_bytes()
 }
 
-/// The set of a kernel `kernel` and each root disk on `root`.
+/// The set of a kernel `kernel` and each root disk, of a flavor or of a
+/// service image, on `root`.
 fn set(kernel: &str, root: &str) -> Digests {
     Digests {
         kernel: kernel.parse().unwrap(),
         roots: PerFlavor::every(|_| root.parse().unwrap()),
+        services: PerService::every(|_| Some(root.parse().unwrap())),
     }
 }
 
@@ -387,4 +392,49 @@ fn failed_bytes_wait_again_after_other_bytes() {
     let line = settle(&mut follow, &failed).unwrap();
     assert!(line.contains(&format!("base {HELLO}")), "{line}");
     assert_eq!(*current.borrow(), set(EMPTY, HELLO));
+}
+
+/// The bytes of `digests` with no entry for any service image: the file
+/// of a disks row from before the browser disk.
+fn without_services(bytes: &[u8]) -> Vec<u8> {
+    let mut json: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_slice(bytes).unwrap();
+    for (_, &name) in PerService::every(ServiceImage::name).iter() {
+        json.remove(name);
+    }
+    serde_json::Value::Object(json).to_string().into_bytes()
+}
+
+/// Handover step 9 restarts a new vmm on the old `digests.json`, with no
+/// browser entry. The start takes it, and its set says that the browser
+/// disk is absent. A later file that names the disk imports it while the
+/// vmm runs, and the swap line names it. A file that drops the entry
+/// again swaps to an absent image and says so in its line.
+#[test]
+fn a_service_image_that_arrives_later_imports_and_swaps() {
+    let root = Root::new("service");
+    let old = without_services(&digests(("vmlinux", EMPTY), ("abc.ext4", ABC)));
+    let (mut follow, current) = root.follow(&old);
+    let absent = Digests {
+        services: PerService::every(|_| None),
+        ..set(EMPTY, ABC)
+    };
+    assert_eq!(*current.borrow(), absent);
+    assert!(root.store().check(digest(HELLO)).is_err());
+
+    let new = digests(("vmlinux", EMPTY), ("hello.ext4", HELLO));
+    let line = settle(&mut follow, &new).unwrap();
+    assert!(line.contains(&format!("browser {HELLO}")), "{line}");
+    assert!(!line.contains("names no disk"), "{line}");
+    assert_eq!(*current.borrow(), set(EMPTY, HELLO));
+    root.store().check(digest(HELLO)).unwrap();
+
+    let line = settle(&mut follow, &without_services(&new)).unwrap();
+    assert!(
+        line.ends_with(
+            "the digests.json names no disk of the service images browser, so no VM of them starts"
+        ),
+        "{line}"
+    );
+    assert_eq!(*current.borrow().services.get(ServiceImage::Browser), None);
 }

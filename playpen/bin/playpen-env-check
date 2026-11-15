@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# CI — the `playpen-image` job runs it on each built flavor:
-#   playpen/bin/playpen-env-check <image>
+# CI — the `playpen-image` job runs it on each built flavor and each built
+# service image:
+#   playpen/bin/playpen-env-check <image> [flavor|service]
 #
 # It holds `/etc/creche/env` of the image equal to the env of the image's
 # config, inherited names included (CH7-7, CH49). The config gives one
@@ -8,11 +9,18 @@
 # by name in byte order, with each PATH folder only once
 # (`creche-env-write`).
 #
-# Then it places each name of the file in one list of the agent (CH49
-# rule 1). Node in the image runs `placeEnvFile` of the agent module that
+# For the kind `flavor` (the default), it then places each name of the
+# file in one list of the agent (CH49 rule 1). Node in the image runs `placeEnvFile` of the agent module that
 # the image ships (`agent/src/tool-env.ts`), so the lists are the ones the
 # flavor runs, and no second copy exists. The file's names are the built
 # env, the parent image's names such as NODE_VERSION too.
+#
+# The kind `service` is a service image of catalog.SERVICE_IMAGES. It runs
+# no agent and ships no node, so it gets the env check only.
+# CONTRACT-QUESTION: CH49 rule 1 names the env of an agent image and is
+# silent on a service image. The reading here: the equal check of CH7-7
+# still holds, and the agent list check does not apply. A service image
+# that runs an agent tool later needs a list of its own.
 #
 # Exit 0 when the two are equal and each name sits in a list. Exit 1, with
 # a diff or the unplaced names, when one fails or when docker or node
@@ -21,8 +29,11 @@ set -euo pipefail
 
 die() { printf 'playpen-env-check: %s\n' "$*" >&2; exit 1; }
 
-[[ "$#" -eq 1 ]] || die "usage: playpen-env-check <image>"
+usage="usage: playpen-env-check <image> [flavor|service]"
+[[ "$#" -eq 1 || "$#" -eq 2 ]] || die "$usage"
 image="$1"
+kind="${2:-flavor}"
+[[ "$kind" == flavor || "$kind" == service ]] || die "$usage"
 
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
@@ -44,6 +55,12 @@ done < "$work/config" | LC_ALL=C sort -t= -k1,1 > "$work/expected"
 
 if ! diff -u --label "config of $image" --label "/etc/creche/env" "$work/expected" "$work/file"; then
   die "/etc/creche/env of $image is not the env of its config. List each new name in the RUN of creche-env-write in playpen/Dockerfile."
+fi
+
+if [[ "$kind" == service ]]; then
+  printf 'playpen-env-check: %s: /etc/creche/env equals the config env (%s names, a service image)\n' \
+    "$image" "$(wc -l < "$work/file" | tr -d ' ')"
+  exit 0
 fi
 
 # Node runs in the facade's deploy tree, where the bare name

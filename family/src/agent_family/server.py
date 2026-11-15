@@ -9,7 +9,7 @@ from typing import Final
 
 from pydantic import Field
 
-from .grammar import ALL_TOOLS, DEFAULT_PYTHON
+from .grammar import ALL_TOOLS, DEFAULT_PYTHON, SECRET_PREFIX
 from .model import Strict
 
 #: `tools: all`, or a list of this server's tool names (contract 01b §7).
@@ -32,12 +32,16 @@ class InstallBlock(Strict):
     #: near end looks for a declared server.
     lock: str | None = None
     python: str = DEFAULT_PYTHON
+    #: The DNS name of the Forgejo or Gitea host of a `forge-release` pin.
+    #: `serverrules` holds the rule, as `handover.mcpserver` rule 17.
+    host: str | None = None
     repo: str | None = None
     asset: str | None = None
     sha256: str | None = None
     ref: str | None = None
     #: Contract 01b §3.2: `tar` (the default) or `binary`, `github-release`
-    #: only. `serverrules` holds the rule, as `handover.mcpserver` rule 16.
+    #: and `forge-release` only. `serverrules` holds the rule, as
+    #: `handover.mcpserver` rule 16.
     format: str | None = None
 
 
@@ -87,12 +91,26 @@ class McpServerFile(Strict):
     tools: list[ToolEntry] = Field(default_factory=list[ToolEntry])
     arg_allows: list[FenceEntry] = Field(default_factory=list[FenceEntry])
     arg_denies: list[FenceEntry] = Field(default_factory=list[FenceEntry])
+    #: The Home Assistant entity domains this server's identity may read.
+    #: caregiver writes them into the `ha-entities` fence of each app that
+    #: holds a grant to this server (chaperone design section 12). `None`
+    #: leaves the server unfenced. An empty list lets a call name no entity.
+    entity_domains: list[str] | None = None
     shared_secrets: list[SharedSecretEntry] = Field(default_factory=list[SharedSecretEntry])
 
     def tool_names(self) -> tuple[str, ...]:
         """The catalog: what COULD be granted. Nothing is granted by being
         declared here (contract 01b §5 rule 1)."""
         return tuple(entry.name for entry in self.tools)
+
+    def secret_keys(self) -> frozenset[str]:
+        """The keys after `secret:` in the values of `run.env` (contract 01b
+        §4)."""
+        return frozenset(
+            value.removeprefix(SECRET_PREFIX)
+            for value in self.run.env.values()
+            if value.startswith(SECRET_PREFIX)
+        )
 
 
 SERVER_FIELDS: Final = tuple(McpServerFile.model_fields)

@@ -227,6 +227,7 @@ fn put_made_names_the_file_by_its_digest() {
 
     let checked = temp.store.put_made(BYTES).expect("the write");
     assert_eq!(checked.digest(), digest);
+    assert_eq!(ImageDigest::of(BYTES), digest, "`vmm gc` names it so");
     assert_eq!(checked.path(), temp.store.path(&digest));
     assert_eq!(fs::read(checked.path()).expect("the copy"), BYTES);
     let mode = fs::metadata(checked.path()).expect("the copy").mode();

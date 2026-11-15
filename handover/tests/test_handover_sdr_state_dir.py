@@ -14,7 +14,7 @@ release:
     /var/lib/mcp/<name>   mcp-<name> 0700     step 8 makes it
 
 These drive `McpBuilder` against `McpFake`. The
-eleven real declarations are `test_handover_mce_first_mcp_release.py`'s.
+twelve declarations are `test_handover_mce_first_mcp_release.py`'s.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ install:
   package: kagimcp
   version: 1.0.2
   lock: {KAGI_LOCK_PATH}
-  python: "3.12"
+  python: "3.14"
 run:
   entrypoint: kagimcp
   env:

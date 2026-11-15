@@ -6,52 +6,11 @@
 # Usage: sudo creche-deploy [ref]     (default: main from the operator's tree)
 set -euo pipefail
 
-# The product's root-owned checkout, and the site's beside it. Since
-# 2026-11-03 the site's two files in /etc/creche link into the `host`
-# release of creche-release, not into this checkout. The site checkout still
-# serves the compose stack and the personal units, until they move as well.
+# The product's root-owned checkout. Since 2026-11-03 the site's two files in
+# /etc/creche link into the `host` release of creche-release, not into this
+# checkout. The compose stack, the personal units and flowsync moved into that
+# release as well, so this script deploys no site checkout.
 PRODUCT=/opt/creche
-SITE=/opt/private-docs
-
-#: The one branch the site deploys. It has no release branches and no tags.
-SITE_REF=main
-
-# deploy_site PRODUCT SITE: bring SITE to its origin's SITE_REF.
-#
-# The site is this deployment's own repository: the docs, the compose
-# stack, the personal scripts and units. It follows
-# the product's rule, so root needs no GitHub credential for it either: its
-# origin is the checkout BESIDE the product's origin.
-#
-#   <code>/creche        ──fetch──▶ /opt/creche         the product
-#   <code>/private-docs  ──fetch──▶ /opt/private-docs   the site
-#
-# A first run clones it. A host with no site checkout beside the product's
-# says so and deploys the product alone.
-#
-# Returns non-zero when the site could not be brought up to date. The caller
-# decides what that costs.
-deploy_site() {
-  local product="$1" site="$2" origin
-
-  # The site's origin is named after the product's: the same parent
-  # directory, e.g. <code>/creche -> <code>/private-docs.
-  origin="$(dirname "$(git -C "$product" remote get-url origin)")/$(basename "$site")"
-
-  if [[ ! -d "$site/.git" ]]; then
-    if [[ ! -d "$origin/.git" ]]; then
-      echo "no site checkout at $origin: the product deploys alone"
-      return 0
-    fi
-
-    git clone --quiet "$origin" "$site" || return 1
-  fi
-
-  git -C "$site" remote set-url origin "$origin" || return 1
-  git -C "$site" fetch --quiet origin || return 1
-  git -C "$site" checkout --quiet -f "origin/$SITE_REF" || return 1
-  echo "site     $(git -C "$site" rev-parse --short HEAD): $(git -C "$site" log -1 --format=%s)"
-}
 
 [[ "$(id -u)" == "0" ]] || { echo "run via sudo" >&2; exit 1; }
 
@@ -110,13 +69,6 @@ if [[ -z "${CRECHE_DEPLOY_REEXEC:-}" ]] && ! cmp -s "$NEW" "$SELF"; then
   install -m 0755 "$NEW" "$SELF"
   CRECHE_DEPLOY_REEXEC=1 exec "$SELF" "$REF"
 fi
-
-# After the self-update, so the copy that knows the site is the one that
-# deploys it. Not fatal: no release, no wrapper and no /etc/creche link
-# reads this checkout. A failure leaves the compose stack and the personal
-# units on the tree they already run.
-deploy_site "$PRODUCT" "$SITE" \
-  || echo "WARNING: the site at $SITE could not be brought up to date; the product is deployed either way" >&2
 
 # /usr/local/sbin/creche-handover is deliberately NOT refreshed by a
 # deploy: contract 06 §1.1, "the thing that deploys code is not deployed by

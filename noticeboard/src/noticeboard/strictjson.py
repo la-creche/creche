@@ -85,7 +85,7 @@ import math
 import re
 from array import array
 from itertools import accumulate
-from typing import Final, NoReturn
+from typing import Final, NoReturn, cast
 
 #: The deepest nesting of arrays and objects in a strict text.
 DEPTH_MAX: Final = 64
@@ -334,6 +334,40 @@ def _too_deep(data: bytes) -> bool:
     steps = array("b", outside.translate(_BRACKET_AS_STEP))
 
     return max(accumulate(steps), default=0) > DEPTH_MAX
+
+
+def _nests_too_deep(value: object) -> bool:
+    """Whether `value` nests more than `DEPTH_MAX` arrays and objects.
+
+    The walk holds a list of its own, so it uses no recursion. A value that
+    holds itself nests with no end, so the walk stops it at `DEPTH_MAX + 1`.
+    The walk opens one container again only when it reaches it at a greater
+    depth, so a container that a value holds in many places costs at most
+    `DEPTH_MAX` visits.
+    """
+    deepest: dict[int, int] = {}
+    pending: list[tuple[object, int]] = [(value, 1)]
+    while pending:
+        item, depth = pending.pop()
+        key = id(item)
+        children: list[object]
+        if isinstance(item, dict):
+            children = list(cast("dict[object, object]", item).values())
+        elif isinstance(item, list | tuple):
+            children = list(cast("list[object] | tuple[object, ...]", item))
+        else:
+            continue
+
+        if depth > DEPTH_MAX:
+            return True
+
+        if deepest.get(key, 0) >= depth:
+            continue
+
+        deepest[key] = depth
+        pending.extend((child, depth + 1) for child in children)
+
+    return False
 
 
 def _has_lone_surrogate(data: bytes, value: object) -> bool:
@@ -812,11 +846,16 @@ def dumps(
         item, key = separators
         separators = (item, key)
 
+    # The depth comes first, from the value. Python 3.14 bounds the recursion
+    # of C code by the stack, so the pure Python encoder of `indent` can grow
+    # with no `RecursionError` until the kernel stops the process. A value
+    # that holds itself is too deep by the same walk.
+    if _nests_too_deep(value):
+        raise NotStrictJson(Rule.TOO_DEEP, None)
+
     text = ""
     rule: Rule | None = None
     try:
-        # With no check for a circle, a value that holds itself ends in a
-        # `RecursionError`, as a value that nests too deep does.
         text = json.dumps(
             value,
             check_circular=False,
@@ -825,8 +864,6 @@ def dumps(
             separators=separators,
             ensure_ascii=ensure_ascii,
         )
-    except RecursionError:
-        rule = Rule.TOO_DEEP
     except ValueError:
         # With these arguments, `json.dumps` raises this type for one value:
         # an integer with more digits than `int` gives as text.

@@ -47,7 +47,7 @@ text before it prints the text.
 Exit status: 0 for a good run, 1 for a pair that differs, and 2 for each
 other end of a run: a file or a command line that the script refuses, an
 output that the script cannot write, and a fault that the script does not
-name. A Python older than 3.12 cannot read the script and ends with its own
+name. A Python older than 3.14 cannot read the script and ends with its own
 status 1.
 """
 
@@ -586,7 +586,7 @@ class _Reader:
 
             if kind == "float":
                 return float(self._loader.construct_yaml_float(node))
-        except (ValueError, yaml.YAMLError):
+        except ValueError, yaml.YAMLError:
             raise Refusal(Reason.NOT_YAML, _line(node)) from None
 
         if kind == "timestamp":
@@ -1002,7 +1002,7 @@ def _mapping_difference(left: dict[str, object], right: dict[str, object], path:
 def _check(source: Source, toml_text: str) -> Checked:
     try:
         value = tomllib.loads(toml_text)
-    except (tomllib.TOMLDecodeError, RecursionError):
+    except tomllib.TOMLDecodeError, RecursionError:
         raise Refusal(Reason.NOT_TOML) from None
 
     found = _difference(plain(source.root), value, "")

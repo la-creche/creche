@@ -112,20 +112,22 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   does. The loop ends with `acp accept failed: <error>`, and the main
   thread powers off (CH19 rule 3, CH67 rule 11).
 - The host rows (`src/bridge.rs`, CH6-2, CH14, CH46 rules 1 and 4, CH62
-  rules 13 and 14): the loopback rows take each link of guest
-  127.0.0.1:4000 (`litellm`), :8300 (`chaperone`), :3128 (`egress`) and
-  :9418 (`mirror`) from any guest process, with no allowlist. Every VM
-  gets the `egress` and `mirror` rows, because guest init knows no
-  family. The host side is the guard: a VM with no 1104 or 1103
-  listener fails each dial, so it fails closed (CH46 rule 1, CH69 rule
-  13).
+  rules 13 and 14, CH3): the loopback rows take each link of guest
+  127.0.0.1:4000 (`litellm`), :8300 (`chaperone`), :3128 (`egress`),
+  :9418 (`mirror`) and :1105 (`spool`) from any guest process, with no
+  allowlist. Every VM gets the `egress`, `mirror` and `spool` rows,
+  because guest init knows no family. The host side is the guard: a VM
+  with no 1104, 1103 or 1105 listener fails each dial, so it fails closed
+  (CH46 rule 1, CH69 rule 13). The vmm binds 1105 only for a family with
+  a `git-platform` grant (`rust/crates/vmm/AGENTS.md`, "The git platform
+  spool").
   The family-state row takes each link of the family-state socket whose
   `SO_PEERCRED` pid is the live facade, in any facade state with a pid
   and after its local link opened too. The accept thread asks the
   control loop, which owns the facade state. It closes each other link
   at once and writes `family-state peer pid <n> refused: not the
   facade`. Each kept link dials vsock CID 2 fresh: host port 1101,
-  1102, 1104, 1103 or 1100. A failed dial closes the guest side at once, and nothing
+  1102, 1104, 1103, 1105 or 1100. A failed dial closes the guest side at once, and nothing
   retries: the next guest connection dials fresh, which is the reading
   of "the bridge reconnects after a restore" (CH6-2, CH62 rule 14). The
   splice reads and rewrites no byte, so the `Host` header stays valid
@@ -141,7 +143,10 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   listener. The `egress` and `mirror` rows land in one change before the
   first vmm deploy, so they need no bump (CH69 rules 21 and 29). The
   ports are `creche_wire::guest::EGRESS_PROXY_PORT` and `MIRROR_PORT`,
-  and `vectors/guest.json` lists them.
+  and `vectors/guest.json` lists them. The `spool` row lands with host
+  port 1105 in the change that raised `GUEST_INIT_PROTOCOL` to 2, so it
+  needs no bump of its own (CH3). Its port is
+  `creche_wire::guest::GIT_SPOOL_PORT`.
 - `src/splice.rs` copies the bytes of one link both ways on two std
   threads and reads none of them. An EOF in one direction shuts down
   the write half of the other socket, and the other direction runs on,
@@ -218,9 +223,12 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   child, the family stranger, which sends a `FamilyStatePull` on the
   family-state socket and writes `standin: family stranger pid <pid>
   closed` when guest init closes its link. Then the stand-in sends one
-  `FamilyStatePull` itself and one HTTP GET to each plane, and answers
-  `pulled <pid> <reply key> <status 4000> <status 8300> <pull ms>`,
-  with `closed` for a link that ended with no answer.
+  `FamilyStatePull` itself and one HTTP GET to each plane with
+  `Authorization: Bearer` and the value of the pull for that plane,
+  then one GET to 4000 with a value that is not the one of the pull.
+  It answers `pulled <pid> <reply key> <status 4000> <status 8300>
+  <status of the wrong value> <pull ms>`, with `closed` for a link that
+  ended with no answer.
   With the mode `markers`, it writes three marker files on the session
   disk and `standin: markers written`, then stays up. With the mode
   `linked-relay`, it opens the local link, runs the relay of `relay` and
@@ -240,7 +248,7 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   line with no write. A fault answers `failed <id> <io
   error kind>`. `-` stands for no bytes. The streams of a 1201 link
   close with it. A kvm test thus sets each request itself: the guest
-  init tests of the 3128 and 9418 rows, and the vmm tests of the egress
+  init tests of the 3128, 9418 and 1105 rows, and the vmm tests of the egress
   proxy and the mirror (CH69 rules 22 and 28, plan PRs A1, E3 and E4).
   The vmm tests only send these lines and never edit the stand-in.
   Each other start stays up until a signal ends it.

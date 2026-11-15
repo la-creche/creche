@@ -381,6 +381,33 @@ def test_the_phone_summary_comes_from_roots_own_resolution(bench: Bench) -> None
     assert str(manifest["manifest_sha256"]).endswith(summary["manifest"]) or summary[  # pyright: ignore[reportUnknownArgumentType]
         "manifest"
     ] in str(manifest["manifest_sha256"])  # pyright: ignore[reportUnknownArgumentType]
+    assert shown[0].message() == (
+        f"Components: caregiver {LIVE_VERSION} -> {NEW_VERSION}\nUnsafe: none"
+    )
+    log = cast("list[str]", bench.ledger()["log_tail"])
+    assert f"summary restore: {summary['restore']}" in log
+
+
+def test_a_manual_restore_is_on_the_unsafe_line(bench: Bench) -> None:
+    """A component with no automatic rollback is named before the tap."""
+    shown: list[Summary] = []
+
+    def watching(action_id: str, gate: str, summary: Summary, wait_s: float) -> Decision:
+        del action_id, wait_s
+        shown.append(summary)
+
+        return Decision(Verdict.DENIED, gate, 1.0)
+
+    bench.wiring = replace(bench.wiring, transport=watching)
+    write_request(bench.spool_root, REQUEST_ID, request_body({"caregiver": NEW_VERSION}))
+    _serve_manifests(bench, _all_manifests(bench, {"mode: automatic": "mode: manual"}))
+    spool = bench.open_spool()
+    try:
+        handle(spool, f"{REQUEST_ID}.json", bench.wiring, Counter())
+    finally:
+        spool.close()
+
+    assert shown[0].message().splitlines()[1] == "Unsafe: caregiver"
 
 
 def _with_transport(bench: Bench, answer: Callable[[str], Decision]) -> Wiring:

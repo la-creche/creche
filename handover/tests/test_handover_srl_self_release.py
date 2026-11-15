@@ -2,7 +2,8 @@
 
 The three rules, end to end on a fake host:
 
-1. `handover` is last in `order` (`order.py`, already built).
+1. `handover` is last in `order` (`order.py`, already built). A set that
+   deploys it holds no other component (`resolve.check_alone`).
 2. Its switch happens after the ledger entry is written and the lock is
    released. Step 9 writes a note and swaps nothing.
 3. Its verify hook runs as a fresh process, from the new tree, after that
@@ -38,6 +39,7 @@ from handover.executor.spool import (
 )
 from handover.executor.steps import Wiring
 from handover.manifest import Markup
+from handover.resolve import HANDOVER_ALONE
 from handover_executor_fixtures import (
     REQUEST_ID,
     SHA_OF,
@@ -323,31 +325,45 @@ def test_the_entry_names_no_listener_to_restart(bench: Bench) -> None:
     assert manual == []
 
 
-def test_a_set_switches_handover_after_everything_else(pair: Bench) -> None:
-    """Rule 1 and rule 2 together: `caregiver` swaps and verifies inside the
-    release, `handover` after its entry."""
+def test_a_set_of_handover_and_another_is_refused(pair: Bench) -> None:
+    """`handover` releases alone (`resolve.check_alone`). Step 2 refuses the
+    set before step 3 and before the push, and nothing moves."""
+    pushes: list[str] = []
+
+    def transport(action_id: str, gate: str, summary: Summary, wait_s: float) -> Decision:
+        del summary, wait_s
+        pushes.append(action_id)
+
+        return Decision(Verdict.GRANTED, gate, pair.wiring.host.clock())
+
+    pair.wiring = replace(pair.wiring, transport=transport)
+
     _run(pair, {"caregiver": CARE_NEW, SELF: NEW})
 
     release = pair.ledger()
-    assert cast("dict[str, object]", release["manifest"])["order"] == ["caregiver", SELF]
-    assert _verified(release) == ["caregiver"]
-    assert _verified(pair.self_entry()) == [SELF]
-    assert pair.live("caregiver") == CARE_NEW
-    assert pair.live() == NEW
-
-
-def test_a_failed_set_never_switches_handover(pair: Bench) -> None:
-    """`caregiver` fails its hook, the set restores, and `handover` never
-    moves: no note, no second entry, no staged tree left behind."""
-    pair.run.fails["caregiver-verify"] = 1
-
-    _run(pair, {"caregiver": CARE_NEW, SELF: NEW})
-
-    assert pair.ledger()["status"] != "succeeded"
+    assert release["status"] == "refused"
+    assert release["refused_check"] == "request"
+    assert release["reason"] == HANDOVER_ALONE
+    assert _step(release, "resolve")["status"] == "refused"
+    assert pushes == []
     assert not pair.has_entry(SELF_ENTRY)
     assert pair.live() == LIVE
+    assert pair.live("caregiver") == CARE_LIVE
     assert not (pair.components / f"{SELF}.new").exists()
-    assert pair.running() == []
+    assert not (pair.components / "caregiver.new").exists()
+
+
+def test_handover_unchanged_beside_another_is_one_set(pair: Bench) -> None:
+    """Only a deploy row counts. `handover` named at its live version is
+    `unchanged`, so the set deploys `caregiver` alone and `handover` stays."""
+    _run(pair, {"caregiver": CARE_NEW, SELF: LIVE})
+
+    release = pair.ledger()
+    assert release["status"] == "succeeded"
+    assert cast("dict[str, object]", release["manifest"])["order"] == ["caregiver"]
+    assert not pair.has_entry(SELF_ENTRY)
+    assert pair.live("caregiver") == CARE_NEW
+    assert pair.live() == LIVE
 
 
 def test_the_pass_ends_once_the_executor_replaced_itself(bench: Bench) -> None:

@@ -35,8 +35,9 @@
 //! swap names the new set. A snapshot of a VM on the old disk holds the
 //! old key, so the next start drops it and cold-boots on the new disk. The
 //! VM sleeps on the idle timeout of `vmm serve`, 300 s, while the follow
-//! waits its 305 s. So the job kvm waits about 5 min once for both
-//! proofs, and the test proves that the compose step runs the follow. The
+//! waits its 305 s. So the V1 test waits about 5 min once for both
+//! proofs, and the shard `disk-swap` of the job kvm runs it alone. The
+//! test proves that the compose step runs the follow. The
 //! rust job proves the follow on the bytes
 //! (`src/image_root/follow/tests.rs`), because only the runner's sudo
 //! makes a root-owned file (decision CH36 G20).
@@ -909,7 +910,7 @@ fn kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk() {
     let disk = format!(r#"{{"file":"root2.img","sha256":"{new}"}}"#);
     let kernel = sha256(&image.join("vmlinux"));
     let text = format!(
-        r#"{{"kernel":{{"file":"vmlinux","sha256":"{kernel}"}},"base":{disk},"python":{disk},"coding":{disk}}}"#
+        r#"{{"kernel":{{"file":"vmlinux","sha256":"{kernel}"}},"base":{disk},"python":{disk},"coding":{disk},"browser":{disk}}}"#
     );
     let staged = image.join("digests.json.new");
     fs::write(&staged, text).unwrap();
@@ -924,7 +925,7 @@ fn kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk() {
     // `IDLE_CHECK`, and the vmm log says so. Its snapshot holds the key of
     // its start on the old disk, also when it sleeps after the swap.
     let swap = format!(
-        "vmm: new starts use the new {DIGESTS_FILE}: kernel {kernel}, base {new}, python {new}, coding {new}"
+        "vmm: new starts use the new {DIGESTS_FILE}: kernel {kernel}, base {new}, python {new}, coding {new}, browser {new}"
     );
     let slept = format!("vmm: the VM of {SESSION} sleeps");
     let settle = HOOK_TIMEOUT + POLL..HOOK_TIMEOUT + POLL * 4;

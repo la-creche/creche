@@ -55,7 +55,8 @@ own module.
    first (`HOME_DIR`). The user has no home of its own, and `uv` will not
    run without a cache directory it can create.
 4. **Every pin is an INPUT, and the build resolves nothing.** A
-   `github-release` asset is downloaded to a root-owned staging FILE, under
+   `github-release` or `forge-release` asset is downloaded to a
+   root-owned staging FILE, under
    a `Content-Length` cap AND an `RLIMIT_FSIZE` the kernel enforces as the
    bytes are written, hashed
    here with `hashlib`, and compared with the declared `sha256` before
@@ -103,8 +104,9 @@ own module.
    it has already validated.
 8. **The build fetches no code root did not pin.** `pypi` and
    `agent-mcp` reach the network only through `uv` under
-   `--require-hashes`, and `github-release` through one `curl` to a URL
-   built from validated fields. No credential is presented to any of them:
+   `--require-hashes`, and `github-release` and `forge-release` through
+   one `curl` to a URL built from validated fields. No credential is
+   presented to any of them:
    root holds none (contract 06 §3.4).
 9. **A `source: agent-mcp` server installs from the tree the release
    already fetched**, at the SHA the approval was bound to, and it names
@@ -128,7 +130,7 @@ own module.
     |---|---|---|
     | `/opt/mcp` | every `mcp-<name>`, for ever | The release succeeds and no server can start. |
     | the staging tree | the `uv pip install` child | The `pypi` build fails at step 8. |
-    | the `agent-mcp` checkout | the `uv sync` child | The `agent-mcp` build fails at step 8. |
+    | the `mcp` checkout | the `uv sync` child | The `agent-mcp` build fails at step 8. |
     | `<name>.new` | the PEP, at every start | The server cannot exec its entrypoint. |
 
     `install.normalize_modes` is the rule, `normalize_dir` its
@@ -179,7 +181,7 @@ from pathlib import Path
 from typing import Final
 
 from ..errors import Refusal, RefusalCode, safe_token
-from ..mcpserver import AssetFormat, ServerFile, Source
+from ..mcpserver import ASSET_SOURCES, AssetFormat, ServerFile, Source
 from .host import As, Command, Host
 from .install import (
     BUILD_TIMEOUT_S,
@@ -214,8 +216,8 @@ UV_CACHE_DIR_NAME: Final = "uv-cache"
 #: root's, `0755` all the way down, shared by every server tree that names
 #: that minor. A dot name, so nothing that globs `/opt/mcp/*` for server
 #: trees sees it, and under the MCP root so every `mcp-<name>` can reach
-#: it. A server can require a minor the host lacks — `ha-mcp` requires
-#: `>=3.13` and the host has 3.12 — and a build child may not download,
+#: it. A server can name a minor the host lacks — `ha` names 3.13 and
+#: the host has 3.14 — and a build child may not download,
 #: so without this the build dies at `No interpreter found for Python
 #: 3.13`. `UV_PYTHON_INSTALL_DIR` names it and the tree is opened
 #: `a+rX`, by the release, so a new server needing a new minor is still
@@ -286,7 +288,7 @@ class Fetched:
     """Everything this release already has on disk, and the tag it deploys.
 
     `registry` holds the server declarations AND their committed closures
-    (contract 01b §3.4). `tree` is the `agent-mcp` checkout root fetched at
+    (contract 01b §3.4). `tree` is the `mcp` checkout root fetched at
     the approved SHA. `tag` is what the phone showed, and assumption 9 is
     about a `source: agent-mcp` server's `ref` agreeing with it: root
     fetches nothing after the tap.
@@ -359,7 +361,7 @@ class McpBuilder:
     ) -> tuple[ServerBuild, ...]:
         """Build every server's `<name>.new`. Assumption 10: it swaps none.
 
-        `source` is the `agent-mcp` checkout this release already fetched at
+        `source` is the `mcp` checkout this release already fetched at
         the approved SHA, with the tag it was fetched at. A
         `source: agent-mcp` server installs from that tree and from nowhere
         else, and names no tag of its own (assumption 9).
@@ -391,7 +393,7 @@ class McpBuilder:
 
         Root asks `uv python find` first, with downloads off and the
         shared directory in view: the host's own interpreter answers for
-        3.12, an earlier release's for a minor already installed. Only a
+        3.14, an earlier release's for a minor already installed. Only a
         minor nobody provides is installed, by ROOT — the one child of
         this module that fetches from the network, and it fetches an
         interpreter build whose sha256 the host's `uv` release carries in
@@ -400,9 +402,7 @@ class McpBuilder:
         anybody's `~/.local/bin`. Then the whole tree is opened (`a+rX`):
         root's umask made every directory `0750`.
         """
-        wanted = sorted(
-            {one.pin.python for one in servers if one.pin.source is not Source.GITHUB_RELEASE}
-        )
+        wanted = sorted({one.pin.python for one in servers if one.pin.source not in ASSET_SOURCES})
         shared = {"UV_PYTHON_INSTALL_DIR": str(self.python_root)}
         for minor in wanted:
             found = self.host.run(
@@ -450,11 +450,12 @@ class McpBuilder:
         `direct_url.json` that names a path outside `<name>.new` is a
         refusal, with nothing swapped.
 
-        Only the two venv sources. A `github-release` tree is an unpacked
-        binary with no site-packages, which is the one shape the walk
-        refuses for a reason that cannot apply to it.
+        Only the two venv sources. The tree of a release asset
+        (`ASSET_SOURCES`) is an unpacked binary with no site-packages,
+        which is the one shape the walk refuses for a reason that cannot
+        apply to it.
         """
-        if server.pin.source is Source.GITHUB_RELEASE:
+        if server.pin.source in ASSET_SOURCES:
             return
 
         check_tree(server.name, new)
@@ -485,7 +486,7 @@ class McpBuilder:
         source: Fetched,
         home: Path,
     ) -> ServerBuild:
-        if server.pin.source is Source.GITHUB_RELEASE:
+        if server.pin.source in ASSET_SOURCES:
             return self._from_release(server, paths, staging)
 
         self._venv(server, paths.new, home)
@@ -494,7 +495,7 @@ class McpBuilder:
 
         return self._from_pypi(server, paths, staging, source.registry, home)
 
-    # -- the three sources ----------------------------------------------
+    # -- the four sources, in three builds -------------------------------
 
     def _from_pypi(
         self,
@@ -538,7 +539,10 @@ class McpBuilder:
     def _from_release(self, server: ServerFile, paths: ServerPaths, staging: Path) -> ServerBuild:
         """Contract 01b §3.2. Download, HASH, then unpack. In that order.
         A `format: binary` asset IS the program: after the hash it is
-        placed as it is, and nothing is unpacked."""
+        placed as it is, and nothing is unpacked.
+
+        A `github-release` pin and a `forge-release` pin take this one
+        path. Only the host of the URL differs, and the pin gives it."""
         url = server.pin.asset_url()
         archive = staging / str(server.pin.asset)
         self._must(

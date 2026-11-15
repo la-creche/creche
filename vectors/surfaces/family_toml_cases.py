@@ -136,7 +136,7 @@ install.source = "pypi"
 install.package = "example-mcp"
 install.version = "1.0.0"
 install.lock = "mcp/github-platform/install.lock"
-install.python = "3.12"
+install.python = "3.14"
 
 run.entrypoint = "example-mcp"
 run.env = {}

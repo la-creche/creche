@@ -36,7 +36,9 @@ until the prose is fixed. This is the most important rule in this file.
 1. Separate the subject from the body with one blank line.
 2. Limit the subject to 50 characters. 72 is the hard limit.
 3. Capitalize the subject. Do not end it with a period.
-4. Write the subject in the imperative: "Add", not "Added" or "Adds".
+4. Write the subject in the imperative: "Add", not "Added" or "Adds". The
+   subject must complete this sentence: "If applied, this commit will
+   <subject>".
 5. Wrap the body at 72 characters.
 6. Use the body for what changed and why. The code says how.
 7. End the message with `Co-Authored-By` and nothing else. Do not add a
@@ -63,16 +65,22 @@ rule.
 ## Code style
 
 - Extract a repeated or meaningful value into a named constant. Keep a
-  one-off value inline.
+  one-off value inline. A value from a specification gets a constant, even
+  when the code uses it once.
 - Return early. Avoid deep nesting.
 - Keep function names under 30 characters.
 - Use an enum, not a boolean, for a function parameter.
 - Put a blank line between logical blocks.
+- Add a short comment that says what a block does and why. Give an example
+  when it helps. Draw an ASCII picture to explain a whole system.
 - Always use `{}` on a one-line `if` in TypeScript.
 - Keep a field or function private unless the design needs it public. Ask
   before you widen visibility.
 - A layer talks only to the layer directly below it. Do not call through a
   layer.
+- Put low-level mechanics in one module. Raw device I/O, sector parsing and
+  direct socket streams are examples. Give the rest of the code a
+  high-level interface, so the calling code uses domain terms.
 
 ## Time
 
@@ -94,6 +102,7 @@ text with no UTC offset is not a time.
 | `caregiver/` | `caregiver/AGENTS.md` |
 | `door-trigger/`, `door-acp/` | the door's own `AGENTS.md` |
 | `noticeboard/` | `noticeboard/AGENTS.md` |
+| `disks/` | `disks/AGENTS.md` |
 | `playpen/` | `playpen/AGENTS.md` |
 | `agent/` | `agent/AGENTS.md` |
 | `facade/` | `facade/AGENTS.md` |
@@ -105,7 +114,7 @@ text with no UTC offset is not a time.
 | `rust/crates/vmm-confine/` | `rust/crates/vmm-confine/AGENTS.md` |
 | `rust/crates/guest-init/` | `rust/crates/guest-init/AGENTS.md` |
 | `memory/` | `memory/AGENTS.md` |
-| `integration/` | `integration/AGENTS.md` |
+| `integration/` | `integration/AGENTS.md`, and `integration/proc/AGENTS.md` for the process suite |
 | `bin/` | `bin/AGENTS.md` |
 | `vectors/` | `vectors/AGENTS.md` |
 | `systemd/` | `systemd/AGENTS.md` |

@@ -6,7 +6,8 @@ stub on `PATH` that answers `image inspect` with a config env, the `cat`
 run with a file, and the `node` run with a report: the count of lines
 read, then the names that no agent list holds (CH49 rule 1). CI runs the
 same check on each built flavor, where node runs the agent's own
-`placeEnvFile` (`agent/test/tool-env.test.ts`).
+`placeEnvFile` (`agent/test/tool-env.test.ts`). A service image runs no
+agent, so CI checks it with the kind `service`: the equal check alone.
 """
 
 from __future__ import annotations
@@ -74,10 +75,16 @@ def _write(*names: str, env: dict[str, str] | None = None) -> subprocess.Complet
 
 
 def _check(
-    tmp_path: Path, config: str, file: str, report: str | None = None, node_exit: int = 0
+    tmp_path: Path,
+    config: str,
+    file: str,
+    report: str | None = None,
+    node_exit: int = 0,
+    kind: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
-    """Run the check. With no `report`, node reports each line of `file`
-    read and no unplaced name."""
+    """Run the check, with the kind argument `kind` when it holds one. With
+    no `report`, node reports each line of `file` read and no unplaced
+    name."""
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     docker = stubs / "docker"
@@ -97,7 +104,11 @@ def _check(
         "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
     }
     return subprocess.run(
-        ["bash", str(CHECK), "image:tag"], env=env, capture_output=True, text=True, check=False
+        ["bash", str(CHECK), "image:tag", *kind],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
@@ -149,6 +160,42 @@ def test_the_check_passes_the_file_that_the_writer_prints(tmp_path: Path) -> Non
         "playpen-env-check: image:tag: /etc/creche/env equals the config env,"
         " and each name sits in an agent list (6 names)\n"
     )
+
+
+def test_the_kind_flavor_is_the_default(tmp_path: Path) -> None:
+    """The kind `flavor` runs the agent list check, as no kind does."""
+    done = _check(tmp_path, CONFIG, FILE, report="6\nEMPTY\n", kind=("flavor",))
+
+    assert done.returncode == 1
+    assert "no agent list holds EMPTY." in done.stderr
+
+
+def test_a_service_image_gets_the_env_check_alone(tmp_path: Path) -> None:
+    """A service image ships no node, so node never runs: a failed node
+    does not fail it (browser design 10.5.2)."""
+    done = _check(tmp_path, CONFIG, FILE, node_exit=1, kind=("service",))
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout == (
+        "playpen-env-check: image:tag: /etc/creche/env equals the config env"
+        " (6 names, a service image)\n"
+    )
+
+
+def test_a_service_image_still_fails_a_file_that_is_not_the_config_env(tmp_path: Path) -> None:
+    done = _check(tmp_path, CONFIG, FILE + "EXTRA=1\n", kind=("service",))
+
+    assert done.returncode == 1
+    assert "is not the env of its config" in done.stderr
+
+
+@pytest.mark.parametrize("kind", [("other",), ("service", "flavor")])
+def test_another_kind_is_refused(tmp_path: Path, kind: tuple[str, ...]) -> None:
+    done = _check(tmp_path, CONFIG, FILE, kind=kind)
+
+    assert done.returncode == 1
+    usage = "usage: playpen-env-check <image> [flavor|service]"
+    assert done.stderr == f"playpen-env-check: {usage}\n"
 
 
 def test_the_check_names_each_name_that_no_agent_list_holds(tmp_path: Path) -> None:
@@ -246,7 +293,9 @@ def _flavor_steps(stage: str) -> list[str]:
     return [line for line in joined.splitlines()[1:] if line.strip() and not line.startswith("#")]
 
 
-@pytest.mark.parametrize("stage", ["agent-sandbox", "agent-sandbox-python", "agent-sandbox-coding"])
+@pytest.mark.parametrize(
+    "stage", ["agent-sandbox", "agent-sandbox-python", "agent-sandbox-coding", "service-browser"]
+)
 def test_each_flavor_writes_the_env_file_in_its_last_step(stage: str) -> None:
     """An ENV line after the write would set a name the file does not hold."""
     steps = _flavor_steps(stage)

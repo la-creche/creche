@@ -27,7 +27,8 @@ Bad input never raises. A bad definition yields a report, not a crash.
 | `serverrules.py` | the server file value rules, and the rules of root |
 | `registry.py` | reads `families/`, `mcp/`, `skills/`. One report per family. |
 | `classify.py` | pure: two parsed families in, a live-or-replace diff out |
-| `cli.py` | `agent-family validate` |
+| `reach.py` | two registry roots in, the reach diff of each family out |
+| `cli.py` | `agent-family validate` and `agent-family reach` |
 
 Shape lives in `model.py` and `server.py`. Values live in `validate.py` and
 `serverrules.py`. The split is what lets one parse report every violation
@@ -59,6 +60,10 @@ instead of the first.
   `approval` like `tools` or `egress`.
 - `all` resolves against the server file at read time, in
   `Index.granted_tools` only.
+- `reach.py` fails closed. A head file that the reader refuses is a gain.
+  A tool that the catalog does not declare is a write tool. `all` on a
+  server that the registry does not declare is the write tool
+  `<server>__*`.
 
 ## The name of a file
 
@@ -145,11 +150,15 @@ each rule of root:
 1. An identity and a description count each character.
 2. The grammar of `package`, `repo`, `asset`, `python`, `entrypoint` and
    `state_dir_env`.
-3. A value of `run.env`, a word of `run.args` and a value of a fence have
+3. The grammar of `host`, the field of the source `forge-release`: a DNS
+   name in lower case, with two labels at least and 253 characters at
+   most. The validator refuses `github.com` as a host, because that host
+   takes the source `github-release`.
+4. A value of `run.env`, a word of `run.args` and a value of a fence have
    256 characters at most and no NUL character.
-4. The key after `secret:` matches `[a-z][a-z0-9_]{1,62}`.
-5. A fence names one tool at least, or `all`.
-6. Each count has a cap:
+5. The key after `secret:` matches `[a-z][a-z0-9_]{1,62}`.
+6. A fence names one tool at least, or `all`.
+7. Each count has a cap:
    - 200 tools.
    - 32 words of `run.args`.
    - 32 variables of `run.env`.
@@ -182,7 +191,7 @@ refuses each one, and so does the validator.
 |---|---|
 | Unknown fields | refused on every model |
 | `name` | `[a-z][a-z0-9-]{1,30}`, equal to the directory name |
-| `tools` | the server is declared, and each tool is in its catalog. Only a platform family of the host holds `github-platform` |
+| `tools` | the server is declared, and each tool is in its catalog. Only a platform family of the host holds a server of the platform token: `github-platform`, and each server whose `run.env` names `secret:github_token_platform` (`PLATFORM_SECRET`) |
 | Tool name | `[A-Za-z][A-Za-z0-9_-]{0,63}`, in a family file and in a server file |
 | `run.env` name | `[A-Z][A-Z0-9_]{0,63}` |
 | `install.version` | `[0-9][0-9A-Za-z.]{0,63}`: no `+`, no `-` and no range sign |
@@ -207,6 +216,31 @@ uv run agent-family validate <registry path> --family chat --json
 
 Exit codes: 0 every report is clean, 1 at least one error, 2 a usage
 mistake.
+
+```bash
+uv run agent-family reach --base <base registry path> <head registry path>
+```
+
+`reach` reads two registry roots with the strict reader and prints one
+Markdown report. Registry CI runs it on each pull request, with the PR base
+as `--base`. The report has these parts:
+
+1. A table of the gains: family, kind, detail. The kinds are
+   `new_credential`, `new_write_tool`, `new_tool`, `gate_dropped`,
+   `fence_loosened` and `new_reach`.
+2. The head files that the reader refused, under "Not read".
+3. A table of the narrowings, under their own heading.
+
+A server file change counts against each family that grants the server. A
+credential is a pair of a secret and the server that holds it, so a known
+secret through a new server is a new credential. When `GITHUB_STEP_SUMMARY`
+is set, `reach` also appends the report to that file.
+
+Exit codes: 0 no family gains reach, 1 a family gains reach or a head file
+is not read, 2 a usage mistake.
+
+The diff does not see the meaning of a fence value. A value that passes an
+exact match and still reaches a protected name is not a gain to it.
 
 ## Tests
 
@@ -237,12 +271,13 @@ uv run pytest family/tests
   2. `model.py`, `Strict`, contract 01 §2 and contract 01b. The contracts do
      not say how strict the read of a type is. The reader uses the strict
      mode.
-  3. `serverrules.py`, seven comments, contract 01b §3 to §7. The contract
+  3. `serverrules.py`, eight comments, contract 01b §3 to §7. The contract
      does not give these rules, and the validator takes the rules of root
      ("The grammar of root for a server file"):
      - The count of an identity and of a description.
      - The grammar of `package`, `repo`, `asset`, `python`, `entrypoint`
        and `state_dir_env`.
+     - The source `forge-release` and the grammar of its `host`.
      - The grammar of a value and of a secret key.
      - A fence with an empty list of tools.
      - Each other cap on a length and on a count.
@@ -250,3 +285,8 @@ uv run pytest family/tests
      The two readers have one form for a tool name, for the name of a
      variable and for a version. `grammar.py` holds the three forms of this
      validator. `handover.mcpserver` holds the three patterns of root.
+  4. `validate.py`, `_check_platform`, contract 01 §5.5 rules 1 and 7. The
+     contract names `github-platform` and says nothing of another server of
+     its token. The check fences `github-platform` by its name and each
+     server whose `run.env` names `secret:github_token_platform`. Rule 7
+     withholds the merge on each of them. The contract says the name only.

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import tomllib
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from agent_family.fences import Fences
 from agent_family.model import FamilyFile
@@ -150,6 +150,50 @@ def check_no_host(fixture: str, **changes: Any) -> Report:
     issues = Issues()
     check_family(family, fixture, full_index(), issues, None, FENCES)
     return Report(family.name, f"families/{fixture}/family.toml", issues.frozen())
+
+
+#: A second server of the platform token, in the shape of the registry's
+#: `git-platform`. It is not a fixture file, so the fixture registry and its
+#: twin under `vectors/` stay as they are. No code of `agent_family` names
+#: it: the fence finds it by its token.
+GIT_PLATFORM: Final = "git-platform"
+_GIT_PLATFORM_TEXT: Final = """\
+name = "git-platform"
+identity = "The platform token. Pushes and fetches branches of the platform repos as git bundles."
+
+install.source = "agent-mcp"
+
+run.entrypoint = "git-platform-mcp"
+run.env.GIT_PLATFORM_TOKEN = "secret:github_token_platform"
+
+arg_allows = [
+    { tools = "all", arg = "repo", values = ["example-owner/creche", "example-owner/registry"] },
+]
+
+tools = [
+    { name = "push", description = "Push one bundle to one branch.", write = true },
+    { name = "fetch", description = "Fetch one branch into a bundle.", write = false },
+]
+
+shared_secrets = [
+    { secret = "github_token_platform", server = "github-platform" },
+]
+"""
+
+
+def git_platform(*extra_tools: dict[str, Any]) -> McpServerFile:
+    """`git-platform`, with each entry of `extra_tools` added to its tools."""
+    body = tomllib.loads(_GIT_PLATFORM_TEXT)
+    body["tools"] = [*body["tools"], *extra_tools]
+    server, issues = parse_server(toml_text(body), Markup.TOML)
+    assert server is not None, issues
+    return server
+
+
+def index_with(server: McpServerFile) -> Index:
+    """The fixture registry with one server file added or replaced."""
+    index = full_index()
+    return Index(index.kinds, {**index.servers, server.name: server}, index.skills)
 
 
 def server_text(fixture: str) -> str:

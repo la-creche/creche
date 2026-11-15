@@ -2,7 +2,8 @@
 
 One parametrized test per checked function, in the file's own order. `kagi`
 (a `pypi` install) and `github-code` (a `github-release` install) are the two
-base fixtures; `mail` covers the third source, `agent-mcp`."""
+base fixtures; `mail` covers the third source, `agent-mcp`, and
+`forgejo-code` the fourth, `forge-release`."""
 
 from __future__ import annotations
 
@@ -178,6 +179,127 @@ def test_repo_must_be_owner_slash_name() -> None:
         },
     )
     assert "is not <owner>/<name> on GitHub" in messages(report)
+
+
+# --- install: a release asset of a Forgejo or Gitea host ----------------------
+
+#: The pin of the fixture `forgejo-code`: forgejo-mcp 3.4.1, from the host
+#: that publishes it.
+FORGE: dict[str, Any] = {
+    "source": "forge-release",
+    "host": "git.b4mad.industries",
+    "repo": "agentic-forges/forgejo-mcp",
+    "version": "3.4.1",
+    "asset": "forgejo-mcp_3.4.1_linux_amd64.tar.gz",
+    "sha256": "940d3ed08a5535bf1baaf426cb93610cfef5ad02adbda76b7c70a618f08fa53c",
+}
+
+HOST_RULE = (
+    "is not a host; use a DNS name in lower case, with no scheme, no port, no path, "
+    "no user and no IP address"
+)
+
+#: One value for each rule of `install.host`, by the rule that it breaks.
+HOST_REFUSED: dict[str, str] = {
+    "a-scheme": "https://git.example.org",
+    "a-port": "git.example.org:3000",
+    "a-path": "git.example.org/owner",
+    "a-user": "bot@git.example.org",
+    "a-user-and-a-password": "bot:word@git.example.org",
+    "an-ipv4-address": "192.0.2.10",
+    "an-ipv4-address-in-hexadecimal": "0xc0.0.2.10",
+    "an-ipv4-address-as-one-number": "3221225994",
+    "an-ipv6-address": "[2001:db8::1]",
+    "upper-case": "Git.Example.org",
+    "one-label": "localhost",
+    "an-end-dot": "git.example.org.",
+    "an-empty-label": "git..example.org",
+    "a-label-that-starts-with-a-hyphen": "-git.example.org",
+    "a-label-that-ends-with-a-hyphen": "git-.example.org",
+    "a-label-of-64-characters": f"{'a' * 64}.example.org",
+    "an-underscore": "git_forge.example.org",
+    "a-space": "git.example.org evil.example.org",
+    "a-line-end": "git.example.org\n",
+    "a-query": "git.example.org?x=1",
+    "an-empty-text": "",
+}
+
+HOST_ACCEPTED: tuple[str, ...] = (
+    "git.b4mad.industries",
+    "codeberg.org",
+    "forge.example.org",
+    "a.b.c.d.example.org",
+    "xn--bcher-kva.example",
+    "1forge.example.org",
+    f"{'a' * 63}.example.org",
+)
+
+
+def test_the_forge_release_fixture_is_clean() -> None:
+    report = check_server_rules("forgejo-code")
+
+    assert report.ok, messages(report)
+
+
+@pytest.mark.parametrize("host", HOST_ACCEPTED)
+def test_a_lower_case_dns_name_is_a_host(host: str) -> None:
+    report = check_server_rules("forgejo-code", install={**FORGE, "host": host})
+
+    assert report.ok, messages(report)
+
+
+@pytest.mark.parametrize("case", list(HOST_REFUSED))
+def test_each_rule_of_a_host_refuses_a_value(case: str) -> None:
+    report = check_server_rules("forgejo-code", install={**FORGE, "host": HOST_REFUSED[case]})
+
+    assert [(issue.loc, HOST_RULE in issue.msg) for issue in errors(report)] == [
+        ("install.host", True)
+    ]
+
+
+def test_a_host_has_253_characters_at_most() -> None:
+    label = "a" * 49
+    at_the_cap = ".".join([label] * 5) + ".org"
+    past_the_cap = f"a{at_the_cap}"
+
+    assert len(at_the_cap) == 253
+    assert check_server_rules("forgejo-code", install={**FORGE, "host": at_the_cap}).ok
+    report = check_server_rules("forgejo-code", install={**FORGE, "host": past_the_cap})
+    assert "the host is 254 characters; it may have 253 at most" in messages(report)
+
+
+def test_the_host_of_github_release_is_not_a_forge_host() -> None:
+    report = check_server_rules("forgejo-code", install={**FORGE, "host": "github.com"})
+
+    assert [(issue.loc, issue.msg) for issue in errors(report)] == [
+        ("install.host", "'github.com' takes the source 'github-release', not 'forge-release'")
+    ]
+
+
+def test_a_forge_release_requires_a_host() -> None:
+    install = {key: value for key, value in FORGE.items() if key != "host"}
+    report = check_server_rules("forgejo-code", install=install)
+
+    assert "source 'forge-release' requires 'install.host'" in messages(report)
+
+
+def test_a_github_release_takes_no_host() -> None:
+    install = {**FORGE, "source": "github-release"}
+    report = check_server_rules("forgejo-code", install=install)
+
+    assert "source 'github-release' does not take 'install.host'" in messages(report)
+
+
+def test_a_forge_release_takes_a_format() -> None:
+    report = check_server_rules("forgejo-code", install={**FORGE, "format": "binary"})
+
+    assert report.ok, messages(report)
+
+
+def test_a_forge_release_repo_must_be_owner_slash_name() -> None:
+    report = check_server_rules("forgejo-code", install={**FORGE, "repo": "not-a-repo-path"})
+
+    assert "is not <owner>/<name> on the host" in messages(report)
 
 
 # --- run: the process (contract 01b §4) --------------------------------------

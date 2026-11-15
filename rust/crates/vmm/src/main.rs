@@ -34,6 +34,13 @@
 //!   checks the digest of each file that `digests.json` names and writes
 //!   no file.
 //!
+//! - `vmm gc --env-file <path>` lists what the snapshot and image
+//!   retention of the vmm remove now and removes nothing
+//!   (`creche_vmm::gc`). `vmm gc --apply --env-file <path>` removes it,
+//!   and refuses while `vmm serve` holds the state root lock. It writes one
+//!   line per item on stdout. It exits 0 when no step failed and 1 when a
+//!   step failed. A refusal before any remove exits 78.
+//!
 //! Each hook writes one JSON line on stdout and exits 0 when every check
 //! passes, else 1 (contract 06 §4 rule 3). Its `<path>` is the env file of
 //! the vmm unit, because handover passes no unit env to a hook (contract
@@ -45,6 +52,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use creche_vmm::config::{Config, KillScopesConfig};
+use creche_vmm::gc::{self, Act};
 use creche_vmm::shutdown::RUNTIME_END;
 use creche_vmm::verify::Report;
 use creche_vmm::{check_images, verify};
@@ -58,11 +66,14 @@ const EX_CONFIG: u8 = 78;
 
 /// The usage line for a wrong argument list.
 const USAGE: &str = "usage: vmm serve | vmm launch | vmm launch-stage <plan> | vmm kill-scopes \
-| vmm verify --json --env-file <path> | vmm check-images --json --env-file <path>";
+| vmm verify --json --env-file <path> | vmm check-images --json --env-file <path> \
+| vmm gc [--apply] --env-file <path>";
 
 /// The two words before the env file of each hook mode.
 const JSON: &str = "--json";
 const ENV_FILE: &str = "--env-file";
+/// The word of `vmm gc` that removes.
+const APPLY: &str = "--apply";
 
 /// The modes of the program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +90,8 @@ enum Mode<'a> {
     /// The verify hook of the disks row with its env file (decision CH76
     /// rule 6).
     CheckImages(&'a OsString),
+    /// The retention by hand with its act and env file.
+    Gc(Act, &'a OsString),
 }
 
 impl<'a> Mode<'a> {
@@ -91,6 +104,12 @@ impl<'a> Mode<'a> {
             [mode] if mode == launch::MODE => Some(Self::Launch),
             [mode, plan] if mode == stage::MODE => Some(Self::Stage(plan)),
             [mode] if mode == "kill-scopes" => Some(Self::KillScopes),
+            [mode, flag, path] if mode == "gc" && flag == ENV_FILE => {
+                Some(Self::Gc(Act::List, path))
+            }
+            [mode, apply, flag, path] if mode == "gc" && apply == APPLY && flag == ENV_FILE => {
+                Some(Self::Gc(Act::Remove, path))
+            }
             [mode, json, flag, path] if json == JSON && flag == ENV_FILE => {
                 if mode == "verify" {
                     Some(Self::Verify(path))
@@ -129,6 +148,25 @@ fn dispatch(args: &[OsString]) -> ExitCode {
         Mode::KillScopes => kill_scopes(),
         Mode::Verify(path) => hook(&verify::run(Path::new(path))),
         Mode::CheckImages(path) => hook(&check_images::run(Path::new(path))),
+        Mode::Gc(act, path) => gc(act, Path::new(path)),
+    }
+}
+
+/// Runs `vmm gc` and writes its lines on stdout. Exit 0 when no step
+/// failed, 1 when a step failed, 78 for a refusal before any remove.
+fn gc(act: Act, env_file: &Path) -> ExitCode {
+    match gc::run(env_file, act) {
+        Ok(outcome) => {
+            for line in outcome.lines() {
+                println!("{line}");
+            }
+            if outcome.failed() {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+        Err(error) => refuse(&format_args!("gc: {error}")),
     }
 }
 
@@ -210,7 +248,7 @@ mod tests {
     use std::ffi::OsString;
     use std::process::ExitCode;
 
-    use super::{EX_CONFIG, Mode, dispatch};
+    use super::{Act, EX_CONFIG, Mode, dispatch};
 
     fn args(args: &[&str]) -> Vec<OsString> {
         args.iter().map(OsString::from).collect()
@@ -232,6 +270,27 @@ mod tests {
         assert_eq!(Mode::parse(&verify), Some(Mode::Verify(&verify[3])));
         let images = args(&["check-images", "--json", "--env-file", "/srv/vmm.env"]);
         assert_eq!(Mode::parse(&images), Some(Mode::CheckImages(&images[3])));
+        let list = args(&["gc", "--env-file", "/srv/vmm.env"]);
+        assert_eq!(Mode::parse(&list), Some(Mode::Gc(Act::List, &list[2])));
+        let apply = args(&["gc", "--apply", "--env-file", "/srv/vmm.env"]);
+        assert_eq!(Mode::parse(&apply), Some(Mode::Gc(Act::Remove, &apply[3])));
+    }
+
+    /// `vmm gc` takes exactly `[--apply] --env-file <path>`, in that order.
+    #[test]
+    fn parse_refuses_a_wrong_gc_list() {
+        for list in [
+            vec!["gc"],
+            vec!["gc", "--apply"],
+            vec!["gc", "--env-file"],
+            vec!["gc", "--env-file", "/srv/vmm.env", "--apply"],
+            vec!["gc", "--json", "--env-file", "/srv/vmm.env"],
+            vec!["gc", "--apply", "--apply", "--env-file", "/srv/vmm.env"],
+            vec!["gc", "--env-file", "/srv/vmm.env", "extra"],
+            vec!["gc", "/srv/vmm.env"],
+        ] {
+            assert_eq!(Mode::parse(&args(&list)), None, "{list:?}");
+        }
     }
 
     /// Each hook takes exactly `--json --env-file <path>`, in that order.

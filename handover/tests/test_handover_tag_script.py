@@ -1451,9 +1451,9 @@ def _disks_and_caregiver(repo: Path) -> str:
     return _commit(repo, "disks/bin/one.sh", "caregiver/src/one.py")
 
 
-def test_the_disks_row_has_five_files_and_five_bundles() -> None:
-    """The planner names ten assets: each file, then its bundle."""
-    assert len(DISK_ASSETS) == 10
+def test_the_disks_row_has_six_files_and_six_bundles() -> None:
+    """The planner names twelve assets: each file, then its bundle."""
+    assert len(DISK_ASSETS) == 12
     assert DISK_ASSETS[1::2] == tuple(f"{name}{BUNDLE_SUFFIX}" for name in DISK_ASSETS[::2])
 
 

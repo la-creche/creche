@@ -411,7 +411,7 @@ def _fragment_table(root: Path, family: str, *, keep_note: bool) -> dict[str, An
     read."""
     try:
         text = _read_fragment(paths.policy_fragment_path(root, family), family)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
     return _table(text, family, keep_note=keep_note)
@@ -424,7 +424,7 @@ def _policy_apps(target: PolicyTarget) -> dict[str, Any]:
         with target.path(TargetFile.POLICY).open("rb") as handle:
             data = handle.read(POLICY_FILE_MAX_BYTES + 1)
         apps = tomllib.loads(data.decode("utf-8")).get(_APPS_KEY)
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+    except OSError, UnicodeDecodeError, tomllib.TOMLDecodeError:
         return {}
 
     return cast("dict[str, Any]", apps) if isinstance(apps, dict) else {}

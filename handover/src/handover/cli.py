@@ -28,14 +28,15 @@ Eight subcommands. Only `request` and `follow` write anything.
 5. `follow <name> …` is `request` on a timer (`follow/`). It fetches, reads
    which of the named components a newer tag would move, and files ONE
    request for that set. It files a set once, after it read the same set on
-   two runs, and it approves nothing. A run with nothing new prints one
-   line and exits 0. A text that is not strict JSON leaves one row in its
-   notice file (`--notices`), because a timer starts it and the operator
-   does not watch its log. `--dry-run` writes no notice file, and a run as
-   root writes none. With no names, it reads the names, their ceilings and
-   the registry watch from `host.toml` in the live `host` tree
-   (`follow/policy.py`). A run with no names and no such file files
-   nothing and exits 2.
+   two runs, and it approves nothing. A set that moves `handover` and
+   more files `handover` alone first (`follow/` rule 10). A run with
+   nothing new prints one line and exits 0. A text that is not strict JSON
+   leaves one row in its notice file (`--notices`), because a timer starts
+   it and the operator does not watch its log. `--dry-run` writes no
+   notice file, and a run as root writes none. With no names, it reads the
+   names, their ceilings and the registry watch from `host.toml` in the
+   live `host` tree (`follow/policy.py`). A run with no names and no such
+   file files nothing and exits 2.
 6. `artifacts` prints what CI builds for each binary component, in a line
    form that a `read` loop of bash reads (`artifacts.ArtifactRow`).
    `--crate-row` prints one such row for a crate that need not be a
@@ -113,6 +114,7 @@ from .follow import (
     Answer,
     Marker,
     Step,
+    alone_first,
     asked_marker,
     decide,
     default_marker,
@@ -766,7 +768,8 @@ def _run_request(args: argparse.Namespace) -> int:
             "id": request.id,
             "filed": filed,
             "corpus": fetched.lines if fetched else [],
-            "phone": view.summary.as_dict(),
+            "phone": view.phone(),
+            "record": view.summary.as_dict(),
         }
         print(json.dumps(report, indent=2))
 
@@ -1082,7 +1085,13 @@ def _marker_file(args: argparse.Namespace) -> Path:
 def _follow_tags(
     args: argparse.Namespace, built: BuiltState, wanted: dict[str, str], moving: dict[str, str]
 ) -> None:
-    """Rules 2 to 7: one request for the set the newer tags move."""
+    """Rules 2 to 7 and 10: one request for the set the newer tags move.
+    A set that moves `handover` and more files `handover` alone."""
+    split = alone_first(moving)
+    for line in split.lines():
+        print(line)
+
+    moving = split.moving
     ready = _ready_members(moving)
     if not args.dry_run:
         _prune_store(wanted, built.state)
