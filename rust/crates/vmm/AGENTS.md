@@ -34,7 +34,9 @@ other failure exits 1. `vmm verify --json --env-file <path>` and `vmm
 check-images --json --env-file <path>` are the verify hooks of the vmm
 row and of the disks row (decision CH76 rules 2 and 6, see "The verify
 hooks"). Each takes exactly those three words, in that order, and a
-wrong list exits 78. `vmm serve` raises its soft `RLIMIT_NOFILE` to
+wrong list exits 78. `vmm gc --env-file <path>` and `vmm gc --apply
+--env-file <path>` run the snapshot and image retention by hand (see
+"The gc verb"). `vmm serve` raises its soft `RLIMIT_NOFILE` to
 `planes::fd_need` plus `family_state::fd_need` plus `proxy::fd_need`
 in step 4 of the compose step, after the start checks and before the
 bind (decision CH67 rule 4 for the bridge need, Known gap 23 for the
@@ -71,7 +73,10 @@ component of this repository") holds its rules. In short:
 
 1. `shutdown::sigterm` registers the handler of SIGTERM inside the
    runtime, before any other step (caller duty 8).
-2. In `spawn_blocking`: `leftovers::stop_all` stops each VM scope of an
+2. In `spawn_blocking`: `StateRoot::lock` takes the state root lock and
+   holds it until the vmm exits. A `vmm gc --apply` that holds it makes
+   the start wait, with one stderr line (see "The gc verb"). Then
+   `leftovers::stop_all` stops each VM scope of an
    earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
    `root_owned::check_program` checks the files of `VMM_CH_PROGRAM`,
    `VMM_CH_REMOTE_PROGRAM` and `VMM_GIT_PROGRAM` before any run of one
@@ -450,6 +455,48 @@ copies with the runner's sudo (decision CH36 G20). They prove that
 verify passes on the CI build of CH (decision CH75), ch-remote, guest
 init and the vmm itself, and that check-images passes on root-owned
 `.zst` disks and fails on a changed one.
+
+## The gc verb
+
+`src/gc.rs` runs the two passes of the sweep tick by hand, for the
+operator. `vmm gc --env-file <path>` takes the `vmm.env` of the unit, as
+the verify hooks do (see "The verify hooks"), and reads `GcConfig` from
+it: `VMM_STATE_ROOT`, `VMM_IMAGE_ROOT`, `VMM_GUEST_INIT_PROGRAM`,
+`VMM_ZSTD_PROGRAM` and `VMM_SNAPSHOT_BUDGET_GIB`, each with the check of
+`Config`.
+
+1. The current images are the digests of `digests.json`
+   (`ImageSet::digests`, with the root-owned check of `image_root::read`)
+   and the digest of the guest init initramfs
+   (`guest_init::initramfs_digest`, the pack of `write_initramfs` with no
+   write). A vmm start reads the same two.
+2. With no `--apply`, the dry run: `retention::plan`, then
+   `image_retention::plan`, whose mark skips each generation that the
+   first plan lists. It removes nothing and takes no lock, so it may run
+   beside `vmm serve`. A take, a claim or a drop of that vmm can then
+   change what a later run removes, and the plan runs no
+   `ImageStore::check`.
+3. With `--apply`: `StateRoot::try_lock`. `vmm serve` holds the lock
+   while it runs, so gc refuses and removes nothing. With the lock, no VM
+   runs, so `retention::sweep` runs with an empty `InUse`, then
+   `image_retention::collect`. gc holds the lock through both, and a vmm
+   start waits for it.
+
+It writes one line per item on stdout (`would remove` or `removed`, then
+the kind, the name and the allocated bytes), one `failed` line per failed
+step and a total line. It exits 0 when no step failed and 1 when a step
+failed. A wrong argument list, a bad env file, key, `digests.json` or
+guest init program, and a held lock exit 78 before any remove.
+
+`tests/gc.rs` runs `gc::collect` on a scratch state root with real store
+pairs and keys: a stale snapshot and the images that only its key names,
+a current snapshot, and an import temp file. It proves the dry run, an
+apply that removes what the dry run listed, a held lock that refuses the
+apply, and a refused image scan. The rust job cannot make a root-owned
+file, so its binary tests prove the refusals with exit 78. The ignored
+`kvm_the_binary_lists_then_removes` makes `digests.json` and the guest
+init program root-owned with the runner's sudo (decision CH36 G20) and
+runs the binary end to end.
 
 ## The server
 
@@ -1464,13 +1511,25 @@ the passes on paused time.
    a restored VM goes. The lock of `InUse` lasts one insert or remove,
    so no runtime worker waits behind the sweep (decision CH36 G21). The
    write lock of the takes keeps each take out of the sweep, as
-   `retention::sweep` asks. The blocking step owns both locks.
+   `retention::sweep` asks. The blocking step owns both locks. The sweep
+   also drops a newest generation whose key names images of an older
+   set, another CH rev or another guest init protocol, or does not read
+   (`Reason::Stale`, `key::may_restore`). The next start of its session
+   would drop it (decision CH7-6), and until then its key keeps its images
+   in the store. The current set is the set of new starts at the sweep,
+   with the initramfs of this vmm start. A start that selected the old set
+   before a swap and did not reach its key check yet then cold-boots. The
+   shape is not read, so a shape change still drops the snapshot at the
+   next start.
 3. The same sweep tick runs image collection after the snapshot sweep.
    Collection takes the image write gate before it checks the VM table.
    A nonempty table skips collection. A later start waits for collection
    before it selects, checks and launches its images. The mark phase keeps
    the current image set, the guest init initramfs and all snapshot keys.
-   A failed mark removes nothing.
+   A failed mark removes nothing. The sweep phase also removes the
+   leftovers of the store: an identity of an unmarked digest with no
+   image, and each temp file of an import or an identity write. The write
+   gate keeps each import and each identity write out of the pass.
 
 The last use of a VM is the latest of its start, its last door close
 and its last turn event (decision CH50 rule 5). `ControlState::turn`

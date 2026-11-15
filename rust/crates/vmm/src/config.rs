@@ -21,6 +21,10 @@
 //! each hook reads its keys from the env file of the unit
 //! (`crate::env_file`) and passes its lookup here. Each key gets the check
 //! of `Config`.
+//!
+//! `GcConfig` is the config of `vmm gc`, which the operator runs by hand.
+//! It reads the same env file, so it collects the state root of the unit
+//! with the images and the budget of the unit.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -331,6 +335,40 @@ impl CheckImagesConfig {
         Ok(Self {
             image_root: path(&lookup, IMAGE_ROOT)?,
             zstd: program(&lookup, ZSTD)?,
+        })
+    }
+}
+
+/// What `vmm gc` reads from the env file of the vmm unit: the state
+/// root, the image root, the guest init program, the `zstd` of the store
+/// and the snapshot budget.
+#[derive(Debug)]
+pub struct GcConfig {
+    /// `VMM_STATE_ROOT`.
+    pub state: StateRoot,
+    /// `VMM_IMAGE_ROOT`.
+    pub image_root: PathBuf,
+    /// `VMM_GUEST_INIT_PROGRAM`.
+    pub guest_init: Program,
+    /// `VMM_ZSTD_PROGRAM`. The store names it, and gc never runs it.
+    pub zstd: Program,
+    /// `VMM_SNAPSHOT_BUDGET_GIB`, in bytes.
+    pub budget: u64,
+}
+
+impl GcConfig {
+    /// Reads each key through `lookup`, the lookup of the env file.
+    ///
+    /// # Errors
+    ///
+    /// The first key that is missing or bad, in the order of the struct.
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, ConfigError> {
+        Ok(Self {
+            state: StateRoot::new(path(&lookup, STATE_ROOT)?).map_err(|e| root(STATE_ROOT, e))?,
+            image_root: path(&lookup, IMAGE_ROOT)?,
+            guest_init: program(&lookup, GUEST_INIT)?,
+            zstd: program(&lookup, ZSTD)?,
+            budget: gib(&lookup, BUDGET, Zero::Refused)?,
         })
     }
 }

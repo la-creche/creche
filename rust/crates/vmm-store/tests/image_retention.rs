@@ -1,5 +1,7 @@
 //! Image retention keeps every current or snapshotted image and removes
-//! only complete, checked store pairs that no reference names.
+//! only complete, checked store pairs that no reference names, plus the
+//! leftovers of the store: an orphan identity that no reference names and
+//! each temp file. `plan` lists the same and removes nothing.
 
 use std::collections::HashSet;
 use std::fs;
@@ -7,7 +9,7 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use creche_vmm_store::image_retention::collect;
+use creche_vmm_store::image_retention::{Collected, collect, plan};
 use creche_vmm_store::images::{CheckedImage, ImageDigest, ImageStore};
 use creche_vmm_store::key::{SnapshotKey, check_cloud_hypervisor, write_key};
 use creche_vmm_store::layout::{SnapshotGeneration, StateRoot};
@@ -160,21 +162,162 @@ fn a_bad_store_pair_stays_and_reports_a_failure() {
     assert!(temp.store.identity_path(&image.digest()).exists());
 }
 
+/// A name that is no image, identity or temp file of the store stays, and
+/// so does an orphan identity of a marked digest.
 #[test]
-fn unknown_store_names_and_orphan_identities_stay() {
+fn unknown_store_names_and_marked_orphan_identities_stay() {
     let temp = Temp::new("unknown-store");
     let store = temp.state.store_dir();
     fs::create_dir_all(&store).expect("the store dir");
-    fs::write(store.join("notes"), "keep").expect("the unknown file");
-    let orphan = format!("{}.identity", digest_of(b"absent"));
-    fs::write(store.join(&orphan), "keep").expect("the orphan identity");
+    let marked = digest_of(b"marked");
+    let kept = [
+        "notes".to_owned(),
+        format!("{marked}.identity"),
+        format!("{marked}.part"),
+        ".notes.tmp".to_owned(),
+        format!("{marked}x.tmp"),
+    ];
+    for name in &kept {
+        fs::write(store.join(name), "keep").expect("the file");
+    }
 
-    let collected = collect(&temp.store, &temp.state, &HashSet::new()).expect("the collection");
+    let current = HashSet::from([marked]);
+    let collected = collect(&temp.store, &temp.state, &current).expect("the collection");
 
     assert!(collected.removed.is_empty());
+    assert!(collected.leftovers.is_empty(), "{:?}", collected.leftovers);
     assert!(collected.failures.is_empty());
-    assert!(store.join("notes").exists());
-    assert!(store.join(orphan).exists());
+    for name in &kept {
+        assert!(store.join(name).exists(), "{name}");
+    }
+}
+
+/// The leftovers of the store go: an orphan identity that no reference
+/// names, the temp file of an import or `put_made`, and the temp file of
+/// an identity write, also for a marked digest.
+#[test]
+fn leftovers_are_removed_and_counted() {
+    let temp = Temp::new("leftovers");
+    let current = temp.image("current");
+    let store = temp.state.store_dir();
+    let absent = digest_of(b"absent");
+    let leftovers = [
+        store.join(format!("{absent}.identity")),
+        store.join(format!("{absent}.tmp")),
+        store.join(format!("{}.tmp", current.digest())),
+        store.join(format!(".{}.identity.77.3.tmp", current.digest())),
+    ];
+    for path in &leftovers {
+        fs::write(path, "left").expect("the leftover");
+    }
+
+    let keep = HashSet::from([current.digest()]);
+    let collected = collect(&temp.store, &temp.state, &keep).expect("the collection");
+
+    let mut removed: Vec<_> = collected
+        .leftovers
+        .iter()
+        .map(|leftover| leftover.path.clone())
+        .collect();
+    removed.sort_unstable();
+    let mut expected = leftovers.to_vec();
+    expected.sort_unstable();
+    assert_eq!(removed, expected);
+    assert!(collected.removed.is_empty());
+    assert!(collected.failures.is_empty(), "{:?}", collected.failures);
+    let bytes: u64 = collected
+        .leftovers
+        .iter()
+        .map(|leftover| leftover.allocated_bytes)
+        .sum();
+    assert_eq!(collected.reclaimed_bytes, bytes);
+    for path in &leftovers {
+        assert!(!path.exists(), "{}", path.display());
+    }
+    assert!(current.path().exists());
+    assert!(temp.store.identity_path(&current.digest()).exists());
+}
+
+/// The digests of `collected.removed`.
+fn removed_digests(collected: &Collected) -> Vec<ImageDigest> {
+    collected
+        .removed
+        .iter()
+        .map(|removed| removed.digest)
+        .collect()
+}
+
+/// `plan` lists the pairs and the leftovers that `collect` removes, and
+/// removes nothing.
+#[test]
+fn a_plan_lists_the_collection_and_removes_nothing() {
+    let temp = Temp::new("plan");
+    let kept = temp.image("kept");
+    let unused = temp.image("unused");
+    let store = temp.state.store_dir();
+    let leftover = store.join(format!("{}.tmp", digest_of(b"import")));
+    fs::write(&leftover, "left").expect("the leftover");
+    let keep = HashSet::from([kept.digest()]);
+
+    let listed = plan(&temp.store, &temp.state, &keep, &HashSet::new()).expect("the plan");
+
+    assert_eq!(removed_digests(&listed), [unused.digest()]);
+    assert_eq!(listed.leftovers.len(), 1, "{:?}", listed.leftovers);
+    assert_eq!(listed.leftovers[0].path, leftover);
+    assert!(listed.failures.is_empty(), "{:?}", listed.failures);
+    assert!(unused.path().exists() && leftover.exists());
+    assert!(temp.store.identity_path(&unused.digest()).exists());
+
+    let collected = collect(&temp.store, &temp.state, &keep).expect("the collection");
+    assert_eq!(removed_digests(&collected), removed_digests(&listed));
+    assert_eq!(collected.reclaimed_bytes, listed.reclaimed_bytes);
+    assert!(!unused.path().exists() && !leftover.exists());
+    assert!(kept.path().exists());
+}
+
+/// `plan` skips the key of each generation that snapshot retention would
+/// drop, so the images of that key are listed.
+#[test]
+fn a_plan_skips_the_keys_of_dropped_generations() {
+    let temp = Temp::new("plan-dropped");
+    let images = [
+        temp.image("snapshot-kernel"),
+        temp.image("snapshot-initramfs"),
+        temp.image("snapshot-root"),
+    ];
+    temp.snapshot([&images[0], &images[1], &images[2]]);
+    let id: SessionId = ID.parse().expect("the session id");
+
+    let listed =
+        plan(&temp.store, &temp.state, &HashSet::new(), &HashSet::new()).expect("the plan");
+    assert!(listed.removed.is_empty(), "{:?}", listed.removed);
+
+    let dropped = HashSet::from([(id, SnapshotGeneration(1))]);
+    let listed = plan(&temp.store, &temp.state, &HashSet::new(), &dropped).expect("the plan");
+    let mut expected: Vec<_> = images.iter().map(CheckedImage::digest).collect();
+    expected.sort_unstable();
+    assert_eq!(removed_digests(&listed), expected);
+    for image in &images {
+        assert!(image.path().exists());
+    }
+}
+
+/// `plan` gives the failure of `collect` for a pair with no identity.
+#[test]
+fn a_plan_reports_a_pair_with_no_identity() {
+    let temp = Temp::new("plan-no-identity");
+    let image = temp.image("bare");
+    fs::remove_file(temp.store.identity_path(&image.digest())).expect("no identity");
+
+    let listed =
+        plan(&temp.store, &temp.state, &HashSet::new(), &HashSet::new()).expect("the plan");
+    assert!(listed.removed.is_empty());
+    assert_eq!(listed.failures.len(), 1, "{:?}", listed.failures);
+
+    let collected = collect(&temp.store, &temp.state, &HashSet::new()).expect("the collection");
+    assert!(collected.removed.is_empty());
+    assert_eq!(collected.failures.len(), 1, "{:?}", collected.failures);
+    assert!(image.path().exists());
 }
 
 #[test]

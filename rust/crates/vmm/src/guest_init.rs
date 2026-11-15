@@ -26,7 +26,7 @@ use std::fmt;
 use std::io::Read;
 use std::path::Path;
 
-use creche_vmm_store::images::{CheckedImage, ImageStore, MadeError};
+use creche_vmm_store::images::{CheckedImage, ImageDigest, ImageStore, MadeError};
 use creche_vmm_store::initramfs::{Entry, Kind, PackError, pack};
 
 use crate::config::GUEST_INIT;
@@ -79,9 +79,26 @@ impl std::error::Error for GuestInitError {}
 ///
 /// A `GuestInitError`. Each one refuses the start of the vmm.
 pub fn write_initramfs(program: &Path, store: &ImageStore) -> Result<CheckedImage, GuestInitError> {
+    store
+        .put_made(&archive(program)?)
+        .map_err(GuestInitError::Store)
+}
+
+/// The digest of the initramfs that `write_initramfs` writes for
+/// `program`, with the same checks and no write. `vmm gc` keeps that store
+/// copy. Blocks.
+///
+/// # Errors
+///
+/// `GuestInitError::Program` or `GuestInitError::Pack`.
+pub fn initramfs_digest(program: &Path) -> Result<ImageDigest, GuestInitError> {
+    archive(program).map(|bytes| ImageDigest::of(&bytes))
+}
+
+/// The archive of `program` after the checks of the module doc.
+fn archive(program: &Path) -> Result<Vec<u8>, GuestInitError> {
     let bytes = read_program(program)?;
-    let archive = pack(&entries(bytes)).map_err(GuestInitError::Pack)?;
-    store.put_made(&archive).map_err(GuestInitError::Store)
+    pack(&entries(bytes)).map_err(GuestInitError::Pack)
 }
 
 /// The entries of the archive, in order: each parent dir comes before

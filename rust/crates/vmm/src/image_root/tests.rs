@@ -113,6 +113,23 @@ fn a_good_file_gives_the_digests_after_the_import() {
     assert_eq!(set.import(&store).unwrap(), expected);
 }
 
+/// `digests` gives the digests of the file with no import: the digests
+/// that the import gives, also with no file in the image root.
+#[test]
+fn the_digests_of_a_set_need_no_import() {
+    let root = Root::new("digests");
+    let set = root.set(&other_sha("python", HELLO));
+    fs::remove_dir_all(root.images()).unwrap();
+    let expected = Digests {
+        kernel: EMPTY.parse().unwrap(),
+        roots: PerFlavor::every(|flavor| match flavor {
+            SandboxFlavor::Python => HELLO.parse().unwrap(),
+            SandboxFlavor::Base | SandboxFlavor::Coding => ABC.parse().unwrap(),
+        }),
+    };
+    assert_eq!(set.digests(), expected);
+}
+
 #[test]
 fn a_malformed_file_refuses() {
     let other = |key: &str, value: serde_json::Value| {
