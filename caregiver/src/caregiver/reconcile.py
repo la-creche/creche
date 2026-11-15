@@ -142,8 +142,16 @@ class ReconcileResult:
         return replace(self, note=note)
 
     def log_line(self) -> str:
+        """One line per pass. A family with faults names each one as
+        `source:code`, so a `degraded` line says why without a read of
+        `status.json`. The message stays in the document only: a writer
+        other than the caregiver chose its text."""
         steps_text = ",".join(self.ran) if self.ran else "-"
-        return f"{self.family}: {self.note} steps={steps_text} state={self.status.state}"
+        line = f"{self.family}: {self.note} steps={steps_text} state={self.status.state}"
+        if not self.status.faults:
+            return line
+        faults_text = ",".join(f"{one.source}:{one.code}" for one in self.status.faults)
+        return f"{line} faults={faults_text}"
 
 
 def reconcile_family(

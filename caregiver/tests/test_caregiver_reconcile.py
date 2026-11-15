@@ -714,6 +714,19 @@ def test_a_vmm_fault_folds_into_the_document(fleet: Fleet) -> None:
     assert result.status.state is FamilyState.DEGRADED
 
 
+def test_the_log_line_of_a_degraded_family_names_each_fault(fleet: Fleet) -> None:
+    """On 2026-11-15 `creche` logged `state=degraded` for three hours with
+    no reason. The line now names the source and code of each fault."""
+    write_fault_file(fleet.state_root, "vmm", "sandbox_start_failed")
+    result = fleet.run()
+    assert result.log_line().endswith("state=degraded faults=vmm:sandbox_start_failed")
+
+
+def test_the_log_line_of_a_family_with_no_fault_names_none(fleet: Fleet) -> None:
+    result = fleet.run()
+    assert result.log_line().endswith("state=in_sync")
+
+
 def test_a_pep_fault_folds_into_the_document(fleet: Fleet) -> None:
     """A fault of the PEP stops turns, as section 3.3's table says."""
     fleet.run()
