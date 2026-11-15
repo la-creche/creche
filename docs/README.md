@@ -39,6 +39,7 @@ decision can replace a row.
 | [cloud-hypervisor-playpen.md](design/cloud-hypervisor-playpen.md) | The move of the playpen to Cloud Hypervisor. The rows CH1 and so on. |
 | [mcp-memory.md](design/mcp-memory.md) | The memory service. |
 | [browser-mcp.md](design/browser-mcp.md) | A browser tool for an agent. |
+| [ci-runner.md](design/ci-runner.md) | One throwaway VM per Forgejo Actions job. The rows R1 to R6. |
 | [openshell-ideas.md](design/openshell-ideas.md) | Ideas taken from OpenShell. |
 | [family-isolation.md](design/family-isolation.md) | The fences between families. |
 | [code-creche-split.md](design/code-creche-split.md) | The two attended coding families. |
