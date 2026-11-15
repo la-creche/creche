@@ -50,13 +50,13 @@
 # No shard names a path, so a suite added to `testpaths` runs here with no
 # change to this file. bin/tests/test_gate_workflow.py pins all of it.
 #
-# Actions are SHA-pinned with the tag as a comment, as agent-registry's
+# Actions are SHA-pinned with the tag as a comment, as the registry repository's
 # validate.yml does.
 # release.yml runs the same `tests`, `agent`, `facade`, `proc`, `suites`,
 # `rust`, `systemd-proof` and `kvm` jobs after the merge. `vmm-archive` is
 # the one job of this file alone: release.yml builds the archive in its
 # `artifacts` job.
-# agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
+# The mcp repository carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
 
@@ -251,7 +251,7 @@ jobs:
   # The job runs the suite with the pytest command that
   # integration/AGENTS.md tells a person to run. integration/tests held a
   # second suite until the session API left attendance (phase 2 plan, row
-  # 21). Its stand-in for `sbx` left at the Cloud Hypervisor cut.
+  # 21). Its stand-in for the old playpen left at the Cloud Hypervisor cut.
   #
   # A test of the suite can skip itself, and a run in which every test
   # skips is green and judged nothing. The suite reads no switch that makes

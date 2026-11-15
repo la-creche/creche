@@ -5,9 +5,9 @@
 #   handover/bin/allocate-tags.sh [--dry-run]
 #
 # TWO REPOSITORIES RUN IT. creche's workflow runs it from
-# its own checkout. agent-mcp's workflow checks creche out beside its
+# its own checkout. The mcp repository's workflow checks creche out beside its
 # own tree and borrows this script, because contract 06 §1 gives `mcp-servers`
-# to agent-mcp and the allocator that knows that lives here. Two environment
+# to mcp and the allocator that knows that lives here. Two environment
 # variables carry the difference, and both default to the creche case:
 #   TAG_REPO_ROOT  the checkout to READ and TAG. Default: this script's own
 #                  repository. Every `git` call below reads it.
@@ -38,8 +38,8 @@
 # repository, and `--repo` is what scopes the plan to it (`allocate.plan_tags`
 # keeps `row.repo is repo` on every decision). Without it the CLI default
 # `creche` would stand wherever the script ran: a run inside an
-# agent-mcp checkout would plan creche's seven components and push
-# `chaperone-v0.1.0` into agent-mcp. The repository name comes from the
+# mcp checkout would plan creche's seven components and push
+# `chaperone-v0.1.0` into mcp. The repository name comes from the
 # environment, and the planner refuses a name the catalog does not hold.
 #
 # An argument that is not `--dry-run` STOPS the run. A typo for it would
@@ -103,7 +103,7 @@ lines() { tr '\n\0' '?\n'; }
 
 # Two roots, and in creche they are one directory. SELF_ROOT is where
 # this script and the `handover` project live, and it is used for nothing else.
-# REPO_ROOT is the checkout this run reads and tags, which agent-mcp's
+# REPO_ROOT is the checkout this run reads and tags, which the mcp repository's
 # workflow points at its own tree. Splitting them is what lets one allocator
 # serve both repositories without a second copy of it.
 SELF_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
