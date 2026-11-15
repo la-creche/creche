@@ -18,6 +18,9 @@ and 8 of the design note named in §6.1.
 Amended on 2026-11-08 by decisions CH8-6 and CH58 rule 2 of the same design
 note.
 
+Amended on 2026-11-15: §5.5 names the Forgejo platform server and token
+beside the GitHub ones.
+
 `docs/invariants.md` lists each rule of this contract that the code does
 not hold yet.
 
@@ -703,9 +706,10 @@ Minor 18 drops this check with `files` (§3.3). The host key
 
 ### 5.5 The platform fence
 
-Two grants are fenced: the `release` verb and each server that holds the
-platform token. Minor 18 drops the mount of the platform working copy with
-`files` (§3.3).
+Two grants are fenced: the `release` verb and each server that holds a
+platform token. The platform tokens are `github_token_platform` (GitHub)
+and `forgejo_token_platform` (Forgejo). Minor 18 drops the mount of the
+platform working copy with `files` (§3.3).
 
 Rules:
 
@@ -723,14 +727,16 @@ Rules:
 5. This rule left in minor 18 with the mount grant.
 6. This rule left in minor 18 with the mount grant.
 7. **The operator lands every platform change.** No family is granted
-   `merge_pull_request` from `github-platform` or from another server of
-   the platform token, by name or through `all`. `caregiver` applies
-   whatever reaches the registry `main` with no tap. A family that could
-   merge there could widen itself, or write a new family with any reach.
-   So the family opens pull requests and the operator merges them. The
-   server name and the withheld tool are constants in the validator, and
-   rule 1 applies to them. A grant of the tool is an error, and the last
-   good state stays (§7).
+   `merge_pull_request` from `github-platform`, from `forgejo-platform` or
+   from another server of a platform token, by name or through `all`. A
+   server of a platform token is a server whose `run.env` names
+   `secret:github_token_platform` or `secret:forgejo_token_platform`.
+   `caregiver` applies whatever reaches the registry `main` with no tap. A
+   family that could merge there could widen itself, or write a new family
+   with any reach. So the family opens pull requests and the operator
+   merges them. The server names, the token keys and the withheld tool are
+   constants in the validator, and rule 1 applies to them. A grant of the
+   tool is an error, and the last good state stays (§7).
 
 ### 5.6 Registry-wide checks
 

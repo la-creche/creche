@@ -251,20 +251,22 @@ LOCAL_HOUR_MAX: Final = 23
 # `fences.py` reads them from the site file. Minor 18 drops the allowed
 # mount roots with `files` (decision CH10-10).
 
-#: Contract 01 §5.5 rule 1, read to follow the token: the secret key of the
-#: platform token. Each server whose `run.env` names `secret:` and this key is
-#: inside the platform fence, whatever its name, for example `git-platform`. A
-#: new server of the token is thus fenced with no change here. `validate.py`
-#: also fences `PLATFORM_SERVER` by its name. The contract names only
-#: `github-platform`: see the CONTRACT-QUESTION at `_check_platform`.
-PLATFORM_SECRET: Final = "github_token_platform"
+#: Contract 01 §5.5 rule 1, read to follow the token: the secret keys of the
+#: platform tokens, one for each forge (GitHub and Forgejo). Each server whose
+#: `run.env` names `secret:` and one of these keys is inside the platform
+#: fence, whatever its name, for example `git-platform`. A new server of a
+#: platform token is thus fenced with no change here. `validate.py` also
+#: fences each of `PLATFORM_SERVERS` by its name. See the CONTRACT-QUESTION at
+#: `_check_platform`.
+PLATFORM_SECRETS: Final = frozenset({"github_token_platform", "forgejo_token_platform"})
 
-#: Contract 01 §5.5 rule 7: the platform's own GitHub server, and the tools no
-#: family is ever granted from it or from another server of `PLATFORM_SECRET`.
-#: A registry's `main` may carry no branch protection, and a merge there lands
-#: a change `caregiver` applies with nobody looking. The platform family
-#: proposes and the operator lands.
-PLATFORM_SERVER: Final = "github-platform"
+#: Contract 01 §5.5 rule 7: the platform's own forge servers, and the tools no
+#: family is ever granted from them or from another server of a platform
+#: token. A registry's `main` may carry no branch protection, and a merge
+#: there lands a change `caregiver` applies with nobody looking. The platform
+#: family proposes and the operator lands. GitHub and Forgejo both name the
+#: merge tool `merge_pull_request`.
+PLATFORM_SERVERS: Final = frozenset({"github-platform", "forgejo-platform"})
 PLATFORM_WITHHELD: Final = frozenset({"merge_pull_request"})
 
 #: The most digits of a count that `int` reads here. Each range of a count

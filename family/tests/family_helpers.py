@@ -152,6 +152,9 @@ def check_no_host(fixture: str, **changes: Any) -> Report:
     return Report(family.name, f"families/{fixture}/family.toml", issues.frozen())
 
 
+#: The platform's GitHub server, a fixture file. `PLATFORM_SERVERS` names it.
+GITHUB_PLATFORM: Final = "github-platform"
+
 #: A second server of the platform token, in the shape of the registry's
 #: `git-platform`. It is not a fixture file, so the fixture registry and its
 #: twin under `vectors/` stay as they are. No code of `agent_family` names
@@ -184,6 +187,59 @@ shared_secrets = [
 def git_platform(*extra_tools: dict[str, Any]) -> McpServerFile:
     """`git-platform`, with each entry of `extra_tools` added to its tools."""
     body = tomllib.loads(_GIT_PLATFORM_TEXT)
+    body["tools"] = [*body["tools"], *extra_tools]
+    server, issues = parse_server(toml_text(body), Markup.TOML)
+    assert server is not None, issues
+    return server
+
+
+#: The platform's Forgejo server, in the shape of the fixture `forgejo-code`
+#: with the platform token. Like `git-platform`, it is not a fixture file.
+#: `PLATFORM_SERVERS` names it, and its token is in `PLATFORM_SECRETS`.
+FORGEJO_PLATFORM: Final = "forgejo-platform"
+_FORGEJO_PLATFORM_TEXT: Final = """\
+name = "forgejo-platform"
+identity = "Access token of the platform bot on the Forgejo host."
+
+install.source = "forge-release"
+install.host = "git.b4mad.industries"
+install.repo = "agentic-forges/forgejo-mcp"
+install.version = "3.4.1"
+install.asset = "forgejo-mcp_3.4.1_linux_amd64.tar.gz"
+install.sha256 = "940d3ed08a5535bf1baaf426cb93610cfef5ad02adbda76b7c70a618f08fa53c"
+
+run.entrypoint = "forgejo-mcp"
+run.args = ["--transport", "stdio"]
+
+run.env.FORGEJO_URL = "https://forge.example.org"
+run.env.FORGEJO_ACCESS_TOKEN = "secret:forgejo_token_platform"
+
+arg_allows = [
+    { tools = "all", arg = "owner/repo", values = [
+        "example-owner/creche", "example-owner/registry", "example-owner/mcp",
+    ] },
+]
+
+tools = [
+    { name = "get_file_content", description = "Read one file at a ref.", write = false },
+    { name = "list_repo_pull_requests", description = "List pull requests.", write = false },
+    { name = "create_pull_request", description = "Open a pull request.", write = true },
+]
+"""
+
+
+def forgejo_platform(
+    *extra_tools: dict[str, Any],
+    name: str = FORGEJO_PLATFORM,
+    token: str = "forgejo_token_platform",
+) -> McpServerFile:
+    """`forgejo-platform` under `name` with the secret `token`, and with each
+    entry of `extra_tools` added to its tools. Another `name` gives a server
+    that holds the Forgejo platform token and has no name of
+    `PLATFORM_SERVERS`."""
+    body = tomllib.loads(_FORGEJO_PLATFORM_TEXT)
+    body["name"] = name
+    body["run"]["env"]["FORGEJO_ACCESS_TOKEN"] = f"secret:{token}"
     body["tools"] = [*body["tools"], *extra_tools]
     server, issues = parse_server(toml_text(body), Markup.TOML)
     assert server is not None, issues

@@ -6,10 +6,17 @@ from __future__ import annotations
 
 import pytest
 from agent_family.fences import PLATFORM_FAMILIES_KEY, FenceError, Fences, read_fences
-from agent_family.grammar import PLATFORM_SERVER
 from agent_family.report import Issue, Issues, Severity
 from agent_family.validate import check_family
-from family_helpers import GIT_PLATFORM, edited, full_index, git_platform, host, index_with
+from family_helpers import (
+    GIT_PLATFORM,
+    GITHUB_PLATFORM,
+    edited,
+    full_index,
+    git_platform,
+    host,
+    index_with,
+)
 
 
 def test_the_site_key_reads_as_fences() -> None:
@@ -47,19 +54,19 @@ def _issues(fences: Fences | None, **changes: object) -> Issues:
 
 def test_no_platform_family_on_the_host_refuses_the_platform_server() -> None:
     fences = Fences(platform_families=frozenset())
-    issues = _issues(fences, tools={PLATFORM_SERVER: "all"})
+    issues = _issues(fences, tools={GITHUB_PLATFORM: "all"})
 
     assert any("only no family may hold" in issue.msg for issue in issues.frozen())
 
 
 def test_with_no_fences_each_fence_check_is_a_downgraded_warning() -> None:
     """Registry CI has no host. The caregiver of the host refuses the family."""
-    issues = _issues(None, tools={PLATFORM_SERVER: "all"})
+    issues = _issues(None, tools={GITHUB_PLATFORM: "all"})
     found = issues.frozen()
 
     assert not any("platform fence" in issue.msg for issue in found)
     downgraded = {issue.msg for issue in found if issue.downgraded}
-    assert f"no host fences: who may hold '{PLATFORM_SERVER}' was not checked" in downgraded
+    assert f"no host fences: who may hold '{GITHUB_PLATFORM}' was not checked" in downgraded
 
 
 def _token_server_issues(fences: Fences | None) -> tuple[Issue, ...]:
