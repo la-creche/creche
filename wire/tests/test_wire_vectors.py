@@ -54,7 +54,7 @@ def _model(type_name: str) -> type[BaseModel]:
 def _read_and_write(type_name: str, text: str) -> str | None:
     try:
         value = creche_wire.read(_model(type_name), text.encode("utf-8"), cap=CAP)
-    except (creche_wire.NotStrictJson, ValidationError):
+    except creche_wire.NotStrictJson, ValidationError:
         return None
 
     return value.model_dump_json()

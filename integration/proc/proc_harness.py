@@ -466,7 +466,7 @@ def session_id_of(pid: int) -> int | None:
     """
     try:
         return os.getsid(pid)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError, PermissionError:
         return None
 
 
@@ -613,7 +613,7 @@ def _read_stat(pid: int | str) -> _Stat | None:
     """
     try:
         text = (_PROC_DIR / str(pid) / "stat").read_text(encoding="utf-8", errors="replace")
-    except (FileNotFoundError, NotADirectoryError, ProcessLookupError):
+    except FileNotFoundError, NotADirectoryError, ProcessLookupError:
         return None
     except OSError as error:
         raise _StatUnread(f"cannot read the state of {pid}: {error.strerror}") from error
@@ -698,7 +698,7 @@ def _ended_by_ps(pgid: int) -> list[bool]:
             timeout=_PS_TIMEOUT_S,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return []
 
     if done.returncode != 0:

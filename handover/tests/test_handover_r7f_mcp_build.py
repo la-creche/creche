@@ -319,8 +319,8 @@ def test_a_failed_child_says_what_it_printed(tmp_path: Path) -> None:
 
 def ha_like_server() -> ServerFile:
     """A pypi server that wants a minor the host does not have. `ha-mcp`
-    requires `>=3.13,<3.15` and the host has 3.12."""
-    body = KAGI_YAML.format(lock=KAGI_LOCK_PATH).replace('python: "3.12"', 'python: "3.13"')
+    requires `>=3.13,<3.15` and the server file names 3.13. The host has 3.14."""
+    body = KAGI_YAML.format(lock=KAGI_LOCK_PATH).replace('python: "3.14"', 'python: "3.13"')
 
     return parse_server(body.encode("utf-8"), "kagi")
 
@@ -368,7 +368,7 @@ def test_a_minor_the_host_provides_is_not_installed(tmp_path: Path) -> None:
 
     builder.stage_all((kagi_server(),), work, source)
 
-    assert fake.ran("python find 3.12")
+    assert fake.ran("python find 3.14")
     assert not fake.ran("python install")
 
 

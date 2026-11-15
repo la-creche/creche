@@ -4,7 +4,7 @@ name = "agent-control-workspace"
 # that CI allocates at merge (.github/workflows/release.yml). uv needs the
 # field to resolve the workspace, so it stays, and nothing reads it.
 version = "0.0.0"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "agent-family",
     "caregiver",
@@ -99,7 +99,7 @@ markers = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 # TC004 is load-bearing, not tidiness: `cli.py` imports the control plane
@@ -143,7 +143,7 @@ input = "rust/crates/wire/schema/wire.json"
 input-file-type = "jsonschema"
 output = "wire/src/creche_wire/models.py"
 output-model-type = "pydantic_v2.BaseModel"
-target-python-version = "3.12"
+target-python-version = "3.14"
 # The schema is one document of `$defs`. Its root is no type of its own.
 skip-root-model = true
 use-annotated = true

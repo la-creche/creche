@@ -33,7 +33,7 @@ install:
   package: kagimcp
   version: 1.0.2
   lock: mcp/kagi/install.lock
-  python: "3.12"
+  python: "3.14"
 run:
   entrypoint: kagimcp
   env:
@@ -177,7 +177,7 @@ def test_the_contract_s_agent_mcp_example_parses() -> None:
     server = parse_server(VIKUNJA.encode("utf-8"), "vikunja-finance")
 
     assert server.pin.source is Source.AGENT_MCP
-    assert server.pin.python == "3.12"
+    assert server.pin.python == "3.14"
     # §3.3: the whole pin is the component tag the release deploys, and
     # the file carries no version field of any kind.
     assert (server.pin.package, server.pin.version, server.pin.sha256) == (None, None, None)
@@ -306,7 +306,7 @@ def test_an_interpreter_the_host_does_not_have_is_refused() -> None:
     install: dict[str, object] = body["install"]  # type: ignore[assignment]
     install["python"] = "2.7"
 
-    assert "not one of the two interpreters" in _refusal(body).detail
+    assert "not one of the interpreters" in _refusal(body).detail
 
 
 @pytest.mark.parametrize("ref", ["v0.4.6", "mcp-servers-v0.1.0", "main"])

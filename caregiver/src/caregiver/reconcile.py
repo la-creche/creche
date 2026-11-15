@@ -679,7 +679,7 @@ def _text(path: Path) -> str:
     # that the family reads `invalid`.
     try:
         return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return ""
 
 

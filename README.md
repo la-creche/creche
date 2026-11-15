@@ -98,7 +98,7 @@ The other directories:
 
 ## 5. Develop
 
-Prerequisites: Python 3.12, `uv`, and for `agent/` and `facade/` Node 24
+Prerequisites: Python 3.14, `uv`, and for `agent/` and `facade/` Node 24
 with `pnpm`.
 
 ```bash

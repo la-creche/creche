@@ -211,7 +211,7 @@ class KeyStore:
     def _tuned_spend(self, alias: str) -> float:
         try:
             return float((self._state / TUNE_DIR / f"spend-{alias}").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return 0.0
 
     def _read_keys(self) -> dict[str, dict[str, Any]]:

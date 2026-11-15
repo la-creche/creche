@@ -81,8 +81,8 @@ HOST_RE: Final = re.compile(
 )
 MAX_HOST_CHARS: Final = 253
 CODE_HOST: Final = "github.com"
-PYTHONS: Final = ("3.12", "3.13")
-DEFAULT_PYTHON: Final = "3.12"
+PYTHONS: Final = ("3.12", "3.13", "3.14")
+DEFAULT_PYTHON: Final = "3.14"
 MAX_TOOLS: Final = 200
 MAX_ARGS: Final = 32
 MAX_ENV: Final = 32

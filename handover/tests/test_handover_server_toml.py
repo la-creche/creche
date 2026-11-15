@@ -211,7 +211,7 @@ install.source = "pypi"
 install.package = "kagimcp"
 install.version = "1.0.2"
 install.lock = "mcp/kagi/install.lock"
-install.python = "3.12"
+install.python = "3.14"
 
 run.entrypoint = "kagimcp"
 run.env.KAGI_API_KEY = "secret:kagi_api_key"
@@ -230,7 +230,7 @@ install:
   package: kagimcp
   version: 1.0.2
   lock: mcp/kagi/install.lock
-  python: "3.12"
+  python: "3.14"
 run:
   entrypoint: kagimcp
   env:
@@ -550,8 +550,8 @@ WRONG_TYPES = {
         "field 'install.version' is malformed",
     ),
     "float-python": (
-        ('install.python = "3.12"', "install.python = 3.12"),
-        "install.python is not one of the two interpreters in use",
+        ('install.python = "3.14"', "install.python = 3.14"),
+        "install.python is not one of the interpreters in use",
     ),
     "text-state-dir": (
         ('run.entrypoint = "kagimcp"', 'run.entrypoint = "kagimcp"\nrun.state_dir = "true"'),

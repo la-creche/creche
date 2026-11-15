@@ -64,7 +64,7 @@ install:
   package: kagimcp
   version: 1.0.2
   lock: mcp/{SERVER}/install.lock
-  python: "3.12"
+  python: "3.14"
 run:
   entrypoint: kagimcp
   env:

@@ -55,7 +55,7 @@ FIXTURE = {
     "caregiver/src/caregiver/__pycache__/host.pyc": "pyc",
     # The venv the units run from.
     f"{VENV}/bin/caregiver": "#!/bin/sh\n",
-    f"{VENV}/lib/python3.12/site-packages/caregiver/__init__.py": "",
+    f"{VENV}/lib/python3.14/site-packages/caregiver/__init__.py": "",
     # Untracked and NOT ignored: `-X` must leave it, `-x` would not.
     "left-by-hand.txt": "a decrypted secret, or a copy of a unit",
 }
@@ -135,7 +135,7 @@ def test_the_clean_keeps_the_venv_every_unit_runs_from(deployed: Path) -> None:
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert (deployed / VENV / "bin" / "caregiver").is_file()
-    assert (deployed / VENV / "lib/python3.12/site-packages/caregiver/__init__.py").is_file()
+    assert (deployed / VENV / "lib/python3.14/site-packages/caregiver/__init__.py").is_file()
 
 
 def test_the_clean_keeps_what_git_does_not_ignore(deployed: Path) -> None:

@@ -414,6 +414,7 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
+          python-version: "3.14"
 
       - run: uv sync --locked
         working-directory: memory
@@ -672,6 +673,7 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
+          python-version: "3.14"
 
       # TAG_REPO: the catalog's name for this repository, as the tag step
       # gives it.
@@ -725,6 +727,7 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
+          python-version: "3.14"
 
       # musl-gcc for the C of ring under CH (plan risk 13). The
       # `vmm-archive` job of gate.yml holds the same step. Runner sudo
@@ -785,6 +788,7 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
+          python-version: "3.14"
 
       # DISK_REPO: the catalog's name for this repository, as ARTIFACT_REPO
       # of the `artifacts` job. DISK_ROW: the one disk-image row of this
@@ -1039,6 +1043,8 @@ jobs:
           fi
 
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.14"
 
       # Idempotent: a component already tagged on this SHA is a no-op, and
       # a tag is never moved or deleted (handover/bin/allocate-tags.sh).

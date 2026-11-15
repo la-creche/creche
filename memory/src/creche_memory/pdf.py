@@ -102,7 +102,7 @@ def extract_in_child(path: Path) -> str | None:
             timeout=EXTRACT_TIMEOUT_S,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError, subprocess.TimeoutExpired:
         return None
 
     if done.returncode != 0:

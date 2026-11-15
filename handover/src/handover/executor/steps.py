@@ -1516,7 +1516,7 @@ class Release:
         try:
             self._swap_servers(name)
             self.installer.swap_in(paths)
-        except (Refusal, StepFailed):
+        except Refusal, StepFailed:
             raise
         except Exception:
             self.interrupted = name
@@ -1717,7 +1717,7 @@ class Release:
         try:
             self._restore_servers(name)
             self.installer.swap_back(paths)
-        except (Refusal, StepFailed):
+        except Refusal, StepFailed:
             raise
         except Exception:
             self.interrupted = name

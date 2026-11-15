@@ -297,6 +297,9 @@ NO_RULE = {GATE_NAME: {"scope", "lint"}, RELEASE_NAME: {"scope", "lint", *RELEAS
 #: The actions of the `artifacts` job, by their commit.
 CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 SETUP_UV = "astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4"
+#: The Python of the host. Each setup-uv step names it, so uv downloads no
+#: newer minor that `requires-python` also allows.
+HOST_PYTHON = "3.14"
 UPLOAD_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
 DOWNLOAD_ACTION = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
 
@@ -342,7 +345,7 @@ MUSL_TOOLS_STEP = {"name": "musl-tools", "run": MUSL_TOOLS_RUN}
 #: step comes before the build (plan risk 13).
 ARTIFACTS_STEPS = [
     {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
-    {"uses": SETUP_UV, "with": {"enable-cache": False}},
+    {"uses": SETUP_UV, "with": {"enable-cache": False, "python-version": HOST_PYTHON}},
     MUSL_TOOLS_STEP,
     {"name": "build", "id": "build", "env": BUILD_STEP_ENV, "run": "bin/build-artifacts.sh"},
     {
@@ -407,7 +410,7 @@ fi
 #: The upload does not compress: each file is a zstd file already.
 DISKS_STEPS = [
     {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
-    {"uses": SETUP_UV, "with": {"enable-cache": False}},
+    {"uses": SETUP_UV, "with": {"enable-cache": False, "python-version": HOST_PYTHON}},
     {"name": "build", "id": "build", "env": DISKS_STEP_ENV, "run": DISKS_RUN},
     {
         "uses": UPLOAD_ACTION,
@@ -472,7 +475,11 @@ echo "{STATIC_PROGRAM} of the vmm archive is static"
 #: Nothing uploads and nothing signs.
 VMM_ARCHIVE_STEPS = [
     {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
-    {"uses": SETUP_UV, "if": ONLY_VMM, "with": {"enable-cache": False}},
+    {
+        "uses": SETUP_UV,
+        "if": ONLY_VMM,
+        "with": {"enable-cache": False, "python-version": HOST_PYTHON},
+    },
     {**MUSL_TOOLS_STEP, "if": ONLY_VMM},
     {
         "name": "build",
@@ -532,7 +539,7 @@ echo "plan: ${components:-no binary component}"
 #: keeps no token. The dry run gets the catalog name and no token.
 PLAN_STEPS = [
     {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
-    {"uses": SETUP_UV, "with": {"enable-cache": False}},
+    {"uses": SETUP_UV, "with": {"enable-cache": False, "python-version": HOST_PYTHON}},
     {"name": PLAN_JOB, "id": PLAN_JOB, "env": {"TAG_REPO": THIS_REPOSITORY}, "run": PLAN_RUN},
 ]
 
@@ -1324,7 +1331,7 @@ def test_the_artifacts_job_takes_uv_at_the_pin_of_the_release_job() -> None:
         step for step in RELEASE_JOBS[RELEASE_NAME]["steps"] if step.get("uses") == SETUP_UV
     ]
 
-    assert pinned == {"uses": SETUP_UV}
+    assert pinned == {"uses": SETUP_UV, "with": {"python-version": HOST_PYTHON}}
 
 
 def test_the_sign_job_is_pinned_as_a_whole() -> None:
@@ -2764,3 +2771,22 @@ def test_the_plan_step_plans_nothing_off_main(tmp_path: Path) -> None:
     assert done.returncode == 0, done.stdout + done.stderr
     assert output == "components=\n"
     assert "is not main" in done.stdout
+
+
+def test_each_setup_uv_step_names_the_host_python() -> None:
+    """uv downloads the newest Python that `requires-python` allows when a
+    step names none. The runner has no 3.14, so a step with no version runs
+    a newer minor than the host. Each step names the floor of the root
+    `pyproject.toml`."""
+    root = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    assert root["project"]["requires-python"] == f">={HOST_PYTHON}"
+
+    uv_sync = yaml.safe_load(
+        (REPO / ".github" / "actions" / "uv-sync" / "action.yml").read_text(encoding="utf-8")
+    )
+    jobs = [*JOBS.values(), *RELEASE_JOBS.values()]
+    steps = [step for job in jobs for step in job["steps"]] + uv_sync["runs"]["steps"]
+    setup = [step for step in steps if step.get("uses") == SETUP_UV]
+
+    assert setup
+    assert {step["with"]["python-version"] for step in setup} == {HOST_PYTHON}

@@ -331,7 +331,7 @@ def _ask_busy(socket_path: Path, token: bytes, timeout_s: float) -> bool | None:
             return None
 
         raw = reply.read(MAX_REPLY_BYTES + 1)
-    except (OSError, UnicodeDecodeError, http.client.HTTPException):
+    except OSError, UnicodeDecodeError, http.client.HTTPException:
         return None
     finally:
         connection.close()

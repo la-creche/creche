@@ -139,7 +139,7 @@ def _says_ok(body: bytes) -> bool:
     """Whether the body is a JSON object with `ok` true."""
     try:
         parsed: object = json.loads(body)
-    except (ValueError, RecursionError):
+    except ValueError, RecursionError:
         return False
 
     return isinstance(parsed, dict) and cast("dict[str, Any]", parsed).get(HEALTH_OK_KEY) is True

@@ -2,7 +2,7 @@
 name = "creche-env"
 version = "0.1.0"
 description = "creche-env: the one reader of default.env, example.env and a .env file."
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 # The standard library only: a script calls the command before a component
 # tree exists, and no reader of a config file may pull a package of its own.
 dependencies = []

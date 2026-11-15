@@ -206,9 +206,9 @@ ARG_NAME_RE: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 #: servers.
 FENCE_ARG_RE: Final = re.compile(rf"{ARG_NAME_RE.pattern}(/{ARG_NAME_RE.pattern})?")
 
-#: The two interpreters in use (contract 01b §3, `stage7-releases.md` §4.2).
-PYTHONS: Final = ("3.12", "3.13")
-DEFAULT_PYTHON: Final = "3.12"
+#: The interpreters in use (contract 01b §3, `stage7-releases.md` §4.2).
+PYTHONS: Final = ("3.12", "3.13", "3.14")
+DEFAULT_PYTHON: Final = "3.14"
 
 #: Contract 01b §4.1 rule 2: a variable whose name holds one of these words
 #: carries a credential, so it must name a secret and never a value. This is
@@ -779,7 +779,7 @@ def _check_pin_fields(name: str, source: Source, present: frozenset[str]) -> Non
 
 def _python(name: str, value: Any) -> str:
     if value not in PYTHONS:
-        raise _refuse(name, "install.python is not one of the two interpreters in use")
+        raise _refuse(name, "install.python is not one of the interpreters in use")
 
     return str(value)
 
