@@ -427,7 +427,9 @@ RUN status=0; /usr/local/bin/creche-facade 2>/dev/null || status=$?; \
     [ "$status" -eq 17 ] || { echo "creche-facade: exit $status, want 17" >&2; exit 1; }
 
 # The image env for guest init (CH7-7, CH49). This RUN stays the last step.
+# The python 3.14 image sets no GPG_KEY: its release is checked with
+# PYTHON_SHA256 only.
 RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
     mkdir -p /etc/creche \
-    && sh /run/creche-env-write GPG_KEY LANG PATH PYTHON_SHA256 PYTHON_VERSION \
+    && sh /run/creche-env-write LANG PATH PYTHON_SHA256 PYTHON_VERSION \
        > /etc/creche/env
