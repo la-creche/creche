@@ -1,0 +1,17 @@
+# The directories of the data disk of the CI runner VM. The bind mounts of
+# /var/lib/docker and /var/lib/containerd in /etc/fstab require this unit,
+# because a bind mount needs its source. The work directory of the job
+# user is the parent of each job workspace (forgejo-runner config.yml,
+# host.workdir_parent).
+[Unit]
+Description=Make the directories of the CI data disk
+DefaultDependencies=no
+RequiresMountsFor=/var/lib/ci-data
+Before=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/install -d -m 0710 /var/lib/ci-data/docker
+ExecStart=/usr/bin/install -d -m 0711 /var/lib/ci-data/containerd
+ExecStart=/usr/bin/install -d -o runner -g runner -m 0700 /var/lib/ci-data/work

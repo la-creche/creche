@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# CI: builds the guest image of the CI runner VMs and proves it under the
+# CH of the vmm (docs/design/ci-runner.md, section 8, PR 2):
+#   CI_RUNNER_IMAGE_DIR=<dir> ci-runner-image/bin/ci-runner-image-proof
+#
+# The job `ci-runner-image` of gate.yml runs it. No hook and no unit runs
+# it, and the host never runs it. It uses the sudo of a throwaway GitHub
+# runner (CH36 G20), so it refuses to run outside GitHub Actions.
+#
+# The steps:
+#   1. It installs qemu-utils, cloud-guest-utils, mtools, dosfstools and
+#      musl-tools from apt,
+#      and the pinned Rust toolchain with the musl target.
+#   2. It starts the build of CH in the background: the 13 words of
+#      bin/lib/chbuild.sh, the build of the vmm row (decision CH75). The
+#      build has a limit of CH_BUILD_LIMIT.
+#   3. It runs ci-runner-image-build beside that build.
+#   4. It opens /dev/kvm to the runner user, and it makes the tap device
+#      TAP with NAT to the network of the runner. This is a stand-in for
+#      the bridge of design section 4.5, which root makes on the host. The
+#      addresses are in 192.0.2.0/24, a documentation range, and only the
+#      tap of the runner uses them.
+#   5. It writes the three disks of a job, as design section 4.4 names
+#      them: a whole copy of the root disk, a sparse data disk with the
+#      serial `ci-data`, and a VFAT seed with the label CIDATA. The seed
+#      holds proof/guest-proof and a network config for the MAC of the VM.
+#   6. It waits for the CH build. CH must print CH_BUILD_VERSION.
+#   7. It boots the VM by direct kernel boot, as the runner user, with at
+#      most BOOT_LIMIT seconds to the power-off. It prints the serial log.
+#   8. It reads the CI-PROOF lines of the serial log, and CH must exit 0.
+#      Each line of EXPECTED must be there. The other lines are facts for
+#      the log, for example the Node version. `system=degraded` fails the
+#      proof, because EXPECTED needs `system=running`. The guest prints
+#      each failed unit first.
+#
+# The files land in CI_RUNNER_IMAGE_DIR, which is absent or empty:
+#   image/  the output of ci-runner-image-build
+#   run/    the disks of the job and serial.log
+#
+# `set -euo pipefail`: the first fault stops the run.
+set -euo pipefail
+export LC_ALL=C
+
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
+TREE=$REPO/ci-runner-image
+# shellcheck source=bin/lib/chbuild.sh
+. "$REPO/bin/lib/chbuild.sh"
+MUSL=x86_64-unknown-linux-musl
+# About twice the 5 min 34 s of fact 78, as in bin/vm-smoke-setup.sh.
+CH_BUILD_LIMIT=12m
+# The boot took 17 s on the host in the spike (design section 5, fact 1).
+# The proof also pulls hello-world, and the runner runs nested KVM.
+BOOT_LIMIT=300
+TAP=cirun-tap0
+HOST_ADDRESS=192.0.2.1
+GUEST_ADDRESS=192.0.2.2
+NET_PREFIX=24
+GUEST_MAC=52:54:00:c1:00:02
+# The command line of design section 4.3.
+CMDLINE="root=LABEL=cloudimg-rootfs ro console=ttyS0"
+DATA_DISK_SIZE=16G
+RUNNER_VERSION=v13.2.1
+# The lines of the guest, without their prefix, that a pass needs.
+EXPECTED=(
+  "system=running"
+  "sudo=ok"
+  "docker=ok"
+  "forgejo-runner=forgejo-runner version $RUNNER_VERSION"
+  "storage=data-disk"
+  "job-unit=no"
+  "job-unit-verify=ok"
+  "done"
+)
+
+say() { printf 'ci-runner-image-proof: %s\n' "$*"; }
+die() {
+  say "$*" >&2
+  exit 1
+}
+
+[[ "${GITHUB_ACTIONS:-}" == true ]] || die "runs only on a GitHub runner (CH36 G20)"
+dir=${CI_RUNNER_IMAGE_DIR:?CI_RUNNER_IMAGE_DIR names the output directory}
+[[ "$dir" == /* ]] || die "CI_RUNNER_IMAGE_DIR is not absolute: $dir"
+[[ ! -e "$dir" ]] || [[ -z "$(ls -A "$dir")" ]] || die "$dir is not empty"
+[[ -e /dev/kvm ]] || die "no /dev/kvm on this runner"
+mkdir -p "$dir/run"
+run=$dir/run
+say "$(nproc) CPUs"
+
+say "install the tools from apt and the $MUSL target"
+(sudo apt-get update -qq && sudo apt-get install --yes --no-install-recommends -qq \
+  qemu-utils cloud-guest-utils mtools dosfstools musl-tools) &
+apt_pid=$!
+(
+  cd "$REPO/rust"
+  rustup toolchain install --no-self-update
+  rustup target add "$MUSL"
+)
+wait "$apt_pid" || die "apt-get did not install the tools"
+
+say "start the build of CH and ch-remote, at most $CH_BUILD_LIMIT"
+ch_work=$(mktemp -d "$dir/ch-build.XXXXXX")
+ch_log=$ch_work/build.log
+ch_start=$SECONDS
+(
+  cd "$REPO/rust"
+  export CARGO_TARGET_DIR=$ch_work/target
+  export CARGO_INSTALL_ROOT=$ch_work/root
+  export CARGO_BUILD_TARGET=$MUSL
+  exec timeout --kill-after=30s "$CH_BUILD_LIMIT" "${CH_BUILD[@]}"
+) < /dev/null > "$ch_log" 2>&1 &
+ch_pid=$!
+trap 'kill "$ch_pid" 2> /dev/null || true' EXIT
+
+say "build the image"
+image_start=$SECONDS
+CI_IMAGE_OUT=$dir/image "$TREE/bin/ci-runner-image-build"
+image_seconds=$((SECONDS - image_start))
+say "the image built in $image_seconds s"
+
+say "open /dev/kvm to the runner user"
+printf '%s\n' 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+  sudo tee /etc/udev/rules.d/99-creche-ci-runner-image.rules > /dev/null
+sudo udevadm control --reload-rules
+sudo udevadm trigger --name-match=kvm
+sudo udevadm settle
+[[ -r /dev/kvm && -w /dev/kvm ]] || die "/dev/kvm is not open to $(id -un)"
+
+say "make the tap $TAP with NAT"
+sudo ip tuntap add dev "$TAP" mode tap user "$(id -un)"
+sudo ip address add "$HOST_ADDRESS/$NET_PREFIX" dev "$TAP"
+sudo ip link set dev "$TAP" up
+sudo sysctl -q -w net.ipv4.ip_forward=1
+# Docker on the runner sets the FORWARD policy to drop, so the two accepts
+# go first.
+sudo iptables -I FORWARD 1 -i "$TAP" -j ACCEPT
+sudo iptables -I FORWARD 1 -o "$TAP" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+sudo iptables -t nat -A POSTROUTING -s "$HOST_ADDRESS/$NET_PREFIX" ! -o "$TAP" -j MASQUERADE
+# The stub of systemd-resolved listens on the loopback of the runner only,
+# so the guest asks the first server that the stub asks.
+dns=$(awk '$1 == "nameserver" && $2 ~ /^[0-9.]+$/ { print $2; exit }' /run/systemd/resolve/resolv.conf)
+[[ -n "$dns" ]] || die "the runner names no IPv4 DNS server"
+
+say "write the disks of the job"
+seed=$(mktemp -d "$dir/seed.XXXXXX")
+printf 'instance-id: ci-runner-image-proof\nlocal-hostname: ci-runner-proof\n' > "$seed/meta-data"
+cat > "$seed/network-config" << EOF
+version: 2
+ethernets:
+  job0:
+    match:
+      macaddress: "$GUEST_MAC"
+    addresses: [$GUEST_ADDRESS/$NET_PREFIX]
+    routes:
+      - to: default
+        via: $HOST_ADDRESS
+    nameservers:
+      addresses: [$dns]
+EOF
+{
+  printf '%s\n' '#cloud-config' 'write_files:' '  - path: /usr/local/sbin/guest-proof' \
+    '    permissions: "0755"' '    content: |'
+  sed 's/^/      /' "$TREE/proof/guest-proof"
+  printf '%s\n' 'runcmd:' \
+    '  - [systemd-run, --no-block, --unit=guest-proof, --property=StandardOutput=journal+console, --property=StandardError=journal+console, /usr/local/sbin/guest-proof]'
+} > "$seed/user-data"
+mkfs.vfat -n CIDATA -C "$run/seed.img" 1024 > /dev/null
+MTOOLS_SKIP_CHECK=1 mcopy -i "$run/seed.img" "$seed/meta-data" "$seed/network-config" "$seed/user-data" ::
+rm -rf -- "$seed"
+truncate -s "$DATA_DISK_SIZE" "$run/data.raw"
+copy_start=$SECONDS
+cp -- "$dir/image/root.qcow2" "$run/root.qcow2"
+say "the root copy took $((SECONDS - copy_start)) s"
+
+say "wait for the build of CH and ch-remote"
+ch_status=0
+wait "$ch_pid" || ch_status=$?
+trap - EXIT
+if ((ch_status != 0)); then
+  cat "$ch_log" >&2
+  die "the build of CH and ch-remote failed with status $ch_status"
+fi
+say "CH built in $((SECONDS - ch_start)) s"
+ch=$ch_work/root/bin/cloud-hypervisor
+version=$("$ch" --version) || die "cloud-hypervisor --version failed"
+[[ "$version" == "$CH_BUILD_VERSION" || "$version" == "cloud-hypervisor $CH_BUILD_VERSION" ]] ||
+  die "cloud-hypervisor prints $version, not $CH_BUILD_VERSION (fact 78)"
+
+say "boot the image, at most $BOOT_LIMIT s"
+boot_start=$SECONDS
+boot_status=0
+timeout --kill-after=10s "$BOOT_LIMIT" "$ch" \
+  --kernel "$dir/image/vmlinuz" \
+  --initramfs "$dir/image/initrd.img" \
+  --cmdline "$CMDLINE" \
+  --cpus boot=2 \
+  --memory size=4G \
+  --disk "path=$run/root.qcow2,image_type=qcow2" \
+  "path=$run/seed.img,image_type=raw,readonly=on" \
+  "path=$run/data.raw,image_type=raw,serial=ci-data" \
+  --net "tap=$TAP,mac=$GUEST_MAC" \
+  --serial "file=$run/serial.log" \
+  --console off || boot_status=$?
+boot_seconds=$((SECONDS - boot_start))
+echo "::group::the serial log of the VM"
+tr -d '\r' < "$run/serial.log" || true
+echo "::endgroup::"
+say "CH exited with status $boot_status after $boot_seconds s"
+
+# The CI-PROOF lines, without their prefix. journald writes each line of
+# the unit to the console as `[<time>] guest-proof[<pid>]: CI-PROOF ...`,
+# and a line of the login prompt can come before it on the same line.
+mapfile -t got < <(tr -d '\r' < "$run/serial.log" |
+  sed -E -n 's/^.*guest-proof\[[0-9]+\]: CI-PROOF //p')
+printf '  %s\n' "${got[@]}"
+fails=0
+for line in "${EXPECTED[@]}"; do
+  found=0
+  for one in "${got[@]}"; do
+    [[ "$one" == "$line" ]] && found=1
+  done
+  if ((found == 0)); then
+    say "FAIL: the guest did not print: $line"
+    fails=$((fails + 1))
+  fi
+done
+((boot_status == 0)) || {
+  say "FAIL: CH exited with status $boot_status"
+  fails=$((fails + 1))
+}
+((fails == 0)) || die "the proof of the image failed ($fails)"
+
+df -h /
+say "PASS in $boot_seconds s of boot, after $image_seconds s of image build"

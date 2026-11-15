@@ -86,6 +86,12 @@ The `vmm-archive` job is the one job of the gate alone (decision CH76 rule
 same musl-tools step, and holds guest-init static. On a code change that
 touches no file of the vmm build it skips each step after the checkout, as
 the `systemd-proof` job does. The scope gives that answer.
+
+The `ci-runner-image` job is the second job of the gate alone. It runs
+`ci-runner-image/bin/ci-runner-image-proof`, which builds the guest image
+of the CI runner VMs and boots it under CH. On a code change that touches
+no file of the image build it skips its one step after the checkout. The
+scope gives that answer too.
 """
 
 from __future__ import annotations
@@ -428,8 +434,35 @@ DISKS_STEPS = [
 #: changes a file of the vmm build (decision CH76 rule 4).
 VMM_ARCHIVE_JOB = "vmm-archive"
 
+#: The job of the gate alone that builds the guest image of the CI runner
+#: VMs and boots it under CH (docs/design/ci-runner.md, section 8, PR 2).
+CI_IMAGE_JOB = "ci-runner-image"
+
 #: The jobs that only the gate has.
-GATE_ONLY = {VMM_ARCHIVE_JOB}
+GATE_ONLY = {VMM_ARCHIVE_JOB, CI_IMAGE_JOB}
+
+#: The step of that job that a change with no file of the image build
+#: skips. Only the answer `false` skips it.
+ONLY_CI_IMAGE = "needs.scope.outputs.ci_runner_image != 'false'"
+
+#: How the scope job hands that answer to the job.
+CI_IMAGE_OUTPUT = "${{ steps.scope.outputs.ci_runner_image }}"
+
+#: Each key of the job. One more key can let a failed proof pass, for
+#: example `continue-on-error`.
+CI_IMAGE_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "steps"}
+
+#: The steps of the job, as a whole. The checkout keeps no token in the
+#: clone, because a build script runs here. The one script builds the
+#: image, builds CH and boots the image.
+CI_IMAGE_STEPS = [
+    {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
+    {
+        "run": "ci-runner-image/bin/ci-runner-image-proof",
+        "if": ONLY_CI_IMAGE,
+        "env": {"CI_RUNNER_IMAGE_DIR": "${{ runner.temp }}/ci-runner-image"},
+    },
+]
 
 #: The steps of that job that a change with no file of the vmm build skips.
 #: Only the answer `false` skips them.
@@ -1066,6 +1099,25 @@ def test_the_vmm_archive_job_checks_guest_init_of_the_vmm_row() -> None:
 def test_the_scope_action_gives_the_vmm_answer_as_an_output() -> None:
     assert SCOPE_ACTION["outputs"]["vmm"]["value"] == VMM_OUTPUT
     assert JOBS["scope"]["outputs"]["vmm"] == VMM_OUTPUT
+
+
+def test_the_ci_image_job_is_pinned_as_a_whole() -> None:
+    """Each key of the job and each step, in their order. The script that
+    the step runs is in the tree and holds the whole proof."""
+    job = JOBS[CI_IMAGE_JOB]
+
+    assert set(job) == CI_IMAGE_KEYS
+    assert job["needs"] == "scope"
+    assert job["if"] == ONLY_CODE
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert 0 < job["timeout-minutes"] <= JOBS[KVM_JOB]["timeout-minutes"]
+    assert job["steps"] == CI_IMAGE_STEPS
+    assert (REPO / CI_IMAGE_STEPS[1]["run"]).is_file()
+
+
+def test_the_scope_action_gives_the_ci_image_answer_as_an_output() -> None:
+    assert SCOPE_ACTION["outputs"]["ci_runner_image"]["value"] == CI_IMAGE_OUTPUT
+    assert JOBS["scope"]["outputs"]["ci_runner_image"] == CI_IMAGE_OUTPUT
 
 
 def test_the_artifacts_job_is_pinned_as_a_whole() -> None:
@@ -2404,6 +2456,7 @@ DOCS = {
     SYSTEMD_JOB: "skipped",
     KVM_JOB: "skipped",
     VMM_ARCHIVE_JOB: "skipped",
+    CI_IMAGE_JOB: "skipped",
 }
 
 #: (the scope, what the jobs did, whether the last job is green), for the
@@ -2451,12 +2504,15 @@ CASES: list[tuple[str | None, dict[str, str], bool]] = [
     (None, DOCS | {"scope": "failure"}, False),
 ]
 
-#: The cases of the job that only the gate has. It runs on every code PR,
-#: and skips its own steps when the PR touches no file of the vmm build.
+#: The cases of the jobs that only the gate has. Each runs on every code
+#: PR, and skips its own steps when the PR touches no file of its build.
 GATE_CASES: list[tuple[str | None, dict[str, str], bool]] = [
     ("code", {VMM_ARCHIVE_JOB: "failure"}, False),
     ("code", {VMM_ARCHIVE_JOB: "skipped"}, False),
     ("docs", DOCS | {VMM_ARCHIVE_JOB: "success"}, False),
+    ("code", {CI_IMAGE_JOB: "failure"}, False),
+    ("code", {CI_IMAGE_JOB: "skipped"}, False),
+    ("docs", DOCS | {CI_IMAGE_JOB: "success"}, False),
 ]
 
 #: The cases of the jobs that only the release has. Each one runs in each
@@ -2572,7 +2628,7 @@ def _scope_of(repo: Path, base: str) -> tuple[str, str]:
 
 def _scope_outputs(repo: Path, base: str) -> dict[str, str]:
     """Runs the scope action's own script in `repo`, as a merge group on
-    `base` would. Returns its three outputs."""
+    `base` would. Returns its four outputs."""
     (step,) = SCOPE_ACTION["runs"]["steps"]
     output = repo.parent / "output"
     output.write_text("", encoding="utf-8")
@@ -2594,7 +2650,7 @@ def _scope_outputs(repo: Path, base: str) -> dict[str, str]:
     assert done.returncode == 0, done.stdout + done.stderr
     outputs = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
 
-    assert set(outputs) == {"scope", "systemd", "vmm"}
+    assert set(outputs) == {"scope", "systemd", "vmm", "ci_runner_image"}
 
     return outputs
 
@@ -2711,6 +2767,41 @@ def test_a_file_that_moves_out_of_rust_builds_the_vmm(checkout: Path) -> None:
     _git(checkout, "commit", "-q", "-m", "the move")
 
     assert _scope_outputs(checkout, base)["vmm"] == "true"
+
+
+#: What the scope action answers for the image build of the CI runner VMs,
+#: for a change of these paths.
+CI_IMAGE_SCOPES = [
+    (["ci-runner-image/bin/ci-runner-image-build"], "true"),
+    (["ci-runner-image/root/etc/forgejo-runner/config.yml"], "true"),
+    (["ci-runner-image/AGENTS.md"], "true"),
+    (["bin/lib/chbuild.sh"], "true"),
+    (["rust/crates/vmm/src/main.rs"], "false"),
+    (["bin/vm-smoke-setup.sh"], "false"),
+    (["docs/design/ci-runner.md"], "false"),
+    (["ci-runner-image-notes.txt"], "false"),
+]
+
+
+@pytest.mark.parametrize(("paths", "image"), CI_IMAGE_SCOPES, ids=lambda one: " ".join(one))
+def test_the_scope_says_whether_a_change_touches_the_ci_image_build(
+    checkout: Path, paths: list[str], image: str
+) -> None:
+    base = _git(checkout, "rev-parse", "HEAD")
+    for name in paths:
+        (checkout / name).parent.mkdir(parents=True, exist_ok=True)
+        with (checkout / name).open("a", encoding="utf-8") as file:
+            file.write("# changed\n")
+    _git(checkout, "add", "-A")
+    _git(checkout, "commit", "-q", "-m", "the change")
+
+    assert _scope_outputs(checkout, base)["ci_runner_image"] == image
+
+
+@pytest.mark.parametrize("base", ["", "0" * 40], ids=["none", "absent"])
+def test_a_base_the_scope_cannot_read_builds_the_ci_image(checkout: Path, base: str) -> None:
+    """No base, or one that the clone lacks: the build is the safe answer."""
+    assert _scope_outputs(checkout, base)["ci_runner_image"] == "true"
 
 
 @pytest.mark.parametrize("fault", ["absent", "not executable", "fails"])

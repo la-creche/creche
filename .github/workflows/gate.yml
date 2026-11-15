@@ -21,9 +21,14 @@
 #           │                      under systemd/. No such change: no proof
 #           ├── kvm         code   the kvm_ tests of rust/, on the KVM of
 #           │                      the runner, in two shards
-#           └── vmm-archive code   the vmm archive, built unsigned, for a
-#                                  change of a file of the vmm build. No
-#                                  such change: no build
+#           ├── vmm-archive code   the vmm archive, built unsigned, for a
+#           │                      change of a file of the vmm build. No
+#           │                      such change: no build
+#           └── ci-runner-image
+#                           code   the guest image of the CI runner VMs,
+#                                  built and booted under CH, for a change
+#                                  of a file of its build. No such change:
+#                                  no build
 #   lint ─────────────────────────┐   ruff, ruff format, pyright, and on a
 #                                 │   docs PR the tests marked `docs`
 #                                 └── gate   red unless every job passed
@@ -53,9 +58,10 @@
 # Actions are SHA-pinned with the tag as a comment, as the registry repository's
 # validate.yml does.
 # release.yml runs the same `tests`, `agent`, `facade`, `proc`, `suites`,
-# `rust`, `systemd-proof` and `kvm` jobs after the merge. `vmm-archive` is
-# the one job of this file alone: release.yml builds the archive in its
-# `artifacts` job.
+# `rust`, `systemd-proof` and `kvm` jobs after the merge. `vmm-archive` and
+# `ci-runner-image` are the jobs of this file alone: release.yml builds the
+# vmm archive in its `artifacts` job, and no release row ships the image
+# yet.
 # The mcp repository carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
@@ -87,6 +93,7 @@ jobs:
       scope: ${{ steps.scope.outputs.scope }}
       systemd: ${{ steps.scope.outputs.systemd }}
       vmm: ${{ steps.scope.outputs.vmm }}
+      ci_runner_image: ${{ steps.scope.outputs.ci_runner_image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -635,10 +642,43 @@ jobs:
           fi
           echo "guest-init of the vmm archive is static"
 
+  # The guest image of the CI runner VMs (docs/design/ci-runner.md, section
+  # 8, PR 2). ci-runner-image/bin/ci-runner-image-proof builds the image
+  # from the pinned Ubuntu 24.04 cloud image, beside the CH build of the
+  # vmm row. It then boots the image under that CH with the three disks of
+  # a job and a tap device, and reads the results of the guest from the
+  # serial log: `systemctl is-system-running`, `sudo -n true` as the job
+  # user, `docker run hello-world` and `forgejo-runner --version`.
+  # ci-runner-image/AGENTS.md has the rules.
+  #
+  # It runs on every code change, and on a change that touches no file of
+  # the image build its step after the checkout is skipped, as in the
+  # `vmm-archive` job. The files of the build are the `ci_runner_image`
+  # answer of the scope. So a change outside them waits for no image build.
+  #
+  # The time limit: the CH build takes about 3 to 6 minutes, with a limit
+  # of 12 minutes in the script. The image build runs beside it, and the
+  # boot has a limit of 300 s.
+  ci-runner-image:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - run: ci-runner-image/bin/ci-runner-image-proof
+        if: needs.scope.outputs.ci_runner_image != 'false'
+        env:
+          CI_RUNNER_IMAGE_DIR: ${{ runner.temp }}/ci-runner-image
+
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.
   gate:
-    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, kvm, vmm-archive]
+    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, kvm, vmm-archive, ci-runner-image]
     if: always()
     runs-on: ubuntu-24.04
     steps:

@@ -1,0 +1,16 @@
+# The config of forgejo-runner in the CI runner VM (ci-runner design,
+# section 4.3). forgejo-runner-job.service reads it.
+#
+# runner.file: the seed of each job writes the registration there.
+# cache: off. The VM runs one job and is then gone, so a cache server in it
+# would hold nothing for the next job.
+# host.workdir_parent: the job workspaces sit on the data disk.
+log:
+  level: info
+runner:
+  file: /etc/forgejo-runner/runner.json
+  capacity: 1
+cache:
+  enabled: false
+host:
+  workdir_parent: /var/lib/ci-data/work

@@ -103,6 +103,7 @@ text with no UTC offset is not a time.
 | `door-trigger/`, `door-acp/` | the door's own `AGENTS.md` |
 | `noticeboard/` | `noticeboard/AGENTS.md` |
 | `disks/` | `disks/AGENTS.md` |
+| `ci-runner-image/` | `ci-runner-image/AGENTS.md` |
 | `playpen/` | `playpen/AGENTS.md` |
 | `agent/` | `agent/AGENTS.md` |
 | `facade/` | `facade/AGENTS.md` |

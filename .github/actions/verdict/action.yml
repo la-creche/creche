@@ -38,6 +38,7 @@ runs:
                 "systemd-proof",
                 "kvm",
                 "vmm-archive",
+                "ci-runner-image",
             ]
         }
 

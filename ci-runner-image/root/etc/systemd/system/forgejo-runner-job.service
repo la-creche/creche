@@ -1,0 +1,31 @@
+# One Forgejo Actions job, then the power-off of the VM (ci-runner design,
+# sections 4.2 step 5 and 4.3 item 6).
+#
+# The seed of each job writes two files, as cloud-init `write_files`:
+#   /etc/forgejo-runner/runner.json  the registration of the ephemeral
+#                                    runner: uuid, token, Forgejo URL and
+#                                    labels. Owner runner, mode 0600.
+#   /etc/forgejo-runner/job.env      JOB_HANDLE=<handle of the job>
+# With either file absent, the unit does not start and the VM stays up.
+# A start that ends, with success or with failure, powers the VM off. The
+# host then sees the CH process exit.
+[Unit]
+Description=Run one Forgejo Actions job, then power off
+Wants=network-online.target
+Requires=docker.service
+After=network-online.target cloud-init.service docker.service
+ConditionPathExists=/etc/forgejo-runner/runner.json
+ConditionPathExists=/etc/forgejo-runner/job.env
+SuccessAction=poweroff
+FailureAction=poweroff
+
+[Service]
+Type=exec
+User=runner
+Group=runner
+EnvironmentFile=/etc/forgejo-runner/job.env
+WorkingDirectory=/var/lib/ci-data/work
+ExecStart=/usr/local/bin/forgejo-runner --config /etc/forgejo-runner/config.yml one-job --handle ${JOB_HANDLE}
+
+[Install]
+WantedBy=multi-user.target
