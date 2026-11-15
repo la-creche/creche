@@ -86,6 +86,7 @@ use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::faults::{FaultBook, FaultCode};
 use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_confine::launch::{Launch, Program};
+use creche_vmm_confine::leftovers::stop_one;
 use creche_vmm_confine::limits::VmLimits;
 use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
 use creche_vmm_confine::spool::SpoolRoot;
@@ -200,6 +201,9 @@ pub struct StartConfig {
     pub ch: Program,
     /// The `systemd-run` program of the launch (PR C2).
     pub systemd_run: Program,
+    /// The `systemctl` program that stops a leftover scope of the session
+    /// before its launch (`leftovers::stop_one`).
+    pub systemctl: Program,
     /// The unit of the vmm, which each VM scope binds to (decision CH60
     /// rule 1). The vmm reads it at its start with `VmmUnit::of_self`. A
     /// vmm in no service unit keeps the error, and every launch then
@@ -1965,6 +1969,14 @@ fn launch<L: Launcher>(
         .map_err(|error| error.to_string())?;
     let payload = command.payload(config.ch.clone());
     let scope = limits.scope(id.clone());
+    // The table holds no VM of `id` here, so a loaded scope with its name
+    // is a leftover, and `systemd-run --unit` would refuse the name. On
+    // 2026-11-15 a dropped start left one, `active` with an empty cgroup,
+    // and every later start of the session failed for three hours.
+    let leftover = format!("{}.scope", scope.unit());
+    if stop_one(&config.systemctl, &leftover).map_err(|error| error.to_string())? {
+        eprintln!("vmm: stopped the leftover unit {leftover}");
+    }
     let plan = Launch::new(config.systemd_run.clone(), scope, payload, files, unit).in_slot(slot);
     let process = launcher.launch(plan).map_err(|error| error.to_string())?;
     Ok(Booted {

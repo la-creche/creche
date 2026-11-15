@@ -9,6 +9,13 @@
 //! the stop gets `reset-failed`, and a unit that is still listed after that
 //! is an error.
 //!
+//! `stop_one` is the same stop for the scope of one session, just before
+//! a launch reuses its name. The table of the vmm holds no VM of that
+//! session then, so a loaded scope with that name is a leftover too. On
+//! 2026-11-15 a dropped start left `creche-vm-<id>.scope` loaded and
+//! `active` with an empty cgroup (systemd 259), and every later launch of
+//! that session failed with "already loaded" for three hours.
+//!
 //! `kill_all` is the `ExecStopPost=` step of the vmm unit, `vmm
 //! kill-scopes` (decisions CH61 rule 1, CH63). It lists the same units,
 //! then sends SIGKILL to each one by name. It queues no stop job, because
@@ -161,7 +168,26 @@ impl From<ListError> for KillError {
 /// `Run` when `systemctl` does not run. `List` when a listing fails.
 /// `Remaining` when a unit is still loaded at the end.
 pub fn stop_all(systemctl: &Program) -> Result<Vec<String>, LeftoverError> {
-    let found = list(systemctl)?;
+    stop_matching(systemctl, &every())
+}
+
+/// Stops the scope `unit` and clears a failed state, as `stop_all` does
+/// for every VM scope. `unit` is the full name, `creche-vm-<id>.scope`.
+/// The result is true when the unit was loaded.
+///
+/// # Errors
+///
+/// `Run` when `systemctl` does not run. `List` when a listing fails.
+/// `Remaining` when the unit is still loaded at the end.
+pub fn stop_one(systemctl: &Program, unit: &str) -> Result<bool, LeftoverError> {
+    let found = stop_matching(systemctl, unit)?;
+    Ok(!found.is_empty())
+}
+
+/// The stop of `stop_all` and `stop_one`, for the VM units that match the
+/// `list-units` pattern `pattern`.
+fn stop_matching(systemctl: &Program, pattern: &str) -> Result<Vec<String>, LeftoverError> {
+    let found = list(systemctl, pattern)?;
     if found.is_empty() {
         return Ok(found);
     }
@@ -170,14 +196,14 @@ pub fn stop_all(systemctl: &Program) -> Result<Vec<String>, LeftoverError> {
     // a unit that ends between the list and the stop makes it fail. The
     // next list is the check.
     run(systemctl, "stop", &found)?;
-    let failed = list(systemctl)?;
+    let failed = list(systemctl, pattern)?;
     if failed.is_empty() {
         return Ok(found);
     }
     // `reset-failed` unloads a failed scope, so `systemd-run` can use the
     // name again. Its status is not read either: the last list decides.
     run(systemctl, "reset-failed", &failed)?;
-    let remaining = list(systemctl)?;
+    let remaining = list(systemctl, pattern)?;
     if remaining.is_empty() {
         Ok(found)
     } else {
@@ -197,7 +223,7 @@ pub fn stop_all(systemctl: &Program) -> Result<Vec<String>, LeftoverError> {
 /// `Run` when `systemctl` does not run. `List` when a listing fails.
 /// `Unkilled` when a unit whose kill failed is still loaded.
 pub fn kill_all(systemctl: &Program) -> Result<Kills, KillError> {
-    let found = list(systemctl)?;
+    let found = list(systemctl, &every())?;
     let mut kills = Kills::default();
     let mut failed = Vec::new();
     for unit in found {
@@ -217,7 +243,7 @@ pub fn kill_all(systemctl: &Program) -> Result<Kills, KillError> {
     if failed.is_empty() {
         return Ok(kills);
     }
-    let loaded = list(systemctl)?;
+    let loaded = list(systemctl, &every())?;
     let (unkilled, gone): (Vec<Unkilled>, Vec<Unkilled>) = failed
         .into_iter()
         .partition(|one| loaded.contains(&one.unit));
@@ -239,12 +265,17 @@ fn kill(systemctl: &Program, unit: &str) -> io::Result<Output> {
         .output()
 }
 
-/// The loaded user units with the VM prefix, in any state (fact 76).
-fn list(systemctl: &Program) -> Result<Vec<String>, ListError> {
-    let pattern = format!("{SCOPE_PREFIX}*");
+/// The `list-units` pattern of every VM unit.
+fn every() -> String {
+    format!("{SCOPE_PREFIX}*")
+}
+
+/// The loaded user units with the VM prefix that match `pattern`, in any
+/// state (fact 76).
+fn list(systemctl: &Program, pattern: &str) -> Result<Vec<String>, ListError> {
     let output = Command::new(systemctl.path())
         .args(["--user", "list-units", "--all", "--plain", "--no-legend"])
-        .args(["--no-pager", "--", pattern.as_str()])
+        .args(["--no-pager", "--", pattern])
         .stdin(Stdio::null())
         .stderr(Stdio::inherit())
         .output()

@@ -479,6 +479,8 @@ impl Test {
             initramfs: empty,
             ch: Program::new(PathBuf::from(CH)).unwrap(),
             systemd_run: Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap(),
+            // `true` lists no unit, so no launch finds a leftover scope.
+            systemctl: Program::new(PathBuf::from("/usr/bin/true")).unwrap(),
             vmm_unit: Ok(VmmUnit::new("creche-vmm.service".to_owned()).unwrap()),
             limits: Limits {
                 ram_cap: 80 * GIB,

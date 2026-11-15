@@ -14,7 +14,9 @@ use std::path::PathBuf;
 use std::sync::{PoisonError, RwLock};
 
 use creche_vmm_confine::launch::Program;
-use creche_vmm_confine::leftovers::{KillError, Kills, LeftoverError, kill_all, stop_all};
+use creche_vmm_confine::leftovers::{
+    KillError, Kills, LeftoverError, kill_all, stop_all, stop_one,
+};
 
 const FAKE: &str = r#"#!/bin/sh
 dir=${0%/*}
@@ -77,6 +79,11 @@ impl Fake {
         stop_all(&self.systemctl)
     }
 
+    fn stop_one(&self, unit: &str) -> Result<bool, LeftoverError> {
+        let _read = EXEC.read().unwrap_or_else(PoisonError::into_inner);
+        stop_one(&self.systemctl, unit)
+    }
+
     fn kill_all(&self) -> Result<Kills, KillError> {
         let _read = EXEC.read().unwrap_or_else(PoisonError::into_inner);
         kill_all(&self.systemctl)
@@ -110,6 +117,34 @@ fn no_leftover_runs_no_stop() {
     let fake = Fake::new("none", &[""], 0);
     assert!(fake.stop_all().unwrap().is_empty());
     assert_eq!(fake.calls(), [LIST]);
+}
+
+#[test]
+fn a_session_with_no_leftover_scope_runs_no_stop() {
+    let fake = Fake::new("one-none", &[""], 0);
+    assert!(!fake.stop_one(A).unwrap());
+    let list = format!("--user list-units --all --plain --no-legend --no-pager -- {A}");
+    assert_eq!(fake.calls(), [list]);
+}
+
+#[test]
+fn the_leftover_scope_of_a_session_is_stopped_by_its_name() {
+    // The scope of 2026-11-15: loaded and active, its cgroup empty.
+    let fake = Fake::new("one-stop", &[&line(A, "active running"), ""], 0);
+    assert!(fake.stop_one(A).unwrap());
+    let list = format!("--user list-units --all --plain --no-legend --no-pager -- {A}");
+    let stop = format!("--user stop -- {A}");
+    assert_eq!(fake.calls(), [list.clone(), stop, list]);
+}
+
+#[test]
+fn a_session_scope_still_loaded_after_the_reset_is_an_error() {
+    let left = line(A, "failed failed");
+    let fake = Fake::new("one-left", &[&left, &left, &left], 0);
+    match fake.stop_one(A) {
+        Err(LeftoverError::Remaining(units)) => assert_eq!(units, [A]),
+        other => panic!("expected Remaining, got {other:?}"),
+    }
 }
 
 #[test]
