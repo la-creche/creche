@@ -30,7 +30,9 @@ surprise on the host.
 **`handover` is staged here and switched after the ledger** (contract 06
 §1.1 rules 2 and 3). Step 9 writes its note and swaps nothing, and
 `self_switch.py` does the rest once the entry is written and the lock is
-released.
+released. A set that deploys `handover` deploys nothing else: step 2
+refuses each other set with the code `request` (`resolve.check_alone`),
+before step 3 and before the push.
 """
 
 from __future__ import annotations
@@ -1399,9 +1401,9 @@ class Release:
         verify. The first failure stops the loop and step 10 acts on what
         is already deployed.
 
-        `handover` is last in `order` (contract 06 §1.1 rule 1) and is
-        only noted here. Every other component is live and verified by the
-        time the note is written, so a set that fails never reaches it.
+        `handover` is only noted here (contract 06 §1.1 rule 1). A set that
+        deploys it holds no other component (`resolve.check_alone`), so
+        the loop switches nothing before the note.
         """
         plan = self._require_plan()
         live = _switch_order(plan)

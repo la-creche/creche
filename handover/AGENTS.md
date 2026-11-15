@@ -123,8 +123,18 @@ The console script is `handover`. The verify hook and the operator's
    `catalog.py`.
 2. Every list in the resolved document is ordered here, so two runs over one
    set produce one hash whatever order the arguments arrived in.
-3. `handover` is last in `order`, whatever `depends_on` says. Nothing may
-   depend on it.
+3. `handover` releases alone. The executor that runs a set is the
+   installed `handover`. Only a newer one can know how to stage a newer
+   component, for example a new disk flavor.
+   - `resolve.check_alone` refuses a set that deploys `handover` and
+     another component, with the code `request`. `resolve` calls it, so
+     step 2 of the executor refuses before the push, and the requester
+     refuses before the file.
+   - Only a deploy row counts. A set with `handover` at its live version
+     is not a mixed set. A redeploy is a deploy row.
+   - `order.py` still puts `handover` last, but a set with `handover`
+     holds nothing else. Nothing may depend on it.
+   - The follower files `handover` alone first (`follow/` rule 10).
 4. `FIRST_VERSION` and the bump arithmetic live in one place.
 5. The site file holds everything that differs between deployments. `site.py`
    reads it. A required value that is missing refuses with the `site` code.
@@ -239,6 +249,17 @@ has the name of the markup of the manifest: `.component.toml` or
    and never above it, and it prints one note for each newer tag the
    ceiling holds back. A file that breaks one of the five rules of
    `policy.py` stops the run before the fetch, with exit 2.
+10. `handover` releases alone, and first ("Rules the design depends on",
+    rule 3). When the newer tags move `handover` and another component,
+    the run takes `handover` alone, at its newest tag under the ceiling,
+    into rules 2 to 8. It holds the rest and prints one line:
+    `split: handover 0.1.94 goes alone first. Held until it is installed:
+    disks 0.1.15, vmm 0.1.22`. When the stamp of `handover` reads that
+    version, the rest is a new set for rules 2 to 8. While `handover` still
+    moves, each run splits again. So a denial of the set of `handover`
+    holds the rest too (rule 4), and a newer tag of `handover` is a new set
+    of one. The registry watch reads the whole set, so a held
+    `mcp-servers` tag still stops a redeploy.
 
 ## Rules `mcpbuild.py` adds
 
@@ -391,9 +412,6 @@ needs and the file does not hold (`executor/envfill.py`).
     changes its kind. Root compares a manifest with the catalog of the
     installed code. Until the installed catalog holds the new row:
     - Root refuses the release of that component, with the code `catalog`.
-    - Root refuses a set that holds that component and `handover`. Root
-      reads each manifest of a set before it swaps a tree. The follower
-      then holds that set (`follow/` rule 4).
     - The installed `handover request` refuses each request. It reads each
       manifest of its roots.
 11. File the request for that release from a checkout that holds the new

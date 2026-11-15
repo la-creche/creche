@@ -285,8 +285,17 @@ CONTRACT_OWNER: dict[ContractId, str] = {
 MANIFEST_CONTRACT_MAJOR = 0
 MANIFEST_CONTRACT_MINOR = 27
 
+#: The one component that releases alone. The executor that runs a set is
+#: the installed `handover`. Only a newer one can know how to stage a newer
+#: component, for example a new disk flavor. So a set that deploys
+#: `handover` deploys nothing else (`resolve.check_alone`), and the
+#: follower files it first (`follow.alone_first`).
+RELEASES_ALONE = "handover"
+
 #: `handover` deploys last whatever `depends_on` says (contract 06 §1.1).
-LAST_IN_ORDER = "handover"
+#: A set that deploys it holds no other component (`RELEASES_ALONE`), so
+#: the rule orders a set of one.
+LAST_IN_ORDER = RELEASES_ALONE
 
 #: spec §9: at most eleven entries (CH35 (1)). The catalog minus
 #: `registry-data`, which never releases, is ten rows, one under the cap,

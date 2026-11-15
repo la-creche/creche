@@ -9,6 +9,7 @@ from handover.catalog import CATALOG, MAX_REQUEST_COMPONENTS, Action, ContractId
 from handover.errors import Refusal, RefusalCode
 from handover.manifest import ComponentManifest, Markup, parse_manifest
 from handover.resolve import (
+    HANDOVER_ALONE,
     build_document,
     canonical_json,
     parse_request,
@@ -129,6 +130,27 @@ def test_a_name_outside_the_catalog_is_refused() -> None:
 
     assert refusal.code is RefusalCode.REQUEST
     assert "contract 06 §1 lists" in refusal.detail
+
+
+def test_a_set_of_handover_and_another_is_refused() -> None:
+    """`handover` releases alone (`catalog.RELEASES_ALONE`)."""
+    refusal = _refusal({"handover": "0.4.0", "chaperone": "2.1.0"})
+
+    assert refusal.code is RefusalCode.REQUEST
+    assert refusal.detail == HANDOVER_ALONE
+
+
+def test_handover_alone_resolves() -> None:
+    resolution = resolve(_rows(), _state(), {"handover": "0.4.0"})
+
+    assert resolution.order == ("handover",)
+
+
+def test_handover_at_its_live_version_beside_another_resolves() -> None:
+    """Only a deploy row counts: `handover` at 0.3.0 is `unchanged`."""
+    resolution = resolve(_rows(), _state(), {"handover": "0.3.0", "chaperone": "2.1.0"})
+
+    assert resolution.deploying == frozenset({"chaperone"})
 
 
 def test_the_data_component_can_never_be_released() -> None:

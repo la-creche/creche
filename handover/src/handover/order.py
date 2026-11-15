@@ -3,7 +3,9 @@
 Two jobs. Refuse a cycle, naming it. Then order the components this release
 deploys, dependencies first. `handover` is forced last whatever the graph
 says, because it cannot replace the code under its own running process
-(contract 06 §1.1 rule 1).
+(contract 06 §1.1 rule 1). A set that deploys `handover` holds no other
+component (`resolve.check_alone`), so a resolved set puts it last in a set
+of one.
 
 The order is deterministic: ties break on the component name, so the same set
 always hashes to the same manifest.
