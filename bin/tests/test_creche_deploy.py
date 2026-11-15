@@ -20,19 +20,13 @@ wrong on the host, so each has a test here:
    measurement, written down, because reading the flag's name is what makes
    the mistake.
 
-The deploy also brings a SECOND checkout up to date: the site, this
-deployment's own repository, beside the product. `deploy_site` is held to
-what a first run, a later run and a host with no site each do.
-
 Everything here runs against a throwaway repository this file builds with the
 real `git`. Nothing reaches a live service and nothing needs the host.
 """
 
 from __future__ import annotations
 
-import re
 import shlex
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -281,113 +275,12 @@ def test_the_old_install_inputs_are_gone(name: str) -> None:
     assert not (REPO_ROOT / name).exists(), name
 
 
-#: `deploy_site` and the one constant it reads, cut out of the script. The
-#: function is run as root runs it, minus root: everything around it in the
-#: script needs a host.
-SITE_FUNCTION = re.compile(r"^deploy_site\(\) \{\n.*?^\}\n", re.MULTILINE | re.DOTALL)
-SITE_REF_LINE = re.compile(r"^SITE_REF=.*$", re.MULTILINE)
-
-
-def _commit(repo: Path, name: str, body: str) -> None:
-    (repo / name).write_text(body, encoding="utf-8")
-    assert _git(repo, "add", name).returncode == 0
-    made = _git(repo, "-c", "user.email=site@test", "-c", "user.name=site", "commit", "-qm", name)
-    assert made.returncode == 0, made.stdout + made.stderr
-
-
-@pytest.fixture
-def host(tmp_path: Path) -> Path:
-    """A host: the operator's two checkouts under `code/`, and root's clone
-    of the product under `opt/` with its origin where bootstrap leaves it."""
-    for name in ("creche", "private-docs"):
-        repo = tmp_path / "code" / name
-        repo.mkdir(parents=True)
-        assert _git(repo, "init", "-q", "-b", "main").returncode == 0
-        _commit(repo, "README.md", name)
-
-    product = tmp_path / "opt" / "creche"
-    cloned = subprocess.run(
-        ["git", "clone", "-q", str(tmp_path / "code" / "creche"), str(product)],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert cloned.returncode == 0, cloned.stderr
-
-    return tmp_path
-
-
-def _deploy_site(host: Path) -> subprocess.CompletedProcess[str]:
-    """The script's own `deploy_site`, run against the fixture host."""
+def test_the_deploy_names_no_site_checkout() -> None:
+    """The site, the compose stack and the personal units come from the
+    `host` release of creche-release, a tree handover owns and no git
+    checkout. A deploy that cloned a site into it would overwrite a release."""
     text = SCRIPT.read_text(encoding="utf-8")
-    function = SITE_FUNCTION.search(text)
-    ref = SITE_REF_LINE.search(text)
-    assert function is not None and ref is not None, f"no deploy_site in {SCRIPT}"
-    program = f'set -euo pipefail\n{ref.group(0)}\n{function.group(0)}\ndeploy_site "$1" "$2"\n'
 
-    return subprocess.run(
-        [
-            "bash",
-            "-c",
-            program,
-            "deploy",
-            str(host / "opt/creche"),
-            str(host / "opt/private-docs"),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-
-
-def test_a_first_run_clones_the_site_beside_the_product(host: Path) -> None:
-    """Root needs no step of its own: the checkout beside the product's
-    origin is the site's origin, and the first deploy clones it."""
-    done = _deploy_site(host)
-
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert (host / "opt/private-docs/README.md").read_text(encoding="utf-8") == "private-docs"
-    assert done.stdout.startswith("site ")
-
-
-def test_a_later_run_follows_the_sites_origin(host: Path) -> None:
-    assert _deploy_site(host).returncode == 0
-    _commit(host / "code/private-docs", "site.env", "LAN_HOST=192.0.2.10\n")
-
-    done = _deploy_site(host)
-
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert (host / "opt/private-docs/site.env").is_file()
-
-
-def test_a_later_run_discards_what_was_changed_in_the_deployed_site(host: Path) -> None:
-    """The deployed site is a copy root reads, never a place to edit: the
-    operator's checkout is. `checkout -f` puts a changed file back."""
-    assert _deploy_site(host).returncode == 0
-    (host / "opt/private-docs/README.md").write_text("edited on the host", encoding="utf-8")
-
-    assert _deploy_site(host).returncode == 0
-
-    assert (host / "opt/private-docs/README.md").read_text(encoding="utf-8") == "private-docs"
-
-
-def test_a_host_with_no_site_checkout_deploys_the_product_alone(host: Path) -> None:
-    shutil.rmtree(host / "code/private-docs")
-
-    done = _deploy_site(host)
-
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert "the product deploys alone" in done.stdout
-    assert not (host / "opt/private-docs").exists()
-
-
-def test_a_site_that_cannot_be_fetched_says_so(host: Path) -> None:
-    """The caller decides what a stale site costs, so the function must
-    report it rather than print a deployed line over an old tree."""
-    assert _deploy_site(host).returncode == 0
-    shutil.rmtree(host / "code/private-docs")
-
-    done = _deploy_site(host)
-
-    assert done.returncode != 0
-    assert "site " not in done.stdout
+    assert "deploy_site" not in text
+    assert "SITE" not in text
+    assert "/opt/private-docs" not in text
