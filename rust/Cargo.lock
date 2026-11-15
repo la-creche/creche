@@ -57,6 +57,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "creche-ci-runner"
+version = "0.0.0"
+dependencies = [
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "creche-guest-init"
 version = "0.0.0"
 dependencies = [

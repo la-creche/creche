@@ -1,0 +1,25 @@
+# The ci-runner daemon: one throwaway Cloud Hypervisor VM per waiting
+# Forgejo Actions job (docs/design/ci-runner.md). This crate holds the
+# Forgejo API client only (build plan PR 4). The job loop, the VM start and
+# the program come in later PRs.
+[package]
+name = "creche-ci-runner"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Each crate is already in rust/Cargo.lock for the vmm. The client reuses the
+# HTTP/1.1 stack of the vmm (decision CH26), so it adds no crate to the lock.
+[dependencies]
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# `net` for the TCP connect to Forgejo and `time` for the bound of each call.
+# The vmm turns on both, so neither adds a crate to the lock.
+tokio = { workspace = true, features = ["net", "time"] }
+
+[lints]
+workspace = true
