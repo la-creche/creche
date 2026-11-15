@@ -363,8 +363,18 @@ dead-graph check. Gaps 5 and 7 belong to the exit 75 of the check.
    WAL. Then it opens again. A WAL file can hold committed writes.
 4. A kill of the worker inside a checkpoint can leave a file that does not
    open. A stop no longer kills it ("The stop"). systemd still kills it
-   when a stop takes over 60 s (`TimeoutStopSec=60`). An OOM kill at
-   `MemoryMax=2G` or a crash of the host can kill it too.
+   when a stop takes over 60 s (`TimeoutStopSec=60`). A crash of the host
+   can kill it too. So can an OOM kill at `MemoryMax=12G`: the OOM killer
+   picks the largest process of the unit, and that is the graph worker.
+   The unit comment holds the measurements of 2026-11-15. With the first
+   limit of 2G the unit lived at its limit, in 2.2 to 6.8 GiB of swap. Now
+   `MemoryHigh=8G` throttles first and kills nothing, and
+   `MemorySwapMax=2G` keeps the unit's swap off the host's 8 GiB. The warning
+   is the `high` count in the cgroup's `memory.events`. No watcher reads it
+   yet. The operator reads it with
+   `cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/creche-memory.service/memory.events`
+   and stops the unit before it reaches `MemoryMax`. The footprint grows
+   over a run, and the cause is not known.
 5. An exit-75 loop never reaches the `failed` state, so the watchdog's
    `is-failed` check does not see it. The journal line names the cause.
 6. The first check of a process builds Cognee's engine. In subprocess

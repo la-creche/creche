@@ -191,6 +191,14 @@ def test_the_unit_signals_the_main_process_alone_and_gives_the_stop_60_s() -> No
     assert "TimeoutStopSec=60" in lines
 
 
+def test_the_unit_throttles_at_8g_before_the_kill_at_12g_and_caps_its_swap() -> None:
+    lines = UNIT.read_text(encoding="utf-8").splitlines()
+
+    assert "MemoryHigh=8G" in lines
+    assert "MemoryMax=12G" in lines
+    assert "MemorySwapMax=2G" in lines
+
+
 def test_a_daemon_thread_returns_the_result_or_the_error() -> None:
     def fails() -> int:
         raise ValueError("no")
