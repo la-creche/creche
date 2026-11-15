@@ -12,12 +12,12 @@ never invents one.**
 
 **NOTHING CALLS `publish` TODAY, AND NOTHING COMMITS OR PUSHES THE FILE IT
 WRITES.** No module under `caregiver` imports this one, so
-`live-manifest.json` is not written on the host at all, and agent-registry
+`live-manifest.json` is not written on the host at all, and registry
 CI still reads whatever a human last put there. `caregiver` runs no git
 (`docs/rework/spec.md` §12.2).
 
 Closing that gap is a credential decision, not a function. A push from the
-host needs write on agent-registry, and that is a key this code does not
+host needs write on registry, and that is a key this code does not
 ask for.
 `bin/rework-registry-sync.sh` is the half that exists: it pulls this
 checkout every minute, it deliberately never pushes, and it survives a copy
@@ -25,7 +25,7 @@ of this file that `caregiver` has rewritten (its `clear_derived`).
 
 Two consumers, both named in contract 06 §3.4's table.
 
-1. agent-registry CI cannot read a ledger on the LAN, so it needs the
+1. registry CI cannot read a ledger on the LAN, so it needs the
    `caregiver` version in a committed file to know which creche to
    check out when it validates family files. `live-manifest.json` is that
    file, and its human writer is what this replaces.
@@ -78,7 +78,7 @@ SUCCEEDED: Final = "succeeded"
 #: validator can refuse a family file written against a newer one.
 FAMILY_FILE_CONTRACT: Final = "family-file"
 
-#: The key contract 06 §3.4 gives the version. agent-registry CI reads it,
+#: The key contract 06 §3.4 gives the version. registry CI reads it,
 #: so it keeps the component's old name until both sides move together.
 VERSION_KEY: Final = "managerd"
 

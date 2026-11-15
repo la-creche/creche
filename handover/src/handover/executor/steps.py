@@ -1297,7 +1297,7 @@ class Release:
         is built and NOTHING is swapped, so a hash that does not match
         leaves the host exactly as it was (`mcpbuild` assumption 10).
 
-        `source` is the `agent-mcp` tree this release already fetched at
+        `source` is the `mcp` tree this release already fetched at
         the approved SHA. A `source: agent-mcp` server installs from it,
         which is why root needs no second fetch after the tap, and each
         `pypi` server installs from the closure committed beside its own

@@ -26,7 +26,7 @@ chaperone serves that policy file, and the test writes none.
 
 The six scenarios of phase 2 (plan row 30) left this topology at the Cloud
 Hypervisor cut (plan PR CR1). Each one ran a turn of the built facade
-through `attendance` and `sbx exec`. After the cut the vmm starts the
+through `attendance` and `sbx exec`. Since the cut the vmm starts the
 facade in a VM, one per session (decisions CH1, CH9), and the facade reads
 the fixed guest paths of the VM (decisions CH80, CH81). No process of this
 suite can start that VM. The kvm job runs a turn of the real facade in a VM
