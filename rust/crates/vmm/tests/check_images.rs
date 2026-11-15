@@ -14,7 +14,7 @@ use std::process::{Command, Output};
 use creche_vmm::config::{IMAGE_ROOT, ZSTD};
 use creche_vmm::image_root::{DIGESTS_FILE, KERNEL_KEY};
 use creche_vmm::verify::ENV_FILE;
-use creche_wire::{PerFlavor, SandboxFlavor};
+use creche_wire::{PerFlavor, PerService, SandboxFlavor, ServiceImage};
 use serde_json::Value;
 
 /// The SHA-256 of no bytes.
@@ -31,8 +31,9 @@ impl Drop for Scratch {
 
 #[cfg(test)]
 impl Scratch {
-    /// An image root with an empty file for the kernel and each flavor,
-    /// and a good `digests.json` that the test user owns.
+    /// An image root with an empty file for the kernel, each flavor and
+    /// each service image, and a good `digests.json` that the test user
+    /// owns.
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!(
             "creche-vmm-check-images-{}-{name}",
@@ -42,7 +43,10 @@ impl Scratch {
         fs::create_dir_all(dir.join("images")).unwrap();
         let mut json = serde_json::Map::new();
         let flavors = PerFlavor::every(SandboxFlavor::name);
-        let names = std::iter::once(KERNEL_KEY).chain(flavors.iter().map(|(_, &name)| name));
+        let services = PerService::every(ServiceImage::name);
+        let names = std::iter::once(KERNEL_KEY)
+            .chain(flavors.iter().map(|(_, &name)| name))
+            .chain(services.iter().map(|(_, &name)| name));
         for key in names {
             let file = format!("{key}.img");
             fs::write(dir.join("images").join(&file), "").unwrap();

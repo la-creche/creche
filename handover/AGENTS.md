@@ -502,16 +502,23 @@ CH76 rules 1 and 5). Its manifest is `disks/component.toml`, and
    `install.to`. CI builds and signs each file. Root checks each signature
    and installs each file unchanged. Root runs no build and unpacks
    nothing (contract 06 §8.4).
-2. The files are `digests.json`, `vmlinux-x86_64.zst` and one
-   `<flavor>.ext4.zst` for each flavor of `catalog.DISK_FLAVORS`. Each file
-   has its own bundle `<file>.sigstore.json`. `artifacts.asset_limits`
+2. The files are `digests.json`, `vmlinux-x86_64.zst`, one
+   `<flavor>.ext4.zst` for each flavor of `catalog.DISK_FLAVORS` and one
+   `<image>.ext4.zst` for each service image of `catalog.SERVICE_IMAGES`.
+   Each file has its own bundle `<file>.sigstore.json`. `artifacts.asset_limits`
    holds the list and the limits: `DISK_FILE_MAX_BYTES` (2 GiB - 1) for a
    disk and the kernel, `DIGESTS_MAX_BYTES` (64 KiB, the `DIGESTS_CAP` of
    the vmm) for `digests.json`, and `BUNDLE_MAX_BYTES` for each bundle.
 3. `DISK_FLAVORS` is `base`, `python` and `coding`, the values of the wire
    enum `SandboxFlavor`. `tests/test_handover_disk_flavors.py` holds the
    two equal (CH58 rule 4, CH76 rule 7). `coding` joined before the cut
-   (CH79 rule 1).
+   (CH79 rule 1). `SERVICE_IMAGES` is `browser`, the values of the wire
+   enum `ServiceImage` (browser design 10.5.2). A service image is not a
+   flavor, and no family file can choose one. The same test holds
+   `SERVICE_IMAGES` equal to the keys of
+   `rust/crates/wire/vectors/digests.json` that are not `kernel` and not
+   a flavor. The vmm parses that vector, so the keys are the values of
+   the enum.
 4. A disk-image manifest names no unit, and its `runs_as` is `none`. Its
    `build` argv starts with an absolute path, and only CI runs it, with
    `DISK_OUT` set (`catalog.DISK_OUT_ENV`).
@@ -574,10 +581,10 @@ CH76 rules 1 and 5). Its manifest is `disks/component.toml`, and
     the 2 GiB - 1 cap needs about 2.06 GiB.
 16. `bin/allocate-tags.sh` takes every asset of the `--assets` lines, in
     pairs of a file and its bundle. It runs the verifier once for each
-    pair, and the Release of a disk-image component holds the ten assets
+    pair, and the Release of a disk-image component holds the twelve assets
     (CH35 (2), CH76 rule 5). `bin/build-artifacts.sh` skips a planned
     disk-image row, and the `sign` job of `release.yml` signs each of the
-    five files.
+    six files.
 17. The job `disks` of `release.yml` runs the build of the row,
     `disks/bin/playpen-release-disks`, when the plan tags `disks`. Then
     `bin/check-disk-files.sh` refuses a file past its limit of

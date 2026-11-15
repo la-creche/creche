@@ -11,6 +11,7 @@ applies here too.
 | File | What it is |
 |---|---|
 | `base.ext4.zst`, `python.ext4.zst`, `coding.ext4.zst` | The root disk of each flavor of `catalog.DISK_FLAVORS`, an ext4 file compressed with zstd. |
+| `browser.ext4.zst` | The root disk of each service image of `catalog.SERVICE_IMAGES`, in the same form. |
 | `vmlinux-x86_64.zst` | The pinned guest kernel, compressed with zstd (CH7-3). |
 | `digests.json` | The SHA-256 of each other file after decompression (CH41 rule 1). |
 
@@ -29,7 +30,16 @@ applies here too.
 4. The flavors are the values of the wire enum `SandboxFlavor`: base,
    python and coding. Coding joined with the PR that added it to the enum,
    before the cut (CH76 rule 7, CH79 rule 1).
-5. The catalog row bundles `playpen`, `agent`, `facade`, `pyproject.toml`
+5. The service images are the values of the wire enum `ServiceImage`:
+   browser (browser design 10.5.2). A service image is not a flavor. No
+   family file can choose one, so `SandboxFlavor` and contract 01 §3.9 do
+   not change. The verify hook `vmm check-images` refuses a `digests.json`
+   that has no entry for a service image. The vmm start and its follow
+   take such a file and log the absent image, because handover step 9 can
+   restart a new vmm on an old disks row (`rust/crates/vmm/AGENTS.md`,
+   "The image root"). The vmm imports the browser disk into its digest
+   store. No VM boots it yet.
+6. The catalog row bundles `playpen`, `agent`, `facade`, `pyproject.toml`
    and `uv.lock`: the image build and what it copies. A change there moves
    the disks tag. A change under `disks/` moves the disks tag alone.
 
@@ -39,12 +49,14 @@ applies here too.
 the job `disks` of `release.yml` runs it, from the repository root, with
 `DISK_OUT` set, when the plan tags `disks`.
 
-1. For each flavor it runs `playpen/bin/playpen-rootfs` and
-   `playpen/bin/playpen-disk`. Then it runs `playpen/bin/playpen-kernel`.
+1. For each flavor of `FLAVORS`, then for each service image of
+   `SERVICES`, it runs `playpen/bin/playpen-rootfs` and
+   `playpen/bin/playpen-disk`. The target of the browser disk is
+   `service-browser`. Then it runs `playpen/bin/playpen-kernel`.
 2. It writes `digests.json` from the digest line of each of those
-   scripts: `kernel` and one key for each flavor, each `{file, sha256}`,
-   keys sorted, one line (CH58 rule 4).
-3. It writes `SHA256SUMS`, the digest of each of the five files as it
+   scripts: `kernel`, one key for each flavor and one key for each service
+   image, each `{file, sha256}`, keys sorted, one line (CH58 rule 4).
+3. It writes `SHA256SUMS`, the digest of each of the six files as it
    ships. The job hands it to the `sign` job.
 4. A step that fails before the last one leaves `DISK_OUT` empty.
 
@@ -80,3 +92,6 @@ no import runs while `vmm check-images` runs.
    4 of phase 10).
 2. The download rate from the host to github.com. The follower must fetch
    each file of 415 to 562 MiB in one run of 270 s.
+3. The size of the browser disk, and the time that its check adds to
+   `vmm check-images`. The browser design estimates about 400 MiB
+   compressed. No build of the disk ran before this row named it.

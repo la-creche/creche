@@ -4,16 +4,17 @@
 //! the `Deserialize` of `Manifest`, the parse that `read` runs, and build
 //! the `ImageSet` from its fields. `tests/image_root.rs` proves the file
 //! checks of `read`, and its `kvm_` tests prove a root-owned file end to
-//! end. The fixture takes its flavors from the wire enum, as the vmm does.
+//! end. The fixture takes its flavors and its service images from the
+//! wire enums, as the vmm does.
 
 use std::fs;
 use std::path::PathBuf;
 
 use creche_vmm_store::images::{ImageStore, ImportError};
 use creche_vmm_store::layout::StateRoot;
-use creche_wire::{PerFlavor, SandboxFlavor};
+use creche_wire::{PerFlavor, PerService, SandboxFlavor, ServiceImage};
 
-use super::{ImageSet, KERNEL_KEY, Manifest};
+use super::{DIGESTS_FILE, EntryFault, ImageSet, KERNEL_KEY, Manifest};
 use crate::start::Digests;
 
 /// The SHA-256 of no bytes.
@@ -36,15 +37,15 @@ impl Drop for Root {
 
 impl Root {
     /// An image root with the file `vmlinux` (no bytes) and one file
-    /// `<flavor>.ext4` (`abc`) for each flavor.
+    /// `<name>.ext4` (`abc`) for each flavor and each service image.
     fn new(name: &str) -> Self {
         let dir =
             std::env::temp_dir().join(format!("creche-vmm-manifest-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("images")).unwrap();
         fs::write(dir.join("images/vmlinux"), "").unwrap();
-        for (_, &flavor) in PerFlavor::every(SandboxFlavor::name).iter() {
-            fs::write(dir.join(format!("images/{flavor}.ext4")), "abc").unwrap();
+        for name in disk_names() {
+            fs::write(dir.join(format!("images/{name}.ext4")), "abc").unwrap();
         }
         Self(dir)
     }
@@ -77,12 +78,24 @@ fn entry(file: &str, sha256: &str) -> serde_json::Value {
     serde_json::json!({ "file": file, "sha256": sha256 })
 }
 
-/// The good `digests.json`: the kernel and one entry for each flavor.
+/// The wire name of each flavor, then of each service image: the keys of
+/// `digests.json` that name a root disk, in the order of `check`.
+fn disk_names() -> Vec<&'static str> {
+    let flavors = PerFlavor::every(SandboxFlavor::name);
+    let services = PerService::every(ServiceImage::name);
+    let flavors = flavors.iter().map(|(_, &name)| name);
+    flavors
+        .chain(services.iter().map(|(_, &name)| name))
+        .collect()
+}
+
+/// The good `digests.json`: the kernel and one entry for each flavor and
+/// each service image.
 fn good_json() -> serde_json::Map<String, serde_json::Value> {
     let mut json = serde_json::Map::new();
     json.insert(KERNEL_KEY.to_owned(), entry("vmlinux", EMPTY));
-    for (_, &flavor) in PerFlavor::every(SandboxFlavor::name).iter() {
-        json.insert(flavor.to_owned(), entry(&format!("{flavor}.ext4"), ABC));
+    for name in disk_names() {
+        json.insert(name.to_owned(), entry(&format!("{name}.ext4"), ABC));
     }
     json
 }
@@ -106,6 +119,7 @@ fn a_good_file_gives_the_digests_after_the_import() {
     let expected = Digests {
         kernel: EMPTY.parse().unwrap(),
         roots: PerFlavor::every(|_| ABC.parse().unwrap()),
+        services: PerService::every(|_| Some(ABC.parse().unwrap())),
     };
     assert_eq!(set.import(&store).unwrap(), expected);
     // A second import finds each digest in the store and reads no file.
@@ -126,6 +140,7 @@ fn the_digests_of_a_set_need_no_import() {
             SandboxFlavor::Python => HELLO.parse().unwrap(),
             SandboxFlavor::Base | SandboxFlavor::Coding => ABC.parse().unwrap(),
         }),
+        services: PerService::every(|_| Some(ABC.parse().unwrap())),
     };
     assert_eq!(set.digests(), expected);
 }
@@ -144,6 +159,7 @@ fn a_malformed_file_refuses() {
         format!("{} {{}}", good()),
         other("extra", entry("vmlinux", EMPTY)),
         other("Base", entry("base.ext4", ABC)),
+        other("Browser", entry("browser.ext4", ABC)),
         other("base", serde_json::json!({ "file": "base.ext4" })),
         other(
             "base",
@@ -169,16 +185,20 @@ fn a_malformed_file_refuses() {
     }
 }
 
-/// Decision CH58 rule 4: the kernel and each flavor of the wire enum, each
-/// once. A file that lacks one of them, or repeats one, refuses.
+/// Decision CH58 rule 4: the kernel and each flavor of the wire enum,
+/// each once. A file that lacks one of them refuses. A file that repeats
+/// any key, a service image too, refuses.
 #[test]
 fn a_file_that_lacks_or_repeats_a_key_refuses() {
+    let services = PerService::every(ServiceImage::name);
     let keys: Vec<String> = good_json().keys().cloned().collect();
     for key in &keys {
-        let mut json = good_json();
-        json.remove(key);
-        let error = parse(&serde_json::Value::Object(json).to_string()).unwrap_err();
-        assert!(error.to_string().contains(&format!("`{key}`")), "{error}");
+        if !services.iter().any(|(_, &name)| name == key) {
+            let mut json = good_json();
+            json.remove(key);
+            let error = parse(&serde_json::Value::Object(json).to_string()).unwrap_err();
+            assert!(error.to_string().contains(&format!("`{key}`")), "{error}");
+        }
 
         let text = good();
         let repeated = format!(
@@ -232,6 +252,10 @@ fn the_shared_vector_reads() {
     for (flavor, entry) in manifest.roots.iter() {
         assert_eq!(entry.file.0, format!("{}.ext4.zst", flavor.name()));
     }
+    for (image, entry) in manifest.services.iter() {
+        let entry = entry.as_ref().unwrap();
+        assert_eq!(entry.file.0, format!("{}.ext4.zst", image.name()));
+    }
 }
 
 /// Decision CH76 rule 6: `check` hashes each entry, passes each good one,
@@ -241,13 +265,7 @@ fn a_good_set_checks_and_writes_no_file() {
     let root = Root::new("check");
     let checks = root.set(&good()).check(&PathBuf::from("/usr/bin/zstd"));
     let keys: Vec<&str> = checks.iter().map(|check| check.key).collect();
-    let expected: Vec<&str> = std::iter::once(KERNEL_KEY)
-        .chain(
-            PerFlavor::every(SandboxFlavor::name)
-                .iter()
-                .map(|(_, &name)| name),
-        )
-        .collect();
+    let expected: Vec<&str> = std::iter::once(KERNEL_KEY).chain(disk_names()).collect();
     assert_eq!(keys, expected);
     for check in &checks {
         assert!(check.result.is_ok(), "{check:?}");
@@ -272,13 +290,108 @@ fn a_wrong_digest_fails_and_names_the_entry() {
     assert_eq!(failed, [(KERNEL_KEY, "vmlinux"), ("base", "base.ext4")]);
     let base = checks.iter().find(|check| check.key == "base").unwrap();
     assert!(
-        matches!(base.result, Err(ImportError::Mismatch { .. })),
+        matches!(
+            base.result,
+            Err(EntryFault::Import(ImportError::Mismatch { .. }))
+        ),
         "{base:?}"
     );
     let kernel = checks.first().unwrap();
     assert!(
-        matches!(kernel.result, Err(ImportError::Io { .. })),
+        matches!(
+            kernel.result,
+            Err(EntryFault::Import(ImportError::Io { .. }))
+        ),
         "{kernel:?}"
     );
-    assert_eq!(checks.len(), 1 + PerFlavor::every(|_| ()).iter().count());
+    assert_eq!(checks.len(), 1 + disk_names().len());
+}
+
+/// The browser design 10.5.2: the root disk of a service image imports
+/// and checks as a root disk of a flavor does, and a wrong digest of it
+/// refuses the import and names its file.
+#[test]
+fn a_service_image_imports_and_checks() {
+    let root = Root::new("service");
+    let store = root.store();
+    let image = ServiceImage::Browser.name();
+    let file = format!("{image}.ext4");
+    let digests = root.set(&good()).import(&store).unwrap();
+    let browser = digests.services.get(ServiceImage::Browser).unwrap();
+    assert_eq!(browser, ABC.parse().unwrap());
+    store.check(browser).unwrap();
+
+    let wrong = root.set(&other_sha(image, HELLO));
+    let checks = wrong.check(&PathBuf::from("/usr/bin/zstd"));
+    let failed: Vec<(&str, &str)> = checks
+        .iter()
+        .filter(|check| check.result.is_err())
+        .map(|check| (check.key, check.file.as_str()))
+        .collect();
+    assert_eq!(failed, [(image, file.as_str())]);
+    let fresh = Root::new("service-wrong");
+    let error = fresh.set(&other_sha(image, HELLO)).import(&fresh.store());
+    assert_eq!(error.unwrap_err().file, file);
+}
+
+/// The good `digests.json` with no entry for any service image: the file
+/// of a disks row from before the browser disk.
+fn without_services() -> String {
+    let mut json = good_json();
+    for (_, &name) in PerService::every(ServiceImage::name).iter() {
+        json.remove(name);
+    }
+    serde_json::Value::Object(json).to_string()
+}
+
+/// The module doc: the vmm start and the follow take a file with no entry
+/// for a service image, and its digests say that the image is absent.
+/// Handover step 9 restarts a new vmm on the old file, and a refusal
+/// would exit 78 and keep the vmm down.
+#[test]
+fn a_file_without_a_service_image_imports_it_as_absent() {
+    let root = Root::new("absent");
+    let set = root.set(&without_services());
+    let digests = set.import(&root.store()).unwrap();
+    assert_eq!(digests.services, PerService::every(|_| None));
+    assert_eq!(
+        *digests.roots.get(SandboxFlavor::Base),
+        ABC.parse().unwrap()
+    );
+    assert_eq!(set.absent_services(), ["browser"]);
+    assert!(root.set(&good()).absent_services().is_empty());
+}
+
+/// The disks verify hook stays strict: `check` fails each service image
+/// with no entry, so a new disks row must ship the browser disk.
+#[test]
+fn a_file_without_a_service_image_fails_the_check() {
+    let root = Root::new("absent-check");
+    let checks = root
+        .set(&without_services())
+        .check(&PathBuf::from("/usr/bin/zstd"));
+    let failed: Vec<(&str, &str)> = checks
+        .iter()
+        .filter(|check| check.result.is_err())
+        .map(|check| (check.key, check.file.as_str()))
+        .collect();
+    assert_eq!(failed, [("browser", DIGESTS_FILE)]);
+    let browser = checks.last().unwrap();
+    assert!(
+        matches!(browser.result, Err(EntryFault::Absent)),
+        "{browser:?}"
+    );
+    assert_eq!(checks.len(), 1 + disk_names().len());
+}
+
+/// An absent service image is the one leniency: a malformed entry of it
+/// still refuses the parse, as an unknown key does.
+#[test]
+fn a_malformed_service_entry_still_refuses() {
+    let mut json = good_json();
+    json.insert(
+        "browser".to_owned(),
+        serde_json::json!({ "file": "browser.ext4" }),
+    );
+    assert!(parse(&serde_json::Value::Object(json).to_string()).is_err());
 }

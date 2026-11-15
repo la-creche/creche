@@ -41,8 +41,9 @@ def test_the_disks_row_is_the_one_disk_image_row() -> None:
 
 
 def test_the_disks_row_lists_each_file_and_bundle() -> None:
-    """`digests.json`, the kernel, then one disk for each flavor. Each file
-    comes right before its own bundle (contract 06 §8.4 rule 2)."""
+    """`digests.json`, the kernel, then one disk for each flavor, then one
+    for each service image. Each file comes right before its own bundle
+    (contract 06 §8.4 rule 2)."""
     assert _lines() == [
         ("digests.json", 64 * 1024),
         ("digests.json.sigstore.json", BUNDLE_MAX_BYTES),
@@ -54,6 +55,8 @@ def test_the_disks_row_lists_each_file_and_bundle() -> None:
         ("python.ext4.zst.sigstore.json", BUNDLE_MAX_BYTES),
         ("coding.ext4.zst", 2 * GIB - 1),
         ("coding.ext4.zst.sigstore.json", BUNDLE_MAX_BYTES),
+        ("browser.ext4.zst", 2 * GIB - 1),
+        ("browser.ext4.zst.sigstore.json", BUNDLE_MAX_BYTES),
     ]
 
 

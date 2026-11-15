@@ -102,7 +102,9 @@ use creche_vmm_store::serial_log::SerialLog;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
-use creche_wire::{FamilyName, FamilyShape, GuestEvent, PerFlavor, SessionId, SessionRow};
+use creche_wire::{
+    FamilyName, FamilyShape, GuestEvent, PerFlavor, PerService, SessionId, SessionRow,
+};
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
@@ -136,15 +138,23 @@ const DIR_MODE: u32 = 0o700;
 /// change costs one constant.
 const SLOT_POLL: Duration = Duration::from_millis(10);
 
-/// The store digests of the guest kernel and of the root disk of each
-/// flavor (decisions CH7-3, CH8-8). The vmm keeps one root disk for each
-/// value of the wire flavor enum (decision CH58 rule 4).
+/// The store digests of the guest kernel, of the root disk of each flavor
+/// and of the root disk of each service image (decisions CH7-3, CH8-8,
+/// browser design 10.5.2). The vmm keeps one root disk for each value of
+/// the wire flavor enum and of the wire enum `ServiceImage` (decision
+/// CH58 rule 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Digests {
     /// The guest kernel. Every flavor boots it.
     pub kernel: ImageDigest,
     /// The root disk of each flavor.
     pub roots: PerFlavor<ImageDigest>,
+    /// The root disk of each service image (browser design 10.5.2), or
+    /// `None` when `digests.json` has no entry for it (`image_root`). No
+    /// VM boots it yet. The store keeps it, so a later service VM kind
+    /// reads it from here as a start reads `roots`, and refuses a start
+    /// on `None` with its own reason.
+    pub services: PerService<Option<ImageDigest>>,
 }
 
 impl Digests {
@@ -156,6 +166,7 @@ impl Digests {
             kernel: self.kernel,
             initramfs,
             roots: self.roots,
+            services: self.services,
         }
     }
 }

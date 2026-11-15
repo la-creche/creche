@@ -55,12 +55,17 @@ def _facade_bins() -> dict[str, str]:
 
 
 def test_the_targets_are_the_flavors_ci_builds() -> None:
-    """playpen/AGENTS.md rule 3: the targets and the flavors are one list."""
+    """playpen/AGENTS.md rule 3: the targets are one list with the flavors,
+    then the service images, that CI builds."""
     targets = [name for name in STAGE_RE.findall(_text()) if name not in BUILD_ONLY_STAGES]
-    checked = re.search(r'^FLAVORS="([^"]*)"$', CI.read_text(encoding="utf-8"), re.MULTILINE)
+    ci = CI.read_text(encoding="utf-8")
+    flavors = re.search(r'^FLAVORS="([^"]*)"$', ci, re.MULTILINE)
+    services = re.search(r'^SERVICES="([^"]*)"$', ci, re.MULTILINE)
 
-    assert checked is not None
-    assert targets == [pair.split(":", 1)[1] for pair in checked.group(1).split()]
+    assert flavors is not None
+    assert services is not None
+    pairs = [*flavors.group(1).split(), *services.group(1).split()]
+    assert targets == [pair.split(":", 1)[1] for pair in pairs]
     assert "FROM agent-sandbox AS agent-sandbox-python" in _text()
 
 

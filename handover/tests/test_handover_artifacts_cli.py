@@ -624,6 +624,8 @@ DISK_LINES = [
     "asset python.ext4.zst.sigstore.json 1048576",
     "asset coding.ext4.zst 2147483647",
     "asset coding.ext4.zst.sigstore.json 1048576",
+    "asset browser.ext4.zst 2147483647",
+    "asset browser.ext4.zst.sigstore.json 1048576",
     "argv 3",
     *DISK_ARGV,
     "end",

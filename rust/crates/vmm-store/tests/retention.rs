@@ -17,7 +17,7 @@ use creche_vmm_store::key::{CH_REV, CurrentImages};
 use creche_vmm_store::layout::{SessionDir, SnapshotGeneration, StateRoot};
 use creche_vmm_store::retention::{BUDGET, InUse, MAX_AGE, Reason, Swept, plan, sweep};
 use creche_vmm_store::snapshot::{MEMORY_RANGES, generations};
-use creche_wire::{GUEST_INIT_PROTOCOL, PerFlavor, SandboxFlavor, SessionId};
+use creche_wire::{GUEST_INIT_PROTOCOL, PerFlavor, PerService, SandboxFlavor, SessionId};
 
 const A: &str = "0f8e2a4c-1b3d-4e5f-8a9b-0c1d2e3f4a5b";
 const B: &str = "1f8e2a4c-1b3d-4e5f-8a9b-0c1d2e3f4a5b";
@@ -39,8 +39,9 @@ fn digest(hex: char) -> ImageDigest {
     hex.to_string().repeat(64).parse().expect("a digest")
 }
 
-/// The images of each new start: kernel `a`, initramfs `b`, and the root
-/// `c`, `d` and `e` of the three flavors.
+/// The images of each new start: kernel `a`, initramfs `b`, the root
+/// `c`, `d` and `e` of the three flavors, and the root `f` of each service
+/// image.
 #[cfg(test)]
 fn current() -> CurrentImages {
     let mut roots = ['c', 'd', 'e'].into_iter();
@@ -48,7 +49,19 @@ fn current() -> CurrentImages {
         kernel: digest('a'),
         initramfs: digest('b'),
         roots: PerFlavor::every(|_| digest(roots.next().expect("a root"))),
+        services: PerService::every(|_| Some(digest('f'))),
     }
+}
+
+#[test]
+fn the_current_set_holds_each_service_image() {
+    // Image retention keeps each digest of the set, so a browser disk
+    // that no snapshot names stays in the store.
+    let marked = current().digests();
+    assert!(marked.contains(&digest('f')));
+    let mut absent = current();
+    absent.services = PerService::every(|_| None);
+    assert_eq!(absent.digests().len(), marked.len() - 1);
 }
 
 /// The parts of a key file. `Key::current()` equals `current()` for the

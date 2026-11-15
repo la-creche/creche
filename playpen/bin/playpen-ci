@@ -3,14 +3,16 @@
 # repository root:
 #   playpen/bin/playpen-ci
 #
-# It builds each flavor and checks what the build alone cannot check:
+# It builds each flavor and each service image, and checks what the build
+# alone cannot check:
 #
 #   1. `docker build` of each target, tagged `playpen-ci/<target>`. The
 #      python flavor builds on the base flavor, so the second build reuses
 #      the first.
 #   2. `playpen-env-check` on each image: `/etc/creche/env` equals the
-#      image config env (CH7-7, CH49), and a list of the image's agent
-#      holds each of its names (CH49 rule 1).
+#      image config env (CH7-7, CH49). For a flavor, a list of the image's
+#      agent also holds each of its names (CH49 rule 1). A service image
+#      runs no agent, so it gets the env check only.
 #   3. `playpen-rootfs` of each target: the tar export that a root disk
 #      is made from builds, holds `/etc/creche/env` and holds no
 #      `.dockerenv` (CH7-2, fact 59). The export reuses the build cache.
@@ -34,24 +36,36 @@ work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
 
 # Each flavor of catalog.DISK_FLAVORS with its target, as FLAVORS of
-# disks/bin/playpen-release-disks lists them (playpen/AGENTS.md).
+# disks/bin/playpen-release-disks lists them (playpen/AGENTS.md). Each
+# service image of catalog.SERVICE_IMAGES with its target, as SERVICES of
+# that script lists them (browser design 10.5.2).
 FLAVORS="base:agent-sandbox python:agent-sandbox-python coding:agent-sandbox-coding"
+SERVICES="browser:service-browser"
 
-for pair in $FLAVORS; do
-  flavor="${pair%%:*}"
-  target="${pair#*:}"
-  image="playpen-ci/$target"
+# check_disk KIND PAIR: builds the target of PAIR, checks its env as KIND
+# (flavor or service), and makes its disk two times.
+check_disk() {
+  local kind="$1" disk="${2%%:*}" target="${2#*:}"
+  local image="playpen-ci/$target" first second
+
   say "building $target"
   docker build --platform "$PLATFORM" -f "$ROOT/playpen/Dockerfile" --target "$target" \
     -t "$image" "$ROOT" || die "the $target build failed"
-  "$ROOT/playpen/bin/playpen-env-check" "$image"
+  "$ROOT/playpen/bin/playpen-env-check" "$image" "$kind"
   "$ROOT/playpen/bin/playpen-rootfs" "$target" "$work/$target.tar"
   mkdir "$work/one" "$work/two"
-  first="$("$ROOT/playpen/bin/playpen-disk" "$work/$target.tar" "$work/one" "$flavor")"
-  second="$("$ROOT/playpen/bin/playpen-disk" "$work/$target.tar" "$work/two" "$flavor")"
+  first="$("$ROOT/playpen/bin/playpen-disk" "$work/$target.tar" "$work/one" "$disk")"
+  second="$("$ROOT/playpen/bin/playpen-disk" "$work/$target.tar" "$work/two" "$disk")"
   [[ "$first" == "$second" ]] || die "two disks of one $target tar differ: $first, $second"
   say "$first"
   rm -rf -- "$work/$target.tar" "$work/one" "$work/two"
+}
+
+for pair in $FLAVORS; do
+  check_disk flavor "$pair"
+done
+for pair in $SERVICES; do
+  check_disk service "$pair"
 done
 
 mkdir "$work/kernel"

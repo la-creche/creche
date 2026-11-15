@@ -13,6 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub mod guest;
 mod per_flavor;
+mod per_service;
 mod ports;
 mod routes;
 #[cfg(test)]
@@ -23,6 +24,7 @@ mod strict_json;
 mod vectors;
 
 pub use per_flavor::PerFlavor;
+pub use per_service::PerService;
 pub use ports::{GUEST_INIT_PROTOCOL, GuestPort, HostPort};
 pub use routes::{
     AcpError, AcpRoute, Body, CheckError, CheckRoute, CreateError, CreateRoute,
@@ -1796,6 +1798,38 @@ impl SandboxFlavor {
             Self::Base => "base",
             Self::Python => "python",
             Self::Coding => "coding",
+        }
+    }
+}
+
+/// The image of a service VM: a root disk of the disks row that no family
+/// file may choose (browser design 10.5.2). `SandboxFlavor` stays the
+/// closed set of contract 01 §3.9, so a service image is no flavor. It is
+/// a closed set of its own beside it. `digests.json` holds one entry for
+/// each value, with the wire name as its key, and `vmm check-images`
+/// refuses a file that lacks one (decision CH58 rule 4). The vmm start
+/// takes such a file and marks the image absent.
+///
+/// No message carries it, so the schema does not hold it.
+/// `handover/tests/test_handover_disk_flavors.py` holds
+/// `catalog.SERVICE_IMAGES` equal to it through the shared vector
+/// `vectors/digests.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceImage {
+    /// The root disk of the browser VM: Chrome and agent-browser.
+    Browser,
+}
+
+impl ServiceImage {
+    /// The wire name of the service image, as the serde derive writes it.
+    /// The match names each variant, so a new service image fails to
+    /// compile until it has a name. A test of `per_service.rs` holds it
+    /// equal to the derive.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Browser => "browser",
         }
     }
 }

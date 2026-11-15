@@ -19,8 +19,10 @@ const DOCKERFILE = join(ROOT, "..", "playpen", "Dockerfile");
 const FLUE_DIST = join(ROOT, "node_modules", "@flue", "runtime", "dist", "node", "index.mjs");
 const GUEST_VECTORS = join(ROOT, "..", "rust", "crates", "wire", "vectors", "guest.json");
 
-/** The stages that ship, and the build-only stages of `bin/tests/test_playpen_image.py`. */
+/** The stages that ship to a family VM, the service images, and the build-only stages of `bin/tests/test_playpen_image.py`. */
 const SHIPPED = ["agent-sandbox", "agent-sandbox-python", "agent-sandbox-coding"];
+/** A service image runs no agent, so no list of the agent places its env (`playpen/AGENTS.md`, Known gaps). */
+const SERVICES = ["service-browser"];
 const BUILD_ONLY = ["build", "creche-test-venv"];
 
 /** `FROM [--flag=...] <parent> AS <stage>`, and `ENV <pairs>`. Docker reads both words in any case. */
@@ -157,7 +159,7 @@ describe("the tool env lists", () => {
 
   it("place each ENV name of a shipped stage in exactly one list", () => {
     const stages = stageEnv(readFileSync(DOCKERFILE, "utf8"));
-    expect([...stages.keys()].sort()).toEqual([...SHIPPED, ...BUILD_ONLY].sort());
+    expect([...stages.keys()].sort()).toEqual([...SHIPPED, ...SERVICES, ...BUILD_ONLY].sort());
 
     const names = new Set(SHIPPED.flatMap((stage) => [...(stages.get(stage)?.keys() ?? [])]));
     expect([...names]).toEqual(

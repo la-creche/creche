@@ -55,7 +55,7 @@ use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
 use creche_wire::{
     DropError, DropRoute, DropSession, DropTarget, Dropped, FacadeState, FamilyName, FamilyShape,
-    OpenAcp, PerFlavor, SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
+    OpenAcp, PerFlavor, PerService, SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
 };
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::watch;
@@ -473,6 +473,7 @@ impl Test {
             digests: watch::channel(Digests {
                 kernel: empty,
                 roots: PerFlavor::every(|_| empty),
+                services: PerService::every(|_| Some(empty)),
             })
             .1,
             initramfs: empty,
@@ -828,7 +829,13 @@ fn each_flavor_boots_its_own_root_disk() {
                 other
             }
         });
-        config.digests = watch::channel(Digests { kernel, roots }).1;
+        let services = config.digests.borrow().services;
+        config.digests = watch::channel(Digests {
+            kernel,
+            roots,
+            services,
+        })
+        .1;
     });
     let shape = test.dir.join("families/chat/config/shape.json");
     for (index, flavor, digest) in [(0, "python", python), (1, "base", other)] {

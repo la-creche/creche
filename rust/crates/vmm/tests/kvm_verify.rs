@@ -23,7 +23,7 @@ use creche_vmm::config::{CH, CH_REMOTE, GUEST_INIT, IMAGE_ROOT, ZSTD};
 use creche_vmm::image_root::{DIGESTS_FILE, KERNEL_KEY};
 use creche_vmm::verify::{CH_VERSION, GUEST_INIT_STATIC, VMM};
 use creche_vmm_confine::slot_profile::CH_BINARY;
-use creche_wire::{PerFlavor, SandboxFlavor};
+use creche_wire::{PerFlavor, PerService, SandboxFlavor, ServiceImage};
 use serde_json::Value;
 
 /// The variable that names the files of the setup script.
@@ -78,9 +78,10 @@ impl Work {
         copy
     }
 
-    /// An image root of the kernel and one disk for each flavor, each a
-    /// `.zst` file of `bytes(key)`, and a `digests.json` that names the
-    /// SHA-256 of `named(key)`. Root owns each file.
+    /// An image root of the kernel and one disk for each flavor and each
+    /// service image, each a `.zst` file of `bytes(key)`, and a
+    /// `digests.json` that names the SHA-256 of `named(key)`. Root owns
+    /// each file.
     fn image_root(
         &self,
         bytes: impl Fn(&str) -> String,
@@ -137,11 +138,17 @@ fn sudo_chown_root(path: &Path) {
 }
 
 #[cfg(test)]
-/// `kernel` and the wire name of each flavor, the keys of `digests.json`.
+/// `kernel`, the wire name of each flavor and the wire name of each
+/// service image: the keys of `digests.json`.
 fn keys() -> Vec<&'static str> {
     std::iter::once(KERNEL_KEY)
         .chain(
             PerFlavor::every(SandboxFlavor::name)
+                .iter()
+                .map(|(_, &name)| name),
+        )
+        .chain(
+            PerService::every(ServiceImage::name)
                 .iter()
                 .map(|(_, &name)| name),
         )
@@ -322,4 +329,35 @@ fn kvm_check_images_fails_on_a_changed_disk() {
         detail.starts_with(&format!("{changed}.ext4.zst: the SHA-256 is ")),
         "{detail}"
     );
+}
+
+/// The disks verify hook stays strict on a service image: a root-owned
+/// `digests.json` with no browser entry fails the entry `browser`, and
+/// each other entry passes. The vmm start takes such a file (the module
+/// doc of `image_root`), so only this hook proves that a disks row ships
+/// the browser disk.
+#[test]
+#[ignore = "needs runner sudo for root-owned files: the job kvm runs it"]
+fn kvm_check_images_fails_without_a_service_image() {
+    let work = Work::new("absent");
+    let root = work.image_root(
+        |key| format!("the {key} bytes"),
+        |key| format!("the {key} bytes"),
+    );
+    let digests = root.join(DIGESTS_FILE);
+    let mut json: serde_json::Map<String, Value> =
+        serde_json::from_slice(&fs::read(&digests).unwrap()).unwrap();
+    let absent = ServiceImage::Browser.name();
+    json.remove(absent).unwrap();
+    fs::remove_file(&digests).unwrap();
+    fs::write(&digests, Value::Object(json).to_string()).unwrap();
+    sudo_chown_root(&digests);
+    let env_file = work.env_file(&[(IMAGE_ROOT, &root), (ZSTD, Path::new(ZSTD_PROGRAM))]);
+    let (output, report) = hook(
+        Path::new(env!("CARGO_BIN_EXE_vmm")),
+        "check-images",
+        &env_file,
+    );
+    assert_eq!(output.status.code(), Some(1), "{report}");
+    assert_eq!(names(&report, false), [absent], "{report}");
 }

@@ -103,7 +103,14 @@ from typing import Any
 import pytest
 import yaml
 from handover.artifacts import asset_names, disk_components, disk_files
-from handover.catalog import ARCHIVE_SUFFIX, BUNDLE_SUFFIX, DISK_FLAVORS, DISK_SUFFIX, Repo
+from handover.catalog import (
+    ARCHIVE_SUFFIX,
+    BUNDLE_SUFFIX,
+    DISK_FLAVORS,
+    DISK_SUFFIX,
+    SERVICE_IMAGES,
+    Repo,
+)
 from handover.discovery import read_one
 
 REPO = Path(__file__).resolve().parents[2]
@@ -1346,17 +1353,20 @@ def test_the_sign_job_names_the_assets_as_the_catalog_does() -> None:
 
 def test_the_disk_names_are_the_disk_flavors() -> None:
     """The workflow file names one root disk for each flavor of
-    `catalog.DISK_FLAVORS`, in the regex of the sign step and in the glob
-    of each cosign fetch, and no other (decision CH76 rule 7). The test
-    reads the text of the workflow, not the pins of this file."""
+    `catalog.DISK_FLAVORS` and for each service image of
+    `catalog.SERVICE_IMAGES`, in the regex of the sign step and in the glob
+    of each cosign fetch, and no other (decision CH76 rule 7, browser
+    design 10.5.2). The test reads the text of the workflow, not the pins
+    of this file."""
     sign = _step(RELEASE_JOBS, SIGN_JOB, SIGN_JOB)["run"]
     fetch = _step(RELEASE_JOBS, RELEASE_NAME, "cosign")["run"]
     disk_end = DISK_SUFFIX.replace(".", "[.]")
     in_regex = re.findall(rf"\|([a-z]+){re.escape(disk_end)}", sign)
     in_globs = [re.findall(rf"\|([a-z]+){re.escape(DISK_SUFFIX)}", text) for text in (sign, fetch)]
 
-    assert sorted(in_regex) == sorted(DISK_FLAVORS)
-    assert [sorted(one) for one in in_globs] == [sorted(DISK_FLAVORS)] * 2
+    disks = sorted((*DISK_FLAVORS, *SERVICE_IMAGES))
+    assert sorted(in_regex) == disks
+    assert [sorted(one) for one in in_globs] == [disks] * 2
 
 
 def test_the_digest_check_is_before_the_first_cosign_word() -> None:

@@ -141,8 +141,10 @@ This tree has no release of its own. The `disks` row ships what it builds
    `release.yml`. CI signs each file. Root installs each signed file and
    runs no build.
 3. Keep the flavor lists equal: the targets of `Dockerfile` are the
-   `bin/playpen-ci` list, and that list equals `FLAVORS` of
-   `disks/bin/playpen-release-disks` and `catalog.DISK_FLAVORS`.
+   `bin/playpen-ci` lists, the flavors then the services. `FLAVORS` equals
+   `FLAVORS` of `disks/bin/playpen-release-disks` and
+   `catalog.DISK_FLAVORS`. `SERVICES` equals `SERVICES` of that script and
+   `catalog.SERVICE_IMAGES`.
    `bin/tests/test_playpen_image.py` reads the Dockerfile as text, and
    `bin/tests/test_playpen_release_disks.py` holds the other lists equal.
    No test builds an image.
@@ -152,9 +154,62 @@ This tree has no release of its own. The `disks` row ships what it builds
 | File | Owns |
 |---|---|
 | `Dockerfile` | the image: the build stage and the flavors |
-| `bin/creche-env-write`, `bin/playpen-env-check` | `/etc/creche/env` in each flavor's last step, and the CI check that it equals the image config env and that an agent list holds each name |
-| `bin/playpen-ci` | the steps of the `playpen-image` CI job: build each flavor, then check it |
+| `bin/creche-env-write`, `bin/playpen-env-check` | `/etc/creche/env` in the last step of each flavor and service image, and the CI check that it equals the image config env. For a flavor, the check also places each name in an agent list. For a service image (kind `service`), it does not, because the image has no agent |
+| `bin/playpen-ci` | the steps of the `playpen-image` CI job: build each flavor and each service image, then check it |
 | `bin/playpen-rootfs` | the tar export of one flavor, the input of its root disk |
 | `bin/playpen-disk`, `disk/Dockerfile` | the root disk of one flavor from its tar, in the pinned trixie stage |
 | `bin/playpen-kernel` | the pinned CH guest kernel, compressed to ship like the disks |
 | `guest/creche_git_spool.py` | `creche-git-spool` of the coding flavor, the guest end of the git platform spool |
+| `guest/creche_browser_facade.py`, `guest/creche-chrome` | the facade and the Chrome wrapper of the browser service image |
+
+## The browser service image
+
+The target `service-browser` is the root disk `browser` of the disks row.
+It is not a family flavor: a family file cannot name it (contract 01
+§3.9). Its wire name is `ServiceImage::Browser`. The vmm boots it for the
+`browser` MCP upstream, so that Chrome runs with its own sandbox and on no
+host kernel. The private design note of the browser has the decisions.
+
+| Program | What it is |
+|---|---|
+| `/usr/local/bin/creche-facade` | `guest/creche_browser_facade.py`, at the facade path of guest init |
+| `/usr/local/bin/creche-chrome` | `guest/creche-chrome`: Google's Chrome with the egress proxy and no background traffic |
+| `/usr/local/bin/agent-browser` | the agent-browser release asset, at its GitHub digest |
+
+1. The base is `PYTHON_IMAGE`. Chrome is `google-chrome-stable` from
+   Google's signed apt repo, at build time. The build checks the
+   fingerprint of the signing key. A new Chrome stable reaches the host as
+   a new disks release.
+2. The setuid helper of Chrome loses its setuid bit. Chrome starts its
+   sandbox from user namespaces, which the guest kernel allows.
+3. Guest init starts the facade as root, as it starts the facade of a
+   family VM. The facade opens the local link at once and sends no line on
+   it. The stop line, or the end of the link, ends the facade, its
+   children and every process of the user `browser`.
+4. The facade listens on `RELAY_SOCKET`, where guest init joins each link
+   of guest port 1201. The first line of a link names it: `mcp` or `view`,
+   then LF, at most 16 bytes, within 10 s. Any other line closes the link.
+   At most 8 links of each kind are open.
+5. An `mcp` link runs `agent-browser mcp --tools core` as the user
+   `browser`, with the link as its stdin and stdout, and an env of its
+   own. Every link shares one browser, the default session of
+   agent-browser.
+6. A `view` link joins the link to the stream server of agent-browser on
+   guest `127.0.0.1:9223`, both ways, and reads no byte. The vmm filters
+   the view: the facade is no guard.
+7. The home of `browser` is a new directory on the guest tmpfs at each
+   start of the facade. No profile or cookie stays on any disk.
+
+The build runs Chrome and agent-browser once, and the facade outside
+guest init, which must exit with status 17. `bin/tests/
+test_playpen_browser_facade.py` holds the line rules, the paths that guest
+init shares and the flags of the wrapper.
+
+## Known gaps
+
+1. CONTRACT-QUESTION: CH49 rule 1 places each name of a flavor's
+   `/etc/creche/env` in one list of the agent. It says nothing about a
+   service image, which has no agent. The reading taken: the CH7-7
+   equality check applies to the browser image, and the agent list check
+   does not (`bin/playpen-env-check`, kind `service`). A rule that also
+   bound service images would need an env list of the browser facade.

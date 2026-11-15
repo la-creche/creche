@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CH_REV, CurrentImages};
 use creche_vmm_store::layout::{SnapshotGeneration, StateRoot};
-use creche_wire::{GUEST_INIT_PROTOCOL, PerFlavor, SandboxFlavor, SessionId};
+use creche_wire::{GUEST_INIT_PROTOCOL, PerFlavor, PerService, SandboxFlavor, SessionId};
 
 /// A session whose snapshot names an old root disk and initramfs.
 pub const OLD: &str = "0f8e2a4c-1b3d-4e5f-8a9b-0c1d2e3f4a5b";
@@ -112,6 +112,7 @@ impl Host {
             kernel,
             initramfs,
             roots,
+            services: PerService::every(|_| None),
         };
         Self {
             scratch,

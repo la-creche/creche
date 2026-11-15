@@ -274,15 +274,50 @@ user cannot write it. `image_root::read` runs these checks:
 4. No group or other write bit is set. The vmm does not read its group
    list, so any group write bit refuses.
 5. The file has at most `DIGESTS_CAP` (64 KiB) bytes, and it parses as
-   strict JSON (decision CH58 rule 4): the key `kernel` plus one key for
-   each value of the wire flavor enum `SandboxFlavor`, each `{"file",
-   "sha256"}`, and no other key. Each key comes once. A file is one file
-   name in the image root.
+   strict JSON (decision CH58 rule 4): the key `kernel`, one key for each
+   value of the wire flavor enum `SandboxFlavor` and at most one key for
+   each value of the wire enum `ServiceImage`, each `{"file", "sha256"}`,
+   and no other key. Each key comes once. A file is one file name in the
+   image root.
 
-The vmm holds no list of the flavors. `PerFlavor` of `creche-wire`
-holds one value for each value of `SandboxFlavor`, and its `get` gives
-the value of any flavor. So a new flavor of `creche-wire` needs no vmm
-change.
+The vmm holds no list of the flavors and no list of the service images.
+`PerFlavor` of `creche-wire` holds one value for each value of
+`SandboxFlavor`, and `PerService` holds one value for each value of
+`ServiceImage`. The `get` of each gives the value of any one value. So a
+new flavor or a new service image of `creche-wire` needs no vmm change.
+
+A service image is the root disk of a service VM, such as the browser
+(browser design 10.5.2). It is not a flavor: no family file can choose
+one. `Digests::services` holds the store digest of each service image,
+or `None` when `digests.json` has no entry for it. No VM boots one yet.
+A later service VM start refuses `None` with its own reason. The
+snapshot sweep keeps each digest in the store, as it keeps each root
+disk of a flavor.
+
+These rules hold for an entry of a service image:
+
+1. The vmm start and the digests follow take a `digests.json` with no
+   entry for a service image. They log one line that names each absent
+   service image. An unknown key, a key twice and a malformed entry still
+   refuse.
+2. The reason is the order of handover step 9: it keeps the unit, swaps
+   the tree, refreshes the unit, restarts it and verifies, one component
+   at a time. In a set with `vmm` and `disks`, the new vmm restarts while
+   the old `digests.json` is still live. A restore runs `disks` back
+   while the new vmm is live. A refusal at the start exits 78, and
+   `RestartPreventExitStatus=78` of `creche-vmm.service` keeps the vmm
+   down. `vmm verify` reads no disk, so no hook finds that fault.
+3. `vmm check-images`, the verify hook of the disks row, stays strict.
+   `ImageSet::check` fails each service image with no entry
+   (`EntryFault::Absent`). So a new disks row must ship each service
+   image.
+4. When a new `digests.json` names a service image, the follow imports
+   its disk and swaps the set, with no vmm restart.
+
+`src/image_root/tests.rs` proves rules 1 and 3 on the bytes,
+`src/image_root/follow/tests.rs` proves rules 1 and 4, and the ignored
+`kvm_check_images_fails_without_a_service_image` of `tests/kvm_verify.rs`
+proves rule 3 on a root-owned file.
 
 Each fault refuses the start, and `src/main.rs` exits 78. Then
 `ImageSet::import` copies each file into the digest store with

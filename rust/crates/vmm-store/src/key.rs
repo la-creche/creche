@@ -53,7 +53,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::Duration;
 
-use creche_wire::{FamilyShape, GUEST_INIT_PROTOCOL, PerFlavor};
+use creche_wire::{FamilyShape, GUEST_INIT_PROTOCOL, PerFlavor, PerService};
 use serde::{Deserialize, Serialize};
 
 use crate::ch_remote::output_until;
@@ -223,8 +223,9 @@ impl SnapshotKey {
 }
 
 /// The images of each new VM start of this vmm: the kernel, the guest
-/// init initramfs of this vmm start and the root disk of each flavor
-/// (decisions CH57 rule 1, CH62 rule 18). Snapshot retention drops a
+/// init initramfs of this vmm start, the root disk of each flavor
+/// (decisions CH57 rule 1, CH62 rule 18) and the root disk of each service
+/// image the host has (browser design 10.5.2). Snapshot retention drops a
 /// newest generation whose key names other images (`may_restore`), and
 /// image retention keeps each digest of the set.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,6 +236,10 @@ pub struct CurrentImages {
     pub initramfs: ImageDigest,
     /// The root disk of each flavor.
     pub roots: PerFlavor<ImageDigest>,
+    /// The root disk of each service image, or `None` when `digests.json`
+    /// names none. Image retention keeps each one. No snapshot key names
+    /// one, because no family VM boots a service image.
+    pub services: PerService<Option<ImageDigest>>,
 }
 
 impl CurrentImages {
@@ -243,6 +248,7 @@ impl CurrentImages {
     pub fn digests(&self) -> HashSet<ImageDigest> {
         let mut digests = HashSet::from([self.kernel, self.initramfs]);
         digests.extend(self.roots.iter().map(|(_, digest)| *digest));
+        digests.extend(self.services.iter().filter_map(|(_, digest)| *digest));
         digests
     }
 }

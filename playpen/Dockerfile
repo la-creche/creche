@@ -11,7 +11,7 @@
 # image installs them from the facade's lockfile, so the Flue pin is the one
 # that `facade/pnpm-lock.yaml` holds and no second copy exists.
 #
-# Three image targets and one build-only stage:
+# Four image targets and one build-only stage:
 #   agent-sandbox         every family
 #   agent-sandbox-python  the python flavor: pandas, numpy and matplotlib
 #                         for the analysis stack, plus the 3.12 test venv
@@ -20,6 +20,9 @@
 #   agent-sandbox-coding  the coding flavor of code and creche (CH7-1): the
 #                         python flavor plus uv, pnpm, cargo and the git
 #                         platform spool helper
+#   service-browser       not a family flavor: the root disk of the browser
+#                         service VM (ServiceImage::Browser), with Chrome,
+#                         agent-browser and creche-browser-facade
 #   creche-test-venv      build-only: it resolves uv.lock and installs the
 #                         test venv and the 3.12 interpreter. It ships in
 #                         no image. Only the coding flavor copies its uv
@@ -356,3 +359,75 @@ ENV CRECHE_TOOL_HTTPS_PROXY=http://127.0.0.1:3128
 RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
     sh /run/creche-env-write CRECHE_TOOL_HTTPS_PROXY HOME MPLBACKEND MPLCONFIGDIR NODE_ENV \
        NODE_VERSION PATH TMPDIR YARN_VERSION > /etc/creche/env
+
+# --- service-browser: the root disk of the browser service VM ---------------
+# Not a family flavor: `ServiceImage::Browser` of the wire, `browser` of the
+# disks row (browser design note, section 10). The vmm boots it for the
+# `browser` MCP upstream. Guest init starts creche-browser-facade at the
+# facade path, and the facade runs agent-browser and Chrome as the user
+# `browser`, with Chrome's own sandbox on. The guest has no network device:
+# Chrome reaches the web only through the egress row, guest 127.0.0.1:3128,
+# and the vmm checks each name there.
+FROM ${PYTHON_IMAGE} AS service-browser
+ARG AGENT_BROWSER_VERSION=0.43.0
+ARG AGENT_BROWSER_SHA256=8e69c9fb662514c9cf36e4911e94e913742ba066e55102486350e049dd847612
+# The fingerprint of Google's Linux package signing key. A key with any
+# other fingerprint fails the build.
+ARG GOOGLE_SIGNER_FPR=EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796
+
+# Chrome comes from Google's signed apt repo at BUILD time. Chrome for
+# Testing publishes no sha256 (decision B5), so a new Chrome stable reaches
+# the host as a new disks release (decision V3).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg procps \
+    && curl -fsSL -o /tmp/google.pub https://dl.google.com/linux/linux_signing_key.pub \
+    && gpg --show-keys --with-colons /tmp/google.pub | grep -qx "fpr:::::::::${GOOGLE_SIGNER_FPR}:" \
+    && install -d -m 0755 /etc/apt/keyrings \
+    && gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg /tmp/google.pub \
+    && rm -f /tmp/google.pub \
+    && echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main' \
+       > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
+    && apt-get purge -y gnupg && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# Chrome starts its sandbox from user namespaces alone. The setuid helper
+# goes, so no setuid file of Chrome stays in the image.
+RUN chmod u-s /opt/google/chrome/chrome-sandbox
+
+# agent-browser, the bare release asset at its GitHub digest.
+RUN curl -fsSL -o /usr/local/bin/agent-browser \
+      "https://github.com/vercel-labs/agent-browser/releases/download/v${AGENT_BROWSER_VERSION}/agent-browser-linux-x64" \
+    && echo "${AGENT_BROWSER_SHA256}  /usr/local/bin/agent-browser" | sha256sum -c - \
+    && chmod 0755 /usr/local/bin/agent-browser
+
+# The mount points of guest init, as the agent-sandbox stage makes them
+# (CH62 rules 4 and 5, CH81 rule 1). playpen-disk reads them back.
+RUN mkdir -p -m 0755 /var/lib/creche/session \
+    && for dir in /tmp /run /root /var/cache /var/tmp; do \
+         [ -d "$dir" ] || { echo "no mount point $dir" >&2; exit 1; }; \
+       done
+
+# The user of agent-browser and Chrome. Its home is made fresh on the guest
+# tmpfs at each start (decision V4), so the root disk holds none.
+RUN useradd --system --user-group --no-create-home --home-dir /nonexistent \
+      --shell /usr/sbin/nologin browser
+
+# The facade at the facade path of guest init, and the Chrome wrapper. The
+# mode is set by chmod, not by a COPY flag: the bundles test of handover
+# reads each COPY word as a copied path.
+COPY playpen/guest/creche_browser_facade.py /usr/local/bin/creche-facade
+COPY playpen/guest/creche-chrome /usr/local/bin/creche-chrome
+RUN chmod 0755 /usr/local/bin/creche-facade /usr/local/bin/creche-chrome
+
+# Fail the BUILD, not the first boot: Chrome and agent-browser start, and
+# the facade refuses to run outside guest init.
+RUN google-chrome-stable --version && agent-browser --version
+RUN status=0; /usr/local/bin/creche-facade 2>/dev/null || status=$?; \
+    [ "$status" -eq 17 ] || { echo "creche-facade: exit $status, want 17" >&2; exit 1; }
+
+# The image env for guest init (CH7-7, CH49). This RUN stays the last step.
+RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
+    mkdir -p /etc/creche \
+    && sh /run/creche-env-write GPG_KEY LANG PATH PYTHON_SHA256 PYTHON_VERSION \
+       > /etc/creche/env
