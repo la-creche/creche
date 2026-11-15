@@ -1,0 +1,33 @@
+name = "forgejo-code"
+identity = "Access token of the code bot on the Forgejo host. Its repository list excludes creche, registry and mcp."
+
+# A release asset of a Forgejo host. The pin is the pin of `github-release`,
+# and `install.host` names the host that serves the asset.
+install.source = "forge-release"
+install.host = "git.b4mad.industries"
+install.repo = "agentic-forges/forgejo-mcp"
+install.version = "3.4.1"
+install.asset = "forgejo-mcp_3.4.1_linux_amd64.tar.gz"
+install.sha256 = "940d3ed08a5535bf1baaf426cb93610cfef5ad02adbda76b7c70a618f08fa53c"
+
+run.entrypoint = "forgejo-mcp"
+run.args = ["--transport", "stdio"]
+
+run.env.FORGEJO_URL = "https://forge.example.org"
+run.env.FORGEJO_ACCESS_TOKEN = "secret:forgejo_token_code"
+
+arg_denies = [
+    # The same fence as `github-code`: the token of the code bot reaches no
+    # platform repository.
+    { tools = "all", arg = "owner/repo", values = ["example-owner/creche", "example-owner/registry", "example-owner/mcp"] },
+]
+
+tools = [
+    { name = "get_file_content", description = "Read one file at a ref.", write = false },
+    { name = "list_branches", description = "List the branches of a repository.", write = false },
+    { name = "list_repo_issues", description = "List the issues of a repository.", write = false },
+    { name = "list_repo_pull_requests", description = "List the pull requests of a repository.", write = false },
+    { name = "create_branch", description = "Create a branch from another branch.", write = true },
+    { name = "create_pull_request", description = "Open a pull request.", write = true },
+    { name = "create_issue_comment", description = "Comment on an issue.", write = true },
+]

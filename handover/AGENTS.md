@@ -762,6 +762,18 @@ other reader of the file.
    the field, and never the value.
 7. `SERVER_FILE_NAME` and `SERVER_FILE_NAME_YAML` hold the two names. Write
    no other copy of a name.
+8. `install.source` has four values: `pypi`, `github-release`,
+   `forge-release` and `agent-mcp`. A `forge-release` pin has the fields
+   of a `github-release` pin and one more, `host`. The build of the two
+   sources is one path (`ASSET_SOURCES`). Only the host of the URL
+   differs: `CODE_HOST` for `github-release`, and `host` for
+   `forge-release`.
+9. `host` is a DNS name in lower case, with two labels at least and 253
+   characters at most. Its last label starts with a letter. Root refuses
+   a scheme, a port, a path, a user, an IP address and `github.com`
+   (`HOST_RE`, rule 17 of `mcpserver.py`).
+10. Release `handover` before the first server file says
+    `forge-release`. An older executor refuses that file.
 
 ## An `mcp-servers` release
 
@@ -884,6 +896,11 @@ that wants a refusal changes one field.
   that is no failed hook still stops the restore at its component
   (`executor/steps.py`).
 - `arg_allows` is applied by nothing (`mcpserver.py`).
+- Contract 01b §3 names no `forge-release` source and no `host` field.
+  Root takes the strict reading: a DNS name in lower case, no name of one
+  label, no end dot, and no list of allowed hosts. The file that names
+  the host is the file that the operator reviews (`mcpserver.py`,
+  `HOST_RE`).
 - Contract 06 §3 names `chaperone` as the owner of `pep-grant`. The
   manifest of the Rust `chaperone` provides no contract. Each floor on
   `pep-grant` is then a line `not verified`, and not a refusal
