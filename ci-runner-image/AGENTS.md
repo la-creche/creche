@@ -25,8 +25,10 @@ PR 6).
    `SHA256SUMS` of that release. It pins `forgejo-runner` v13.2.1 and Node
    by URL and SHA-256 too. A download with another SHA-256 stops the
    build.
-2. The script converts the image to a raw file and attaches the file to a
-   loop device. It mounts the root and `/boot` of the image and installs
+2. The script converts the image to a raw file. It grows the file by
+   2 GiB, and grows the root partition and its file system into that
+   space. The root of the cloud image has too little free space for the
+   packages. It attaches the file to a loop device. It mounts the root and `/boot` of the image and installs
    the packages in a chroot. It then converts the raw file back to qcow2.
    No VM boots during the build, so the build runs beside the CH build.
 3. apt reads the Ubuntu snapshot `APT_SNAPSHOT`. A rebuild then gets the
@@ -46,7 +48,7 @@ PR 6).
 ## The data disk
 
 The data disk holds the storage of Docker and containerd and the job
-workspaces. The root of the image is 3.5 GB, and a Docker build fills it
+workspaces. The root of the image is 5.5 GB, and a Docker build fills it
 (design section 4.3, rule 7).
 
 1. The host gives the data disk the virtio serial `ci-data`. The guest

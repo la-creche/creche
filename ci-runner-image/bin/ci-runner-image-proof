@@ -8,7 +8,8 @@
 # runner (CH36 G20), so it refuses to run outside GitHub Actions.
 #
 # The steps:
-#   1. It installs qemu-utils, mtools, dosfstools and musl-tools from apt,
+#   1. It installs qemu-utils, cloud-guest-utils, mtools, dosfstools and
+#      musl-tools from apt,
 #      and the pinned Rust toolchain with the musl target.
 #   2. It starts the build of CH in the background: the 13 words of
 #      bin/lib/chbuild.sh, the build of the vmm row (decision CH75). The
@@ -86,9 +87,9 @@ mkdir -p "$dir/run"
 run=$dir/run
 say "$(nproc) CPUs"
 
-say "install qemu-utils, mtools, dosfstools, musl-tools and the $MUSL target"
+say "install the tools from apt and the $MUSL target"
 (sudo apt-get update -qq && sudo apt-get install --yes --no-install-recommends -qq \
-  qemu-utils mtools dosfstools musl-tools) &
+  qemu-utils cloud-guest-utils mtools dosfstools musl-tools) &
 apt_pid=$!
 (
   cd "$REPO/rust"

@@ -7,7 +7,7 @@
 #    file system (`x-systemd.makefs`). The disk is a new sparse file for
 #    each job, so each boot is a first boot.
 # 2. No `nofail`: a VM with no data disk does not reach local-fs.target.
-#    It does not start Docker on the 3.5 GB root.
+#    It does not start Docker on the small root.
 # 3. ci-data-dirs.service makes the two directories on the data disk
 #    before the two bind mounts.
 /dev/disk/by-id/virtio-ci-data /var/lib/ci-data ext4 defaults,x-systemd.makefs,x-systemd.device-timeout=30s 0 0
