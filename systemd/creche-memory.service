@@ -58,9 +58,41 @@ KillSignal=SIGTERM
 # loop to end, then for the close. 60 s covers that with a margin for a
 # slower disk and a larger WAL. The journal prints the time of each close.
 TimeoutStopSec=60
-# The store and Cognee's tree. The spike did not measure the memory use, so
-# this is a first limit, to tune after the first full sync.
-MemoryMax=2G
+# THE MEMORY. The kernel OOM killer picks the largest process of the unit,
+# and that is the graph worker. A kill inside a checkpoint can leave a dead
+# graph (memory/AGENTS.md, known gap 4). So the unit must never live at its
+# hard limit.
+#
+# Measured on the host on 2026-11-15 at 01:05 UTC, 3 h and 3 syncs after a
+# start, with the first limit MemoryMax=2G:
+#
+# | Process          | RAM      | Swap     |
+# |------------------|----------|----------|
+# | main             | 0.24 GiB | 0.49 GiB |
+# | graph worker     | 1.15 GiB | 1.15 GiB |
+# | vector worker    | 0.70 GiB | 0.40 GiB |
+# | resource tracker | 0.01 GiB | 0.01 GiB |
+#
+# The unit sat at 2.0 GiB of 2.0 GiB, with 2.2 GiB in swap. `memory.events`
+# counted 12,567 `max` events and 0 `oom_kill`. The graph file is 262 MiB.
+# Of the graph worker's 2.3 GiB, only 0.17 GiB is in ladybug's buffer pool.
+# The rest is anonymous heap. Swap peaks of earlier runs, each with a memory
+# peak at the 2.0 GiB limit: 4.6 GiB, 4.9 GiB (18 h, 7 syncs, 2026-11-14),
+# and 6.8 GiB (the failing sync loop of 2026-11-09). The host has 128 GiB of
+# RAM and 8 GiB of swap for everything.
+#
+# So the footprint is 4.2 to 8.8 GiB, and it grows over a run.
+# MemoryHigh=8G is the warning: above it the kernel throttles and reclaims,
+# and kills nothing. Each crossing adds to `high` in the cgroup's
+# `memory.events`, and the syncs get slower. MemoryMax=12G is the kill. The
+# 4 GiB between them is the time to see the warning and stop the unit with a
+# SIGTERM, which checkpoints and closes the graph ("The stop"). No watcher
+# reads `high` yet (known gap 4).
+# MemorySwapMax=2G keeps the unit from filling the host's swap: a runaway
+# then ends in this unit's own OOM, not a host-wide one.
+MemoryHigh=8G
+MemoryMax=12G
+MemorySwapMax=2G
 
 # A user unit on this host cannot use mount-namespace options
 # (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
