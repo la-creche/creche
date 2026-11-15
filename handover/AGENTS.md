@@ -548,10 +548,11 @@ Kind.BINARY, Releases.YES)` (CH7-5, CH9, item 12 (1)). Its manifest is
    the four programs, the version that CH prints and a static guest-init.
    It opens no socket and reads no disk (CH76 rule 2). `bin/fleet-up up`
    writes `vmm.env` (CH59 rule 1). The file must exist before the first
-   vmm release. When the vmm manifest has an `env` table, a release also
-   adds each absent key of the table to `vmm.env` ("The env fill"). A later
-   PR adds that table, after a host installs the `handover` that reads
-   it.
+   vmm release. The `env` table of the vmm manifest lists each key of
+   `vmm.env`, so a release also adds each absent key to the file ("The env
+   fill"). `bin/tests/test_vmm_manifest.py` holds the table equal to
+   `rust/crates/vmm/src/config.rs` and to the `VMM_KEYS` of
+   `bin/fleet-up`.
 5. The manifest requires `family-file` 0.19. Minor 16 is the first with
    the reach files that the vmm reads (CH76 rule 3), minor 17 adds the
    flavor `coding` (CH79 rule 1), minor 18 drops `files` (CH10-10), and

@@ -2054,9 +2054,14 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
    and reads no byte.
 10. Decision CH59 rule 1: the vmm reads `VMM_EGRESS_LOG` (plan PR E2),
     `VMM_MIRROR_ROOT` and `VMM_GIT_PROGRAM` (plan PR M1), and
-    `VMM_GIT_SPOOL_ROOT` (decision CH3), so the `vmm.env` that
-    `bin/fleet-up up` writes must hold them before this vmm starts on a
-    host, or the start exits 78. Root must own the file
+    `VMM_GIT_SPOOL_ROOT` (decision CH3), so `vmm.env` must hold them
+    before this vmm starts on a host, or the start exits 78. The `env`
+    table of `rust/component.toml` lists each key, so a release adds each
+    absent key before the switch (`handover/AGENTS.md`, "The env fill").
+    `bin/fleet-up up` writes the file first on a new host. A new key of
+    `src/config.rs` goes into that table and into the `VMM_KEYS` of
+    `bin/fleet-up` in the same PR, and `bin/tests/test_vmm_manifest.py`
+    holds the three lists equal. Root must own the file
     of `VMM_GIT_PROGRAM` (`/usr/bin/git` of Ubuntu). The hard
     `RLIMIT_NOFILE` of the user unit must hold 128128 (decision CH67
     rule 4, plan risk 3).
