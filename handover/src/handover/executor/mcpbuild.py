@@ -703,7 +703,7 @@ class McpBuilder:
     def _place_binary(self, server: ServerFile, unpacked: Path, new: Path) -> None:
         """A release asset ships a binary, not a venv. Put it where the PEP
         resolves it: `/opt/mcp/<name>/bin/<entrypoint>`."""
-        found = _find_entrypoint(unpacked, server.entrypoint)
+        found = _find_entrypoint(unpacked, server.entrypoint, str(server.pin.asset))
         if found is None:
             raise _refuse(server.name, f"the asset holds no {safe_token(server.entrypoint)}")
 
@@ -1023,10 +1023,48 @@ def _pins(line: str, requirement: str) -> bool:
     return not rest or rest.startswith(PIN_ENDINGS)
 
 
-def _find_entrypoint(unpacked: Path, entrypoint: str) -> Path | None:
-    """The binary at the top of the asset, or under its `bin/`. Two places
-    and no walk: a search would find a file the archive chose the name of."""
-    for candidate in (unpacked / entrypoint, unpacked / "bin" / entrypoint):
+# CONTRACT-QUESTION: contract 01b §3.2 does not say where the program sits
+# in an unpacked asset. Root reads four places and walks no tree: the top,
+# `bin/`, and the same two below the folder named after the asset
+# (`_find_entrypoint`). A fifth place costs one candidate here and one test
+# in `tests/test_handover_r7f_mcp_build.py`.
+#: The archive suffixes of a release asset that `unpack.ASSET_MODE` reads.
+#: `handover` runs on Python 3.14 or newer, whose `tarfile` reads zstd too.
+#: A name with another suffix has no asset folder.
+ARCHIVE_SUFFIXES: Final = (".tar.gz", ".tgz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tar")
+
+
+def _asset_folder(asset: str) -> str | None:
+    """The asset name without its archive suffix, or None for a name with
+    no suffix of `ARCHIVE_SUFFIXES`.
+
+    Example: `forgejo-mcp_3.4.1_linux_amd64.tar.gz` gives
+    `forgejo-mcp_3.4.1_linux_amd64`, the folder at the top of that asset.
+    `ASSET_RE` starts the name with a letter or a digit and holds no `/`,
+    so the result is one plain path segment and never `.` or `..`.
+    """
+    for suffix in ARCHIVE_SUFFIXES:
+        if asset.endswith(suffix) and len(asset) > len(suffix):
+            return asset.removesuffix(suffix)
+
+    return None
+
+
+def _find_entrypoint(unpacked: Path, entrypoint: str, asset: str) -> Path | None:
+    """The binary at the top of the asset, or under its `bin/`. Then the same
+    two places below the asset folder (`_asset_folder`), for an archive that
+    packs its files in one folder named after the asset.
+
+    Four places and no walk: a search would find a file the archive chose
+    the name of. The server file pins the asset name, and its sha256 pins
+    the bytes, so the file and not the archive names the folder.
+    """
+    candidates = [unpacked / entrypoint, unpacked / "bin" / entrypoint]
+    folder = _asset_folder(asset)
+    if folder is not None:
+        candidates += [unpacked / folder / entrypoint, unpacked / folder / "bin" / entrypoint]
+
+    for candidate in candidates:
         if candidate.is_file() and not candidate.is_symlink():
             return candidate
 
