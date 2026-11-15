@@ -413,8 +413,14 @@ def test_a_write_to_a_skipped_folder_neither_syncs_nor_spins(
     )
     counted.request()
     stop = threading.Event()
-    threading.Timer(0.3, stop.set).start()
-    threading.Timer(0.3, counted.request).start()
+
+    # One timer, the stop first: with two timers, a request that came first
+    # started one more check, and the count was 4 in about 1 run in 8.
+    def end() -> None:
+        stop.set()
+        counted.request()
+
+    threading.Timer(0.3, end).start()
     asyncio.run(counted.run(stop))
 
     assert len(ingests.calls) == 2

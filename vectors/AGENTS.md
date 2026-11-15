@@ -318,15 +318,12 @@ did not.
 - One token reader is a private function: `_read_token` of
   `attendance.auth`. A `runtime.token` surface calls its public caller,
   `TokenBook.load`.
-- No vector covers `_read_token` of `agent_door_trigger.config`. It was a
-  copy of the reader that the frozen file `runtime/token.door.json` holds.
-- No surface covers `read_api` of `attendance.owui_copy`, which reads the
-  key of Open WebUI. It reads UTF-8 text, removes the whitespace of Python
-  `str.strip` from the two ends and has no least count of bytes.
+- No vector covers `_read_token` of `agent_door_trigger.config`.
 - `_bearer` of `noticeboard.sessions.SessionReader` reads the token that the
   noticeboard sends to `attendance`. It has no public entry point.
   `noticeboard.sessions.token` covers it through one call of the reader. It
-  has the two rules of `read_api`. That surface holds files of mode 0600.
+  reads UTF-8 text and removes the whitespace of Python `str.strip` from
+  the two ends. That surface holds files of mode 0600.
   A token there has 43 ASCII characters, with nothing before it and with
   one line feed or nothing after it. No vector covers another mode, a
   shorter token, a token between spaces or a token with a character

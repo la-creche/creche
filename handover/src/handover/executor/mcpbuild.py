@@ -128,7 +128,7 @@ own module.
     |---|---|---|
     | `/opt/mcp` | every `mcp-<name>`, for ever | The release succeeds and no server can start. |
     | the staging tree | the `uv pip install` child | The `pypi` build fails at step 8. |
-    | the `agent-mcp` checkout | the `uv sync` child | The `agent-mcp` build fails at step 8. |
+    | the `mcp` checkout | the `uv sync` child | The `agent-mcp` build fails at step 8. |
     | `<name>.new` | the PEP, at every start | The server cannot exec its entrypoint. |
 
     `install.normalize_modes` is the rule, `normalize_dir` its
@@ -286,7 +286,7 @@ class Fetched:
     """Everything this release already has on disk, and the tag it deploys.
 
     `registry` holds the server declarations AND their committed closures
-    (contract 01b §3.4). `tree` is the `agent-mcp` checkout root fetched at
+    (contract 01b §3.4). `tree` is the `mcp` checkout root fetched at
     the approved SHA. `tag` is what the phone showed, and assumption 9 is
     about a `source: agent-mcp` server's `ref` agreeing with it: root
     fetches nothing after the tap.
@@ -359,7 +359,7 @@ class McpBuilder:
     ) -> tuple[ServerBuild, ...]:
         """Build every server's `<name>.new`. Assumption 10: it swaps none.
 
-        `source` is the `agent-mcp` checkout this release already fetched at
+        `source` is the `mcp` checkout this release already fetched at
         the approved SHA, with the tag it was fetched at. A
         `source: agent-mcp` server installs from that tree and from nowhere
         else, and names no tag of its own (assumption 9).

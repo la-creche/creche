@@ -317,7 +317,14 @@ left one. So the stop never ends the graph worker in a statement.
    No new statement reaches the graph worker. The worker ends the statement
    that it runs now. A task that still runs 10 s after its cancel can still
    send a statement or a checkpoint. Then the stop writes nothing, as in
-   step 4, and ends the process at once (`os._exit`). A normal exit hangs
+   step 4. It shuts down the executor of Cognee's graph adapter: each later
+   statement of the task raises before it reaches the worker, and the stop
+   waits for each statement that the worker runs. Then it ends the process
+   at once (`os._exit`). The exit ends the worker at once, by
+   `PR_SET_PDEATHSIG` on Linux and by Cognee's parent watchdog on macOS.
+   Before the wait, an exit in a checkpoint of the task left a `.shadow`
+   and a `.wal.checkpoint`, and the next open crashed or failed in 3 of 16
+   stops on Linux on 2026-11-14. A normal exit hangs
    on Linux: Cognee's graph worker sets `PR_SET_PDEATHSIG`, so the end of
    the loop thread kills it, and Cognee starts a new worker that the exit
    waits on.
@@ -340,7 +347,7 @@ left one. So the stop never ends the graph worker in a statement.
    systemd kills a `pdftext.py` child that still runs after the main process
    exits. The child only reads.
 9. The stop waits at most 10 s for the tasks of the loop, then for the
-   close, with no deadline of its own. `TimeoutStopSec=60` bounds it. On
+   close or the drain of step 3, with no deadline of its own. `TimeoutStopSec=60` bounds it. On
    2026-11-13 the close took 1.1 to 2.3 s and the whole stop 1.9 to 3.1 s,
    with a graph of 110 to 185 MiB and statements of 200,000 rows.
 

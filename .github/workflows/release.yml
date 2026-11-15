@@ -94,12 +94,12 @@
 # repository, this workflow file and the commit. A run with no archive and
 # no disk file writes no record. A run that tags `disks` writes four.
 #
-# agent-mcp has a SIBLING of the `release` job, in its own
+# The mcp repository has a SIBLING of the `release` job, in its own
 # rework-component-tags.yml. `mcp-servers` is its component, not
 # creche's (contract 06 §1 row 6), and the planner scopes every
 # decision to one repository, so this run never tags it. That workflow
 # checks creche out at a pinned commit and runs the same script
-# against agent-mcp's tree.
+# against the mcp tree.
 #
 # `workflow_dispatch` starts the same run by hand, for a commit a missed run
 # left behind. Read the plan first, from any checkout:
@@ -328,7 +328,7 @@ jobs:
   # The job runs the suite with the pytest command that
   # integration/AGENTS.md tells a person to run. integration/tests held a
   # second suite until the session API left attendance (phase 2 plan, row
-  # 21). Its stand-in for `sbx` left at the Cloud Hypervisor cut.
+  # 21). Its stand-in for the old playpen left at the Cloud Hypervisor cut.
   #
   # A test of the suite can skip itself, and a run in which every test
   # skips is green and judged nothing. The suite reads no switch that makes
