@@ -44,6 +44,7 @@
 //! Caller duty: lifecycle runs `check_cloud_hypervisor` at the vmm start
 //! (`vmm/src/compose.rs`).
 
+use std::collections::HashSet;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -52,7 +53,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::Duration;
 
-use creche_wire::{FamilyShape, GUEST_INIT_PROTOCOL};
+use creche_wire::{FamilyShape, GUEST_INIT_PROTOCOL, PerFlavor};
 use serde::{Deserialize, Serialize};
 
 use crate::ch_remote::output_until;
@@ -221,6 +222,31 @@ impl SnapshotKey {
     }
 }
 
+/// The images of each new VM start of this vmm: the kernel, the guest
+/// init initramfs of this vmm start and the root disk of each flavor
+/// (decisions CH57 rule 1, CH62 rule 18). Snapshot retention drops a
+/// newest generation whose key names other images (`may_restore`), and
+/// image retention keeps each digest of the set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CurrentImages {
+    /// The guest kernel. Every flavor boots it.
+    pub kernel: ImageDigest,
+    /// The guest init initramfs.
+    pub initramfs: ImageDigest,
+    /// The root disk of each flavor.
+    pub roots: PerFlavor<ImageDigest>,
+}
+
+impl CurrentImages {
+    /// Each digest of the set, for the mark of image retention.
+    #[must_use]
+    pub fn digests(&self) -> HashSet<ImageDigest> {
+        let mut digests = HashSet::from([self.kernel, self.initramfs]);
+        digests.extend(self.roots.iter().map(|(_, digest)| *digest));
+        digests
+    }
+}
+
 /// A failed write, read or remove under the snapshots of a session.
 #[derive(Debug)]
 pub struct KeyError {
@@ -373,6 +399,33 @@ fn read_key(path: &Path) -> Result<Option<KeyFile>, KeyError> {
         return Ok(None);
     };
     Ok(serde_json::from_slice(&text).ok())
+}
+
+/// False when the key in `path` can never equal a key of this vmm:
+/// the key does not read, or it names another CH rev, kernel, guest init
+/// initramfs or guest init protocol, or a root disk that is not the
+/// current one of its flavor. `check_newest` then drops the generation at
+/// the next start of its session (decision CH7-6). The family shape is not
+/// read here: a shape change still drops the generation at that start.
+///
+/// # Errors
+///
+/// A failed read of the key file, as for `check_newest`. The caller then
+/// keeps the generation.
+pub(crate) fn may_restore(path: &Path, current: &CurrentImages) -> Result<bool, KeyError> {
+    let Some(key) = read_key(path)? else {
+        return Ok(false);
+    };
+    let root = current
+        .roots
+        .iter()
+        .find(|(flavor, _)| flavor.name() == key.flavor)
+        .map(|(_, digest)| digest.to_string());
+    Ok(key.ch_rev == CH_REV
+        && key.guest_init_protocol == GUEST_INIT_PROTOCOL
+        && key.kernel == current.kernel.to_string()
+        && key.initramfs == current.initramfs.to_string()
+        && root.is_some_and(|root| key.root_disk == root))
 }
 
 /// Reads the three image digests of one strict snapshot key. Image

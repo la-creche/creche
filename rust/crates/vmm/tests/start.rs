@@ -1362,6 +1362,21 @@ fn the_sweep_skips_a_snapshot_in_use() {
     assert!(!dir.exists());
 }
 
+/// The sweep drops a snapshot whose key names another CH rev: no start
+/// restores it (decision CH7-6), and its key would keep its images in
+/// the store. A snapshot with the key of the current images stays.
+#[test]
+fn the_sweep_drops_a_snapshot_with_a_stale_key() {
+    let test = Test::new("sweep-stale", |_| {});
+    let stale = test.snapshot(0, None);
+    let kept = test.snapshot(1, Some(&test.key()));
+    let swept = test.runtime.block_on(test.hook.sweep()).unwrap();
+    let reasons: Vec<Reason> = swept.dropped.iter().map(|each| each.reason).collect();
+    assert_eq!(reasons, [Reason::Stale]);
+    assert!(!stale.exists());
+    assert!(kept.is_dir());
+}
+
 /// The sweep reads the budget of `StartConfig`, the key
 /// `VMM_SNAPSHOT_BUDGET_GIB` (gap G14). A budget of 1 byte drops a keyed
 /// generation that `BUDGET` keeps.

@@ -41,7 +41,18 @@ The second file has the table of the three vmm crates.
   key before it removes a store pair. A failed mark removes nothing. The
   sweep checks an exact digest file and its identity. It removes the
   identity first, syncs the store, removes the image and syncs the store.
-  Unknown names and incomplete or bad pairs stay.
+  It also removes the leftovers: an identity of an unmarked digest with
+  no image, an import temp file `<sha256>.tmp` and an identity temp file
+  `.<sha256>.identity.<pid>.<n>.tmp`. The caller holds the image write
+  gate, so no import or identity write runs. Unknown names, an orphan
+  identity of a marked digest, and incomplete or bad pairs stay. `plan`
+  runs the mark and the scan, skips the keys of the generations that its
+  caller names, runs no `ImageStore::check` and removes nothing.
+- `layout.rs`: `StateRoot::lock` and `StateRoot::try_lock` take an
+  exclusive `flock` of the state root dir. `vmm serve` holds it while it
+  runs, and `vmm gc --apply` while it removes. The lock adds no file to
+  the layout of decision CH39 rule 3, and the kernel frees it when its
+  holder exits.
 - Decision CH44 rule 3 (PR D8, `ch_remote.rs`): the timeout of a
   `ch-remote` call comes from its caller. This crate names no value. A
   pause takes about 4 ms (fact 72) and a 16 GiB snapshot about 12 s
@@ -107,12 +118,16 @@ The second file has the table of the three vmm crates.
 - Decisions CH2, CH8-7, CH36 G13, CH44 rule 6 and CH50 rules 7 and 8
   (PR D13, `retention.rs`): `sweep` removes leftover `<n>.retired` dirs,
   every generation but the newest of a session, the newest one when a
-  claim consumed it, the newest one past `MAX_AGE` (7 days from the
+  claim consumed it, the newest one whose key can never restore
+  (`key::may_restore`: a key that does not read, or another CH rev,
+  kernel, initramfs, guest init protocol or root disk of its flavor than
+  `CurrentImages`), the newest one past `MAX_AGE` (7 days from the
   take, the mtime of `memory-ranges`), and then the oldest first while
   the allocated bytes (`st_blocks`) pass the budget. It never removes a
   session disk or a generation in use. It never removes a generation
   while an older one of the session stays, so an older one never becomes
-  the newest.
+  the newest. A failed read of a key keeps its generation. `plan` runs
+  the same steps and removes nothing.
 - Decisions CH27 and CH21-10 (PR D14, `remove.rs`): `remove_session`
   removes the generations oldest first, then the session dir, then the
   row last. The row-last order comes from the plan entry of D14, not

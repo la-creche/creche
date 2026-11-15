@@ -308,6 +308,17 @@ impl ImageSet {
         })
     }
 
+    /// The digest of the kernel and of each root disk as the file names
+    /// them, with no import and no read of a disk: the set of new starts
+    /// once these entries import. `vmm gc` keeps it.
+    #[must_use]
+    pub fn digests(&self) -> Digests {
+        Digests {
+            kernel: self.manifest.kernel.sha256.0,
+            roots: PerFlavor::every(|flavor| self.manifest.roots.get(flavor).sha256.0),
+        }
+    }
+
     /// Hashes the kernel and each root disk with `hash_source` of the
     /// store, one file at a time, and compares each digest with its entry
     /// (decision CH76 rule 6). `zstd` decompresses a `.zst` file. It

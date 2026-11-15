@@ -3,7 +3,10 @@
 //!
 //! 1. `shutdown::sigterm` registers the handler of SIGTERM, inside the
 //!    runtime and before any other step (caller duty 8 of `AGENTS.md`).
-//! 2. In `spawn_blocking`: `leftovers::stop_all` stops each VM scope of an
+//! 2. In `spawn_blocking`: `StateRoot::lock` takes the state root lock,
+//!    and waits while `vmm gc --apply` holds it. The vmm holds it until it
+//!    exits, so gc never removes beside a running vmm. Then
+//!    `leftovers::stop_all` stops each VM scope of an
 //!    earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
 //!    `root_owned::check_program` checks the files of `VMM_CH_PROGRAM`,
 //!    `VMM_CH_REMOTE_PROGRAM` and `VMM_GIT_PROGRAM` before any run of one
@@ -56,6 +59,7 @@ use creche_vmm_confine::vmm_unit::VmmUnit;
 use creche_vmm_store::ch_remote::ChRemote;
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{ChVersionError, CheckedCh, check_cloud_hypervisor};
+use creche_vmm_store::layout::{StateLock, StateRoot};
 use creche_vmm_store::rows::{LoadError, Rows};
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::snapshot::Snapshotter;
@@ -104,6 +108,8 @@ pub(crate) const VERSION_WAIT: Duration = Duration::from_secs(10);
 pub enum StartError {
     /// The handler of SIGTERM did not register.
     Sigterm(io::Error),
+    /// The state root lock failed (`StateRoot::lock`).
+    StateLock(io::Error),
     /// The leftover VM scopes did not clear (PR C3).
     Leftovers(LeftoverError),
     /// The file of `VMM_CH_PROGRAM`, `VMM_CH_REMOTE_PROGRAM` or
@@ -141,6 +147,7 @@ impl fmt::Display for StartError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Sigterm(error) => write!(formatter, "cannot register SIGTERM: {error}"),
+            Self::StateLock(error) => write!(formatter, "cannot lock the state root: {error}"),
             Self::Leftovers(error) => write!(formatter, "{error}"),
             Self::Program(error) => write!(formatter, "{error}"),
             Self::ChVersion(error) => write!(formatter, "{error}"),
@@ -253,11 +260,26 @@ struct Vmm {
 /// the vmm has exited (decision CH61 rule 1).
 pub async fn serve(config: Config) -> Result<(), StartError> {
     let sigterm = shutdown::sigterm().map_err(StartError::Sigterm)?;
-    let vmm = spawn_blocking(move || build(config))
-        .await
-        .map_err(|_| StartError::Panicked)??;
+    let (lock, vmm) = spawn_blocking(move || {
+        let lock = lock_state(&config.state)?;
+        build(config).map(|vmm| (lock, vmm))
+    })
+    .await
+    .map_err(|_| StartError::Panicked)??;
     nofile::raise(fd_need()).map_err(StartError::Nofile)?;
-    vmm.run(sigterm).await
+    let ended = vmm.run(sigterm).await;
+    drop(lock);
+    ended
+}
+
+/// The state root lock of step 2. A held lock writes one line, then the
+/// start waits for it. Blocks.
+fn lock_state(state: &StateRoot) -> Result<StateLock, StartError> {
+    if let Some(lock) = state.try_lock().map_err(StartError::StateLock)? {
+        return Ok(lock);
+    }
+    eprintln!("vmm: another process holds the state root lock, so the start waits for it");
+    state.lock().map_err(StartError::StateLock)
 }
 
 /// The fds of step 4: the bridges (decision CH67 rule 4), the 1100 links
