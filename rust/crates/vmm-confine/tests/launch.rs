@@ -37,6 +37,10 @@ const ID: &str = "0123abcd-0000-4000-8000-00000000c2c2";
 const HOLD_ID: &str = "0123abcd-0000-4000-8000-00000000d0d0";
 const SLEEP: &str = "/bin/sleep";
 
+/// The session id whose scope the fake `systemd-run` finds already
+/// loaded (`LOADED` in `examples/launch_chain.rs`).
+const LOADED_ID: &str = "0123abcd-0000-4000-8000-00000000e0e0";
+
 /// The slot of each launch.
 const SLOT: u16 = 3;
 
@@ -131,6 +135,45 @@ fn terminate_sends_sigterm() {
     launched.terminate().unwrap();
     assert_eq!(launched.wait().unwrap().signal(), Some(15));
     launched.terminate().unwrap();
+}
+
+/// A `systemd-run` that finds the scope already loaded exits 1 before CH
+/// runs (2026-11-15). `Launched::ended` gives that exit and the line of
+/// `systemd-run`, with no tag, so a start can name the cause in its
+/// fault. Before the exit it gives `None`.
+#[test]
+fn a_refused_scope_ends_with_its_exit_and_line() {
+    let vm = TempVm::new("loaded", LOADED_ID);
+    let spawner = Spawner::with_sink(example(), Arc::new(|_| {})).unwrap();
+    let scope = Scope::new(
+        LOADED_ID.parse().unwrap(),
+        NonZeroU64::new(1 << 30).unwrap(),
+        NonZeroU32::new(100).unwrap(),
+    );
+    let payload = Payload::new(Program::new(PathBuf::from(SLEEP)).unwrap(), vec![]);
+    let systemd_run = Program::new(example()).unwrap();
+    let launch =
+        Launch::new(systemd_run, scope, payload, vm.files.clone(), vmm_unit()).in_slot(slot());
+    let mut launched = spawner.launch(launch).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let exit = loop {
+        if let Some(exit) = launched.ended().unwrap() {
+            break exit;
+        }
+        assert!(Instant::now() < deadline, "the launch never ended");
+        sleep(Duration::from_millis(5));
+    };
+    assert_eq!(exit.status().code(), Some(1));
+    let line = format!(
+        "Failed to start transient scope unit: Unit creche-vm-{LOADED_ID}.scope was already loaded or has a fragment file."
+    );
+    assert_eq!(exit.line(), Some(line.as_str()));
+    assert_eq!(
+        exit.to_string(),
+        format!("exit status: 1, last line: {line}")
+    );
+    // The status stays after the reap.
+    assert_eq!(launched.ended().unwrap(), Some(exit));
 }
 
 #[test]

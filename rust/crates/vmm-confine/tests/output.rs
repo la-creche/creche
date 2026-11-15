@@ -5,7 +5,7 @@ use std::io::{self, Read};
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
-use creche_vmm_confine::output::{self, LINE_CAP, RATE_LINES, Sink, forward};
+use creche_vmm_confine::output::{self, LINE_CAP, Last, RATE_LINES, Sink, Tail, forward};
 use creche_wire::SessionId;
 
 const ID: &str = "0123abcd-0000-4000-8000-00000000c5c5";
@@ -108,10 +108,42 @@ fn the_reader_thread_forwards_a_pipe_until_its_writer_closes() {
     let (sender, lines) = mpsc::channel();
     let sink: Sink = Arc::new(move |line| sender.send(line.to_owned()).unwrap());
     let (reader, mut writer) = io::pipe().unwrap();
-    let thread = output::start(ID.parse().unwrap(), reader, sink).unwrap();
+    let tail = Arc::new(Tail::default());
+    let thread = output::start(ID.parse().unwrap(), reader, sink, Arc::clone(&tail)).unwrap();
     io::Write::write_all(&mut writer, b"from ch\n").unwrap();
     let line = lines.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(line, format!("ch {ID}: from ch"));
+    assert!(!tail.last().ended);
     drop(writer);
     thread.join().unwrap();
+    let last = Last {
+        line: Some("from ch".to_owned()),
+        ended: true,
+    };
+    assert_eq!(tail.last(), last);
+}
+
+/// The tail keeps the last line with no tag, its control chars escaped,
+/// even when the rate cap drops it from the sink. A failed `systemd-run`
+/// writes its cause there, and the fault of the start names it.
+#[test]
+fn the_tail_keeps_the_last_line_past_the_rate_cap() {
+    let (sender, lines) = mpsc::channel();
+    let sink: Sink = Arc::new(move |line| sender.send(line.to_owned()).unwrap());
+    let (reader, mut writer) = io::pipe().unwrap();
+    let tail = Arc::new(Tail::default());
+    let thread = output::start(ID.parse().unwrap(), reader, sink, Arc::clone(&tail)).unwrap();
+    for number in 0..RATE_LINES {
+        io::Write::write_all(&mut writer, format!("line {number}\n").as_bytes()).unwrap();
+    }
+    io::Write::write_all(&mut writer, b"Failed\tto start\n").unwrap();
+    drop(writer);
+    thread.join().unwrap();
+    let got: Vec<String> = lines.try_iter().collect();
+    assert!(got.iter().all(|line| !line.contains("Failed")), "{got:?}");
+    let last = Last {
+        line: Some("Failed\\tto start".to_owned()),
+        ended: true,
+    };
+    assert_eq!(tail.last(), last);
 }

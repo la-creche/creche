@@ -13,7 +13,9 @@
 //!
 //! Each launch step gets one pipe for its stdout and stderr in place of
 //! the fds of the vmm (decision CH50 rule 12). The spawner starts the
-//! reader thread of `output` on the pipe before the fork.
+//! reader thread of `output` on the pipe before the fork. The thread keeps
+//! the last line of the pipe for `Launched::ended`, so a start whose launch
+//! ended names the cause that `systemd-run` wrote.
 
 use std::fmt;
 use std::io::{self, Write};
@@ -22,14 +24,20 @@ use std::process::{Child, Command, ExitStatus};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use crate::launch::{Launch, MODE, PLAN_MAX, Plan};
-use crate::output::{self, Sink};
+use crate::output::{self, Sink, Tail};
 
 /// The program of the launch step in production. The kernel resolves this
 /// link to the running vmm binary, even after a release renames its file to
 /// `.prev` (fact 56). `std::env::current_exe` would give the new name.
 pub const SELF_EXE: &str = "/proc/self/exe";
+
+/// How long `Launched::ended` waits after the exit for the end of the
+/// output pipe. A process that the launch left behind may still hold the
+/// pipe, so the wait has a bound.
+pub const TAIL_WAIT: Duration = Duration::from_secs(1);
 
 /// Why a launch did not start.
 #[derive(Debug)]
@@ -62,7 +70,7 @@ impl std::error::Error for SpawnError {}
 /// One launch for the spawner thread, and where its answer goes.
 struct Request {
     launch: Launch,
-    reply: Sender<Result<Child, SpawnError>>,
+    reply: Sender<Result<Launched, SpawnError>>,
 }
 
 /// The handle of the spawner thread.
@@ -113,8 +121,7 @@ impl Spawner {
         requests
             .send(Request { launch, reply })
             .map_err(|_| SpawnError::Stopped)?;
-        let child = answer.recv().map_err(|_| SpawnError::Stopped)??;
-        Ok(Launched { child })
+        answer.recv().map_err(|_| SpawnError::Stopped)?
     }
 }
 
@@ -146,7 +153,7 @@ fn serve(program: &Path, sink: &Sink, queue: &Receiver<Request>) {
 /// Writes the plan into a new pipe, starts the output reader on a second
 /// pipe, then forks one launch step from this thread with the plan pipe
 /// on fd 0 and the output pipe on fds 1 and 2.
-fn spawn(program: &Path, sink: &Sink, launch: Launch) -> Result<Child, SpawnError> {
+fn spawn(program: &Path, sink: &Sink, launch: Launch) -> Result<Launched, SpawnError> {
     let id = launch.scope().id().clone();
     let plan = Plan {
         spawner: std::process::id(),
@@ -175,14 +182,55 @@ fn spawn(program: &Path, sink: &Sink, launch: Launch) -> Result<Child, SpawnErro
     // write ends close with this function and the thread ends at once.
     let (output, out) = io::pipe().map_err(SpawnError::Spawn)?;
     let err = out.try_clone().map_err(SpawnError::Spawn)?;
-    output::start(id, output, Arc::clone(sink)).map_err(SpawnError::Spawn)?;
-    Command::new(program)
+    let tail = Arc::new(Tail::default());
+    output::start(id, output, Arc::clone(sink), Arc::clone(&tail)).map_err(SpawnError::Spawn)?;
+    let child = Command::new(program)
         .arg(MODE)
         .stdin(reader)
         .stdout(out)
         .stderr(err)
         .spawn()
-        .map_err(SpawnError::Spawn)
+        .map_err(SpawnError::Spawn)?;
+    Ok(Launched {
+        child,
+        tail,
+        exit_seen: None,
+    })
+}
+
+/// How one launch ended: the exit status of its process and the last line
+/// on its output pipe. A `systemd-run` that refuses the scope exits
+/// non-zero before CH runs, and its last line is the cause, for example
+/// `Failed to start transient scope unit: Unit creche-vm-<id>.scope was
+/// already loaded or has a fragment file.`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Exit {
+    status: ExitStatus,
+    line: Option<String>,
+}
+
+impl Exit {
+    /// The exit status of the process.
+    #[must_use]
+    pub fn status(&self) -> ExitStatus {
+        self.status
+    }
+
+    /// The last line on the output pipe, with its control chars escaped.
+    /// `None` if the launch wrote no line.
+    #[must_use]
+    pub fn line(&self) -> Option<&str> {
+        self.line.as_deref()
+    }
+}
+
+impl fmt::Display for Exit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.line {
+            Some(line) => write!(formatter, "{}, last line: {line}", self.status),
+            None => write!(formatter, "{}, with no output line", self.status),
+        }
+    }
 }
 
 /// One running launch. After the execs the pid is the payload's pid
@@ -190,6 +238,10 @@ fn spawn(program: &Path, sink: &Sink, launch: Launch) -> Result<Child, SpawnErro
 #[derive(Debug)]
 pub struct Launched {
     child: Child,
+    /// The last line of the output pipe.
+    tail: Arc<Tail>,
+    /// When `ended` first found the exit.
+    exit_seen: Option<Instant>,
 }
 
 impl Launched {
@@ -230,6 +282,30 @@ impl Launched {
     /// The status check failed.
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         self.child.try_wait()
+    }
+
+    /// How the launch ended, once its process exited and its output pipe
+    /// ended. A pipe that is still open `TAIL_WAIT` after the first check
+    /// that found the exit counts as ended. `None` while the process runs
+    /// or that wait lasts. Each call is a status check, so it does not
+    /// block. A check reaps an exit, as `try_wait` does.
+    ///
+    /// # Errors
+    ///
+    /// The status check failed.
+    pub fn ended(&mut self) -> io::Result<Option<Exit>> {
+        let Some(status) = self.child.try_wait()? else {
+            return Ok(None);
+        };
+        let seen = *self.exit_seen.get_or_insert_with(Instant::now);
+        let last = self.tail.last();
+        if !last.ended && seen.elapsed() < TAIL_WAIT {
+            return Ok(None);
+        }
+        Ok(Some(Exit {
+            status,
+            line: last.line,
+        }))
     }
 
     /// Waits for the payload to exit.
