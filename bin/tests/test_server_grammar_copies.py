@@ -26,6 +26,7 @@ COPIES = (
     "ASSET_RE",
     "ENTRYPOINT_RE",
     "SECRET_NAME_RE",
+    "ENTITY_DOMAIN_RE",
     "PYTHONS",
     "DEFAULT_PYTHON",
     "MAX_TOOLS",
@@ -34,6 +35,7 @@ COPIES = (
     "MAX_FENCES",
     "MAX_FENCE_VALUES",
     "MAX_SHARED",
+    "MAX_ENTITY_DOMAINS",
     "MAX_ARG_CHARS",
     "MAX_VALUE_CHARS",
 )
@@ -58,6 +60,7 @@ SAME_FORM = (
     ("ASSET_FORM", "ASSET_RE"),
     ("ENTRYPOINT_FORM", "ENTRYPOINT_RE"),
     ("SECRET_NAME_FORM", "SECRET_NAME_RE"),
+    ("ENTITY_DOMAIN_FORM", "ENTITY_DOMAIN_RE"),
 )
 
 #: Each pattern of the validator that root holds under another name.

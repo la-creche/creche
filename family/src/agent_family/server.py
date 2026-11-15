@@ -87,6 +87,11 @@ class McpServerFile(Strict):
     tools: list[ToolEntry] = Field(default_factory=list[ToolEntry])
     arg_allows: list[FenceEntry] = Field(default_factory=list[FenceEntry])
     arg_denies: list[FenceEntry] = Field(default_factory=list[FenceEntry])
+    #: The Home Assistant entity domains this server's identity may read.
+    #: caregiver writes them into the `ha-entities` fence of each app that
+    #: holds a grant to this server (chaperone design section 12). `None`
+    #: leaves the server unfenced. An empty list lets a call name no entity.
+    entity_domains: list[str] | None = None
     shared_secrets: list[SharedSecretEntry] = Field(default_factory=list[SharedSecretEntry])
 
     def tool_names(self) -> tuple[str, ...]:

@@ -16,6 +16,8 @@ from .grammar import (
     ASSET_FORM,
     ASSET_RE,
     DESCRIPTION_MAX,
+    ENTITY_DOMAIN_FORM,
+    ENTITY_DOMAIN_RE,
     ENTRYPOINT_FORM,
     ENTRYPOINT_RE,
     ENV_VAR_NAME,
@@ -25,6 +27,7 @@ from .grammar import (
     IDENTITY_MAX,
     MAX_ARG_CHARS,
     MAX_ARGS,
+    MAX_ENTITY_DOMAINS,
     MAX_ENV,
     MAX_FENCE_VALUES,
     MAX_FENCES,
@@ -92,6 +95,7 @@ def check_server(server: McpServerFile, directory: str, issues: Issues) -> None:
     _check_run(server, issues)
     _check_tools(server, issues)
     _check_fences(server, issues)
+    _check_entity_domains(server, issues)
     _check_shared(server, issues)
 
 
@@ -392,6 +396,25 @@ def _check_fences(server: McpServerFile, issues: Issues) -> None:
 
         for index, entry in enumerate(entries):
             _check_fence(entry, f"{field}[{index}]", declared, issues)
+
+
+def _check_entity_domains(server: McpServerFile, issues: Issues) -> None:
+    """The rules of root for `entity_domains`: at most `MAX_ENTITY_DOMAINS`
+    distinct domains, each of `ENTITY_DOMAIN_FORM`."""
+    domains = server.entity_domains
+    if domains is None:
+        return
+
+    _check_count("entity_domains", len(domains), MAX_ENTITY_DOMAINS, issues)
+    for index, domain in enumerate(domains):
+        if ENTITY_DOMAIN_RE.fullmatch(domain) is None:
+            issues.error(
+                f"entity_domains[{index}]",
+                f"'{collapse(domain)}' must match {ENTITY_DOMAIN_FORM}",
+            )
+
+    if len(set(domains)) != len(domains):
+        issues.error("entity_domains", "entity_domains names one domain twice")
 
 
 def _check_fence(entry: FenceEntry, loc: str, declared: tuple[str, ...], issues: Issues) -> None:

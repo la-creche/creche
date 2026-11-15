@@ -18,6 +18,7 @@ from caregiver.policy_file import (
     ArgumentFence,
     AttendanceSection,
     FenceKind,
+    HaEntitiesSection,
     Limits,
     PluginSections,
     PolicyFile,
@@ -446,3 +447,57 @@ def test_the_attendance_section_holds_the_fence_rules() -> None:
 
     with pytest.raises(PolicyShapeError, match="more than 64"):
         AttendanceSection(enqueue_targets=tuple(f"f{n:02}" for n in range(65)))
+
+
+def domain_index(**domains: list[str] | None) -> Index:
+    """`INDEX` with the `entity_domains` of some server files replaced."""
+    servers = dict(INDEX.servers)
+    for server, value in domains.items():
+        name = server.replace("_", "-")
+        servers[name] = servers[name].model_copy(update={"entity_domains": value})
+    return Index(kinds=INDEX.kinds, servers=servers, skills=INDEX.skills)
+
+
+def ha_entities_of(family: FamilyFile, index: Index) -> dict[str, Any] | None:
+    app = build_app(family, index, (DIGEST,), rev=REV)
+    table = tomllib.loads(render_policy(PolicyFile({family.name: app})))["apps"][family.name]
+    return table.get("plugins", {}).get("ha-entities")
+
+
+def test_each_granted_server_with_entity_domains_gets_its_domains() -> None:
+    index = domain_index(ha_read=["sun", "light", "sun"], ha=["light"])
+
+    section = ha_entities_of(_REGISTRY.families["chat"], index)
+
+    assert section == {"upstreams": {"ha": ["light"], "ha-read": ["light", "sun"]}}
+
+
+def test_the_section_renders_as_one_upstreams_table() -> None:
+    index = domain_index(ha_read=["sun", "light"])
+    app = build_app(_REGISTRY.families["chat"], index, (DIGEST,), rev=REV)
+
+    text = render_policy(PolicyFile({"chat": app}))
+
+    assert text.endswith(
+        '\n[apps.chat.plugins.ha-entities.upstreams]\nha-read = ["light", "sun"]\n'
+    )
+
+
+def test_an_empty_domain_list_is_written_as_an_empty_list() -> None:
+    section = ha_entities_of(_REGISTRY.families["chat"], domain_index(ha_read=[]))
+
+    assert section == {"upstreams": {"ha-read": []}}
+
+
+def test_no_section_without_a_granted_server_with_entity_domains() -> None:
+    assert ha_entities_of(_REGISTRY.families["chat"], INDEX) is None
+    assert ha_entities_of(_REGISTRY.families["code"], domain_index(ha_read=["sun"])) is None
+
+
+@pytest.mark.parametrize(
+    "upstreams",
+    [{}, {"ha-read": ("Light",)}, {"ha-read": ("light.kitchen",)}, {"ha__read": ("sun",)}],
+)
+def test_the_section_refuses_what_the_fence_refuses(upstreams: dict[str, tuple[str, ...]]) -> None:
+    with pytest.raises(PolicyShapeError):
+        HaEntitiesSection(upstreams=upstreams)
