@@ -12,10 +12,13 @@ from pathlib import Path
 import pytest
 from creche_memory.graph import Dead, GraphCheck
 from creche_memory.sync import (
+    BACKOFF_MAX_S,
+    POLL_S,
     Debounce,
     Outcome,
     Syncer,
     Trigger,
+    backoff_s,
     ingest_folders,
     vault_stamp,
 )
@@ -180,6 +183,7 @@ def test_a_failed_sync_prints_no_message_and_tries_again(
     assert not syncer.ready.is_set()
 
     ingests.fail = False
+    clock.now += POLL_S
     assert _step(syncer) is Outcome.SYNCED
 
 
@@ -194,7 +198,10 @@ def test_a_failed_sync_with_a_dead_graph_returns_the_dead_graph(
 
     assert isinstance(state, Dead)
     assert state.side_files[0] == f"{GRAPH_NAME}.wal.checkpoint"
-    assert "secret.test" not in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "secret.test" not in err
+    # No next sync follows a dead graph, so the line names no wait.
+    assert err.splitlines()[-1].endswith("Failed syncs in a row: 1.")
     assert not syncer.ready.is_set()
 
 
@@ -274,8 +281,72 @@ def test_a_failed_sync_logs_its_time_and_the_type_only(
 
     assert _step(syncer) is Outcome.FAILED
     assert capsys.readouterr().err.splitlines()[-1] == (
-        "memory: sync failed after 125 s: ConnectionError"
+        "memory: sync failed after 125 s: ConnectionError. Failed syncs in a row: 1. "
+        "The next sync waits at least 30 s."
     )
+
+
+def test_the_wait_doubles_with_each_failed_sync_up_to_the_cap() -> None:
+    waits = [backoff_s(failures, POLL_S) for failures in range(1, 9)]
+
+    assert waits == [30.0, 60.0, 120.0, 240.0, 480.0, 960.0, BACKOFF_MAX_S, BACKOFF_MAX_S]
+    assert backoff_s(10_000, POLL_S) == BACKOFF_MAX_S
+
+
+def test_failed_syncs_in_a_row_back_off_and_a_good_one_resets_the_count(
+    vault: Path, capsys: pytest.CaptureFixture[str], usable: GraphCheck
+) -> None:
+    clock, ingests = Clock(), Ingests()
+    ingests.fail = True
+    syncer = Syncer(vault, ingests, usable, quiet_s=0.0, clock=clock)
+
+    assert _step(syncer) is Outcome.FAILED
+    clock.now += POLL_S
+    assert _step(syncer) is Outcome.FAILED
+    assert (
+        capsys.readouterr()
+        .err.splitlines()[-1]
+        .endswith("Failed syncs in a row: 2. The next sync waits at least 60 s.")
+    )
+
+    # Each check in the wait syncs nothing.
+    clock.now += 59.0
+    assert _step(syncer) is Outcome.BACKING_OFF
+    assert len(ingests.calls) == 2
+
+    ingests.fail = False
+    clock.now += 1.0
+    assert _step(syncer) is Outcome.SYNCED
+    assert capsys.readouterr().err.splitlines()[-1] == (
+        "memory: sync done in 0 s after 2 failed syncs; search is ready"
+    )
+
+    # The count starts again after a good sync.
+    ingests.fail = True
+    (vault / "docs" / "new.md").write_text("new\n")
+    assert _step(syncer) is Outcome.FAILED
+    assert (
+        capsys.readouterr()
+        .err.splitlines()[-1]
+        .endswith("Failed syncs in a row: 1. The next sync waits at least 30 s.")
+    )
+
+
+def test_a_write_in_the_wait_syncs_after_the_wait(vault: Path, usable: GraphCheck) -> None:
+    clock, ingests = Clock(), Ingests()
+    ingests.fail = True
+    syncer = Syncer(vault, ingests, usable, quiet_s=QUIET_S, clock=clock)
+    syncer.request()
+    assert _step(syncer) is Outcome.FAILED
+
+    ingests.fail = False
+    syncer.request()
+    assert _step(syncer) is Outcome.BACKING_OFF
+
+    # The quiet time has not passed, so only the kept write syncs now.
+    clock.now += POLL_S
+    (vault / "docs" / "new.md").write_text("new\n")
+    assert _step(syncer) is Outcome.SYNCED
 
 
 def test_a_vault_with_no_folder_to_read_is_never_synced(tmp_path: Path, usable: GraphCheck) -> None:

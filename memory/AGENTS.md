@@ -17,6 +17,7 @@ service of the vault. The service hosts the memory store and answers the
 | `src/creche_memory/writes.py` | `Writer`: it creates inbox notes and rewrites whole files in the agent areas. |
 | `src/creche_memory/store.py` | `StoreSettings` and `configure`: the settings of the memory store, as the env that Cognee reads. |
 | `src/creche_memory/sync.py` | `Syncer`: the checks of the vault and the syncs into the store. |
+| `src/creche_memory/logs.py` | `plain_console`: one plain journal line for each Cognee record at WARNING and above. |
 | `src/creche_memory/graph.py` | The graph check: it tells a dead graph database from one that opens. The close of the stop. |
 | `src/creche_memory/pdf.py` | The PDFs of the vault as a second source of the store: the listing, the rows, the cache of texts. |
 | `src/creche_memory/pdftext.py` | The child process that reads the text of one PDF, with its limits. |
@@ -30,7 +31,8 @@ service of the vault. The service hosts the memory store and answers the
 | `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
 | `tests/test_memory_writes.py` | The tests of the writes: the areas, the digest check, the modes and the symlink rules. |
 | `tests/test_memory_store.py` | The tests of the settings. One test imports Cognee in a process of its own and reads its settings back. |
-| `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure and a dead graph. |
+| `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure, the wait after failures and a dead graph. |
+| `tests/test_memory_logs.py` | The tests of the journal lines: one plain line for a Cognee record, and the file log that keeps the traceback. |
 | `tests/test_memory_graph.py` | The tests of the graph check, on real ladybug databases. |
 | `tests/test_memory_stop.py` | The tests of the stop: a SIGTERM in a checkpoint, a sync that ignores its cancel, the close rules, the unit lines and the daemon thread. |
 | `tests/memory_graph_helpers.py` | Real ladybug databases for the tests: a clean one, a dead one and one that recovers. The check and the close through Cognee in a child process, after a failed checkpoint. A writer through Cognee that gets SIGTERM in a checkpoint, and one that ignores its first cancel. |
@@ -181,13 +183,46 @@ after it reads `json`, or `null` when the type refuses `json`.
 3. A note directly in `house/`, or at the vault root, is not read.
 4. A stamp of each note's path, size and time tells the loop that the
    vault changed. A change in a skipped folder does not move it.
-5. A failed sync prints only the type of the error, because a message can
-   hold a URL. Then the loop checks the graph database. A dead graph ends
-   the loop and stops the service with exit 78. An error of the check
-   itself ends the loop too, with exit 75. After any other failed sync,
-   the next check tries again. `ready` is set after the first sync
-   that ends well.
-6. The sync calls `remember` with batches of one note and four chunks.
+5. A failed sync prints one line: the type of the error, because a message
+   can hold a URL, and the count of failed syncs in a row. Then the loop
+   checks the graph database. A dead graph ends the loop and stops the
+   service with exit 78. An error of the check itself ends the loop too,
+   with exit 75. `ready` is set after the first sync that ends well.
+6. After any other failed sync, the loop waits before the next sync. The
+   wait is 30 s after one failed sync, and it doubles with each failed
+   sync in a row, up to 30 minutes. The line of the failed sync names the
+   wait. A write in the wait syncs after the wait. The first sync that
+   ends well names the count of failed syncs before it and resets it.
+7. The sync calls `remember` with batches of one note and four chunks.
+
+## The journal
+
+From 2026-11-04 to 2026-11-09, a dead graph failed every sync, and the
+service of that time did not stop on it ("The dead graph"). A sync failed
+every 8 to 9 minutes and printed about 20,000 journal lines. On 2026-11-08
+the service wrote 3.5 million lines, and from 2026-11-08 to 2026-11-15 it
+wrote 2.53 GB, 94% of the host's syslog. Most lines came from Cognee, not
+from this package.
+
+1. Cognee 1.6.6 sets up the root logger at its first import. Its console
+   handler forces colour codes, writes an empty line before each record,
+   and draws a rich traceback box for each record with an exception. Its
+   orphan cleanup logged one box for each document of the vault, at each
+   sync.
+2. The command imports Cognee once, after `configure`, and swaps that
+   handler (`logs.py`). The new handler writes one plain line for each
+   record at WARNING and above: `cognee <level>: <event> (<error type>)
+   [<logger>]`. It never writes colour, the message of an exception or a
+   traceback. An event text over 300 characters is cut.
+3. Cognee's file handler stays as it is. Every record at INFO and above,
+   with its whole traceback, goes to the rotating files in `<store>/logs`.
+4. The records of the import itself come before the swap: the lines of
+   each start keep Cognee's form.
+5. A Cognee whose import leaves other than one console handler stops the
+   start with exit 78. `test_memory_logs.py` proves the swap on the pinned
+   Cognee.
+6. The wait after failed syncs ("The sync", rule 6) bounds the syncs that
+   fail to about two each hour.
 
 ## The PDFs
 
