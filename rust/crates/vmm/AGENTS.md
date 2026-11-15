@@ -492,11 +492,15 @@ guest init program, and a held lock exit 78 before any remove.
 pairs and keys: a stale snapshot and the images that only its key names,
 a current snapshot, and an import temp file. It proves the dry run, an
 apply that removes what the dry run listed, a held lock that refuses the
-apply, and a refused image scan. The rust job cannot make a root-owned
-file, so its binary tests prove the refusals with exit 78. The ignored
-`kvm_the_binary_lists_then_removes` makes `digests.json` and the guest
-init program root-owned with the runner's sudo (decision CH36 G20) and
-runs the binary end to end.
+apply, and a refused image scan. No test of `tests/gc.rs` starts a
+process. A process that another test thread starts holds a copy of each
+open fd until its exec, and such a copy keeps a dropped `flock`. So the
+binary tests are in `tests/gc_binary.rs`, and `tests/gc_host/mod.rs`
+holds the scratch host of the two files. The rust job cannot make a
+root-owned file, so the binary tests prove the refusals with exit 78.
+The ignored `kvm_the_binary_lists_then_removes` makes `digests.json` and
+the guest init program root-owned with the runner's sudo (decision CH36
+G20) and runs the binary end to end.
 
 ## The server
 
