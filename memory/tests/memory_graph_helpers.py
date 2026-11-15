@@ -146,6 +146,75 @@ def fill_through_cognee(store_root: Path) -> list[str]:
     return [line for line in done.stdout.splitlines() if line.startswith(marks)]
 
 
+#: The rows that `churn_through_cognee` rewrites in each round.
+CHURN_ROWS = 20000
+
+#: The cap on the buffer frames of one open in `churn_through_cognee`. The
+#: graph file stays near 2 MiB. Without a reopen, the checkpoints of one
+#: open reach this cap in about 7 rounds.
+CHURN_DB_BYTES = 1 << 26
+
+#: The rounds of `churn_through_cognee`.
+CHURN_ROUNDS = 30
+
+#: A child that rewrites `CHURN_ROWS` rows and checkpoints, `sys.argv[2]`
+#: rounds, through Cognee's engine, as Cognee does after each `add_nodes`.
+#: Every `sys.argv[3]` rounds it runs the reopen of the sync loop, or
+#: never for 0. It keeps the engine handle of the first round, as Cognee's
+#: own tasks do. Each line says what happened.
+_CHURN = """
+import asyncio, sys
+from pathlib import Path
+from creche_memory.store import StoreSettings, configure
+
+root = Path(sys.argv[1])
+rounds, every = int(sys.argv[2]), int(sys.argv[3])
+configure(StoreSettings(root, "http://127.0.0.1:9", "unused", "http://127.0.0.1:9", root / "hf"))
+from creche_memory.graph import close_cognee_graph, cognee_graph_state, reopen_cognee_graph
+
+async def main():
+    print(repr(await cognee_graph_state()), flush=True)
+    from cognee.infrastructure.databases.graph import get_graph_engine
+    engine = await get_graph_engine()
+    await engine.query("CREATE NODE TABLE F(id INT64 PRIMARY KEY, s STRING)", {})
+    await engine.query("UNWIND range(1, " + sys.argv[4] + ") AS i CREATE (:F {id: i, s: 'a'})", {})
+    await engine.query("CHECKPOINT", {})
+    for n in range(1, rounds + 1):
+        try:
+            await engine.query("MATCH (f:F) SET f.s = '" + ("x" + str(n)) * 8 + "'", {})
+            await engine.query("CHECKPOINT", {})
+        except RuntimeError as error:
+            print("full:", n, "Maximum database size" in str(error), flush=True)
+            return
+        if every and n % every == 0:
+            print(repr(await reopen_cognee_graph()), flush=True)
+    print("rows:", (await engine.query("MATCH (f:F) RETURN count(*)", {}))[0][0], flush=True)
+    print(repr(await close_cognee_graph()), flush=True)
+
+asyncio.run(main())
+"""
+
+
+def churn_through_cognee(store_root: Path, every: int) -> list[str]:
+    """The lines that `_CHURN` prints, for a store at `store_root`, with a
+    reopen every `every` rounds, or none for 0."""
+    (store_root / "hf").mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "NO_COLOR": "1", "KUZU_MAX_DB_SIZE": str(CHURN_DB_BYTES)}
+    args = [str(store_root), str(CHURN_ROUNDS), str(every), str(CHURN_ROWS)]
+    done = subprocess.run(
+        [sys.executable, "-c", _CHURN, *args],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert done.returncode == 0, done.stderr[-3000:]
+
+    marks = ("Usable(", "Dead(", "full:", "rows:", "Reopened(", "Closed(", "LeftOpen(")
+
+    return [line for line in done.stdout.splitlines() if line.startswith(marks)]
+
+
 #: A child that opens the database, says so, and holds it until its stdin closes.
 _HOLDER = """
 import sys, ladybug
@@ -218,7 +287,7 @@ from creche_memory.store import StoreSettings, configure
 root = Path(sys.argv[1])
 configure(StoreSettings(root, "http://127.0.0.1:9", "unused", "http://127.0.0.1:9", root / "hf"))
 from creche_memory.cli import stop_signals, stop_store
-from creche_memory.graph import cognee_graph_state
+from creche_memory.graph import cognee_graph_state, reopen_cognee_graph
 from creche_memory.search import StoreLoop
 from creche_memory.sync import Syncer
 
@@ -257,7 +326,8 @@ stop_signals(stop)
 loop = StoreLoop()
 loop.start()
 print(repr(loop.spawn(cognee_graph_state()).result()), flush=True)
-syncer = Syncer(vault, write, cognee_graph_state, poll_s=0.05, quiet_s=0.0)
+reopen = lambda: loop.alone(reopen_cognee_graph)
+syncer = Syncer(vault, write, cognee_graph_state, reopen, poll_s=0.05, quiet_s=0.0)
 syncing = loop.spawn(syncer.run(stop))
 stop.wait()
 syncer.wake()

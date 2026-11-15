@@ -16,8 +16,11 @@ from creche_memory.graph import (
     side_files,
 )
 from memory_graph_helpers import (
+    CHURN_ROUNDS,
+    CHURN_ROWS,
     FILL_ROWS,
     GRAPH_NAME,
+    churn_through_cognee,
     count_rows,
     fill_through_cognee,
     held_open,
@@ -223,3 +226,27 @@ def test_the_check_after_a_failed_checkpoint_keeps_every_row(tmp_path: Path) -> 
     # worker with no close. A new process opens the file with every row.
     graph_file = store / "system" / "databases" / GRAPH_NAME
     assert count_rows(graph_file, "F") == FILL_ROWS
+
+
+def test_the_checkpoints_of_one_open_fill_the_cap_and_a_reopen_empties_it(
+    tmp_path: Path,
+) -> None:
+    # The state of 2026-11-15 on a small scale: a graph file of about 2 MiB
+    # reaches a cap of 64 MiB in one open, because each checkpoint keeps
+    # the frames of its shadow pages.
+    unopened = churn_through_cognee(tmp_path / "unopened", every=0)
+
+    assert unopened[0] == "Usable()"
+    assert len(unopened) == 2
+    full, round_, reached = unopened[1].split()
+    assert (full, reached) == ("full:", "True")
+    assert int(round_) < CHURN_ROUNDS
+
+    # The same rounds with a reopen every 4 rounds never reach the cap. The
+    # handle of the first round goes to each new engine, and no row is lost.
+    reopened = churn_through_cognee(tmp_path / "reopened", every=4)
+
+    assert reopened[0] == "Usable()"
+    assert [line.split("(")[0] for line in reopened[1:-2]] == ["Reopened"] * (CHURN_ROUNDS // 4)
+    assert reopened[-2] == f"rows: {CHURN_ROWS}"
+    assert reopened[-1].startswith("Closed(")

@@ -18,10 +18,10 @@ service of the vault. The service hosts the memory store and answers the
 | `src/creche_memory/store.py` | `StoreSettings` and `configure`: the settings of the memory store, as the env that Cognee reads. |
 | `src/creche_memory/sync.py` | `Syncer`: the checks of the vault and the syncs into the store. |
 | `src/creche_memory/logs.py` | `plain_console`: one plain journal line for each Cognee record at WARNING and above. |
-| `src/creche_memory/graph.py` | The graph check: it tells a dead graph database from one that opens. The close of the stop. |
+| `src/creche_memory/graph.py` | The graph check: it tells a dead graph database from one that opens. The close of the stop, and the reopen after each sync. |
 | `src/creche_memory/pdf.py` | The PDFs of the vault as a second source of the store: the listing, the rows, the cache of texts. |
 | `src/creche_memory/pdftext.py` | The child process that reads the text of one PDF, with its limits. |
-| `src/creche_memory/search.py` | `Searcher` and `StoreLoop`: the search, and the one asyncio loop in which Cognee runs. |
+| `src/creche_memory/search.py` | `Searcher` and `StoreLoop`: the search, and the one asyncio loop in which Cognee runs. `StoreLoop.alone` keeps the searches out of a reopen. |
 | `src/creche_memory/cognee_search.py` | The two Cognee searches and the map from a document to its note. pyright checks it in basic mode. |
 | `src/creche_memory/server.py` | `MemoryServer` and `Service`: the socket server. It checks the peer uid and answers one line per connection. |
 | `vectors/wire.json` | The shared wire vectors. |
@@ -31,13 +31,13 @@ service of the vault. The service hosts the memory store and answers the
 | `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
 | `tests/test_memory_writes.py` | The tests of the writes: the areas, the digest check, the modes and the symlink rules. |
 | `tests/test_memory_store.py` | The tests of the settings. One test imports Cognee in a process of its own and reads its settings back. |
-| `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure, the wait after failures and a dead graph. |
+| `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure, the wait after failures, a dead graph and the reopen. |
 | `tests/test_memory_logs.py` | The tests of the journal lines: one plain line for a Cognee record, and the file log that keeps the traceback. |
-| `tests/test_memory_graph.py` | The tests of the graph check, on real ladybug databases. |
+| `tests/test_memory_graph.py` | The tests of the graph check, on real ladybug databases. The cap of one open, and the reopen that empties it. |
 | `tests/test_memory_stop.py` | The tests of the stop: a SIGTERM in a checkpoint, a sync that ignores its cancel, the close rules, the unit lines and the daemon thread. |
-| `tests/memory_graph_helpers.py` | Real ladybug databases for the tests: a clean one, a dead one and one that recovers. The check and the close through Cognee in a child process, after a failed checkpoint. A writer through Cognee that gets SIGTERM in a checkpoint, and one that ignores its first cancel. |
+| `tests/memory_graph_helpers.py` | Real ladybug databases for the tests: a clean one, a dead one and one that recovers. The check and the close through Cognee in a child process, after a failed checkpoint. A writer through Cognee that gets SIGTERM in a checkpoint, and one that ignores its first cancel. A writer through Cognee that checkpoints many times in one open, with and without a reopen. |
 | `tests/test_memory_pdf.py` | The tests of the PDFs: the listing, the rows, the cap, the cache, the child and the real source. |
-| `tests/test_memory_search.py` | The tests of the search: `not_ready`, the paths, the caps, a slow search and a failed one. |
+| `tests/test_memory_search.py` | The tests of the search: `not_ready`, the paths, the caps, a slow search, a failed one and a search during a reopen. |
 | `tests/test_memory_server.py` | The tests of the socket: the peer check, the line rules and the dispatch. |
 
 ## One definition per type
@@ -261,8 +261,8 @@ every sync and every search fails. Cognee's own repair removes only the
    or leave a file that does not open. A close after a failed checkpoint
    can leave a file that does not open. The first call builds Cognee's
    engine, and that build writes (gap 6). The checks after a failed sync
-   use the cached engine and write nothing. Only the stop closes the engine
-   ("The stop").
+   use the cached engine and write nothing. Only the stop and the reopen
+   close the engine ("The stop", "The reopen").
 2. Ladybug usually raises a `RuntimeError` or an `IndexError` for a file
    that does not open, and the check calls that a dead graph. Some dead
    files raise a `MemoryError` instead (gap 7). Three kinds of error
@@ -364,6 +364,61 @@ Why the stop writes nothing after a failed checkpoint, from runs on
 After the failed checkpoint, the files beside the open database were
 `.shadow` and `.wal`.
 
+## The reopen
+
+Ladybug 0.19.0 keeps the buffer frames that each checkpoint takes for its
+shadow pages until the database closes. `KUZU_MAX_DB_SIZE` caps the sum of
+these frames over all the checkpoints of one open. It does not cap the size
+of the file. The cap of Cognee 1.6.6 is 32 GiB (`1 << 35`). Cognee
+checkpoints after each `add_nodes`. At the cap, each statement fails:
+`Maximum database size of 34359738368 bytes has been reached. Reopen the
+database with a larger max_db_size to continue.` A new open starts again
+from zero.
+
+On 2026-11-15 one open reached the cap at 06:54 UTC, after 2 h 7 min and 5
+failed syncs. The graph file was 448 MB. A worker of the service crashed at
+07:03, and after that the WAL failed its checksum. The operator set the
+store aside ("The dead graph").
+
+Measured with ladybug 0.19.0 on macOS on 2026-11-15. Each round rewrites
+every row, then runs `CHECKPOINT`:
+
+| Graph file | Cap | Reopen | Result |
+|---|---|---|---|
+| 2 MiB | 64 MiB | none | Checkpoint 7 fails. |
+| 9.4 MiB | 1 GiB | none | Checkpoint 67 fails: about 15 MiB of the cap for each checkpoint. |
+| 2 MiB | 64 MiB | after every 5 checkpoints | 40 checkpoints, no failure. |
+| 9.4 MiB | 1 TiB | none | 200 checkpoints, no failure. The RSS goes from 234 MiB to 359 MiB. |
+| 9.4 MiB | 1 TiB | after every 5 checkpoints | 200 checkpoints, no failure. The RSS goes from 227 MiB to 233 MiB. |
+
+So a larger cap is not a fix. The frames also keep memory, and at
+`MemoryMax=12G` the OOM killer can kill the graph worker in a checkpoint
+(known gap 4).
+
+1. After each sync, good or failed, the sync loop reopens the graph
+   database (`reopen_graph`). After a failed sync, the check runs first,
+   and a dead graph is not reopened.
+2. The reopen closes the database as the stop does (`close_graph`): it
+   sends `RETURN 1`, reads the files beside the database, runs
+   `CHECKPOINT`, then closes. When the close leaves the database open, the
+   reopen writes nothing more. The next sync then uses the same open.
+3. After the close, the reopen removes the closed engine from the cache of
+   Cognee. Then it runs the graph check, which opens a new engine. An
+   engine handle that a task of Cognee still holds goes to the new engine
+   at its next use. A dead graph after the reopen exits 78, as after a
+   failed sync.
+4. No search runs during a reopen (`StoreLoop.alone`). The reopen waits
+   for each search that runs. A new search waits for the end of the
+   reopen, inside its 15 s.
+5. One journal line says what the reopen did:
+   `memory: The graph database reopened in <s> s.`, or
+   `memory: the reopen of the graph database wrote nothing: <reason>. The next sync uses the same open.`
+6. One sync can still reach the cap. The 5 failed syncs of 2026-11-15
+   used 32 GiB, about 6.4 GiB each on average. The largest sync is not
+   measured.
+
+No fixed version of ladybug is known on 2026-11-15.
+
 ## Not a workspace member
 
 The package is not a member of the uv workspace. It pins the memory store,
@@ -409,7 +464,10 @@ dead-graph check. Gaps 5 and 7 belong to the exit 75 of the check.
    yet. The operator reads it with
    `cat /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/creche-memory.service/memory.events`
    and stops the unit before it reaches `MemoryMax`. The footprint grows
-   over a run, and the cause is not known.
+   over a run. The frames of the checkpoints of one open can be a part of
+   the growth of the graph worker ("The reopen"). On 2026-11-15 at 17:00
+   UTC the vector worker held 6.5 GiB of RSS. The cause of that is not
+   known.
 5. An exit-75 loop never reaches the `failed` state, so the watchdog's
    `is-failed` check does not see it. The journal line names the cause.
 6. The first check of a process builds Cognee's engine. In subprocess
