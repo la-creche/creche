@@ -74,6 +74,11 @@ impl VmProcess for FakeProcess {
         Ok(exits_on == "gone" || self.0.steps().iter().any(|(step, _)| *step == exits_on))
     }
 
+    /// A stop never asks how the process ended.
+    fn ended(&mut self) -> io::Result<Option<String>> {
+        Ok(self.exited()?.then(|| "exited".to_owned()))
+    }
+
     fn terminate(&mut self) -> io::Result<()> {
         if self.0.fails.term {
             return Err(io::ErrorKind::PermissionDenied.into());
@@ -319,6 +324,11 @@ impl VmProcess for Shell {
     fn exited(&mut self) -> io::Result<bool> {
         self.status = self.child.try_wait()?;
         Ok(self.status.is_some())
+    }
+
+    fn ended(&mut self) -> io::Result<Option<String>> {
+        self.exited()?;
+        Ok(self.status.map(|status| status.to_string()))
     }
 
     fn terminate(&mut self) -> io::Result<()> {

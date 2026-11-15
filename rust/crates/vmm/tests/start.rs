@@ -21,7 +21,7 @@ use std::thread::spawn;
 use std::time::{Duration, Instant, SystemTime};
 use std::{fs, io};
 
-use creche_vmm::control::{ControlState, SYNC_WAIT};
+use creche_vmm::control::{ControlState, READY_WAIT, SYNC_WAIT};
 use creche_vmm::egress::log::Log;
 use creche_vmm::egress::watch::POLL;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
@@ -106,6 +106,13 @@ const ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f2001
 /// The SHA-256 of `hello world`: the python root disk in the flavor test.
 const HELLO: &str = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
 
+/// The end of a launch whose `systemd-run` refuses the scope, as
+/// `spawner::Exit` writes it. On 2026-11-15 a dropped start left the
+/// scope of its session loaded, and each later start ended this way.
+const LOADED: &str = "exit status: 1, last line: Failed to start transient scope unit: \
+    Unit creche-vm-3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b.scope was already loaded or has a \
+    fragment file.";
+
 /// How the fake guest answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Guest {
@@ -129,6 +136,9 @@ enum Guest {
     /// As `Ready`, and a `stop` line does not power the VM off, so a stop
     /// waits `DROP_STOP_WAIT` and then sends SIGTERM.
     Ignores,
+    /// The launch ends at once with `LOADED`, before CH runs, so no
+    /// vsock socket exists and no guest answers.
+    LaunchEnds,
 }
 
 /// A launched fake VM. A signal ends it at once.
@@ -152,6 +162,12 @@ impl VmProcess for FakeVm {
             return Err(io::Error::other("the status check failed"));
         }
         Ok(self.exited.load(Ordering::SeqCst))
+    }
+
+    /// Each end reads as the one of `Guest::LaunchEnds`. Only a start
+    /// asks, and only that launch ends during one.
+    fn ended(&mut self) -> io::Result<Option<String>> {
+        Ok(self.exited()?.then(|| LOADED.to_owned()))
     }
 
     fn terminate(&mut self) -> io::Result<()> {
@@ -236,9 +252,8 @@ impl Fake {
         if let Some(port) = *self.extra.lock().unwrap() {
             UnixListener::bind(run.join(format!("vsock.sock_{port}"))).unwrap();
         }
-        let listener = UnixListener::bind(run.join("vsock.sock")).unwrap();
         let guest = *self.guest.lock().unwrap();
-        let exited = Arc::new(AtomicBool::new(false));
+        let exited = Arc::new(AtomicBool::new(guest == Guest::LaunchEnds));
         let broken = Arc::new(AtomicBool::new(false));
         let vm = Vm {
             exited: Arc::clone(&exited),
@@ -247,7 +262,10 @@ impl Fake {
             sync_lines: Arc::clone(&self.sync_lines),
             links: Arc::clone(&self.links),
         };
-        spawn(move || play(&listener, guest, &vm));
+        if guest != Guest::LaunchEnds {
+            let listener = UnixListener::bind(run.join("vsock.sock")).unwrap();
+            spawn(move || play(&listener, guest, &vm));
+        }
         let mut launches = self.launches.lock().unwrap();
         let number = launches.len();
         fs::write(self.dir.join(format!("cmdline-{number}")), args.join("\0")).unwrap();
@@ -577,6 +595,19 @@ impl Test {
         faults
             .iter()
             .map(|fault| fault["code"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// The messages in the fault file of `chat`.
+    fn fault_messages(&self) -> Vec<String> {
+        let Ok(text) = fs::read(&self.faults) else {
+            return Vec::new();
+        };
+        let body: serde_json::Value = serde_json::from_slice(&text).unwrap();
+        let faults = body["faults"].as_array().unwrap();
+        faults
+            .iter()
+            .map(|fault| fault["message"].as_str().unwrap().to_owned())
             .collect()
     }
 
@@ -927,6 +958,33 @@ fn a_guest_fault_stops_the_vm() {
         assert_eq!(test.fault_codes(), ["sandbox_start_failed"]);
         assert!(test.stopped(0));
         assert_eq!(test.stop_lines(), graceful, "{name}");
+        assert!(!test.hook.running(&test.rows[0].id));
+    }
+}
+
+/// A launch whose `systemd-run` refuses the scope ends before CH runs.
+/// The start faults at once with the exit and the line of `systemd-run`,
+/// not after `READY_WAIT` with `waiting for ControlReady: Timeout`. A
+/// restore that waits for `ch-remote info` ends the same way.
+#[test]
+fn a_launch_that_ends_faults_at_once_with_its_cause() {
+    for restore in [false, true] {
+        let test = Test::new(if restore { "ended-restore" } else { "ended" }, |_| {});
+        if restore {
+            test.snapshot(0, Some(&test.key()));
+            test.reply(0, "Paused", &[]);
+            // `info` fails for longer than `READY_WAIT`, as with no CH.
+            test.api.fails.store(usize::MAX, Ordering::SeqCst);
+        }
+        *test.fake.guest.lock().unwrap() = Guest::LaunchEnds;
+        let began = Instant::now();
+        assert_eq!(test.start(0), Err(StartFault::SandboxStartFailed));
+        let took = began.elapsed();
+        assert!(took < READY_WAIT / 4, "restore {restore}: {took:?}");
+        assert_eq!(test.restored(0), restore);
+        assert_eq!(test.fault_codes(), ["sandbox_start_failed"]);
+        let message = format!("the VM process ended before ControlReady: {LOADED}");
+        assert_eq!(test.fault_messages(), [message]);
         assert!(!test.hook.running(&test.rows[0].id));
     }
 }

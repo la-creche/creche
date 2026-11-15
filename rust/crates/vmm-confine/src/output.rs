@@ -24,7 +24,7 @@
 
 use std::fmt::Write as _;
 use std::io::{self, BufRead, BufReader, PipeReader, Read, Write};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -54,18 +54,67 @@ pub fn stderr_sink() -> Sink {
     })
 }
 
+/// The last line of one pipe, and whether the pipe ended. The reader keeps
+/// each line here before the rate cap, with its control chars escaped and
+/// no tag. A start whose CH process ended before `ControlReady` names
+/// that line in its fault (`spawner::Exit`), because a failed
+/// `systemd-run` writes its cause there and nowhere else.
+#[derive(Debug, Default)]
+pub struct Tail {
+    last: Mutex<Last>,
+}
+
+/// What a `Tail` holds at one moment.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Last {
+    /// The last line, or `None` before the first one.
+    pub line: Option<String>,
+    /// The pipe ended: a read found its end or failed.
+    pub ended: bool,
+}
+
+impl Tail {
+    /// The last line so far, and whether the pipe ended.
+    #[must_use]
+    pub fn last(&self) -> Last {
+        self.lock().clone()
+    }
+
+    fn keep(&self, line: String) {
+        self.lock().line = Some(line);
+    }
+
+    fn end(&self) {
+        self.lock().ended = true;
+    }
+
+    /// The state. A panic of the reader leaves a whole value, so a
+    /// poisoned lock is still read.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Last> {
+        self.last.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// Starts the reader thread of the VM of `id` on `pipe`. The thread ends
 /// at the end of the pipe, when CH and every process that holds the write
-/// end have exited.
+/// end have exited. The thread keeps the last line in `tail` and marks
+/// it ended as the thread ends.
 ///
 /// # Errors
 ///
 /// The thread did not start.
-pub fn start(id: SessionId, pipe: PipeReader, sink: Sink) -> io::Result<JoinHandle<()>> {
+pub fn start(
+    id: SessionId,
+    pipe: PipeReader,
+    sink: Sink,
+    tail: Arc<Tail>,
+) -> io::Result<JoinHandle<()>> {
     thread::Builder::new()
         .name("vmm-ch-output".to_owned())
         .spawn(move || {
-            if let Err(error) = forward(&id, pipe, &mut |line| sink(line)) {
+            let result = read(&id, pipe, &mut |line| sink(line), &tail);
+            tail.end();
+            if let Err(error) = result {
                 sink(&format!("ch {id} output read failed: {}", error.kind()));
             }
         })
@@ -78,6 +127,16 @@ pub fn start(id: SessionId, pipe: PipeReader, sink: Sink) -> io::Result<JoinHand
 ///
 /// A read failed. The lines before it reached the sink.
 pub fn forward(id: &SessionId, pipe: impl Read, sink: &mut dyn FnMut(&str)) -> io::Result<()> {
+    read(id, pipe, sink, &Tail::default())
+}
+
+/// `forward`, which also keeps each line in `tail`.
+fn read(
+    id: &SessionId,
+    pipe: impl Read,
+    sink: &mut dyn FnMut(&str),
+    tail: &Tail,
+) -> io::Result<()> {
     let mut reader = BufReader::with_capacity(LINE_CAP, pipe);
     let mut gate = Gate::new(Instant::now());
     let mut line: Vec<u8> = Vec::with_capacity(LINE_CAP);
@@ -90,7 +149,7 @@ pub fn forward(id: &SessionId, pipe: impl Read, sink: &mut dyn FnMut(&str)) -> i
         };
         if chunk.is_empty() {
             if !line.is_empty() || cut {
-                emit(id, &line, cut, &mut gate, sink);
+                emit(id, &line, cut, (&mut gate, tail), sink);
             }
             break Ok(());
         }
@@ -101,7 +160,7 @@ pub fn forward(id: &SessionId, pipe: impl Read, sink: &mut dyn FnMut(&str)) -> i
         line.extend(chunk.iter().take(take.min(room)));
         reader.consume(take + usize::from(newline.is_some()));
         if newline.is_some() {
-            emit(id, &line, cut, &mut gate, sink);
+            emit(id, &line, cut, (&mut gate, tail), sink);
             line.clear();
             cut = false;
         }
@@ -113,9 +172,17 @@ pub fn forward(id: &SessionId, pipe: impl Read, sink: &mut dyn FnMut(&str)) -> i
     result
 }
 
-/// Gives one line to `sink` if the gate lets it through, after the drop
-/// note of the window before.
-fn emit(id: &SessionId, line: &[u8], cut: bool, gate: &mut Gate, sink: &mut dyn FnMut(&str)) {
+/// Keeps one line in the tail, then gives it to `sink` if the gate lets
+/// it through, after the drop note of the window before.
+fn emit(
+    id: &SessionId,
+    line: &[u8],
+    cut: bool,
+    (gate, tail): (&mut Gate, &Tail),
+    sink: &mut dyn FnMut(&str),
+) {
+    let text = escaped(line);
+    tail.keep(text.clone());
     let Verdict::Pass { dropped } = gate.admit(Instant::now()) else {
         return;
     };
@@ -123,7 +190,7 @@ fn emit(id: &SessionId, line: &[u8], cut: bool, gate: &mut Gate, sink: &mut dyn 
         sink(&format!("ch {id} dropped {dropped} lines"));
     }
     let tag = if cut { " cut" } else { "" };
-    sink(&format!("ch {id}{tag}: {}", escaped(line)));
+    sink(&format!("ch {id}{tag}: {text}"));
 }
 
 /// The text of `line` with each control char escaped. Bytes that are not

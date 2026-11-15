@@ -76,6 +76,17 @@ pub trait VmProcess {
     /// The status check failed.
     fn exited(&mut self) -> io::Result<bool>;
 
+    /// How the process ended, once it exited: its exit status and the last
+    /// line it wrote (`spawner::Exit`). `None` while it runs. A start polls it
+    /// while it waits for CH and guest init, so the fault of a launch that
+    /// ended names the cause at once. The check does not block, and it
+    /// reaps an exit.
+    ///
+    /// # Errors
+    ///
+    /// The status check failed.
+    fn ended(&mut self) -> io::Result<Option<String>>;
+
     /// Sends SIGTERM.
     ///
     /// # Errors
@@ -98,6 +109,10 @@ impl VmProcess for Launched {
 
     fn exited(&mut self) -> io::Result<bool> {
         Ok(self.try_wait()?.is_some())
+    }
+
+    fn ended(&mut self) -> io::Result<Option<String>> {
+        Ok(Self::ended(self)?.map(|exit| exit.to_string()))
     }
 
     fn terminate(&mut self) -> io::Result<()> {

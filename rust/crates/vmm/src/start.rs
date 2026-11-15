@@ -39,7 +39,10 @@
 //!    only: `ch-remote info` must say `Paused`, the device check passes,
 //!    then `ch-remote resume` (decision CH50 rule 10).
 //! 5. The first `ControlReady` (plan PR L10). It clears the faults of the
-//!    family (contract 05 §3.3.1 rule 8).
+//!    family (contract 05 §3.3.1 rule 8). The waits of steps 4 and 5 end
+//!    at once when the process of the launch ends: a `systemd-run` that
+//!    refuses the scope, or a CH that dies. The fault then names the exit
+//!    and the last line of the launch (`spawner::Exit`), not the timeout.
 //! 6. The deny check (PR C8, decision CH6-3), with the family-state port,
 //!    the plane ports, and the mirror port, the egress port and the spool
 //!    port when each one is bound, as the bound set (decisions CH3, CH49
@@ -75,6 +78,7 @@ use std::fs::{self, DirBuilder};
 use std::io;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
+use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
@@ -107,7 +111,7 @@ use creche_wire::{
 };
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 
 use crate::control::{
     Change, ControlError, ControlLink, ControlState, DIAL_PAUSE, EventEnd, GuestEvents, LinkId,
@@ -1341,6 +1345,30 @@ impl StartCode {
     }
 }
 
+/// Runs `wait` unless the launched `process` ends first, with the text
+/// of its end (`VmProcess::ended`). The start waits up to `READY_WAIT` for
+/// CH and guest init. A launch whose `systemd-run` refused the scope, or
+/// a CH that died, ends its process long before that, and the fault then
+/// names the exit and its last line in place of a timeout. A failed status
+/// check leaves `wait` to end the start. With no process, it runs `wait`.
+async fn unless_ended<P: VmProcess, T>(
+    process: Option<&mut P>,
+    wait: impl Future<Output = T>,
+) -> Result<T, String> {
+    let Some(process) = process else {
+        return Ok(wait.await);
+    };
+    let mut wait = pin!(wait);
+    loop {
+        if let Ok(done) = timeout(DIAL_PAUSE, wait.as_mut()).await {
+            return Ok(done);
+        }
+        if let Ok(Some(end)) = process.ended() {
+            return Err(format!("the VM process ended before ControlReady: {end}"));
+        }
+    }
+}
+
 /// Runs `change` on the fault book `faults` for `family` in
 /// `spawn_blocking`. A failed write is logged: the book keeps the faults,
 /// and its next refresh writes them again.
@@ -2065,7 +2093,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             ))
         })
         .await;
-        let (pending, start, restore, cmdline, bound) = match launched {
+        let (mut pending, start, restore, cmdline, bound) = match launched {
             Ok(launched) => launched,
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         };
@@ -2125,15 +2153,27 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
                     .await);
             }
         };
-        if let Some(expected) = restore
-            && let Err((code, message)) = self.resume_checked(&pending.run, expected).await
-        {
-            return Err(self.abort(pending, link, None, family, code, message).await);
+        if let Some(expected) = restore {
+            let checked = self.resume_checked(&pending.run, expected);
+            let failed = match unless_ended(pending.process.as_mut(), checked).await {
+                Ok(Ok(())) => None,
+                Ok(Err(fault)) => Some(fault),
+                Err(message) => Some((sandbox, message)),
+            };
+            if let Some((code, message)) = failed {
+                return Err(self.abort(pending, link, None, family, code, message).await);
+            }
         }
-        let (control, ready) = match open(&vsock, id, wall_time).await {
-            Ok(opened) => opened,
-            Err(error) => {
+        let opened = unless_ended(pending.process.as_mut(), open(&vsock, id, wall_time)).await;
+        let (control, ready) = match opened {
+            Ok(Ok(opened)) => opened,
+            Ok(Err(error)) => {
                 let message = format!("waiting for ControlReady: {error:?}");
+                return Err(self
+                    .abort(pending, link, None, family, sandbox, message)
+                    .await);
+            }
+            Err(message) => {
                 return Err(self
                     .abort(pending, link, None, family, sandbox, message)
                     .await);

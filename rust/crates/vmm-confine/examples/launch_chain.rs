@@ -24,7 +24,8 @@
 //!   writes `core <soft> <hard>`, its own core limits, to stderr. It then
 //!   execs the arguments after `--`. For the scope unit of `HOLD` it
 //!   execs `/bin/sleep 60` instead, so a test has a live process to
-//!   signal.
+//!   signal. For the scope unit of `LOADED` it writes the error of a
+//!   scope that is already loaded and exits 1, as `systemd-run` does.
 //! - `probe <run dir> <root disk> <session disk> <outside file> <port>`
 //!   tries five accesses and writes each result to `<run dir>/probe.txt`.
 //! - `say <text>` writes `<text> out` to stdout and `<text> err` to
@@ -56,6 +57,9 @@ fn main() -> ExitCode {
             .map_err(Failure::from),
         Some((role, [])) if role == "hold" => hold(),
         Some((role, [path])) if role == "await" => await_path(Path::new(path)),
+        Some((role, rest)) if role == "--user" && rest.iter().any(|arg| arg == LOADED) => {
+            return refuse_loaded();
+        }
         Some((role, rest)) if role == "--user" => fake_systemd_run(rest),
         Some((role, rest)) if role == "probe" => probe(rest),
         Some((role, rest)) if role == "say" => say(rest),
@@ -106,6 +110,24 @@ fn await_path(path: &Path) -> Result<(), Failure> {
 /// `/bin/sleep 60`. `tests/launch.rs` launches the session id
 /// `0123abcd-0000-4000-8000-00000000d0d0` for it.
 const HOLD: &str = "--unit=creche-vm-0123abcd-0000-4000-8000-00000000d0d0";
+
+/// The scope unit that the fake `systemd-run` finds already loaded.
+/// `tests/launch.rs` launches the session id
+/// `0123abcd-0000-4000-8000-00000000e0e0` for it.
+const LOADED: &str = "--unit=creche-vm-0123abcd-0000-4000-8000-00000000e0e0";
+
+/// The fake `systemd-run` for the unit of `LOADED`. It exits 1 with one
+/// line on stderr and no prefix, as `systemd-run` does for a scope that
+/// is already loaded.
+fn refuse_loaded() -> ExitCode {
+    let unit = LOADED.trim_start_matches("--unit=");
+    // A failed write still exits 1, the code of the refusal.
+    let _ = writeln!(
+        io::stderr(),
+        "Failed to start transient scope unit: Unit {unit}.scope was already loaded or has a fragment file."
+    );
+    ExitCode::FAILURE
+}
 
 /// The fake `systemd-run`. It returns only on an error. Its core limits
 /// are the ones that the launch step set (decision CH8-5, CH36 G27), so
