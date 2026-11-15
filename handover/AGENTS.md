@@ -270,6 +270,18 @@ has the name of the markup of the manifest: `.component.toml` or
    file's field.
 4. The entrypoint check reads the first 2 KiB, not the first line.
 5. `stage_all` swaps nothing. Every server is built before any is live.
+6. Root looks for the entrypoint of an unpacked asset in four places, in
+   this order, and walks no tree:
+   1. `<entrypoint>` at the top of the asset.
+   2. `bin/<entrypoint>`.
+   3. `<folder>/<entrypoint>`.
+   4. `<folder>/bin/<entrypoint>`.
+
+   `<folder>` is the asset name without its archive suffix: `.tar.gz`,
+   `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst` or `.tar` (`ARCHIVE_SUFFIXES`). An asset
+   name with another suffix has no folder, and only places 1 and 2 count.
+   The server file pins the asset name, so the file names the folder, and
+   the archive does not.
 
 ## Sets, the phone and the quiet window
 
@@ -900,6 +912,9 @@ that wants a refusal changes one field.
   that is no failed hook still stops the restore at its component
   (`executor/steps.py`).
 - `arg_allows` is applied by nothing (`mcpserver.py`).
+- Contract 01b §3.2 does not say where the program sits in an unpacked
+  asset. Root reads the four places of "Rules `mcpbuild.py` adds" rule 6,
+  and no other (`executor/mcpbuild.py`).
 - Contract 01b §3 names no `forge-release` source and no `host` field.
   Root takes the strict reading: a DNS name in lower case, no name of one
   label, no end dot, and no list of allowed hosts. The file that names

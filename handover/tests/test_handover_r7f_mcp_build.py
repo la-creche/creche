@@ -34,6 +34,7 @@ from handover.executor.mcpbuild import (
     Fetched,
     McpBuilder,
     ServerBuild,
+    _asset_folder,
 )
 from handover.mcpserver import ServerFile, parse_server
 from handover_mcp_fixtures import (
@@ -665,6 +666,110 @@ def test_an_asset_without_the_declared_entrypoint_is_refused(tmp_path: Path) -> 
 
     with pytest.raises(Refusal, match="holds no github-mcp-server"):
         _unpack(tmp_path, raw)
+
+
+# -- where the entrypoint may sit in an unpacked asset --------------------
+
+#: The folder at the top of the forgejo-mcp 3.4.1 asset: the asset name
+#: without `.tar.gz`. `tar -tzf` lists three members below it.
+FORGE_FOLDER = "forgejo-mcp_3.4.1_linux_amd64"
+
+
+def _forge_unpack(tmp_path: Path, raw: bytes) -> ServerBuild:
+    fake = McpFake(asset_bytes=raw)
+    builder, work, source = _builder(tmp_path, fake)
+
+    return builder.stage_one(forge_server(sha256_of(raw)), work, source)
+
+
+def _members(*names: str) -> bytes:
+    def make(tar: tarfile.TarFile) -> None:
+        for name in names:
+            _member(tar, name)
+
+    return hostile_tarball(make)
+
+
+def test_the_layout_of_the_forgejo_mcp_asset_installs(tmp_path: Path) -> None:
+    raw = _members(
+        f"{FORGE_FOLDER}/LICENSE", f"{FORGE_FOLDER}/README.md", f"{FORGE_FOLDER}/forgejo-mcp"
+    )
+
+    build = _forge_unpack(tmp_path, raw)
+
+    assert build.paths.new.joinpath("bin", "forgejo-mcp").is_file()
+
+
+def test_the_bin_folder_below_the_asset_folder_installs(tmp_path: Path) -> None:
+    build = _forge_unpack(tmp_path, _members(f"{FORGE_FOLDER}/bin/forgejo-mcp"))
+
+    assert build.paths.new.joinpath("bin", "forgejo-mcp").is_file()
+
+
+@pytest.mark.parametrize(
+    "folder",
+    [
+        "forgejo-mcp_3.4.2_linux_amd64",
+        "forgejo-mcp",
+        "forgejo-mcp_3.4.1_linux_amd64.tar.gz",
+        f"{FORGE_FOLDER}/inner",
+    ],
+)
+def test_a_folder_of_another_name_is_refused(tmp_path: Path, folder: str) -> None:
+    with pytest.raises(Refusal, match="holds no forgejo-mcp"):
+        _forge_unpack(tmp_path, _members(f"{folder}/forgejo-mcp"))
+
+
+def test_the_two_old_layouts_install_as_before(tmp_path: Path) -> None:
+    (tmp_path / "top").mkdir()
+    (tmp_path / "bin").mkdir()
+    top = _forge_unpack(tmp_path / "top", _members("forgejo-mcp"))
+    under_bin = _forge_unpack(tmp_path / "bin", _members("bin/forgejo-mcp"))
+
+    assert top.paths.new.joinpath("bin", "forgejo-mcp").is_file()
+    assert under_bin.paths.new.joinpath("bin", "forgejo-mcp").is_file()
+
+
+def test_a_github_release_takes_the_asset_folder_too(tmp_path: Path) -> None:
+    raw = _members("github-mcp-server_Linux_x86_64/github-mcp-server")
+
+    build = _unpack(tmp_path, raw)
+
+    assert build.paths.new.joinpath("bin", "github-mcp-server").is_file()
+
+
+def test_the_top_of_the_asset_comes_before_the_asset_folder(tmp_path: Path) -> None:
+    def make(tar: tarfile.TarFile) -> None:
+        for name, body in (("forgejo-mcp", b"top"), (f"{FORGE_FOLDER}/forgejo-mcp", b"folder")):
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            info.mode = 0o755
+            tar.addfile(info, io.BytesIO(body))
+
+    build = _forge_unpack(tmp_path, hostile_tarball(make))
+
+    assert build.paths.new.joinpath("bin", "forgejo-mcp").read_bytes() == b"top"
+
+
+@pytest.mark.parametrize(
+    ("asset", "folder"),
+    [
+        ("forgejo-mcp_3.4.1_linux_amd64.tar.gz", "forgejo-mcp_3.4.1_linux_amd64"),
+        ("tool.tgz", "tool"),
+        ("tool.tar.xz", "tool"),
+        ("tool.tar.bz2", "tool"),
+        ("tool.tar", "tool"),
+        ("tool.v1.tar.gz", "tool.v1"),
+        ("tool.zip", None),
+        ("tool.tar.zst", "tool"),
+        ("tool", None),
+        ("tool.TAR.GZ", None),
+    ],
+)
+def test_the_asset_folder_is_the_asset_name_without_its_suffix(
+    asset: str, folder: str | None
+) -> None:
+    assert _asset_folder(asset) == folder
 
 
 def test_an_unpacked_file_keeps_no_more_than_0755(tmp_path: Path) -> None:
