@@ -1,0 +1,71 @@
+#!/bin/bash
+# The guest side of the proof of the image (ci-runner-image-proof). The
+# seed of the proof installs it as /usr/local/sbin/guest-proof, and
+# cloud-init starts it as the transient unit `guest-proof`. It is no file
+# of the image.
+#
+# Each result is one line `CI-PROOF <key>=<value>` on the serial console.
+# The host reads the lines and judges them. The last line is
+# `CI-PROOF done`, and then the guest powers off.
+#
+# `systemctl is-system-running --wait` waits for the end of the boot. The
+# unit has the type `simple`, so its own start job does not hold the boot
+# open.
+set -uo pipefail
+
+say() { printf 'CI-PROOF %s\n' "$*"; }
+
+state=$(timeout 300 systemctl is-system-running --wait)
+say "system=$state"
+if [[ "$state" != running ]]; then
+  systemctl --failed --no-legend --plain | while read -r line; do
+    say "failed-unit=$line"
+  done
+fi
+
+if runuser -u runner -- sudo -n true; then
+  say "sudo=ok"
+else
+  say "sudo=refused"
+fi
+
+if hello=$(runuser -u runner -- docker run --rm hello-world 2>&1) &&
+  grep -q '^Hello from Docker!' <<< "$hello"; then
+  say "docker=ok"
+else
+  while read -r line; do
+    say "docker-log=$line"
+  done <<< "$hello"
+  say "docker=failed"
+fi
+
+say "forgejo-runner=$(forgejo-runner --version 2>&1)"
+say "node=$(runuser -u runner -- node --version 2>&1)"
+say "git=$(runuser -u runner -- git --version 2>&1)"
+
+# The storage of Docker and containerd and the job workspaces must sit on
+# the data disk, not on the root.
+data=$(stat -c %d /var/lib/ci-data)
+storage="data-disk"
+for path in /var/lib/docker /var/lib/containerd /var/lib/ci-data/work; do
+  if [[ "$(stat -c %d "$path")" != "$data" || "$data" == "$(stat -c %d /)" ]]; then
+    storage="root:$path"
+  fi
+done
+say "storage=$storage"
+say "data-disk=$(findmnt -n -o SOURCE,FSTYPE /var/lib/ci-data)"
+
+# The job unit has no seed files here, so its conditions keep it stopped,
+# and the VM stays up. The verify reads the unit as systemd does.
+say "job-unit=$(systemctl show -p ConditionResult --value forgejo-runner-job.service)"
+if verify=$(systemd-analyze verify forgejo-runner-job.service 2>&1) && [[ -z "$verify" ]]; then
+  say "job-unit-verify=ok"
+else
+  while read -r line; do
+    say "job-unit-verify-log=$line"
+  done <<< "$verify"
+  say "job-unit-verify=failed"
+fi
+
+say "done"
+systemctl poweroff

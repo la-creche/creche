@@ -1,6 +1,6 @@
 # CI runner VMs on the host (`ci-runner`): design
 
-> Status as of 2026-11-15: Decided, not built. The operator decided R1 to R6 on 2026-11-15, all as recommended. The spike on the host is complete, and every step passed on a tap network. No component code exists yet. Next: the open questions of section 7, then PR 2 of section 8.
+> Status as of 2026-11-15: Decided. PR 2 of section 8 builds the guest image, and its proof runs in the gate. The operator decided R1 to R6 on 2026-11-15, all as recommended. The spike on the host is complete, and every step passed on a tap network. Questions 1 and 2 of section 7 take their defaults. `ci-runner-image/AGENTS.md` has the build. Next: PR 3 of section 8.
 > Host names, addresses and accounts are placeholders. The operator's private notes hold the real values.
 
 Source: the operator's private plan `reframe/forgejo-runner-vm-plan.md` (sections 2, 4 and 7), and the spike scripts `reframe/forgejo-runner/net-up.sh` and `net-down.sh`. Section 7 of the plan (the spike results) replaces section 3 of the plan (the first design) where the two differ. Research date: 2026-11-15. File evidence was checked against creche `origin/main` at `6c1009d5`.
@@ -128,7 +128,7 @@ CH v54 boots the image by direct kernel boot. The kernel is the image's own `vml
 Each job gets three disks in its own run folder:
 
 1. **The root disk.** A copy of the qcow2 image, 1.4 GB in the spike. The host has no `qemu-img`, so it cannot make a qcow2 overlay. The spike copied the whole image.
-2. **The data disk.** A sparse raw file of 40 GB. It holds `/var/lib/docker`, `/var/lib/containerd` and the workspace. The spike used 1.7 GB of it for the Panda build. The spike record does not say which side formatted it. This design formats it in the guest at first boot (cloud-init `fs_setup`).
+2. **The data disk.** A sparse raw file of 40 GB. It holds `/var/lib/docker`, `/var/lib/containerd` and the workspace. The spike used 1.7 GB of it for the Panda build. The spike record does not say which side formatted it. This design formats it in the guest at first boot, with `x-systemd.makefs` in `/etc/fstab` of the image. The host gives the disk the virtio serial `ci-data`. Docker and containerd then start only after the mounts, because the mounts are part of `local-fs.target`. cloud-init `fs_setup` runs later, in `cloud-init.service`, and containerd has no order after that unit.
 3. **The config disk.** A cloud-init NoCloud seed with the label `cidata`. It holds the runner uuid and token, the job handle, the labels, the Forgejo URL, and a `network-config` that matches the MAC of the slot and sets the static address of the slot.
 
 The spike built its seed as an ISO on another machine, because the host has no ISO tool. NoCloud also reads a VFAT filesystem with the label `cidata`. The daemon writes the seed as a small VFAT image itself, so the host needs no new tool. This is a design choice. The spike did not test a VFAT seed.

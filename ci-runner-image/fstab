@@ -1,0 +1,15 @@
+# The data disk of the CI runner VM (docs/design/ci-runner.md, section
+# 4.3 item 7). The build appends these lines to /etc/fstab of the image.
+#
+# 1. The data disk is the virtio disk with the serial `ci-data`. The host
+#    gives that serial on its `--disk` argument, so the disk order does
+#    not matter. systemd formats it at the first boot when it holds no
+#    file system (`x-systemd.makefs`). The disk is a new sparse file for
+#    each job, so each boot is a first boot.
+# 2. No `nofail`: a VM with no data disk does not reach local-fs.target.
+#    It does not start Docker on the 3.5 GB root.
+# 3. ci-data-dirs.service makes the two directories on the data disk
+#    before the two bind mounts.
+/dev/disk/by-id/virtio-ci-data /var/lib/ci-data ext4 defaults,x-systemd.makefs,x-systemd.device-timeout=30s 0 0
+/var/lib/ci-data/docker /var/lib/docker none bind,x-systemd.requires=ci-data-dirs.service 0 0
+/var/lib/ci-data/containerd /var/lib/containerd none bind,x-systemd.requires=ci-data-dirs.service 0 0

@@ -1,0 +1,4 @@
+# The job user of the CI runner VM uses sudo with no password (ci-runner
+# design, section 4.3 item 5). The VM is the boundary, and it is thrown
+# away after its one job.
+runner ALL=(ALL:ALL) NOPASSWD: ALL

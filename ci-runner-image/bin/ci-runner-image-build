@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+# CI: builds the guest image of the CI runner VMs (docs/design/ci-runner.md,
+# section 4.3):
+#   CI_IMAGE_OUT=<dir> ci-runner-image/bin/ci-runner-image-build
+#
+# ci-runner-image/bin/ci-runner-image-proof runs it in the job
+# `ci-runner-image` of gate.yml. No hook and no unit runs it, and the host
+# never runs it. It uses the sudo of a throwaway GitHub runner (CH36 G20),
+# so it refuses to run outside GitHub Actions. The runner needs qemu-img
+# (the apt package qemu-utils).
+#
+# The method: the script converts the pinned cloud image to a raw file,
+# attaches it to a loop device, mounts its root and its /boot, and installs
+# the packages in a chroot. The runner gives the chroot its network. Then it
+# converts the raw file back to qcow2. It boots no VM, so it runs beside the
+# CH build of the proof.
+#
+# The steps:
+#   1. Fetch the Ubuntu 24.04 cloud image of IMAGE_URL, forgejo-runner and
+#      Node. Check each one against its pinned SHA-256.
+#   2. In the chroot, install PACKAGES from the Ubuntu snapshot
+#      APT_SNAPSHOT, so a rebuild takes the same package versions. Purge
+#      snapd. Mask the two apt timers: a fresh image would start them at
+#      the first boot, and an apt run then holds the lock that a job needs.
+#   3. Add the job user JOB_USER, in the groups docker and kvm, with sudo
+#      and no password.
+#   4. Install Node into /usr/local and forgejo-runner into /usr/local/bin.
+#   5. Install the files of ci-runner-image/root, append
+#      ci-runner-image/fstab to /etc/fstab and enable
+#      forgejo-runner-job.service.
+#   6. Copy the kernel and the initrd of the image out of its /boot. The
+#      host boots them by direct kernel boot. The image must hold exactly
+#      one kernel.
+#   7. Trim the file systems and convert the raw file to qcow2.
+#
+# CI_IMAGE_OUT names a directory that is absent or empty. The script writes
+# these files into it:
+#   root.qcow2   the root disk
+#   vmlinuz      the kernel of the image
+#   initrd.img   the initrd of that kernel
+#   SHA256SUMS   the SHA-256 of the three files, as sha256sum prints it
+# A step that fails leaves CI_IMAGE_OUT empty.
+#
+# `set -euo pipefail`: the first fault stops the run.
+set -euo pipefail
+export LC_ALL=C
+
+# A dated release of the cloud image, never `current`. The SHA-256 is the
+# line of the file SHA256SUMS of that release.
+IMAGE_URL=https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-amd64.img
+IMAGE_SHA256=04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94
+# The label of the root file system of the image. The kernel command line
+# of the host names it.
+ROOT_LABEL=cloudimg-rootfs
+BOOT_LABEL=BOOT
+APT_SNAPSHOT=20261101T000000Z
+# docker-buildx: Docker 29 deprecates the old builder, and BuildKit needs
+# the plugin.
+PACKAGES=(docker.io containerd docker-buildx git pigz xz-utils)
+# The file .sha256 beside the program holds this digest.
+RUNNER_VERSION=v13.2.1
+RUNNER_URL=https://code.forgejo.org/forgejo/runner/releases/download/v13.2.1/forgejo-runner-13.2.1-linux-amd64
+RUNNER_SHA256=bb369fe1ecb50fdc983c0b1d993f19b0920df6e5864511892b3cdbf16d858b34
+# The line of linux-x64.tar.xz in SHASUMS256.txt of the release.
+NODE_VERSION=v24.22.1
+NODE_URL=https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.xz
+NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+JOB_USER=runner
+
+say() { printf 'ci-runner-image-build: %s\n' "$*"; }
+die() {
+  say "$*" >&2
+  exit 1
+}
+
+[[ "${GITHUB_ACTIONS:-}" == true ]] || die "runs only on a GitHub runner (CH36 G20)"
+out=${CI_IMAGE_OUT:?CI_IMAGE_OUT names the output directory}
+[[ "$out" == /* ]] || die "CI_IMAGE_OUT is not absolute: $out"
+if [[ -e "$out" ]]; then
+  [[ -d "$out" && ! -L "$out" ]] || die "CI_IMAGE_OUT names no directory"
+  [[ -z "$(ls -A -- "$out")" ]] || die "CI_IMAGE_OUT is not empty"
+fi
+command -v qemu-img > /dev/null || die "no qemu-img on this runner"
+mkdir -p -- "$out"
+
+TREE=$(cd "$(dirname "$0")/.." && pwd)
+work=$(mktemp -d "${RUNNER_TEMP:-/tmp}/ci-runner-image.XXXXXX")
+mnt=$work/mnt
+loop=""
+
+# The cleanup undoes each mount in reverse order and frees the loop device.
+# It runs also after a fault, so the runner keeps no busy device.
+cleanup() {
+  local status=$?
+  if [[ -d "$mnt" ]]; then
+    for target in run dev/pts dev sys proc boot ""; do
+      if mountpoint -q -- "$mnt/$target"; then
+        sudo umount -- "$mnt/$target" || status=1
+      fi
+    done
+  fi
+  if [[ -n "$loop" ]]; then
+    sudo losetup -d "$loop" || status=1
+  fi
+  sudo rm -rf -- "$work"
+  exit "$status"
+}
+trap cleanup EXIT
+
+# fetch URL SHA256 FILE: the download, checked before any use.
+fetch() {
+  curl -fsSL --retry 3 -o "$3" "$1"
+  sha256sum --check --strict --quiet <<< "$2  $3" || die "$1 has another SHA-256"
+}
+
+say "fetch the cloud image, forgejo-runner $RUNNER_VERSION and Node $NODE_VERSION"
+fetch "$IMAGE_URL" "$IMAGE_SHA256" "$work/cloud.img"
+fetch "$RUNNER_URL" "$RUNNER_SHA256" "$work/forgejo-runner"
+fetch "$NODE_URL" "$NODE_SHA256" "$work/node.tar.xz"
+chmod 0755 "$work/forgejo-runner"
+say "forgejo-runner prints: $("$work/forgejo-runner" --version)"
+
+say "attach the root of the image"
+qemu-img convert -f qcow2 -O raw "$work/cloud.img" "$work/root.raw"
+rm -f -- "$work/cloud.img"
+loop=$(sudo losetup --find --show --partscan "$work/root.raw")
+sudo udevadm settle
+
+# The partitions by their label. The runner has file systems with the same
+# labels, so the search reads the partitions of the loop device only.
+root_part=""
+boot_part=""
+for part in "$loop"p*; do
+  label=$(sudo blkid -o value -s LABEL "$part" || true)
+  case "$label" in
+    "$ROOT_LABEL") root_part=$part ;;
+    "$BOOT_LABEL") boot_part=$part ;;
+  esac
+done
+[[ -n "$root_part" ]] || die "the image has no partition with the label $ROOT_LABEL"
+mkdir -p -- "$mnt"
+sudo mount -- "$root_part" "$mnt"
+if [[ -n "$boot_part" ]]; then
+  sudo mount -- "$boot_part" "$mnt/boot"
+fi
+
+# The chroot gets the kernel file systems and the DNS of the runner. The
+# tmpfs on /run keeps every file of the run out of the image. The image's
+# /etc/resolv.conf links to the stub file of systemd-resolved under /run,
+# and the chroot shares the network of the runner, so the stub of the
+# runner answers.
+sudo mount -t proc proc "$mnt/proc"
+sudo mount -t sysfs sysfs "$mnt/sys"
+sudo mount --bind /dev "$mnt/dev"
+sudo mount -t devpts devpts "$mnt/dev/pts"
+sudo mount -t tmpfs tmpfs "$mnt/run"
+sudo install -d "$mnt/run/systemd/resolve"
+sudo install -m 0644 /etc/resolv.conf "$mnt/run/systemd/resolve/stub-resolv.conf"
+
+in_root() { sudo chroot "$mnt" /usr/bin/env DEBIAN_FRONTEND=noninteractive "$@"; }
+
+say "install ${PACKAGES[*]} from the snapshot $APT_SNAPSHOT"
+# A package script must start no service in the chroot.
+printf '#!/bin/sh\nexit 101\n' | sudo tee "$mnt/usr/sbin/policy-rc.d" > /dev/null
+sudo chmod 0755 "$mnt/usr/sbin/policy-rc.d"
+in_root apt-get --snapshot "$APT_SNAPSHOT" -qq update
+in_root apt-get --snapshot "$APT_SNAPSHOT" -qq --yes --no-install-recommends install "${PACKAGES[@]}"
+in_root apt-get -qq --yes purge snapd
+in_root apt-get -qq --yes --purge autoremove
+in_root apt-get -qq clean
+sudo rm -rf -- "$mnt/var/lib/apt/lists/"*
+sudo rm -f -- "$mnt/usr/sbin/policy-rc.d"
+sudo systemctl --root="$mnt" mask apt-daily.timer apt-daily-upgrade.timer
+
+say "add the job user $JOB_USER"
+in_root sh -c 'getent group kvm > /dev/null || groupadd --system kvm'
+in_root useradd --create-home --shell /bin/bash --user-group --groups docker,kvm "$JOB_USER"
+
+say "install Node and forgejo-runner into /usr/local"
+# The archive holds bin, include, lib and share under one top directory,
+# and three text files beside them that /usr/local does not need.
+node_top="node-$NODE_VERSION-linux-x64"
+sudo tar --extract --xz --file "$work/node.tar.xz" --directory "$mnt/usr/local" \
+  --strip-components=1 --no-same-owner --anchored \
+  --exclude="$node_top/CHANGELOG.md" --exclude="$node_top/LICENSE" \
+  --exclude="$node_top/README.md"
+node_version=$(in_root /usr/local/bin/node --version)
+[[ "$node_version" == "$NODE_VERSION" ]] || die "node prints $node_version, not $NODE_VERSION"
+sudo install -m 0755 "$work/forgejo-runner" "$mnt/usr/local/bin/forgejo-runner"
+
+say "install the files of ci-runner-image/root"
+# Each file with its mode. The sudoers file must pass visudo.
+while read -r mode path; do
+  sudo install -D -m "$mode" "$TREE/root/$path" "$mnt/$path"
+done << 'EOF'
+0644 etc/systemd/system/ci-data-dirs.service
+0644 etc/systemd/system/forgejo-runner-job.service
+0644 etc/systemd/system/docker.service.d/ci-data.conf
+0644 etc/systemd/system/containerd.service.d/ci-data.conf
+0644 etc/forgejo-runner/config.yml
+0440 etc/sudoers.d/90-ci-runner-job
+EOF
+in_root visudo --check --quiet --file /etc/sudoers.d/90-ci-runner-job ||
+  die "the sudoers file of the job user does not pass visudo"
+sudo install -d -m 0755 "$mnt/var/lib/ci-data" "$mnt/var/lib/docker" "$mnt/var/lib/containerd"
+sudo tee -a "$mnt/etc/fstab" < "$TREE/fstab" > /dev/null
+sudo systemctl --root="$mnt" enable forgejo-runner-job.service
+
+say "copy the kernel and the initrd out of /boot"
+mapfile -t kernels < <(sudo ls -1 "$mnt/lib/modules")
+((${#kernels[@]} == 1)) || die "the image holds ${#kernels[@]} kernels, not 1: ${kernels[*]}"
+kernel=${kernels[0]}
+sudo install -m 0644 -o "$(id -u)" -g "$(id -g)" "$mnt/boot/vmlinuz-$kernel" "$work/vmlinuz"
+sudo install -m 0644 -o "$(id -u)" -g "$(id -g)" "$mnt/boot/initrd.img-$kernel" "$work/initrd.img"
+say "the kernel is $kernel"
+
+say "trim and detach the image"
+sudo fstrim "$mnt"
+if [[ -n "$boot_part" ]]; then
+  sudo fstrim "$mnt/boot"
+fi
+for target in run dev/pts dev sys proc boot ""; do
+  if mountpoint -q -- "$mnt/$target"; then
+    sudo umount -- "$mnt/$target"
+  fi
+done
+sudo losetup -d "$loop"
+loop=""
+
+say "convert the root disk to qcow2"
+qemu-img convert -f raw -O qcow2 "$work/root.raw" "$work/root.qcow2"
+qemu-img check -q "$work/root.qcow2"
+rm -f -- "$work/root.raw"
+
+names=(root.qcow2 vmlinuz initrd.img)
+(cd -- "$work" && sha256sum -- "${names[@]}") > "$work/SHA256SUMS"
+for name in "${names[@]}" SHA256SUMS; do
+  mv -f -- "$work/$name" "$out/$name"
+done
+cat -- "$out/SHA256SUMS"
+say "the root disk is $(stat -c %s "$out/root.qcow2") bytes"
