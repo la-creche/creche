@@ -4,8 +4,9 @@
 # cloud-init starts it as the transient unit `guest-proof`. It is no file
 # of the image.
 #
-# Each result is one line `CI-PROOF <key>=<value>` on the serial console.
-# The host reads the lines and judges them. The last line is
+# Each result is one line `CI-PROOF <key>=<value>`. journald copies it to
+# the serial console with the tag of the unit. The host reads the lines
+# and judges them. The last line is
 # `CI-PROOF done`, and then the guest powers off.
 #
 # `systemctl is-system-running --wait` waits for the end of the boot. The

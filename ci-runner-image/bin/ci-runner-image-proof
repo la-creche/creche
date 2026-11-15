@@ -207,9 +207,11 @@ tr -d '\r' < "$run/serial.log" || true
 echo "::endgroup::"
 say "CH exited with status $boot_status after $boot_seconds s"
 
-# The CI-PROOF lines, without the prefix. The prefix starts the line: the
-# guest writes each one in one write to the console.
-mapfile -t got < <(tr -d '\r' < "$run/serial.log" | sed -n 's/^CI-PROOF //p')
+# The CI-PROOF lines, without their prefix. journald writes each line of
+# the unit to the console as `[<time>] guest-proof[<pid>]: CI-PROOF ...`,
+# and a line of the login prompt can come before it on the same line.
+mapfile -t got < <(tr -d '\r' < "$run/serial.log" |
+  sed -E -n 's/^.*guest-proof\[[0-9]+\]: CI-PROOF //p')
 printf '  %s\n' "${got[@]}"
 fails=0
 for line in "${EXPECTED[@]}"; do
