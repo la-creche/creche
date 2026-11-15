@@ -22,6 +22,11 @@ user = "mcp-board-lead"
 secret_delivery = "env"
 secrets = { VIKUNJA_TOKEN = "vikunja_token_lead" }
 
+[plugins.forgejo-code]
+user = "mcp-forgejo-code"
+secret_delivery = "env"
+secrets = { FORGEJO_ACCESS_TOKEN = "forgejo_token_code" }
+
 [plugins.github-code]
 user = "mcp-github-code"
 secret_delivery = "env"
@@ -85,6 +90,19 @@ command = [
     "VIKUNJA_ACTOR=bot-scrum-lead",
     "VIKUNJA_URL=http://127.0.0.1:3456",
     "/opt/mcp/board-lead/bin/vikunja-lead-mcp",
+]
+--- plugins/effect/added/forgejo-code/plugin.toml
+name = "forgejo-code"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["FORGEJO_ACCESS_TOKEN"]
+command = [
+    "/usr/bin/env",
+    "FORGEJO_URL=https://forge.example.org",
+    "/opt/mcp/forgejo-code/bin/forgejo-mcp",
+    "--transport",
+    "stdio",
 ]
 --- plugins/effect/added/github-code/plugin.toml
 name = "github-code"

@@ -13,6 +13,7 @@ import pytest
 import yaml
 from handover.errors import Refusal, RefusalCode
 from handover.mcpserver import (
+    MAX_HOST_CHARS,
     MAX_SERVER_BYTES,
     MAX_TOOLS,
     AssetFormat,
@@ -60,6 +61,27 @@ run:
 tools:
   - name: get_file_contents
     description: Read one file from a repository.
+  - name: create_pull_request
+    description: Open a pull request.
+    write: true
+"""
+
+#: A release asset of a Forgejo host: forgejo-mcp 3.4.1, from the host that
+#: publishes it. The pin is the pin of `github-release`, with the host.
+FORGEJO_CODE = """
+name: forgejo-code
+identity: "Access token of the code bot on the Forgejo host."
+install:
+  source: forge-release
+  host: git.b4mad.industries
+  repo: agentic-forges/forgejo-mcp
+  version: 3.4.1
+  asset: forgejo-mcp_3.4.1_linux_amd64.tar.gz
+  sha256: 940d3ed08a5535bf1baaf426cb93610cfef5ad02adbda76b7c70a618f08fa53c
+run:
+  entrypoint: forgejo-mcp
+  args: [--transport, stdio]
+tools:
   - name: create_pull_request
     description: Open a pull request.
     write: true
@@ -132,6 +154,25 @@ def test_the_contract_s_github_example_parses_and_builds_its_url() -> None:
     )
 
 
+def test_a_forge_release_parses_and_builds_its_url() -> None:
+    server = parse_server(FORGEJO_CODE.encode("utf-8"), "forgejo-code")
+
+    assert server.pin.source is Source.FORGE_RELEASE
+    assert server.pin.host == "git.b4mad.industries"
+    assert server.pin.format is AssetFormat.TAR
+    # The path of `github-release`, on the host that the file names.
+    assert server.pin.asset_url() == (
+        "https://git.b4mad.industries/agentic-forges/forgejo-mcp/releases/download/"
+        "v3.4.1/forgejo-mcp_3.4.1_linux_amd64.tar.gz"
+    )
+
+
+def test_a_github_release_names_no_host() -> None:
+    server = parse_server(GITHUB_CODE.encode("utf-8"), "github-code")
+
+    assert server.pin.host is None
+
+
 def test_the_contract_s_agent_mcp_example_parses() -> None:
     server = parse_server(VIKUNJA.encode("utf-8"), "vikunja-finance")
 
@@ -199,7 +240,7 @@ def test_an_unknown_source_is_refused() -> None:
     install: dict[str, object] = body["install"]  # type: ignore[assignment]
     install["source"] = "file"
 
-    assert "not one of contract 01b's three" in _refusal(body).detail
+    assert "not one of contract 01b's four" in _refusal(body).detail
 
 
 @pytest.mark.parametrize(
@@ -618,3 +659,138 @@ def test_a_format_under_another_source_is_refused() -> None:
     body = _with_install(_kagi_body(), format="binary")
 
     assert "install.format does not belong to pypi" in _refusal(body).detail
+
+
+# -- rule 17: install.host -------------------------------------------------
+
+
+def _forge_body() -> dict[str, object]:
+    loaded: dict[str, object] = yaml.safe_load(FORGEJO_CODE)
+
+    return loaded
+
+
+HOST_RULE = (
+    "install.host is not a DNS name in lower case, with no scheme, no port, "
+    "no path, no user and no IP address"
+)
+
+#: One value for each rule of `install.host`, by the rule that it breaks.
+HOST_REFUSED: dict[str, str] = {
+    "a-scheme": "https://git.example.org",
+    "a-port": "git.example.org:3000",
+    "a-path": "git.example.org/owner",
+    "a-user": "bot@git.example.org",
+    "a-user-and-a-password": "bot:word@git.example.org",
+    "an-ipv4-address": "192.0.2.10",
+    "an-ipv4-address-in-hexadecimal": "0xc0.0.2.10",
+    "an-ipv4-address-as-one-number": "3221225994",
+    "an-ipv6-address": "[2001:db8::1]",
+    "upper-case": "Git.Example.org",
+    "one-label": "localhost",
+    "an-end-dot": "git.example.org.",
+    "an-empty-label": "git..example.org",
+    "a-label-that-starts-with-a-hyphen": "-git.example.org",
+    "a-label-that-ends-with-a-hyphen": "git-.example.org",
+    "a-label-of-64-characters": f"{'a' * 64}.example.org",
+    "an-underscore": "git_forge.example.org",
+    "a-space": "git.example.org evil.example.org",
+    "a-line-end": "git.example.org\n",
+    "a-query": "git.example.org?x=1",
+    "an-option-of-curl": "--config.example.org",
+    "an-empty-text": "",
+}
+
+HOST_ACCEPTED: tuple[str, ...] = (
+    "git.b4mad.industries",
+    "codeberg.org",
+    "forge.example.org",
+    "a.b.c.d.example.org",
+    "xn--bcher-kva.example",
+    "1forge.example.org",
+    f"{'a' * 63}.example.org",
+)
+
+
+@pytest.mark.parametrize("host", HOST_ACCEPTED)
+def test_a_lower_case_dns_name_is_the_host_of_the_url(host: str) -> None:
+    server = _parse(_with_install(_forge_body(), host=host), "forgejo-code")
+
+    assert server.pin.host == host
+    assert server.pin.asset_url().startswith(f"https://{host}/agentic-forges/forgejo-mcp/")
+
+
+@pytest.mark.parametrize("case", list(HOST_REFUSED))
+def test_each_rule_of_a_host_refuses_a_value(case: str) -> None:
+    body = _with_install(_forge_body(), host=HOST_REFUSED[case])
+
+    assert _refusal(body, "forgejo-code").detail == HOST_RULE
+
+
+@pytest.mark.parametrize("host", [443, None, ["git.example.org"], "a" * (MAX_HOST_CHARS + 1)])
+def test_a_host_is_a_text_of_253_characters_at_most(host: object) -> None:
+    body = _with_install(_forge_body(), host=host)
+
+    assert _refusal(body, "forgejo-code").detail == (
+        "install.host is not a text of 253 characters at most"
+    )
+
+
+def test_a_host_of_253_characters_is_a_host() -> None:
+    host = ".".join(["a" * 49] * 5) + ".org"
+
+    assert len(host) == MAX_HOST_CHARS
+    assert _parse(_with_install(_forge_body(), host=host), "forgejo-code").pin.host == host
+
+
+def test_the_host_of_github_release_is_not_a_forge_host() -> None:
+    body = _with_install(_forge_body(), host="github.com")
+
+    assert _refusal(body, "forgejo-code").detail == (
+        "install.host is github.com; that host takes the source github-release"
+    )
+
+
+def test_a_refusal_of_a_host_holds_no_byte_of_the_value() -> None:
+    body = _with_install(_forge_body(), host="evil.example.org/../../x")
+
+    assert "evil" not in _refusal(body, "forgejo-code").detail
+
+
+def test_a_forge_release_with_no_host_is_refused() -> None:
+    body = _forge_body()
+    install = cast(dict[str, object], body["install"])
+    del install["host"]
+
+    assert "install.host is required for forge-release" in _refusal(body, "forgejo-code").detail
+
+
+@pytest.mark.parametrize("field", ["repo", "version", "asset", "sha256"])
+def test_a_forge_release_requires_each_field_of_a_release_pin(field: str) -> None:
+    body = _forge_body()
+    install = cast(dict[str, object], body["install"])
+    del install[field]
+
+    detail = _refusal(body, "forgejo-code").detail
+
+    assert detail == f"install.{field} is required for forge-release"
+
+
+def test_a_host_under_github_release_is_refused() -> None:
+    body = _with_install(_github_body(), host="git.example.org")
+
+    detail = _refusal(body, "github-code").detail
+
+    assert detail == "install.host does not belong to github-release"
+
+
+def test_a_host_under_pypi_is_refused() -> None:
+    body = _with_install(_kagi_body(), host="git.example.org")
+
+    assert "install.host does not belong to pypi" in _refusal(body).detail
+
+
+def test_a_forge_release_may_name_a_bare_binary_asset() -> None:
+    body = _with_install(_forge_body(), format="binary")
+
+    assert _parse(body, "forgejo-code").pin.format is AssetFormat.BINARY

@@ -5,9 +5,11 @@ when it does not. A directory that holds both names is a refusal. The TOML
 text goes through `handover.tomlfile` with the file kind `SERVER`, and each
 check after that read is the check of the YAML form.
 
-Three files of `handover_mce_registry` give the TOML form of each source.
-`bin/yaml-to-toml.py` wrote each one from the YAML text that this module
-holds, and each pair must read to one `ServerFile`.
+Four files of `handover_mce_registry` give the TOML form of each source.
+`bin/yaml-to-toml.py` wrote three of them from the YAML text that this
+module holds. The file of `forgejo-code` came after the YAML form left the
+registry, and this module holds its YAML form by hand. Each pair must read
+to one `ServerFile`.
 """
 
 from __future__ import annotations
@@ -38,8 +40,8 @@ from handover.tomlfile import (
 #: The TOML files of the fixture registry.
 FIXTURE = Path(__file__).resolve().parent / "handover_mce_registry" / "mcp"
 
-#: The YAML form of three files of the fixture registry: one `pypi`, one
-#: `github-release` and one `mcp` server. A line longer than 100
+#: The YAML form of four files of the fixture registry: one `pypi`, one
+#: `github-release`, one `forge-release` and one `mcp` server. A line longer than 100
 #: characters is folded, and the value of the fold is the value of the line.
 YAML_FORMS = {
     "ha": """\
@@ -159,6 +161,44 @@ run:
 tools:
   - { name: send_standup_email, description: "Send the operator one plain-text email. The
       subject and body are yours, the envelope is not.", write: true }
+""",
+    "forgejo-code": """\
+name: forgejo-code
+identity: "Access token of the code bot on the Forgejo host. Its repository list excludes
+  creche, registry and mcp."
+
+install:
+  source: forge-release
+  host: git.b4mad.industries
+  repo: agentic-forges/forgejo-mcp
+  version: 3.4.1
+  asset: forgejo-mcp_3.4.1_linux_amd64.tar.gz
+  sha256: 940d3ed08a5535bf1baaf426cb93610cfef5ad02adbda76b7c70a618f08fa53c
+
+run:
+  entrypoint: forgejo-mcp
+  args: [--transport, stdio]
+  env:
+    FORGEJO_URL: https://forge.example.org
+    FORGEJO_ACCESS_TOKEN: secret:forgejo_token_code
+
+arg_denies:
+  - tools: all
+    arg: owner/repo
+    values:
+      - example-owner/creche
+      - example-owner/registry
+      - example-owner/mcp
+
+tools:
+  - { name: get_file_content, description: Read one file at a ref., write: false }
+  - { name: list_branches, description: List the branches of a repository., write: false }
+  - { name: list_repo_issues, description: List the issues of a repository., write: false }
+  - { name: list_repo_pull_requests, description: List the pull requests of a repository.,
+      write: false }
+  - { name: create_branch, description: Create a branch from another branch., write: true }
+  - { name: create_pull_request, description: Open a pull request., write: true }
+  - { name: create_issue_comment, description: Comment on an issue., write: true }
 """,
 }
 
@@ -281,7 +321,7 @@ def test_a_toml_file_of_each_source_reads_as_its_yaml_form(name: str) -> None:
     assert from_toml == from_yaml
 
 
-def test_the_three_files_hold_each_source() -> None:
+def test_the_four_files_hold_each_source() -> None:
     sources = {
         parse_server((FIXTURE / name / SERVER_FILE_NAME).read_bytes(), name, Markup.TOML).pin.source
         for name in YAML_FORMS
@@ -302,10 +342,10 @@ def test_the_parse_reads_yaml_when_no_markup_is_given() -> None:
     )
 
 
-def test_the_fixture_registry_holds_eleven_toml_files() -> None:
+def test_the_fixture_registry_holds_twelve_toml_files() -> None:
     entries = sorted(FIXTURE.glob("*/*"))
 
-    assert len(entries) == 11
+    assert len(entries) == 12
     assert {path.name for path in entries} == {SERVER_FILE_NAME}
 
 

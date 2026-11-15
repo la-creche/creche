@@ -56,12 +56,19 @@ A reviewer should find each of these either enforced below or refused.
    (contract 01b §3.3). The key stays in
    `INSTALL_KEYS` so the refusal says which rule it broke rather than
    "unknown key".
-16. `install.format` is optional and belongs to `github-release` only
-    (contract 01b §3.2). `tar` (the default) unpacks the asset. `binary`
-    names an asset that IS the program, as many Rust projects publish
-    one: root places the hashed file itself as `bin/<entrypoint>`, and
-    nothing is unpacked. Any other value, or the key under another
-    source, is refused.
+16. `install.format` is optional and belongs to `github-release` and
+    `forge-release` only (contract 01b §3.2). `tar` (the default) unpacks
+    the asset. `binary` names an asset that IS the program, as many Rust
+    projects publish one: root places the hashed file itself as
+    `bin/<entrypoint>`, and nothing is unpacked. Any other value, or the
+    key under another source, is refused.
+17. `install.host` belongs to `forge-release` only, and that source
+    requires it. It is the DNS name of a Forgejo or Gitea host, in lower
+    case, with two labels at least and a last label that starts with a
+    letter. So it holds no scheme, no port, no path, no user and no IP
+    address, and `curl` reads it as one host. `github.com` is refused:
+    `github-release` is the one source of that host. The rest of the pin
+    is the pin of `github-release`, and so is the path of the URL.
 14. `lock` is a REPOSITORY-relative path with no leading `/`, no `..`
     component, no `//` and no trailing `/`. It names the committed closure
     root installs from (contract 01b §3.4). Where the file is opened,
@@ -148,6 +155,28 @@ LOCK_PATH_RE: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}")
 #: `<owner>/<name>` on GitHub. Exactly one slash, checked below.
 REPO_RE: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 
+#: The host of a `forge-release` pin (rule 17): a DNS name in lower case.
+#: A label starts and ends with a letter or a digit, and it has 63
+#: characters at most. The name has two labels at least, and the last
+#: label starts with a letter, so no spelling of an IPv4 address matches.
+#: No `:`, `/`, `@` or `[` matches, so the value holds no scheme, no port,
+#: no path, no user and no IPv6 address. The value becomes the host of the
+#: URL that `curl` reads.
+#:
+#: CONTRACT-QUESTION: contract 01b §3 names no `forge-release` source and
+#: no `host` field. The reading taken is the strict one: lower case only,
+#: no name of one label such as `localhost`, no end dot, and no list of
+#: allowed hosts, because the file that names the host is the file that
+#: the operator reviews. The validator holds the same pattern
+#: (`agent_family.grammar.HOST_RE`). Another rule costs this pattern, its
+#: copy and one row of `tests/test_handover_r7f_server_file.py`.
+HOST_RE: Final = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?"
+)
+
+#: The most characters of a DNS name (RFC 1035 section 2.3.4, as text).
+MAX_HOST_CHARS: Final = 253
+
 #: One release asset's file name. No slash, so it cannot name a directory,
 #: and no leading `-`, so `curl` cannot read it as an option.
 ASSET_RE: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}")
@@ -205,7 +234,19 @@ OPTIONAL_KEYS: Final = frozenset(
 )
 
 INSTALL_KEYS: Final = frozenset(
-    {"source", "package", "version", "lock", "python", "repo", "asset", "sha256", "ref", "format"}
+    {
+        "source",
+        "package",
+        "version",
+        "lock",
+        "python",
+        "host",
+        "repo",
+        "asset",
+        "sha256",
+        "ref",
+        "format",
+    }
 )
 RUN_KEYS: Final = frozenset({"entrypoint", "args", "env", "state_dir", "state_dir_env"})
 TOOL_KEYS: Final = frozenset({"name", "description", "write"})
@@ -228,15 +269,23 @@ MAX_VALUE_CHARS: Final = 256
 
 
 class Source(StrEnum):
-    """Contract 01b §3's three pin kinds. Each one pins by hash (§3 rule 1)."""
+    """Contract 01b §3's four pin kinds. Each one pins by hash (§3 rule 1)."""
 
     PYPI = "pypi"
     GITHUB_RELEASE = "github-release"
+    FORGE_RELEASE = "forge-release"
     AGENT_MCP = "agent-mcp"
 
 
+#: The two sources whose pin is one release asset: a `repo`, a `version`,
+#: an `asset` and its `sha256`. `github-release` reads the asset from
+#: `CODE_HOST`, and `forge-release` from the Forgejo or Gitea host that the
+#: file names (rule 17). The build of the two is one path.
+ASSET_SOURCES: Final = frozenset({Source.GITHUB_RELEASE, Source.FORGE_RELEASE})
+
+
 class AssetFormat(StrEnum):
-    """Contract 01b §3.2: what a `github-release` asset is (rule 16)."""
+    """Contract 01b §3.2: what a release asset is (rule 16)."""
 
     TAR = "tar"
     BINARY = "binary"
@@ -259,6 +308,7 @@ class Markup(StrEnum):
 _REQUIRED_PIN: Final[dict[Source, frozenset[str]]] = {
     Source.PYPI: frozenset({"package", "version", "lock"}),
     Source.GITHUB_RELEASE: frozenset({"repo", "version", "asset", "sha256"}),
+    Source.FORGE_RELEASE: frozenset({"host", "repo", "version", "asset", "sha256"}),
     # Nothing at all. The `mcp-servers` component tag IS the version of
     # every server that ships in that repository (contract 01b §3.3), so
     # an `agent-mcp` file carries no pin field of its own and this row
@@ -281,10 +331,13 @@ class ServerPin:
     #: during the install would have `--require-hashes` check the hashes
     #: root had just written against themselves.
     lock: str | None = None
+    #: Rule 17. Only a `forge-release` pin names its host.
+    host: str | None = None
     repo: str | None = None
     asset: str | None = None
     sha256: str | None = None
-    #: Rule 16. Only a `github-release` pin carries anything but the default.
+    #: Rule 16. Only a pin of `ASSET_SOURCES` carries anything but the
+    #: default.
     format: AssetFormat = AssetFormat.TAR
 
     def requirement(self) -> str:
@@ -294,8 +347,13 @@ class ServerPin:
     def asset_url(self) -> str:
         """The proven URL shape. `bin/creche-deploy` has fetched
         github-mcp-server from it on every deploy since it was written, and
-        the tag is `v` + the declared version."""
-        return f"{HTTPS}{CODE_HOST}/{self.repo}/releases/download/v{self.version}/{self.asset}"
+        the tag is `v` + the declared version.
+
+        A `forge-release` pin names its own host (rule 17). A Forgejo host
+        and a Gitea host serve a release asset at the same path."""
+        host = self.host if self.source is Source.FORGE_RELEASE else CODE_HOST
+
+        return f"{HTTPS}{host}/{self.repo}/releases/download/v{self.version}/{self.asset}"
 
 
 @dataclass(frozen=True)
@@ -675,6 +733,7 @@ def _install(name: str, value: Any) -> ServerPin:
         package=_optional(name, body, "package", PACKAGE_RE),
         version=_optional(name, body, "version", VERSION_RE),
         lock=_lock(name, body.get("lock")),
+        host=_host(name, body),
         repo=_optional(name, body, "repo", REPO_RE),
         asset=_optional(name, body, "asset", ASSET_RE),
         sha256=_optional(name, body, "sha256", SHA256_RE),
@@ -685,11 +744,12 @@ def _install(name: str, value: Any) -> ServerPin:
 
 
 def _asset_format(name: str, source: Source, body: dict[str, Any]) -> AssetFormat:
-    """Rule 16: optional, `github-release` only, one of two values."""
+    """Rule 16: optional, a source of `ASSET_SOURCES` only, one of two
+    values."""
     if "format" not in body:
         return AssetFormat.TAR
 
-    if source is not Source.GITHUB_RELEASE:
+    if source not in ASSET_SOURCES:
         raise _refuse(name, f"install.format does not belong to {source}")
 
     try:
@@ -702,7 +762,7 @@ def _source(name: str, value: Any) -> Source:
     try:
         return Source(value)
     except ValueError:
-        raise _refuse(name, "install.source is not one of contract 01b's three") from None
+        raise _refuse(name, "install.source is not one of contract 01b's four") from None
 
 
 def _check_pin_fields(name: str, source: Source, present: frozenset[str]) -> None:
@@ -729,6 +789,32 @@ def _optional(name: str, body: dict[str, Any], field: str, pattern: re.Pattern[s
         return None
 
     return _text(name, f"install.{field}", body[field], pattern)
+
+
+def _host(name: str, body: dict[str, Any]) -> str | None:
+    """Rule 17. The host of a `forge-release` pin, or None for a file that
+    names none. `_check_pin_fields` already holds which source takes the
+    key. Each refusal names the rule that the value broke."""
+    if "host" not in body:
+        return None
+
+    value = body["host"]
+    if not isinstance(value, str) or len(value) > MAX_HOST_CHARS:
+        raise _refuse(name, f"install.host is not a text of {MAX_HOST_CHARS} characters at most")
+
+    if HOST_RE.fullmatch(value) is None:
+        raise _refuse(
+            name,
+            "install.host is not a DNS name in lower case, with no scheme, no port, "
+            "no path, no user and no IP address",
+        )
+
+    if value == CODE_HOST:
+        raise _refuse(
+            name, f"install.host is {CODE_HOST}; that host takes the source {Source.GITHUB_RELEASE}"
+        )
+
+    return value
 
 
 def _lock(name: str, value: Any) -> str | None:

@@ -55,7 +55,8 @@ own module.
    first (`HOME_DIR`). The user has no home of its own, and `uv` will not
    run without a cache directory it can create.
 4. **Every pin is an INPUT, and the build resolves nothing.** A
-   `github-release` asset is downloaded to a root-owned staging FILE, under
+   `github-release` or `forge-release` asset is downloaded to a
+   root-owned staging FILE, under
    a `Content-Length` cap AND an `RLIMIT_FSIZE` the kernel enforces as the
    bytes are written, hashed
    here with `hashlib`, and compared with the declared `sha256` before
@@ -103,8 +104,9 @@ own module.
    it has already validated.
 8. **The build fetches no code root did not pin.** `pypi` and
    `agent-mcp` reach the network only through `uv` under
-   `--require-hashes`, and `github-release` through one `curl` to a URL
-   built from validated fields. No credential is presented to any of them:
+   `--require-hashes`, and `github-release` and `forge-release` through
+   one `curl` to a URL built from validated fields. No credential is
+   presented to any of them:
    root holds none (contract 06 §3.4).
 9. **A `source: agent-mcp` server installs from the tree the release
    already fetched**, at the SHA the approval was bound to, and it names
@@ -179,7 +181,7 @@ from pathlib import Path
 from typing import Final
 
 from ..errors import Refusal, RefusalCode, safe_token
-from ..mcpserver import AssetFormat, ServerFile, Source
+from ..mcpserver import ASSET_SOURCES, AssetFormat, ServerFile, Source
 from .host import As, Command, Host
 from .install import (
     BUILD_TIMEOUT_S,
@@ -400,9 +402,7 @@ class McpBuilder:
         anybody's `~/.local/bin`. Then the whole tree is opened (`a+rX`):
         root's umask made every directory `0750`.
         """
-        wanted = sorted(
-            {one.pin.python for one in servers if one.pin.source is not Source.GITHUB_RELEASE}
-        )
+        wanted = sorted({one.pin.python for one in servers if one.pin.source not in ASSET_SOURCES})
         shared = {"UV_PYTHON_INSTALL_DIR": str(self.python_root)}
         for minor in wanted:
             found = self.host.run(
@@ -450,11 +450,12 @@ class McpBuilder:
         `direct_url.json` that names a path outside `<name>.new` is a
         refusal, with nothing swapped.
 
-        Only the two venv sources. A `github-release` tree is an unpacked
-        binary with no site-packages, which is the one shape the walk
-        refuses for a reason that cannot apply to it.
+        Only the two venv sources. The tree of a release asset
+        (`ASSET_SOURCES`) is an unpacked binary with no site-packages,
+        which is the one shape the walk refuses for a reason that cannot
+        apply to it.
         """
-        if server.pin.source is Source.GITHUB_RELEASE:
+        if server.pin.source in ASSET_SOURCES:
             return
 
         check_tree(server.name, new)
@@ -485,7 +486,7 @@ class McpBuilder:
         source: Fetched,
         home: Path,
     ) -> ServerBuild:
-        if server.pin.source is Source.GITHUB_RELEASE:
+        if server.pin.source in ASSET_SOURCES:
             return self._from_release(server, paths, staging)
 
         self._venv(server, paths.new, home)
@@ -494,7 +495,7 @@ class McpBuilder:
 
         return self._from_pypi(server, paths, staging, source.registry, home)
 
-    # -- the three sources ----------------------------------------------
+    # -- the four sources, in three builds -------------------------------
 
     def _from_pypi(
         self,
@@ -538,7 +539,10 @@ class McpBuilder:
     def _from_release(self, server: ServerFile, paths: ServerPaths, staging: Path) -> ServerBuild:
         """Contract 01b §3.2. Download, HASH, then unpack. In that order.
         A `format: binary` asset IS the program: after the hash it is
-        placed as it is, and nothing is unpacked."""
+        placed as it is, and nothing is unpacked.
+
+        A `github-release` pin and a `forge-release` pin take this one
+        path. Only the host of the URL differs, and the pin gives it."""
         url = server.pin.asset_url()
         archive = staging / str(server.pin.asset)
         self._must(

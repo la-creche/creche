@@ -57,6 +57,26 @@ tools = [
 ]
 """
 
+FORGE_TOML = """\
+name = "forgejo-code"
+identity = "A token of the code bot on the Forgejo host."
+
+install.source = "forge-release"
+install.host = "git.b4mad.industries"
+install.repo = "agentic-forges/forgejo-mcp"
+install.version = "3.4.1"
+install.asset = "forgejo-mcp_3.4.1_linux_amd64.tar.gz"
+install.sha256 = "940d3ed08a5535bf1baaf426cb93610cfef5ad02adbda76b7c70a618f08fa53c"
+
+run.entrypoint = "forgejo-mcp"
+run.args = ["--transport", "stdio"]
+run.env.FORGEJO_ACCESS_TOKEN = "secret:forgejo_token_code"
+
+tools = [
+    { name = "create_pull_request", description = "Open a pull request.", write = true },
+]
+"""
+
 AGENT_MCP_TOML = """\
 name = "ha-read"
 identity = "A read token of the house."
@@ -74,7 +94,12 @@ shared_secrets = [{ secret = "ha_token", server = "ha" }]
 """
 
 #: A TOML text of each source of a pin.
-SOURCES = {"pypi": PYPI_TOML, "github-release": RELEASE_TOML, "agent-mcp": AGENT_MCP_TOML}
+SOURCES = {
+    "pypi": PYPI_TOML,
+    "github-release": RELEASE_TOML,
+    "forge-release": FORGE_TOML,
+    "agent-mcp": AGENT_MCP_TOML,
+}
 
 NOT_TOML = "the text is not TOML 1.0, or it nests deeper than 8 levels"
 NOT_UTF8 = "the file is not UTF-8 text"

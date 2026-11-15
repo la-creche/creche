@@ -32,12 +32,16 @@ class InstallBlock(Strict):
     #: near end looks for a declared server.
     lock: str | None = None
     python: str = DEFAULT_PYTHON
+    #: The DNS name of the Forgejo or Gitea host of a `forge-release` pin.
+    #: `serverrules` holds the rule, as `handover.mcpserver` rule 17.
+    host: str | None = None
     repo: str | None = None
     asset: str | None = None
     sha256: str | None = None
     ref: str | None = None
     #: Contract 01b §3.2: `tar` (the default) or `binary`, `github-release`
-    #: only. `serverrules` holds the rule, as `handover.mcpserver` rule 16.
+    #: and `forge-release` only. `serverrules` holds the rule, as
+    #: `handover.mcpserver` rule 16.
     format: str | None = None
 
 
