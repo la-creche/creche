@@ -25,6 +25,7 @@
 #![cfg(target_os = "linux")]
 
 mod common;
+mod snapshot_scan;
 mod stand_in;
 
 use std::fs::{self, OpenOptions};
@@ -45,7 +46,7 @@ use creche_vmm_store::layout::StateRoot;
 use creche_wire::guest::{CHAPERONE_PORT, FACADE_STOP_WAIT, LITELLM_PORT, SESSION_DISK_MOUNT};
 use creche_wire::{FacadeState, GuestPort};
 
-use common::{BOOT, FAMILY, UP, files, lines, sudo, work};
+use common::{BOOT, FAMILY, LITELLM_KEY, PEP_TOKEN, UP, files, lines, sudo, work};
 use stand_in::{ROOT_DIRS, boot, ext4, stub_plane};
 
 /// The image env of the test root disk (decision CH7-7).
@@ -143,20 +144,32 @@ fn kvm_guest_boots_the_vmm_initramfs() {
 }
 
 /// The stub `plane` got one request with the `Host` header of guest
-/// `port`, so the splice kept the bytes (decision CH6-2, fact 46).
+/// `port`, so the proxy kept it (decision CH6-2, fact 46), and with the
+/// real value `secret` of `creds.json` in place of the placeholder that
+/// the guest sent (openshell ideas plan, idea 1).
 #[cfg(test)]
-fn hit(plane: &Receiver<String>, port: u16) {
+fn hit(plane: &Receiver<String>, port: u16, secret: &str) {
     let head = plane.recv_timeout(BOOT).unwrap();
     let host = format!("\r\nHost: 127.0.0.1:{port}\r\n");
     assert!(head.contains(&host), "no {host:?} in {head:?}");
+    let bearer = format!("\r\nAuthorization: Bearer {secret}\r\n");
+    assert!(head.contains(&bearer), "no real bearer in {head:?}");
+}
+
+/// The GET with the wrong value reached no stub plane: the proxy
+/// answered it 403.
+#[cfg(test)]
+fn no_more(plane: &Receiver<String>) {
+    assert!(plane.recv_timeout(Duration::from_millis(500)).is_err());
 }
 
 /// Sends `pull` on a new link to guest port 1201: `CONNECT 1201` on the
 /// vsock socket of CH, as `AcpLink::dial` dials (decision CH13). The
-/// stand-in pulls 1100 and GETs both planes (decision CH62 rule 13). It
-/// gives the words after `pulled`: the facade pid, the reply key, the
-/// status of :4000 and of :8300, and the pull time in ms. A fault fails
-/// the proof `step`.
+/// stand-in pulls 1100 and GETs both planes with the values of the pull,
+/// then :4000 with a wrong value (decision CH62 rule 13). It gives the
+/// words after `pulled`: the facade pid, the reply key, the status of
+/// :4000, of :8300 and of the wrong value, and the pull time in ms. A
+/// fault fails the proof `step`.
 #[cfg(test)]
 fn pull(vsock: &Path, step: &str) -> Vec<String> {
     let stream = UnixStream::connect(vsock).unwrap();
@@ -170,7 +183,7 @@ fn pull(vsock: &Path, step: &str) -> Vec<String> {
     line.clear();
     reader.read_line(&mut line).unwrap();
     let words: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
-    assert_eq!(words.len(), 6, "{step}: {line:?}");
+    assert_eq!(words.len(), 7, "{step}: {line:?}");
     assert_eq!(words[0], "pulled", "{step}: {line:?}");
     words[1..].to_vec()
 }
@@ -218,14 +231,18 @@ fn kvm_phase3_pulls_sleeps_restores_and_stops() {
 
     // 3. A pull on 1201 reaches the same facade (G6), which gets a
     // `state` reply on 1100 (G7, V8) and a 200 from each stub plane (V6).
+    // Each plane got the real value, and the wrong value got 403 and
+    // reached no plane (openshell ideas plan, idea 1).
     let first_pull = pull(&vsock, "step 3 first pull (G6)");
+    let ok = || "200".to_owned();
     assert_eq!(
-        first_pull[..4],
-        [pid.to_string(), "state".into(), "200".into(), "200".into()],
+        first_pull[..5],
+        [pid.to_string(), "state".into(), ok(), ok(), "403".into()],
         "step 3 first pull (G6, G7, V6, V8)"
     );
-    hit(&litellm_heads, LITELLM_PORT);
-    hit(&chaperone_heads, CHAPERONE_PORT);
+    hit(&litellm_heads, LITELLM_PORT, LITELLM_KEY);
+    hit(&chaperone_heads, CHAPERONE_PORT, PEP_TOKEN);
+    no_more(&litellm_heads);
 
     // 4. Sleep: the guest syncs, then the VM snapshots into one
     // generation (G8, V9, CH62 rule 23).
@@ -235,6 +252,11 @@ fn kvm_phase3_pulls_sleeps_restores_and_stops() {
         .map(|entry| entry.unwrap().path())
         .collect();
     assert_eq!(generations.len(), 1, "step 4 sleep (V9): {generations:?}");
+    // The snapshot holds no real value of creds.json (idea 1).
+    for secret in [LITELLM_KEY, PEP_TOKEN] {
+        let found = snapshot_scan::count(&generations[0], &work("phase3"), secret);
+        assert_eq!(found, 0, "step 4 sleep: a real value in the snapshot");
+    }
 
     // 5. Restore: the start claims that generation, and control::open and
     // AcpLink::dial succeed at once. The ready says `running` with the same
@@ -262,17 +284,18 @@ fn kvm_phase3_pulls_sleeps_restores_and_stops() {
     // both planes, through fresh dials (CH6-2, CH62 rule 14, fact 74).
     let second_pull = pull(&vsock, "step 6 second pull (G6)");
     assert_eq!(
-        second_pull[..4],
-        first_pull[..4],
+        second_pull[..5],
+        first_pull[..5],
         "step 6 second pull (G6, G7, V6, V8)"
     );
-    hit(&litellm_heads, LITELLM_PORT);
-    hit(&chaperone_heads, CHAPERONE_PORT);
+    hit(&litellm_heads, LITELLM_PORT, LITELLM_KEY);
+    hit(&chaperone_heads, CHAPERONE_PORT, PEP_TOKEN);
+    no_more(&litellm_heads);
     // Decision CH23: the proof measures the pull. A direct write skips
     // the capture of the test harness, so the job log holds the line.
     let times = format!(
         "phase 3 proof: pull {} ms cold, {} ms after a restore, restore start {restore_ms} ms\n",
-        first_pull[4], second_pull[4]
+        first_pull[5], second_pull[5]
     );
     io::stderr().write_all(times.as_bytes()).unwrap();
 

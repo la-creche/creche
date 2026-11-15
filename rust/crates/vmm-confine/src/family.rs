@@ -28,7 +28,11 @@
 //! one handle above. The two are two reads with no cross-check, so a
 //! caregiver write between them gives a mixed reply that the next pull
 //! fixes (decision CH62 rule 21). caregiver replaces `creds.json` with one
-//! `rename`, so that read needs no retry.
+//! `rename`, so that read needs no retry. The reply carries the
+//! placeholders of the session, not the values of `creds.json`
+//! (openshell ideas plan, idea 1). The read of `creds.json` still decides
+//! `CredsMissing` and `NotValid`. `read_creds` gives the real values to
+//! the plane proxies of ports 1101 and 1102, one read per request.
 //!
 //! `read_egress` reads the egress allowlist `egress.json` of a family
 //! (decisions CH6-4, CH69 rules 3 and 5), and `read_repos` reads its clone
@@ -59,6 +63,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use creche_vmm_store::layout::RootError;
+use creche_vmm_store::placeholder::Placeholders;
 use creche_wire::{
     FAMILY_EGRESS_FILE, FAMILY_GIT_PLATFORM_FILE, FAMILY_REPOS_FILE, FAMILY_SHAPE_FILE,
     FAMILY_STATE_CAP, FamilyConfig, FamilyCreds, FamilyEgress, FamilyGitPlatform, FamilyName,
@@ -562,15 +567,21 @@ impl FamilyRoot {
     /// (decisions CH5a, CH23): `creds/creds.json`, then `config/` through
     /// `with_config`, as two reads with no cross-check (decision CH62
     /// rule 21). It keeps no last good state, so each fault is the reply
-    /// of that pull (decision CH53 rule 2).
+    /// of that pull (decision CH53 rule 2). The creds of the reply are
+    /// `placeholders`, so no real value reaches the guest.
     ///
     /// # Errors
     ///
     /// `CredsMissing` first, whatever `config/` holds (decision CH31
     /// rule 4). Then `ConfigMissing`, `NotValid`, or `TooLarge` when the
     /// reply passes `FAMILY_STATE_CAP`.
-    pub fn read_state(&self, family: &FamilyName) -> Result<StateRead, StateFault> {
-        let creds = self.read_creds(family)?;
+    pub fn read_state(
+        &self,
+        family: &FamilyName,
+        placeholders: &Placeholders,
+    ) -> Result<StateRead, StateFault> {
+        self.read_creds(family)?;
+        let creds = placeholders.creds();
         let (config, model_live_at) = match self.with_config(family, read_config) {
             Ok(read) => read?,
             Err(FamilyError::Unknown) => return Err(StateFault::ConfigMissing),
@@ -595,8 +606,14 @@ impl FamilyRoot {
     }
 
     /// The key and the token of `creds/creds.json` of `family`, one capped
-    /// `O_NOFOLLOW` read (decision CH62 rule 21).
-    fn read_creds(&self, family: &FamilyName) -> Result<FamilyCreds, StateFault> {
+    /// `O_NOFOLLOW` read (decision CH62 rule 21). The plane proxies read
+    /// it once per request, so a rotation reaches the next request.
+    ///
+    /// # Errors
+    ///
+    /// `CredsMissing` for an absent family dir, `creds/` or file, else
+    /// `NotValid`.
+    pub fn read_creds(&self, family: &FamilyName) -> Result<FamilyCreds, StateFault> {
         let opened = |dir: Result<OwnedFd, FamilyError>| match dir {
             Ok(dir) => Ok(dir),
             Err(FamilyError::Unknown) => Err(StateFault::CredsMissing),

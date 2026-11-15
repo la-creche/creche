@@ -120,7 +120,7 @@ use crate::handlers::drop::{StopVm, VmStopFailed};
 use crate::handlers::list::RunningVms;
 use crate::image_lifecycle::ImageLifecycle;
 use crate::mirror::{self, Mirror};
-use crate::planes::{Bound, Planes, Upstreams, bind};
+use crate::planes::{self, Bound, Planes, Upstreams, bind};
 use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
 use crate::shutdown::{Taken, VmSet};
@@ -1965,6 +1965,19 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             Ok(read) => read,
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         };
+        // Openshell ideas plan, idea 1: the row holds the placeholders that
+        // the family-state reply sends and the planes swap. A restore finds
+        // the values that its guest memory holds.
+        let placeholders = self
+            .rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .placeholders(id)
+            .cloned();
+        let Some(placeholders) = placeholders else {
+            let message = "the session has no row with placeholders".to_owned();
+            return Err(self.fault(family, sandbox, message).await);
+        };
         let guest_ram = VmLimits::from(shape).guest_ram();
         // `host_full` is no fault of decision CH6-3, so it writes none.
         let (mut pending, evictions) = self
@@ -2029,8 +2042,19 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // spool.
         let (planes, state, reach, mirror, egress, spool) = bound;
         let families = &self.config.families;
-        let served = planes.serve().and_then(|planes| {
-            let family_state = state.serve(families.clone(), family.clone(), id.clone())?;
+        let session = planes::Session {
+            families: families.clone(),
+            family: family.clone(),
+            id: id.clone(),
+            placeholders,
+        };
+        let served = planes.serve(&session).and_then(|planes| {
+            let family_state = state.serve(
+                families.clone(),
+                family.clone(),
+                id.clone(),
+                session.placeholders.clone(),
+            )?;
             let mirror = mirror
                 .map(|bound| {
                     let mirror = self.config.mirror.clone();

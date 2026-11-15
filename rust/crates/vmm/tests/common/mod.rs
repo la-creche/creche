@@ -91,8 +91,10 @@ impl Shape {
 }
 
 /// The LiteLLM key and the chaperone token of the family of each proof.
-pub const LITELLM_KEY: &str = "sk-test-key";
-pub const PEP_TOKEN: &str = "abababababababababababababababababababababababababababababababab";
+/// Each is a value that no file of a guest disk holds, so the snapshot
+/// read of `tests/snapshot_scan` finds it only if the guest got it.
+pub const LITELLM_KEY: &str = "sk-kvm-real-family-key-7f3e";
+pub const PEP_TOKEN: &str = "5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed5eed";
 
 /// `creds.json` as caregiver writes it, as in `tests/family_state.rs`.
 fn creds() -> String {

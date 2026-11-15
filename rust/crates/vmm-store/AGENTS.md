@@ -9,6 +9,15 @@ The second file has the table of the three vmm crates.
 - The code is synchronous. It uses std, plus `creche-wire`, `serde`,
   `serde_json` and `sha2`. The crate uses no async runtime.
 - The crate never calls `creche-vmm-confine` or `creche-vmm`.
+- Openshell ideas plan, idea 1 (`placeholder.rs`, `rows.rs`):
+  `Placeholders::fresh` reads 48 bytes of `/dev/urandom` and gives the
+  two placeholders of a session in the formats of the real values: `sk-`
+  and 22 base64url characters (16 bytes), and 64 lowercase hex digits
+  (32 bytes). No crate is added. Each row file holds them in its field
+  `placeholders`. `Rows::create` makes them, and `Rows::open` makes and
+  writes them for a row file that has none. A file value of another
+  format refuses the load. `Rows::placeholders` gives them to the start.
+  `SessionRow` does not hold them, so no list page carries them.
 - Decision CH44 rule 2 (PR D6, `images.rs`): a store copy that fails
   the identity check at VM start fails the start. A mount can change the
   device number of an unchanged copy. For a device-only change,

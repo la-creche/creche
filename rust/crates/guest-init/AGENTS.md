@@ -223,9 +223,12 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   child, the family stranger, which sends a `FamilyStatePull` on the
   family-state socket and writes `standin: family stranger pid <pid>
   closed` when guest init closes its link. Then the stand-in sends one
-  `FamilyStatePull` itself and one HTTP GET to each plane, and answers
-  `pulled <pid> <reply key> <status 4000> <status 8300> <pull ms>`,
-  with `closed` for a link that ended with no answer.
+  `FamilyStatePull` itself and one HTTP GET to each plane with
+  `Authorization: Bearer` and the value of the pull for that plane,
+  then one GET to 4000 with a value that is not the one of the pull.
+  It answers `pulled <pid> <reply key> <status 4000> <status 8300>
+  <status of the wrong value> <pull ms>`, with `closed` for a link that
+  ended with no answer.
   With the mode `markers`, it writes three marker files on the session
   disk and `standin: markers written`, then stays up. With the mode
   `linked-relay`, it opens the local link, runs the relay of `relay` and
