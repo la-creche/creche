@@ -9,7 +9,7 @@ Bash only: `#!/usr/bin/env bash`. A script that may run on a development
 machine stays bash 3.2-clean: no associative arrays, no `mapfile`, no
 `${var,,}`, no `&>>`.
 
-Two scripts are exceptions. Each one is Python, with the first line
+Three scripts are exceptions. Each one is Python, with the first line
 `#!/usr/bin/env python3`. The gate checks them with ruff and not with
 pyright: `pyrightconfig.json` names no path under `bin/`.
 
@@ -17,6 +17,9 @@ pyright: `pyrightconfig.json` names no path under `bin/`.
   holds PyYAML, so start the script with `uv run`.
 - `chaperone-install-draft.py`. Reason: it reads TOML with `tomllib` and
   writes TOML. Bash has no TOML reader. Start the script with `uv run`.
+- `docs-mirror.py`. Reason: it renders markdown with frontmatter and diffs
+  a tree against the target. It needs only the standard library, so start it
+  with `python3`.
 
 ## Every script's header says who runs it
 
@@ -26,8 +29,8 @@ A reader must not infer it from the `id -u` guard. A root script asserts
 
 | Family | Files | Contract |
 |---|---|---|
-| Setup | `fleet-up` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
-| Operations | `creche-deploy`, `creche-handover` | Run unattended from units and timers. Fail loudly into the journal. |
+| Setup | `fleet-up`, `nr-setup.sh`, `setup-ups.sh`, `setup-docs-mirror.sh` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
+| Operations | `creche-deploy`, `creche-handover`, `ups-onbatt.sh`, `docs-mirror.py` | Run unattended from units and timers. Fail loudly into the journal. |
 | Checks | `quality-gate.sh`, `systemd-proof.sh`, `vm-smoke-setup.sh` | Run from the hooks and from CI. `systemd-proof.sh` and `vm-smoke-setup.sh` run in CI only. No unit runs them. They use `set -euo pipefail`. The first failed check stops the run. |
 | Build | `build-artifacts.sh`, `check-disk-files.sh` | `build-artifacts.sh` runs in CI only, from the job `artifacts` of `release.yml` and the job `vmm-archive` of `gate.yml`. `check-disk-files.sh` runs in CI only, from the job `disks` of `release.yml`. No hook and no unit runs it, and the host never runs it. It uses `set -euo pipefail`: the first fault stops the run with one line, and `build-artifacts.sh` then writes no digest list. It can use the GNU tools of a runner. It stays bash 3.2-clean, because its tests run it on a development machine. |
 | Library | `lib/envfile.sh`, `lib/docsrule.sh`, `lib/artifactrows.sh`, `lib/chbuild.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
