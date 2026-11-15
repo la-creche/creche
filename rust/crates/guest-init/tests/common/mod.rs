@@ -555,8 +555,8 @@ pub fn answer_get(listener: &UnixListener) -> String {
 }
 
 /// The words of the stand-in answer to a line `pull` on 1201, after the
-/// check of `pulled <pid>`: the reply key, the two plane statuses and the
-/// pull time.
+/// check of `pulled <pid>`: the reply key, the two plane statuses, the
+/// status of the GET with a wrong value, and the pull time.
 pub fn pulled(work: &Path, pid: NonZeroU32) -> Vec<String> {
     let mut acp = dial(work, GuestPort::Acp);
     acp.write(b"pull\n");
@@ -567,7 +567,7 @@ pub fn pulled(work: &Path, pid: NonZeroU32) -> Vec<String> {
         Some(["pulled".to_owned(), pid.to_string()].as_slice()),
         "{answer:?}"
     );
-    assert_eq!(words.len(), 6, "{answer:?}");
+    assert_eq!(words.len(), 7, "{answer:?}");
     words[2..].to_vec()
 }
 

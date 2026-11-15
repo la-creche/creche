@@ -91,7 +91,13 @@ table of the three vmm crates.
   rule 21). Both JSON files go through `creche_wire::strict` (decision
   CH65 rule 2), and each refuses a key that caregiver does not write. The
   reply drops `previous_pep_token`, `previous_expires_at`, `epoch`,
-  `written_at` and `shell` (decision CH23 rule 1). `creds_missing` wins
+  `written_at` and `shell` (decision CH23 rule 1). The creds of the
+  reply are the `Placeholders` that the caller passes, not the values of
+  `creds.json` (openshell ideas plan, idea 1). The read of `creds.json`
+  still decides `creds_missing` and `not_valid`.
+  `family::FamilyRoot::read_creds` gives the real key and token of
+  `creds.json` to the plane proxies of the vmm, one read per request, so
+  a rotation reaches the next request. `creds_missing` wins
   over every fault of `config/` (decision CH31 rule 4). A state over
   `FAMILY_STATE_CAP` is `too_large` (decision CH31 rule 3), and the
   instructions and skills share one budget of that cap, so no read holds

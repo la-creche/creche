@@ -27,7 +27,8 @@ Bad input never raises. A bad definition yields a report, not a crash.
 | `serverrules.py` | the server file value rules, and the rules of root |
 | `registry.py` | reads `families/`, `mcp/`, `skills/`. One report per family. |
 | `classify.py` | pure: two parsed families in, a live-or-replace diff out |
-| `cli.py` | `agent-family validate` |
+| `reach.py` | two registry roots in, the reach diff of each family out |
+| `cli.py` | `agent-family validate` and `agent-family reach` |
 
 Shape lives in `model.py` and `server.py`. Values live in `validate.py` and
 `serverrules.py`. The split is what lets one parse report every violation
@@ -59,6 +60,10 @@ instead of the first.
   `approval` like `tools` or `egress`.
 - `all` resolves against the server file at read time, in
   `Index.granted_tools` only.
+- `reach.py` fails closed. A head file that the reader refuses is a gain.
+  A tool that the catalog does not declare is a write tool. `all` on a
+  server that the registry does not declare is the write tool
+  `<server>__*`.
 
 ## The name of a file
 
@@ -207,6 +212,31 @@ uv run agent-family validate <registry path> --family chat --json
 
 Exit codes: 0 every report is clean, 1 at least one error, 2 a usage
 mistake.
+
+```bash
+uv run agent-family reach --base <base registry path> <head registry path>
+```
+
+`reach` reads two registry roots with the strict reader and prints one
+Markdown report. Registry CI runs it on each pull request, with the PR base
+as `--base`. The report has these parts:
+
+1. A table of the gains: family, kind, detail. The kinds are
+   `new_credential`, `new_write_tool`, `new_tool`, `gate_dropped`,
+   `fence_loosened` and `new_reach`.
+2. The head files that the reader refused, under "Not read".
+3. A table of the narrowings, under their own heading.
+
+A server file change counts against each family that grants the server. A
+credential is a pair of a secret and the server that holds it, so a known
+secret through a new server is a new credential. When `GITHUB_STEP_SUMMARY`
+is set, `reach` also appends the report to that file.
+
+Exit codes: 0 no family gains reach, 1 a family gains reach or a head file
+is not read, 2 a usage mistake.
+
+The diff does not see the meaning of a fence value. A value that passes an
+exact match and still reaches a protected name is not a gain to it.
 
 ## Tests
 

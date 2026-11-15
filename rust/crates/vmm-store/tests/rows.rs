@@ -257,3 +257,82 @@ fn a_failed_create_spends_its_place() {
         .collect();
     assert_eq!(places, [3, 2]);
 }
+
+// Openshell ideas plan, idea 1: each row file holds the placeholders of
+// its session, so a restore after a vmm restart finds the values that the
+// guest memory holds.
+#[test]
+fn the_placeholders_stay_across_a_reload_and_a_turn_end() {
+    let state = TempState::new("placeholders");
+    let mut rows = state.open();
+    rows.create(create(A, 1000, "/w")).expect("a row");
+    rows.create(create(B, 1001, "/w")).expect("a row");
+    let first = rows.placeholders(&id(A)).expect("placeholders").clone();
+    assert_ne!(rows.placeholders(&id(B)), Some(&first));
+
+    let end = serde_json::from_value(serde_json::json!({"title": "t", "updated_at": 2000}))
+        .expect("a turn end");
+    rows.turn_end(&id(A), &end).expect("a write");
+    drop(rows);
+    let rows = state.open();
+    assert_eq!(rows.placeholders(&id(A)), Some(&first));
+
+    // The list row and the session row hold no placeholder.
+    let text = serde_json::to_string(rows.get(&id(A)).expect("a row")).expect("json");
+    assert!(!text.contains(first.litellm_key().reveal()));
+    assert!(!text.contains(first.pep_token().reveal()));
+}
+
+// A row file of a vmm before the placeholders gets them at the load, and
+// the load writes them, so the next load reads the same values.
+#[test]
+fn a_row_with_no_placeholders_gets_them_at_the_load() {
+    let state = TempState::new("old-file");
+    let mut rows = state.open();
+    let row = rows.create(create(A, 1000, "/w")).expect("a row");
+    drop(rows);
+    let path = state.0.row_file(&id(A));
+    let old = serde_json::json!({"order": 1, "row": row});
+    fs::write(&path, serde_json::to_vec(&old).expect("json")).expect("a write");
+
+    let rows = state.open();
+    let given = rows.placeholders(&id(A)).expect("placeholders").clone();
+    let written: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).expect("a read")).expect("json");
+    assert_eq!(
+        written["placeholders"]["litellm_key"],
+        given.litellm_key().reveal()
+    );
+    drop(rows);
+    assert_eq!(state.open().placeholders(&id(A)), Some(&given));
+}
+
+// A placeholder of another format refuses the load.
+#[test]
+fn a_bad_placeholder_refuses_the_load() {
+    let state = TempState::new("bad-placeholder");
+    let mut rows = state.open();
+    let row = rows.create(create(A, 1000, "/w")).expect("a row");
+    drop(rows);
+    let bad = serde_json::json!({
+        "order": 1,
+        "row": row,
+        "placeholders": {"litellm_key": "sk-short", "pep_token": "ab".repeat(32)},
+    });
+    let path = state.0.row_file(&id(A));
+    fs::write(&path, serde_json::to_vec(&bad).expect("json")).expect("a write");
+    assert!(matches!(
+        Rows::open(state.0.clone()),
+        Err(LoadError::Parse { .. })
+    ));
+}
+
+// A drop removes the placeholders with the row.
+#[test]
+fn a_remove_drops_the_placeholders() {
+    let state = TempState::new("remove-placeholders");
+    let mut rows = state.open();
+    rows.create(create(A, 1000, "/w")).expect("a row");
+    rows.remove(&id(A)).expect("a remove");
+    assert_eq!(rows.placeholders(&id(A)), None);
+}

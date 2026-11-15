@@ -18,7 +18,9 @@
 //! 3. Each pull reads the state with `FamilyRoot::read_state` in
 //!    `spawn_blocking` (decision CH50 rule 9). A fault is its typed reply,
 //!    and the link stays open (decision CH23 rule 2). Nothing keeps a last
-//!    good state (decision CH53 rule 2).
+//!    good state (decision CH53 rule 2). The creds of a `state` reply are
+//!    the placeholders of the session (openshell ideas plan, idea 1), so
+//!    no real value reaches the guest. The planes swap them back.
 //! 4. A `state` reply waits until the host time passes `model_live_at`,
 //!    for at most `HOLD_CAP` (decision CH31 rule 1).
 //! 5. A refused line closes the link with no reply, and the vmm logs why
@@ -44,6 +46,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use creche_vmm_confine::family::{FamilyRoot, StateFault};
 use creche_vmm_store::layout::{SLOTS, VmRunDir};
+use creche_vmm_store::placeholder::Placeholders;
 use creche_wire::{FAMILY_STATE_CAP, FamilyName, FamilyStatePull, HostPort, SessionId, strict};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::task::{JoinHandle, JoinSet, spawn_blocking};
@@ -102,18 +105,21 @@ pub fn bind(run: &VmRunDir) -> Result<Bound, BindError> {
         .map_err(|source| BindError { path, source })
 }
 
-/// The family of one VM, which each pull reads, and its session, which
-/// each log line names.
+/// The family of one VM, which each pull reads, its session, which each
+/// log line names, and the placeholders of that session, which each
+/// `state` reply carries.
 #[derive(Debug)]
 struct Puller {
     families: FamilyRoot,
     family: FamilyName,
     session: SessionId,
+    placeholders: Placeholders,
 }
 
 impl Bound {
     /// Serves the listener in a task of its own. Each pull reads the state
-    /// of `family` in `families`. Log lines name `session`.
+    /// of `family` in `families`, and its reply carries `placeholders`.
+    /// Log lines name `session`.
     ///
     /// # Errors
     ///
@@ -123,12 +129,14 @@ impl Bound {
         families: FamilyRoot,
         family: FamilyName,
         session: SessionId,
+        placeholders: Placeholders,
     ) -> io::Result<Server> {
         let listener = UnixListener::from_std(self.0)?;
         let puller = Arc::new(Puller {
             families,
             family,
             session,
+            placeholders,
         });
         Ok(Server(tokio::spawn(accept(listener, puller))))
     }
@@ -227,9 +235,13 @@ fn pull(line: &[u8]) -> bool {
 /// the runtime.
 async fn answer(puller: &Arc<Puller>) -> Option<(&'static str, Vec<u8>, Duration)> {
     let reader = Arc::clone(puller);
-    let read = spawn_blocking(move || reader.families.read_state(&reader.family))
-        .await
-        .ok()?;
+    let read = spawn_blocking(move || {
+        reader
+            .families
+            .read_state(&reader.family, &reader.placeholders)
+    })
+    .await
+    .ok()?;
     match read {
         Ok(state) => {
             let held = hold(state.model_live_at(), SystemTime::now());
