@@ -9,8 +9,9 @@ script tag on any page. Every page works with scripts off.
 
 ## The sentence that bounds this package
 
-**Read everything, write two things: a validated git commit in the registry,
-and the operator's decision on one open approval gate.**
+**Read everything, write three things: a validated git commit in the registry,
+the operator's decision on one open approval gate, and one more push of an
+open release card.**
 
 There is no systemd call, no daemon verb and no `sbx` in this package. Adding
 one is a design change. `caregiver` watches the registry and converges. A
@@ -23,6 +24,13 @@ route of the approval plugin of the chaperone. The page holds no state. It
 shows a gate only while the plugin holds it open, so the page lives only as
 long as the request.
 
+The release page is the third write, and it decides nothing. A release card
+opens `/releases/<id>` on a plain tap. The page shows the card's two lines
+and can ask the approvals Node-RED to push the same card again. Root takes
+a release verdict only from the tap on the card (invariant 10). This
+service runs as the operator's user, as the requester of a release does,
+so its bearer may not decide a release (`releases.py`).
+
 | It reads | From |
 |---|---|
 | family state, faults, spend | `caregiver`'s status documents |
@@ -32,6 +40,7 @@ long as the request.
 | the sessions of a family and the VM state of each, one page of a transcript | the two view routes of `attendance`, as the principal `noticeboard` |
 | the family file behind the form | the registry checkout |
 | one open approval gate | `GET /pending/{job}` of the approval plugin, under its resume bearer |
+| one open release card | `release-pending` on the hook of the approvals Node-RED, under the page bearer |
 
 ## Perimeter rules
 
@@ -49,7 +58,8 @@ long as the request.
 
 A route parameter is an id. `app.py` checks a family name against
 `registrywrite.NAME_RE`, a session id with `sessions.is_session` and a job
-id with `approvals.is_job` before any use. A value that fails answers 404.
+id with `approvals.is_job` and a release id with `releases.is_release`
+before any use. A value that fails answers 404.
 
 ## The approval page
 
@@ -60,6 +70,19 @@ id with `approvals.is_job` before any use. A value that fails answers 404.
 4. The first decision stands. A later decision, from the card or from the
    page, changes nothing, and the page says so.
 5. Set both `NOTICEBOARD_APPROVAL_URL` and `NOTICEBOARD_APPROVAL_TOKEN_FILE`,
+   or neither. With neither, the page is off and shows no button. With one,
+   or with an empty token file, the service refuses to start.
+
+## The release page
+
+1. The page decides nothing. It holds no Approve and no Deny, and its bearer
+   opens no kind of the hook that stores a verdict.
+2. A GET never pushes. The push is a form post under the CSRF rules of every
+   other write. Its body holds the release id and nothing else, so the page
+   cannot change the text of the card.
+3. The flow pushes again only a card that it holds and that no tap has
+   decided. It refuses a second push within 10 seconds.
+4. Set both `NOTICEBOARD_RELEASE_HOOK_URL` and `NOTICEBOARD_RELEASE_TOKEN_FILE`,
    or neither. With neither, the page is off and shows no button. With one,
    or with an empty token file, the service refuses to start.
 
@@ -159,6 +182,8 @@ uv run noticeboard-verify --json                # the component's verify hook
 | `NOTICEBOARD_COOKIE_SECURE` | `Secure` on the CSRF cookie. Set `0` only for a plain-HTTP dev run. |
 | `NOTICEBOARD_APPROVAL_URL` | the base URL of the approval plugin, the address of its `--listen` |
 | `NOTICEBOARD_APPROVAL_TOKEN_FILE` | a mode-0600 file that holds the plugin's `RESUME_TOKEN`. The service reads it at each call. |
+| `NOTICEBOARD_RELEASE_HOOK_URL` | the URL of the hook of the approvals Node-RED, the same URL root posts to |
+| `NOTICEBOARD_RELEASE_TOKEN_FILE` | a mode-0600 file that holds the flow's `REWORK_PAGE_TOKEN`. The service reads it at each call. |
 
 A LAN bind with no key refuses to start, exit 2. The reverse proxy injects
 `X-View-Key` inside its `location /` block and forwards `Cookie`, `Origin`
@@ -174,7 +199,9 @@ and `Referer` unchanged. `/healthz` and `/static/*` stay keyless.
 | `notices.py` | the notice of a refused JSON text: one log line, and one row in the notice file that `bin/creche-watchdog.sh` reads. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `rfc3339.py` | the one reader of a time text. The file is a copy, and `bin/tests/test_rfc3339_copies.py` holds each copy to the same bytes |
 | `sessions.py`, `attendancehttp.py` | the view routes of `attendance` as `noticeboard`, and the wire |
+| `bearercall.py` | one call to a peer under a bearer that a file holds |
 | `approvals.py` | the open gate of the approval plugin, the decision on it, and the wire |
+| `releases.py` | the open release card of the approvals Node-RED, one more push of it, and the wire |
 | `familyform.py`, `tomlout.py`, `tomlkeep.py`, `registrywrite.py` | the form, the whole file, the patched file, the commit |
 | `pages.py`, `app.py` | what each page needs, and the routes |
 | `verify.py` | `noticeboard-verify` |
@@ -211,6 +238,9 @@ prefixed `test_noticeboard_`.
 - No contract names the route of the approval plugin that the approval page
   reads. The page takes `GET /pending/{job}` of the chaperone's
   `docs/design.md` section 12 (`approvals.py`).
+- No contract names the two page kinds of the hook of the approvals
+  Node-RED. The page takes `release-pending` and `release-resend` of the
+  flow export in the operator's vault (`releases.py`).
 - No contract names the surface word of the validation report in a notice.
   `jsonfiles.Surface` gives the report the word `status.report`
   (`jsonfiles.py`).

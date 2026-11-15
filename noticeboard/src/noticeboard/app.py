@@ -43,13 +43,14 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 
-from . import pages, security, tomlkeep
+from . import pages, releases, security, tomlkeep
 from .approvals import ApprovalChannel, Decision, Lookup, Outcome, build_channel, is_job
 from .auditfiles import ARGS_NOTICE, AuditFilter
 from .config import Config
 from .familyform import Form, document_of, form_of, parse_posted, with_posted
 from .pages import EditPage
 from .registrywrite import NAME_RE, family_path, save_family
+from .releases import ReleaseChannel
 from .security import CSRF_COOKIE, CSRF_FIELD, Origin, Refusal
 from .sessions import SessionReader, is_session
 
@@ -77,13 +78,14 @@ def build_app(
     reader: SessionReader,
     clock: Callable[[], datetime] | None = None,
     approvals: ApprovalChannel | None = None,
+    release_cards: ReleaseChannel | None = None,
 ) -> FastAPI:
     """The whole service.
 
     `reader` and `clock` are injected so a test needs no socket and no
     real time: staleness is a comparison against a clock, so a test that
-    could not pin one could not test it. `approvals` defaults to the
-    channel of `config`.
+    could not pin one could not test it. `approvals` and `release_cards`
+    default to the channels of `config`.
     """
     app = FastAPI(title="noticeboard", docs_url=None, redoc_url=None, openapi_url=None)
     render = _renderer(config)
@@ -94,6 +96,11 @@ def build_app(
     _routes(app, config, reader, render, clock or _now)
     _approval_routes(
         app, approvals or build_channel(config.approval_url, config.approval_token_file), render
+    )
+    _release_routes(
+        app,
+        release_cards or releases.build_channel(config.release_hook_url, config.release_token_file),
+        render,
     )
 
     return app
@@ -335,6 +342,72 @@ def _approval_routes(
         )
 
         return page(request, body)
+
+
+@dataclass(frozen=True)
+class ReleasePage:
+    """What `release.html` shows. No card and no outcome is a gone release."""
+
+    release: str
+    found: releases.Lookup
+    outcome: releases.Outcome | None = None
+    problem: str = ""
+
+
+def _release_routes(
+    app: FastAPI,
+    cards: ReleaseChannel,
+    render: Callable[[Request, str, dict[str, object]], HTMLResponse],
+) -> None:
+    """The page a release card opens when its tap is lost (`releases.py`).
+
+    The page decides nothing. A GET changes nothing, so a link preview
+    cannot push a card. The POST asks for one more push of the card, under
+    the CSRF rules of every other write.
+    """
+
+    def page(request: Request, body: ReleasePage) -> HTMLResponse:
+        answer = render(
+            request,
+            "release.html",
+            {"page": body, "outcomes": releases.Outcome, "taps": releases.Tap},
+        )
+        gone = body.found.card is None and not body.found.problem
+        if gone and body.outcome is None:
+            answer.status_code = _NOT_FOUND
+
+        return answer
+
+    @app.get("/releases/{release}", response_class=HTMLResponse)
+    def _release(request: Request, release: str) -> HTMLResponse:  # pyright: ignore[reportUnusedFunction]
+        _require_release(release)
+
+        return page(request, ReleasePage(release=release, found=cards.lookup(release)))
+
+    @app.post("/releases/{release}")
+    async def _resend(request: Request, release: str) -> Response:  # pyright: ignore[reportUnusedFunction]
+        _require_release(release)
+        _, refusal = await _form_of(request)
+
+        if refusal is not None:
+            return _refused(refusal)
+
+        # The flow checks the card itself: it pushes only a card that it
+        # holds and that no tap has decided.
+        sent = await run_in_threadpool(cards.resend, release)
+        found = await run_in_threadpool(cards.lookup, release)
+        body = ReleasePage(release=release, found=found, outcome=sent.outcome, problem=sent.problem)
+
+        return page(request, body)
+
+
+def _require_release(release: str) -> None:
+    """Answer 404 unless the route parameter has the form of a release id.
+
+    The parameter becomes the release id of a body to the flow.
+    """
+    if not releases.is_release(release):
+        raise _no_such_page()
 
 
 def _require_job(job: str) -> None:

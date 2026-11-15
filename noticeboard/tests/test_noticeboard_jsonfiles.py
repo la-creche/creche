@@ -191,6 +191,7 @@ def test_the_surface_words_are_the_words_of_the_notices_of_the_noticeboard() -> 
         "audit.line",
         "session.answer",
         "approval.answer",
+        "release.answer",
     ]
 
 

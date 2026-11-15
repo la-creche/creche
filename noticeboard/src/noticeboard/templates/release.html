@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% from "macros.html" import problem, csrf %}
+{# The page a release card opens when its tap is lost. It shows the release
+   and sends the same card again. It decides nothing: root takes a release
+   verdict only from the tap on the card. It lives only as long as the
+   card: the flow forgets a card when root's gate times out. #}
+{% block title %}release{% endblock %}
+{% block main %}
+{% set card = page.found.card %}
+{% if page.outcome == outcomes.SENT %}
+<p class="saved">The card is on your phone again. Long-press it, then pick
+Approve or Deny.</p>
+{% elif page.outcome == outcomes.TOO_SOON %}
+<p class="problem">The card went out a moment ago. Look for it on your
+phone. If it is not there, wait 10 seconds and send it again.</p>
+{% elif page.outcome == outcomes.DECIDED %}
+<p class="problem">A tap answered this release first. Nothing was sent.</p>
+{% elif page.outcome == outcomes.GONE %}
+<p class="problem">This release is gone. Its gate timed out, so nothing was
+sent.</p>
+{% elif page.outcome == outcomes.FAILED %}
+{{ problem(page.problem or "The request did not reach the approvals Node-RED.") }}
+{% endif %}
+{% if card %}
+<h1>{{ card.title }}</h1>
+<pre>{{ card.message }}</pre>
+{% if card.tap == taps.PENDING %}
+<p>Approve and Deny are on the phone card, behind a long press. This page
+cannot decide a release.</p>
+<p class="foot">The gate times out in {{ card.expires_in_s // 60 }} min {{ card.expires_in_s % 60 }} s,
+and this page with it.</p>
+<form method="post" action="/releases/{{ page.release }}">
+{{ csrf(csrf_token, csrf_field) }}
+<p class="verbs">
+  <button type="submit">Send the card again</button>
+</p>
+</form>
+{% else %}
+<p class="saved">{{ "Approved" if card.tap == taps.APPROVE else "Denied" }} on the phone.
+Root reads the answer at its next poll.</p>
+{% endif %}
+{% elif page.found.problem %}
+<h1>release</h1>
+{{ problem(page.found.problem) }}
+{% else %}
+<h1>release</h1>
+{% if not page.outcome %}
+<p>This release is gone. Its gate timed out, or the approvals Node-RED never
+held its card.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

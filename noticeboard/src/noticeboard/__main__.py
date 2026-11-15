@@ -85,6 +85,7 @@ def _report(config: Config) -> None:
     print(f"noticeboard token {_where(config.view_token_file)}")
     print(f"attendance      {_attendance(config)}")
     print(f"approval page {_approval(config)}")
+    print(f"release page  {_release(config)}")
 
 
 def _key_state(config: Config) -> str:
@@ -111,6 +112,14 @@ def _approval(config: Config) -> str:
         return "off (NOTICEBOARD_APPROVAL_URL or NOTICEBOARD_APPROVAL_TOKEN_FILE is not set)"
 
     return f"{config.approval_url}, token {_where(config.approval_token_file)}"
+
+
+def _release(config: Config) -> str:
+    """Whether the release page can read a card. No part of the token."""
+    if not config.release_hook_url or config.release_token_file is None:
+        return "off (NOTICEBOARD_RELEASE_HOOK_URL or NOTICEBOARD_RELEASE_TOKEN_FILE is not set)"
+
+    return f"{config.release_hook_url}, token {_where(config.release_token_file)}"
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
