@@ -131,6 +131,7 @@ class CatalogRow:
 #: `bundles` follows each build through `uv.lock`: `attendance` installs the
 #: doors and `creche-wire` (CH25), `agent-door-trigger` brings
 #: `agent-family`, and `caregiver` brings `agent-family` and `creche-wire`.
+#: `handover` brings `creche-env`, the reader of the env fill.
 #: `test_each_component_bundles_what_its_build_installs` holds it equal.
 #:
 #: `host` is the whole creche-release repository: the units that belong to
@@ -168,7 +169,7 @@ CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("caregiver", Repo.CRECHE, "caregiver", Kind.VENV, Releases.YES, ("family", "wire")),
     CatalogRow("noticeboard", Repo.CRECHE, "noticeboard", Kind.VENV, Releases.YES, ("family",)),
     CatalogRow("mcp-servers", Repo.MCP, ".", Kind.VENV, Releases.YES),
-    CatalogRow("handover", Repo.CRECHE, "handover", Kind.VENV, Releases.YES),
+    CatalogRow("handover", Repo.CRECHE, "handover", Kind.VENV, Releases.YES, ("env",)),
     CatalogRow("registry-data", Repo.REGISTRY, ".", Kind.DATA, Releases.NO),
     CatalogRow("host", Repo.CRECHE_RELEASE, ".", Kind.UNITS, Releases.YES),
     CatalogRow("memory", Repo.CRECHE, "memory", Kind.VENV, Releases.YES, (), Lock.OWN),
@@ -282,7 +283,7 @@ CONTRACT_OWNER: dict[ContractId, str] = {
 #: the two numbers is the `provides` row of `handover/component.yaml`.
 #: `tests/test_handover_contract_version.py` fails when they differ from it.
 MANIFEST_CONTRACT_MAJOR = 0
-MANIFEST_CONTRACT_MINOR = 26
+MANIFEST_CONTRACT_MINOR = 27
 
 #: `handover` deploys last whatever `depends_on` says (contract 06 §1.1).
 LAST_IN_ORDER = "handover"

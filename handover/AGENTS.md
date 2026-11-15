@@ -256,13 +256,38 @@ has the name of the markup of the manifest: `.component.toml` or
 2. Everything builds before anything swaps. The restore runs in reverse.
 3. The phone transport is the chaperone's, not a second one. `phone.py`
    polls the hook for the verdict, because root owns no HTTP server.
+3a. The operator decided the text of the two pushes. Each arrow is the
+    ASCII `->`.
+    1. The approval push has the title `Release Approval` and a message of
+       two lines. `Components:` lists each deploy row in name order, as
+       `name from -> to`, with `absent` for a first install. `Unsafe:`
+       lists in name order each component with no automatic rollback: its
+       restore mode is `manual`, or root could not verify its manifest. An
+       empty list is `none`.
+    2. The outcome push has the title `Release Result`. Its message is
+       `All succeeded`, or `Release failed at <where>.` and a second line
+       `Rolled back components: <names or none>`. `<where>` is
+       `<component> release` when one component caused the end, and
+       `<step> step` when none did. The executor records the component and
+       each component that the restore put back (`Entry.failed_component`,
+       `Entry.rolled_back`). No code reads the text of an error for them.
+    3. Each push carries `summary`, the message cut to 200 characters.
+       Contract 04 §8.4 rule 1 needs it, and the live flow shows it until
+       the operator imports the flow that reads `title` and `message`. The
+       message has 900 characters at most, and the title 60.
+    4. The approval push carries no `fields`. The outcome push carries
+       `fields` with the request `id` only, and the flow builds the tag of
+       the card from it.
+    5. The log of the ledger entry keeps §2.5's seven fields, one line for
+       each field. The requester's preview prints the two lines of the
+       phone, then the seven fields.
 4. `phone.py` and `quiet.py` are stdlib only. A release re-syncs `handover`'s
    own venv under the running executor.
 5. A signal root cannot read is never quiet, and it restarts the window.
 5a. Root reads an operator-owned file with `O_NOFOLLOW` and checks the open
     descriptor: regular file, the operator's uid, mode 0600, bounded size.
     Root must not act as the operator's deputy against a file the operator
-    cannot read. The rule has two cases:
+    cannot read. The rule has three cases:
     1. The `noticeboard` token of the quiet window (`quiet.py`).
     2. The archive and the bundle of a binary component in the store
        (`executor/artifact.py`). Root also opens each directory below the
@@ -270,8 +295,60 @@ has the name of the markup of the manifest: `.component.toml` or
        one. A file has one name only, and root reads it in blocks up to its
        limit. Root reads the store one time in a release, at step 2. Each
        later read is a read of root's own copy.
+    3. The env file of a unit, at the env fill (`executor/envfill.py`).
+       The size limit is the 64 KiB of `creche-env`.
 6. Root believes a manifest at a SHA it verifies, or out of a tree it owns.
    There is no third source.
+
+## The env fill
+
+A unit can read one env file alone. `creche-vmm.service` reads
+`/srv/agents/state/creche/vmm.env` (CH59 rule 1, CH77 rule 1).
+`bin/fleet-up up` writes that file from the catalog of `creche-env` and the
+site file. fleet-up and the catalog reach the host through `creche-deploy`,
+and never through a release. So a release adds each key that the program
+needs and the file does not hold (`executor/envfill.py`).
+
+1. The manifest names the file and the keys in the optional table `env`.
+   `file` is an absolute path, or `~/` for the operator home, as
+   `install.to` is. `keys` holds 1 to 64 distinct keys of the form
+   `[A-Z][A-Z0-9_]{0,63}`.
+2. The reader refuses an `env` table in a component whose `repo` is not
+   `creche`, because the catalog is in that repository only. Each
+   `--env-file` of the verify hook must name `env.file`.
+3. A key is absent when the file has no line for it. A line with an empty
+   value refuses the release: the fill changes no line, and a second line
+   of one key makes the reader of the vmm refuse the file.
+4. Root reads the value of each absent key from the catalog at the release
+   commit: `env/src/creche_env/default.env` and `example.env` in root's own
+   clone of the commit that step 3 verified. No link is followed. Root
+   never reads the installed tree, so a key that lands in the same set as
+   the program resolves. `creche-env` resolves the value against the site
+   file, as fleet-up does, so the two writers give one value.
+5. Step 4 reads the file by rule 5a and plans the fill. The step writes one
+   log line for each component: `env vmm: adds <keys> to <file>`, or `env
+   vmm: nothing to add to <file>`. Step 4 runs after step 3, so root reads
+   the catalog at a verified commit, and it runs before the push of step
+   5.
+6. Each fault refuses the release at step 4 with the code `env`, before
+   the push. The detail names the component, the file and the key. A
+   missing file names the fix `/opt/creche/bin/fleet-up up`. A file that
+   fails rule 5a, a file that does not parse and a key that the catalog and
+   the site file give no value are the other faults.
+7. Step 8 runs the fill after the build of each component and before any
+   swap. Root opens the file again with `O_NOFOLLOW`, read and write, and
+   each write at the end. It checks the descriptor by rule 5a, reads the
+   file, and finds each key that is still absent. Just before the write, it
+   checks the descriptor again: the same file, the same size. Then it
+   appends one `KEY=VALUE` line for each absent key, with a line end before
+   the first one when the last line has none. The new text must parse. The
+   step writes one log line: `env vmm: wrote <keys> to <file>`.
+8. A restore keeps each added key. The previous program reads only the keys
+   that it names, so a key that it does not name costs nothing.
+9. No value of the fill is a secret. The catalog and the site file hold
+   none (`env/AGENTS.md`). A log line names each key and no value.
+10. Release `handover` before the first manifest has an `env` table. An
+    older executor or requester refuses that manifest.
 
 ## Venv builds and the action id
 
@@ -471,7 +548,10 @@ Kind.BINARY, Releases.YES)` (CH7-5, CH9, item 12 (1)). Its manifest is
    the four programs, the version that CH prints and a static guest-init.
    It opens no socket and reads no disk (CH76 rule 2). `bin/fleet-up up`
    writes `vmm.env` (CH59 rule 1). The file must exist before the first
-   vmm release.
+   vmm release. When the vmm manifest has an `env` table, a release also
+   adds each absent key of the table to `vmm.env` ("The env fill"). A later
+   PR adds that table, after a host installs the `handover` that reads
+   it.
 5. The manifest requires `family-file` 0.19. Minor 16 is the first with
    the reach files that the vmm reads (CH76 rule 3), minor 17 adds the
    flavor `coding` (CH79 rule 1), minor 18 drops `files` (CH10-10), and
@@ -714,7 +794,8 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `requester/`, `corpus/` | one request file, one `git fetch`, and the fetch of the signed assets of a binary or disk-image component into the store (`corpus/artifacts.py`) |
 | `follow/` | the set a newer tag moves, the marker, the decision |
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P6 |
-| `executor/approval.py`, `phone.py`, `notice.py`, `quiet.py` | the gate, the transport, the outcome push, the busy check of step 7 and the quiet minutes |
+| `executor/approval.py`, `phone.py`, `notice.py`, `quiet.py` | the gate and the text of the approval push, the transport, the outcome push, the busy check of step 7 and the quiet minutes |
+| `executor/envfill.py` | the env fill: the plan of step 4 and the append of step 8 |
 | `executor/host.py`, `install.py`, `mcpbuild.py`, `self_switch.py` | the one spawn and the unit of the verifier, steps 8 to 10, a server tree, the self-release |
 | `executor/unpack.py`, `artifact.py` | the unpack of a tar archive and the member list of a component archive, root's copy of the signed assets of a binary or disk-image component and its digest |
 | `executor/ledger.py`, `steps.py`, `drain.py` | the entry, the ten steps, the unit's entry point |

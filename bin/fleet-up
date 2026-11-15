@@ -30,6 +30,13 @@
 # when one line is not of the form `up` writes, or when one entry is outside
 # the state root and outside `~/.config`.
 #
+# A RELEASE ALSO ADDS KEYS. When a manifest names an env file of the fleet
+# in its `env` table, a release appends each key of that table that the
+# file lacks (handover/AGENTS.md, "The env fill"). fleet-up writes the file
+# first. Both read the same catalog and the same site file, so both give a
+# key the same value. The release changes no line, and `up` then finds each
+# key at its value and writes nothing.
+#
 # Prerequisites, copy-pasteable:
 #   command -v systemctl getent ss install cmp base64 head tr awk grep stat
 #   /opt/creche/.venv/bin/creche-env       # sudo creche-deploy builds it

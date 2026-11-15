@@ -37,6 +37,8 @@ from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Any, TypeVar, cast
 
+from creche_env.envfile import is_key
+
 from . import tomlfile
 from .boundedyaml import MergeLimits, MergeTooDeep, MergeTooLarge, load
 from .catalog import (
@@ -129,6 +131,21 @@ DISK_IMAGE_ENV_FILE = (
 #: (contract 06 §4 rule 7).
 ENV_FILE_OPTION = "--env-file"
 
+#: The optional table of the env fill (`executor/envfill.py`), and its two
+#: keys. `file` is the env file that the unit reads. `keys` names each key
+#: that the release adds to the file when the file does not hold it.
+ENV_FIELD = "env"
+ENV_KEYS = frozenset({"file", "keys"})
+
+#: The refusals of an `env` table. The catalog of the keys is in the
+#: `creche` repository only, so a component of another repository has no
+#: `env` table.
+ENV_NOT_CRECHE = "an env table is for a component of the creche repository only"
+ENV_NO_KEYS = "env.keys names 1 to 64 keys"
+ENV_BAD_KEY = "env.keys holds a key that is not of the form [A-Z][A-Z0-9_]{0,63}"
+ENV_REPEATED_KEY = "env.keys names a key two times"
+ENV_OTHER_FILE = f"the {ENV_FILE_OPTION} of the verify hook is not env.file"
+
 #: Contract 06 §8's field table, exactly. The key set is closed: an unknown
 #: key is a refusal, not a warning.
 REQUIRED_FIELDS = frozenset(
@@ -146,7 +163,9 @@ REQUIRED_FIELDS = frozenset(
         "release",
     }
 )
-OPTIONAL_FIELDS = frozenset({BUILD_FIELD, "provides", "requires", "depends_on", "secrets"})
+OPTIONAL_FIELDS = frozenset(
+    {BUILD_FIELD, "provides", "requires", "depends_on", "secrets", ENV_FIELD}
+)
 KNOWN_FIELDS = REQUIRED_FIELDS | OPTIONAL_FIELDS
 
 #: The fields that a TOML text must hold.
@@ -210,6 +229,15 @@ class Install:
 
 
 @dataclass(frozen=True)
+class EnvDecl:
+    """The `env` table: the env file that the unit reads, and each key that
+    a release adds to it when the file does not hold the key."""
+
+    file: str
+    keys: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ComponentManifest:
     """One parsed manifest. Every field has passed its own pattern."""
 
@@ -229,6 +257,8 @@ class ComponentManifest:
     restore: Restore
     secrets: tuple[str, ...]
     release: Releases
+    #: None when the manifest has no `env` table.
+    env: EnvDecl | None
 
 
 class _Reader:
@@ -633,6 +663,41 @@ def _env_files(command: tuple[str, ...], name: str) -> tuple[str, ...]:
     return tuple(found)
 
 
+def _read_env(reader: _Reader, repo: Repo, verify: Verify, subject: str) -> EnvDecl | None:
+    """The optional `env` table. `file` has the rules of `install.to`: an
+    absolute path, or `~/` for the home of the operator. `keys` holds 1 to
+    64 distinct keys of the grammar of `creche-env`. Each `--env-file` of
+    the verify hook names the same file, so the hook reads the file that
+    the release fills."""
+    if reader.raw(ENV_FIELD) is None:
+        return None
+
+    if repo is not Repo.CRECHE:
+        raise reader.refuse(ENV_NOT_CRECHE)
+
+    env = reader.mapping(ENV_FIELD, ENV_KEYS)
+    file = check_absolute_path(_from_home(env.text("file", ANY_TEXT_RE)), subject, "env.file")
+    raw_keys = env.raw("keys")
+    if not isinstance(raw_keys, list) or not raw_keys:
+        raise env.refuse(ENV_NO_KEYS)
+
+    keys: list[str] = []
+    for entry in env.items("keys"):
+        if not isinstance(entry, str) or not is_key(entry):
+            raise env.refuse(ENV_BAD_KEY)
+
+        if entry in keys:
+            raise env.refuse(ENV_REPEATED_KEY)
+
+        keys.append(entry)
+
+    for named in _env_files(verify.command, subject):
+        if _from_home(named) != file:
+            raise env.refuse(ENV_OTHER_FILE)
+
+    return EnvDecl(file=file, keys=tuple(keys))
+
+
 def _check_manifest_version(value: str, subject: str) -> str:
     """This contract's major, at or below its minor. §3.1's `provides` rule."""
     matched = CONTRACT_VERSION_RE.fullmatch(value)
@@ -705,6 +770,12 @@ def parse_manifest(text: str, subject: str, markup: Markup) -> ComponentManifest
     build = _read_build(reader, kind)
     _check_units(reader, kind, unit, build)
     _check_disk_image(reader, kind, unit, runs_as)
+    install = _read_install(reader, subject)
+    depends_on = _read_depends_on(reader)
+    verify = _read_verify(reader)
+    restore = _read_restore(reader)
+    secrets = _read_secrets(reader)
+    release = _read_release(reader, markup)
 
     return ComponentManifest(
         manifest_version=manifest_version,
@@ -715,14 +786,15 @@ def parse_manifest(text: str, subject: str, markup: Markup) -> ComponentManifest
         unit=unit,
         runs_as=runs_as,
         build=build,
-        install=_read_install(reader, subject),
+        install=install,
         provides=tuple(Provided(item, major, minor) for item, major, minor in provides),
         requires=tuple(Required(item, major, floor) for item, major, floor in requires),
-        depends_on=_read_depends_on(reader),
-        verify=_read_verify(reader),
-        restore=_read_restore(reader),
-        secrets=_read_secrets(reader),
-        release=_read_release(reader, markup),
+        depends_on=depends_on,
+        verify=verify,
+        restore=restore,
+        secrets=secrets,
+        release=release,
+        env=_read_env(reader, repo, verify, subject),
     )
 
 

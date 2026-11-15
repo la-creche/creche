@@ -16,7 +16,7 @@ Eleven surfaces, all of `handover`:
   input and its hash.
 - `manifest.gate`: a manifest hash and a request id to the gate id and the
   action string.
-- `manifest.summary`: the seven fields of the approval summary.
+- `manifest.summary`: the seven fields of the record of the approval summary.
 
 A float that the Python code takes or gives is written twice where a reader
 must hold it exactly: as a JSON number, and as the 16 hexadecimal digits of
@@ -1443,7 +1443,7 @@ SUMMARIES: Final[tuple[tuple[str, dict[str, str]], ...]] = (
 
 def _summary_vector(vector_id: str, fields: dict[str, str]) -> Vector:
     given: dict[str, Json] = {"args": {name: fields[name] for name in _SUMMARY_FIELDS}}
-    summary = approval.Summary(**fields)
+    summary = approval.Summary(**fields, moves=(), unsafe=())
 
     return accepted(vector_id, given, summary.as_dict())
 
@@ -1456,7 +1456,8 @@ def _summary_surface() -> Surface:
         contract="stage7-releases.md \u00a72.5",
         notes=(
             "The input is the seven fields of one summary.",
-            "value is the summary as the phone gets it. A field of more than 120 characters "
+            "value is the record of the summary: the log of the ledger entry and the preview "
+            "of the requester. A field of more than 120 characters "
             "is cut to 119 characters and one ellipsis. A character is one code point.",
         ),
         vectors=tuple(_summary_vector(*row) for row in SUMMARIES),

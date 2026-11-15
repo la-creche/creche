@@ -30,6 +30,7 @@
   {"id":"code-unit","input":{"text":"unit"},"result":"accepted","value":"unit"},
   {"id":"code-source","input":{"text":"source"},"result":"accepted","value":"source"},
   {"id":"code-site","input":{"text":"site"},"result":"accepted","value":"site"},
+  {"id":"code-env","input":{"text":"env"},"result":"accepted","value":"env"},
   {"id":"empty","input":{"text":""},"result":"refused"},
   {"id":"lower-c1","input":{"text":"c1"},"result":"refused"},
   {"id":"upper-request","input":{"text":"Request"},"result":"refused"},

@@ -19,7 +19,14 @@ from typing import cast
 import pytest
 from handover.errors import Refusal, RefusalCode
 from handover.executor import spool as spool_module
-from handover.executor.approval import Decision, Summary, Verdict, action_id_of, check_decision
+from handover.executor.approval import (
+    Decision,
+    Move,
+    Summary,
+    Verdict,
+    action_id_of,
+    check_decision,
+)
 from handover.executor.drain import drain
 from handover.executor.phone import PUSH_KIND, make_transport
 from handover.executor.request import NOT_AN_OBJECT, Request, parse_request
@@ -332,6 +339,8 @@ def _summary() -> Summary:
         restore="automatic",
         requested_by="creche",
         manifest="6b84c0e5aa10",
+        moves=(Move("chaperone", "2.0.3", "2.1.0"),),
+        unsafe=(),
     )
 
 
