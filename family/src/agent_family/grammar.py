@@ -72,6 +72,15 @@ ASSET_RE: Final = re.compile(rf"^{ASSET_FORM}\Z")
 ENTRYPOINT_RE: Final = re.compile(rf"^{ENTRYPOINT_FORM}\Z")
 SECRET_NAME_RE: Final = re.compile(rf"^{SECRET_NAME_FORM}\Z")
 ENTITY_DOMAIN_RE: Final = re.compile(rf"^{ENTITY_DOMAIN_FORM}\Z")
+#: The host of a `forge-release` pin: a DNS name in lower case, with two
+#: labels at least and a last label that starts with a letter. It has no
+#: `_FORM`, because a message states the rule in words. `CODE_HOST` is the
+#: host that `github-release` reads, and `forge-release` refuses it.
+HOST_RE: Final = re.compile(
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?\Z"
+)
+MAX_HOST_CHARS: Final = 253
+CODE_HOST: Final = "github.com"
 PYTHONS: Final = ("3.12", "3.13", "3.14")
 DEFAULT_PYTHON: Final = "3.14"
 MAX_TOOLS: Final = 200
@@ -190,7 +199,7 @@ class Verb(StrEnum):
 
 
 class AssetFormat(StrEnum):
-    """Contract 01b §3.2: what a `github-release` asset is."""
+    """Contract 01b §3.2: what a release asset is."""
 
     TAR = "tar"
     BINARY = "binary"
@@ -199,7 +208,14 @@ class AssetFormat(StrEnum):
 class InstallSource(StrEnum):
     PYPI = "pypi"
     GITHUB_RELEASE = "github-release"
+    FORGE_RELEASE = "forge-release"
     AGENT_MCP = "agent-mcp"
+
+
+#: The two sources whose pin is one release asset. `github-release` reads
+#: the asset from `CODE_HOST`. `forge-release` reads it from the Forgejo or
+#: Gitea host that `install.host` names (`handover.mcpserver` rule 17).
+ASSET_SOURCES: Final = frozenset({InstallSource.GITHUB_RELEASE, InstallSource.FORGE_RELEASE})
 
 
 #: Contract 01 §3.4: `all` means every tool the server file declares at read

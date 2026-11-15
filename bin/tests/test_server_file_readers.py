@@ -56,8 +56,8 @@ def test_root_and_the_validator_accept_each_fixture_server_file(name: str) -> No
     assert _server_issues(path.read_text(encoding="utf-8"), name) == ()
 
 
-def test_the_walk_finds_the_eleven_fixture_server_files() -> None:
-    assert len(FIXTURE_SERVERS) == 11
+def test_the_walk_finds_the_twelve_fixture_server_files() -> None:
+    assert len(FIXTURE_SERVERS) == 12
 
 
 # --- the rules of root ----------------------------------------------------------------
@@ -101,6 +101,16 @@ RELEASE: dict[str, Any] = {
     "version": "1.12.0",
     "asset": "github-mcp-server_Linux_x86_64.tar.gz",
     "sha256": "f34de295acd8f1012c7f2c0e3b909d87361d0993b9489b57ee92ac72b85d7cca",
+}
+
+#: A `forge-release` pin: forgejo-mcp 3.4.1, from the host that publishes it.
+FORGE: dict[str, Any] = {
+    "source": "forge-release",
+    "host": "git.b4mad.industries",
+    "repo": "agentic-forges/forgejo-mcp",
+    "version": "3.4.1",
+    "asset": "forgejo-mcp_3.4.1_linux_amd64.tar.gz",
+    "sha256": "940d3ed08a5535bf1baaf426cb93610cfef5ad02adbda76b7c70a618f08fa53c",
 }
 
 SECRET_ENV: dict[str, Any] = {"KAGI_API_KEY": "secret:kagi_api_key"}
@@ -168,6 +178,19 @@ RULES_OF_ROOT: dict[str, dict[str, Any]] = {
     "entity-domain-length": {"entity_domains": ["a" * 65]},
     "entity-domains-twice": {"entity_domains": ["light", "light"]},
     "entity-domains-count": {"entity_domains": [f"d{n}" for n in range(257)]},
+    "host-scheme": {"install": {**FORGE, "host": "https://git.example.org"}},
+    "host-port": {"install": {**FORGE, "host": "git.example.org:3000"}},
+    "host-path": {"install": {**FORGE, "host": "git.example.org/owner"}},
+    "host-user": {"install": {**FORGE, "host": "bot@git.example.org"}},
+    "host-ipv4": {"install": {**FORGE, "host": "192.0.2.10"}},
+    "host-ipv6": {"install": {**FORGE, "host": "[2001:db8::1]"}},
+    "host-upper-case": {"install": {**FORGE, "host": "Git.Example.org"}},
+    "host-one-label": {"install": {**FORGE, "host": "localhost"}},
+    "host-end-dot": {"install": {**FORGE, "host": "git.example.org."}},
+    "host-length": {"install": {**FORGE, "host": "a" * 250 + ".org"}},
+    "host-github": {"install": {**FORGE, "host": "github.com"}},
+    "host-missing": {"install": {k: v for k, v in FORGE.items() if k != "host"}},
+    "host-under-github-release": {"install": {**RELEASE, "host": "git.example.org"}},
 }
 
 
@@ -188,6 +211,34 @@ def test_root_and_the_validator_accept_the_base_of_the_rules() -> None:
 
     assert mcpserver.parse_server(text.encode(), "kagi", mcpserver.Markup.TOML).name == "kagi"
     assert _server_issues(text, "kagi") == ()
+
+
+def test_root_and_the_validator_accept_a_forge_release() -> None:
+    text = _toml({**BASE, "install": FORGE})
+
+    read = mcpserver.parse_server(text.encode(), "kagi", mcpserver.Markup.TOML)
+
+    assert read.pin.asset_url() == (
+        "https://git.b4mad.industries/agentic-forges/forgejo-mcp/releases/download/"
+        "v3.4.1/forgejo-mcp_3.4.1_linux_amd64.tar.gz"
+    )
+    assert _server_issues(text, "kagi") == ()
+
+
+def test_root_and_the_validator_accept_a_github_release_as_before() -> None:
+    text = _toml({**BASE, "install": RELEASE})
+
+    read = mcpserver.parse_server(text.encode(), "kagi", mcpserver.Markup.TOML)
+
+    assert read.pin.host is None
+    assert read.pin.asset_url().startswith("https://github.com/github/github-mcp-server/")
+    assert _server_issues(text, "kagi") == ()
+
+
+def test_the_readers_hold_the_same_four_sources() -> None:
+    from agent_family.grammar import InstallSource
+
+    assert {str(one) for one in InstallSource} == {str(one) for one in mcpserver.Source}
 
 
 def test_root_and_the_validator_accept_entity_domains() -> None:
