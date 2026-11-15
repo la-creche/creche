@@ -192,11 +192,17 @@ SECRET_PREFIX: Final = "secret:"
 #: forward.
 SECRET_NAME_RE: Final = re.compile(r"[a-z][a-z0-9_]{1,62}")
 
+#: A Home Assistant entity domain of `entity_domains`, as the `ha-entities`
+#: fence of chaperone reads it.
+ENTITY_DOMAIN_RE: Final = re.compile(r"[a-z0-9_]{1,64}")
+
 #: Contract 01b §7: `tools: all`, or a list of this server's tool names.
 ALL_TOOLS: Final = "all"
 
 REQUIRED_KEYS: Final = frozenset({"name", "identity", "install", "run"})
-OPTIONAL_KEYS: Final = frozenset({"tools", "arg_allows", "arg_denies", "shared_secrets"})
+OPTIONAL_KEYS: Final = frozenset(
+    {"tools", "arg_allows", "arg_denies", "entity_domains", "shared_secrets"}
+)
 
 INSTALL_KEYS: Final = frozenset(
     {"source", "package", "version", "lock", "python", "repo", "asset", "sha256", "ref", "format"}
@@ -214,6 +220,7 @@ MAX_FENCE_VALUES: Final = 256
 #: Contract 01b §4.3. One server may share at most this many of its
 #: secrets, and each with exactly one partner. The real number is one.
 MAX_SHARED: Final = 8
+MAX_ENTITY_DOMAINS: Final = 256
 MAX_IDENTITY_CHARS: Final = 1000
 MAX_DESCRIPTION_CHARS: Final = 200
 MAX_ARG_CHARS: Final = 256
@@ -351,6 +358,9 @@ class ServerFile:
     #: in hand at once, so the entries are carried per file and matched
     #: across the registry in `_one_upstream_per_secret`.
     shared: tuple[SharedSecret, ...] = ()
+    #: The entity domains for the `ha-entities` fence, or None when the
+    #: file declares none. Root carries them and applies none.
+    entity_domains: tuple[str, ...] | None = None
     #: §4.2: the variable this server reads its state directory from, or
     #: None when the file declares no `run.state_dir`. The file names the
     #: variable and never the path: root builds that.
@@ -450,8 +460,28 @@ def parse_server(raw: bytes, directory: str, markup: Markup = Markup.YAML) -> Se
         arg_denies=denies,
         arg_allows=allows,
         shared=_shared(name, body.get("shared_secrets", []), secrets),
+        entity_domains=_entity_domains(name, body.get("entity_domains")),
         state_dir_env=state_dir_env,
     )
+
+
+def _entity_domains(name: str, value: Any) -> tuple[str, ...] | None:
+    """`entity_domains`: a list of distinct domains, or None when absent."""
+    if value is None:
+        return None
+
+    if not isinstance(value, list):
+        raise _refuse(name, "field 'entity_domains' is not a list")
+
+    entries = cast(list[Any], value)
+    if len(entries) > MAX_ENTITY_DOMAINS:
+        raise _refuse(name, f"field 'entity_domains' holds more than {MAX_ENTITY_DOMAINS} entries")
+
+    domains = tuple(_text(name, "entity_domains[]", one, ENTITY_DOMAIN_RE) for one in entries)
+    if len(set(domains)) != len(domains):
+        raise _refuse(name, "entity_domains names one domain twice")
+
+    return domains
 
 
 def _secrets(name: str, value: Any) -> tuple[str, ...]:

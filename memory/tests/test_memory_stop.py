@@ -81,6 +81,10 @@ def test_a_sync_that_ignores_its_cancel_gets_no_checkpoint_or_close_of_the_stop(
     ], run.stderr[-3000:]
     assert not run.group_left
     graph_file = store / "system" / "databases" / GRAPH_NAME
+    # The stop waited for the statement of the sync, so the exit did not end
+    # the worker in a checkpoint. Such an end left these files, and then the
+    # next open crashed or failed in 3 of 16 stops on Linux.
+    assert unfinished_files(graph_file) == ()
     # The next open replays the WAL. A statement is whole or absent.
     rows = count_rows(graph_file, "F")
     assert rows >= run.committed
@@ -185,6 +189,14 @@ def test_the_unit_signals_the_main_process_alone_and_gives_the_stop_60_s() -> No
     assert "KillMode=mixed" in lines
     assert "KillSignal=SIGTERM" in lines
     assert "TimeoutStopSec=60" in lines
+
+
+def test_the_unit_throttles_at_8g_before_the_kill_at_12g_and_caps_its_swap() -> None:
+    lines = UNIT.read_text(encoding="utf-8").splitlines()
+
+    assert "MemoryHigh=8G" in lines
+    assert "MemoryMax=12G" in lines
+    assert "MemorySwapMax=2G" in lines
 
 
 def test_a_daemon_thread_returns_the_result_or_the_error() -> None:

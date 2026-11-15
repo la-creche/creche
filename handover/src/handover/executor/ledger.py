@@ -96,6 +96,13 @@ class Entry:
     previous: dict[str, str | None] = field(default_factory=dict[str, "str | None"])
     manual: list[str] = field(default_factory=list[str])
     log: list[str] = field(default_factory=list[str])
+    #: The component whose step failed, or None when no single component
+    #: caused the end. The outcome push names it, and `as_dict` leaves it
+    #: out: the steps and the log already say it.
+    failed_component: str | None = None
+    #: Each component that a restore put back, in the order of the
+    #: restore. The outcome push names them, and `as_dict` leaves them out.
+    rolled_back: list[str] = field(default_factory=list[str])
 
     def add(self, step: Step) -> None:
         self.steps.append(step)

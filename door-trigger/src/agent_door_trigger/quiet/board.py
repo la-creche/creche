@@ -7,7 +7,7 @@ then hashed so the gate's file stays small as DONE grows. Titles, assignees,
 comments and the order inside a column are left out: none is a move the
 lead acts on.
 
-The input is `<server>__survey_board`'s answer. agent-mcp's
+The input is `<server>__survey_board`'s answer. mcp's
 `lead/board.py` renders it as
 
     {"columns": {"TODO": [{"id": 12, "points": 3, "refined": true,

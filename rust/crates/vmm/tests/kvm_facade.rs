@@ -26,6 +26,7 @@
 #![cfg(target_os = "linux")]
 
 mod common;
+mod snapshot_scan;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -39,13 +40,14 @@ use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
 
 use creche_vmm_store::claim::CONSUMED;
-use creche_vmm_store::layout::SessionDir;
+use creche_vmm_store::layout::{SessionDir, StateRoot};
+use creche_vmm_store::placeholder::Placeholders;
 use creche_wire::guest::{CHAPERONE_PORT, FACADE_STOP_WAIT, LITELLM_PORT};
-use creche_wire::{FacadeState, GuestPort};
+use creche_wire::{FacadeState, GuestPort, SessionId};
 use serde_json::{Value, json};
 
 use common::{
-    BOOT, LITELLM_KEY, PEP_TOKEN, RootDisk, SESSION, Shape, UP, Vmm, boot_with, files, lines,
+    BOOT, LITELLM_KEY, PEP_TOKEN, RootDisk, SESSION, Shape, UP, Vmm, boot_with, files, lines, work,
 };
 
 /// The base disk of the setup script: the `agent-sandbox` target of
@@ -353,9 +355,10 @@ fn drain(plane: &Receiver<Seen>) {
     while plane.try_recv().is_ok() {}
 }
 
-/// Holds that `seen` came through the splice of guest `port` with the
-/// bearer `secret` of `creds.json`, so the 1100 reply reached the agent
-/// (decisions CH5a, CH6-2).
+/// Holds that `seen` came through the proxy of guest `port` with the
+/// bearer `secret` of `creds.json`: the agent sent the placeholder of the
+/// 1100 reply, and the proxy swapped in the real value (decisions CH5a,
+/// CH6-2, openshell ideas plan idea 1).
 #[cfg(test)]
 fn through(seen: &Seen, port: u16, secret: &str, step: &str) {
     assert_eq!(seen.host, format!("127.0.0.1:{port}"), "{step}: {seen:?}");
@@ -480,6 +483,19 @@ fn base_disk(_work: &Path, root: &Path) -> RootDisk {
     }
 }
 
+/// The placeholders of the session from its row file, read as JSON, so
+/// no second `Rows` opens the rows dir of the vmm. The state root is the
+/// dir two levels above the session dir `session`.
+#[cfg(test)]
+fn placeholders(session: &SessionDir) -> Placeholders {
+    let root = session.path().parent().and_then(Path::parent).unwrap();
+    let state = StateRoot::new(root.to_owned()).unwrap();
+    let id: SessionId = SESSION.parse().unwrap();
+    let text = fs::read(state.row_file(&id)).unwrap();
+    let row: Value = serde_json::from_slice(&text).unwrap();
+    serde_json::from_value(row["placeholders"].clone()).unwrap()
+}
+
 /// The facade state of the vmm once `ready` holds for it, within `wait`.
 /// A wait that runs out fails `step` and prints the serial log.
 #[cfg(test)]
@@ -594,6 +610,30 @@ fn kvm_real_facade_prompts_sleeps_restores_and_stops() {
         .map(|entry| entry.unwrap().path())
         .collect();
     assert_eq!(generations.len(), 1, "step 4 sleep: {generations:?}");
+    // The snapshot read of the openshell ideas plan (section 3.6): the
+    // memory of the facade holds the placeholders that it pulled, and no
+    // real value of creds.json. The placeholders found prove that the read
+    // reaches the guest memory.
+    let row = placeholders(&session);
+    let scratch = work("facade");
+    let count = |value: &str| snapshot_scan::count(&generations[0], &scratch, value);
+    for (name, secret) in [("key", LITELLM_KEY), ("token", PEP_TOKEN)] {
+        assert_eq!(
+            count(secret),
+            0,
+            "step 4 sleep: the real {name} in the snapshot"
+        );
+    }
+    let found = (
+        count(row.litellm_key().reveal()),
+        count(row.pep_token().reveal()),
+    );
+    assert!(
+        found.0 > 0 && found.1 > 0,
+        "step 4 sleep: placeholders {found:?}"
+    );
+    let line = format!("snapshot read: real values 0, placeholders {found:?}\n");
+    io::stderr().write_all(line.as_bytes()).unwrap();
 
     // 5. Restore: the start claims that generation. The ready says
     // `running` with the same pid and start 1, so the same facade answers,

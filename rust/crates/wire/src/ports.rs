@@ -10,7 +10,8 @@
 /// and the guest init of one release share it. It is part of the snapshot
 /// key: on a mismatch the vmm drops the snapshot and cold-boots. It is
 /// separate from `HOST_API_PROTOCOL`.
-pub const GUEST_INIT_PROTOCOL: u32 = 1;
+// Protocol 2 adds host port 1105, the git platform spool (decision CH3).
+pub const GUEST_INIT_PROTOCOL: u32 = 2;
 
 /// Defines a port enum, its list `ALL` and the number of each port from one
 /// table. A variant thus cannot miss its number or its place in `ALL`.
@@ -48,9 +49,6 @@ macro_rules! port_enum {
 
 port_enum! {
     /// A host port: the VM dials the vmm on it.
-    ///
-    /// 1105 is held for the spool of the creche git platform (decision
-    /// CH3). It gets a variant in the change that first uses it.
     HostPort {
         /// The family state.
         FamilyState = 1100,
@@ -64,6 +62,10 @@ port_enum! {
         /// The egress proxy, for families with a non-empty egress list
         /// (today code and creche, decision CH49 rule 3).
         Egress = 1104,
+        /// The git platform spool, for families with a git platform grant
+        /// `git-platform.json` (decision CH3). `crate::spool` holds its
+        /// protocol.
+        GitPlatformSpool = 1105,
     }
 }
 
@@ -103,10 +105,11 @@ mod tests {
             (HostPort::Chaperone, 1102),
             (HostPort::GitMirror, 1103),
             (HostPort::Egress, 1104),
+            (HostPort::GitPlatformSpool, 1105),
         ];
         assert_eq!(host, host_pins);
         assert_eq!(guest, [(GuestPort::Control, 1200), (GuestPort::Acp, 1201)]);
-        assert_eq!(GUEST_INIT_PROTOCOL, 1);
+        assert_eq!(GUEST_INIT_PROTOCOL, 2);
     }
 
     #[test]
@@ -130,7 +133,7 @@ mod tests {
 
     #[test]
     fn a_number_with_no_port_is_none() {
-        assert_eq!(HostPort::from_number(1105), None);
+        assert_eq!(HostPort::from_number(1106), None);
         assert_eq!(HostPort::from_number(1200), None);
         assert_eq!(GuestPort::from_number(1100), None);
         assert_eq!(GuestPort::from_number(1202), None);

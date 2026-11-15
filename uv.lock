@@ -472,11 +472,15 @@ name = "handover"
 version = "0.1.0"
 source = { editable = "handover" }
 dependencies = [
+    { name = "creche-env" },
     { name = "pyyaml" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pyyaml", specifier = ">=6" }]
+requires-dist = [
+    { name = "creche-env", editable = "env" },
+    { name = "pyyaml", specifier = ">=6" },
+]
 
 [[package]]
 name = "httpcore"

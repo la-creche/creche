@@ -16,7 +16,10 @@
 //!    refuses a file that the vmm refuses.
 //! 3. `ImageSet::check` hashes each named file as the import reads it,
 //!    through `zstd -d` for a `.zst` file, and writes no file. It writes
-//!    nothing in the state root.
+//!    nothing in the state root. A service image with no entry fails its
+//!    check, though the vmm start takes such a file (`image_root` module
+//!    doc). So the hook proves that a new disks row ships each service
+//!    image.
 //!
 //! It writes one `verify::Report` line on stdout, one check for the env
 //! file, one for `digests.json` and one for each entry. `src/main.rs`

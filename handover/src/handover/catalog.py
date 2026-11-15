@@ -40,7 +40,8 @@ class Kind(StrEnum):
     #: and step 9 links each unit file of the live tree into place.
     UNITS = "units"
     #: A set of signed files at the root of `install.to`: the guest kernel,
-    #: one root disk for each flavor and `digests.json` (contract 06 §8.4).
+    #: one root disk for each flavor and each service image, and
+    #: `digests.json` (contract 06 §8.4).
     #: CI builds and signs each file. Root checks each signature, installs
     #: each file unchanged and runs no build (CH7-2, CH35 (4), CH76 rule 5).
     #: It names no unit, and nothing runs it.
@@ -130,6 +131,7 @@ class CatalogRow:
 #: `bundles` follows each build through `uv.lock`: `attendance` installs the
 #: doors and `creche-wire` (CH25), `agent-door-trigger` brings
 #: `agent-family`, and `caregiver` brings `agent-family` and `creche-wire`.
+#: `handover` brings `creche-env`, the reader of the env fill.
 #: `test_each_component_bundles_what_its_build_installs` holds it equal.
 #:
 #: `host` is the whole creche-release repository: the units that belong to
@@ -145,14 +147,15 @@ class CatalogRow:
 #: It is the row before `disks`.
 #:
 #: `disks` is the set of signed disk files of this repository, at `disks/`:
-#: the guest kernel, one root disk for each flavor of `DISK_FLAVORS` and
-#: `digests.json` (CH7-2, CH35 (4), CH76 rule 5). The files come from
-#: `playpen/Dockerfile` and the playpen scripts, so the row bundles
-#: `playpen`. The image build copies `agent/` and `facade/`, and its test
-#: venv resolves the workspace from `pyproject.toml` and `uv.lock`, so the
-#: row bundles those four too: the pins of the venv are the pins of the
-#: lock, and no member's code is in the venv (contract 06 §1 rule 15). Its
-#: manifest is `disks/component.toml`. It is the last row.
+#: the guest kernel, one root disk for each flavor of `DISK_FLAVORS`, one
+#: for each service image of `SERVICE_IMAGES` and `digests.json` (CH7-2,
+#: CH35 (4), CH76 rule 5). The files come from `playpen/Dockerfile` and the
+#: playpen scripts, so the row bundles `playpen`. The image build copies
+#: `agent/` and `facade/`, and its test venv resolves the workspace from
+#: `pyproject.toml` and `uv.lock`, so the row bundles those four too: the
+#: pins of the venv are the pins of the lock, and no member's code is in the
+#: venv (contract 06 §1 rule 15). Its manifest is `disks/component.toml`. It
+#: is the last row.
 CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("chaperone", Repo.CHAPERONE, ".", Kind.BINARY, Releases.YES),
     CatalogRow(
@@ -166,7 +169,7 @@ CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("caregiver", Repo.CRECHE, "caregiver", Kind.VENV, Releases.YES, ("family", "wire")),
     CatalogRow("noticeboard", Repo.CRECHE, "noticeboard", Kind.VENV, Releases.YES, ("family",)),
     CatalogRow("mcp-servers", Repo.MCP, ".", Kind.VENV, Releases.YES),
-    CatalogRow("handover", Repo.CRECHE, "handover", Kind.VENV, Releases.YES),
+    CatalogRow("handover", Repo.CRECHE, "handover", Kind.VENV, Releases.YES, ("env",)),
     CatalogRow("registry-data", Repo.REGISTRY, ".", Kind.DATA, Releases.NO),
     CatalogRow("host", Repo.CRECHE_RELEASE, ".", Kind.UNITS, Releases.YES),
     CatalogRow("memory", Repo.CRECHE, "memory", Kind.VENV, Releases.YES, (), Lock.OWN),
@@ -280,7 +283,7 @@ CONTRACT_OWNER: dict[ContractId, str] = {
 #: the two numbers is the `provides` row of `handover/component.yaml`.
 #: `tests/test_handover_contract_version.py` fails when they differ from it.
 MANIFEST_CONTRACT_MAJOR = 0
-MANIFEST_CONTRACT_MINOR = 26
+MANIFEST_CONTRACT_MINOR = 27
 
 #: `handover` deploys last whatever `depends_on` says (contract 06 §1.1).
 LAST_IN_ORDER = "handover"
@@ -311,8 +314,18 @@ ARCHIVE_MAX_UNPACKED_BYTES = 512 * 1024 * 1024
 #: rule 1).
 DISK_FLAVORS: tuple[str, ...] = ("base", "python", "coding")
 
-#: The end of the name of the root disk of a flavor: `<flavor><this>`. An
-#: ext4 file, compressed with zstd. Root installs it unchanged (CH35 (4)).
+#: The service images of a root disk, one file `<image>.ext4.zst` each,
+#: after the disks of `DISK_FLAVORS`. They are the values of the wire enum
+#: `ServiceImage`, not flavors: no family file may choose one (contract 01
+#: §3.9, browser design 10.5.2). `vmm check-images`, the verify hook of
+#: the row, refuses a `digests.json` that lacks one (CH58 rule 4).
+#: `tests/test_handover_disk_flavors.py` holds the two equal through the
+#: shared vector of `digests.json`.
+SERVICE_IMAGES: tuple[str, ...] = ("browser",)
+
+#: The end of the name of the root disk of a flavor or of a service image:
+#: `<flavor><this>` or `<image><this>`. An ext4 file, compressed with zstd.
+#: Root installs it unchanged (CH35 (4)).
 DISK_SUFFIX = ".ext4.zst"
 
 #: The guest kernel, compressed with zstd (CH7-3).

@@ -43,8 +43,8 @@ from vectors.core import (
     raised,
     refused,
 )
+from vectors.surfaces.family_toml_cases import ATTENDED_HEAD, PLACEHOLDER, Case
 from vectors.surfaces.family_toml_cases import CASES as TOML_CASES
-from vectors.surfaces.family_toml_cases import PLACEHOLDER, Case
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 
@@ -132,8 +132,11 @@ def registry_files(base: Path) -> list[Path]:
     )
 
 
+#: The platform family of the written host.
+HOST_PLATFORM_FAMILY: Final = "code"
+
 #: The fence of the written host (`agent_family.fences`).
-HOST_FENCES: Final = Fences(platform_families=frozenset({"code"}))
+HOST_FENCES: Final = Fences(platform_families=frozenset({HOST_PLATFORM_FAMILY}))
 
 
 @dataclass(frozen=True)
@@ -266,10 +269,53 @@ def _fixture_cases(registry: str, file: str) -> tuple[Case, ...]:
 #: The head of each host case: a thin family with no router.
 _HOST_HEAD: Final = b'name = "%NAME%"\nkind = "thin"\ndescription = "One written input."\n'
 
+#: A second server of the platform token, under a name that no code of
+#: `agent_family` holds. The fence finds it by its token (contract 01 §5.5
+#: rules 1 and 7, the CONTRACT-QUESTION at `validate._check_platform`).
+_TOKEN_SERVER_PATH: Final = "mcp/git-platform/server.toml"
+_TOKEN_SERVER: Final = """\
+name = "git-platform"
+identity = "A written server of the platform token, under another name."
+install.source = "agent-mcp"
+run.entrypoint = "example-mcp"
+run.env.GIT_PLATFORM_TOKEN = "secret:github_token_platform"
+tools = [
+    { name = "fetch", description = "Fetch one branch.", write = false },
+%MERGE%]
+shared_secrets = [
+    { secret = "github_token_platform", server = "github-platform" },
+]
+"""
+_MERGE_ENTRY: Final = (
+    '    { name = "merge_pull_request", description = "Merge a pull request." },\n'
+)
+_TOKEN_GRANT: Final = (ATTENDED_HEAD + 'tools.git-platform = "all"\n').encode()
+
+
+def _token_server(*, merge: bool) -> dict[str, str]:
+    return {_TOKEN_SERVER_PATH: _TOKEN_SERVER.replace("%MERGE%", _MERGE_ENTRY if merge else "")}
+
+
 HOST_CASES: Final = (
     Case(
         "host-alias-unknown",
         _HOST_HEAD + b'model = { router = "no-such-alias", budget_usd_per_day = 1 }\n',
+    ),
+    # A family outside the fence may not hold a second server of the token.
+    Case("host-token-server-outside", _TOKEN_GRANT, files=_token_server(merge=False)),
+    # The family of the fence may.
+    Case(
+        "host-token-server-inside",
+        _TOKEN_GRANT,
+        HOST_PLATFORM_FAMILY,
+        _token_server(merge=False),
+    ),
+    # Rule 7 follows the token: `all` does not grant the merge of that server.
+    Case(
+        "host-token-server-merge",
+        _TOKEN_GRANT,
+        HOST_PLATFORM_FAMILY,
+        _token_server(merge=True),
     ),
 )
 

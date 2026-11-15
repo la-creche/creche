@@ -21,7 +21,7 @@ use creche_vmm::config::{
 };
 use creche_vmm::egress::proxy;
 use creche_vmm::image_root::DIGESTS_FILE;
-use creche_vmm::{family_state, mirror, planes};
+use creche_vmm::{family_state, mirror, planes, spool};
 use creche_vmm_confine::vmm_unit::VmmUnit;
 
 /// The exit status of a refused start.
@@ -32,7 +32,7 @@ const TRUE: &str = "/usr/bin/true";
 
 /// Each key with a good value. The paths need not exist: the config
 /// checks their form only.
-const GOOD: [(&str, &str); 21] = [
+const GOOD: [(&str, &str); 22] = [
     ("VMM_STATE_ROOT", "/srv/vmm/state"),
     ("RUNTIME_DIRECTORY", "/run/user/1000/vmm"),
     ("VMM_FAMILY_ROOT", "/srv/families"),
@@ -57,6 +57,7 @@ const GOOD: [(&str, &str); 21] = [
     ("VMM_EGRESS_LOG", "/srv/vmm/egress.jsonl"),
     ("VMM_MIRROR_ROOT", "/srv/agents/code"),
     ("VMM_GIT_PROGRAM", "/usr/bin/git"),
+    ("VMM_GIT_SPOOL_ROOT", "/var/lib/creche-git-platform"),
 ];
 
 /// The CH fixture of the version check (gap G10). Each scratch dir gets a
@@ -74,9 +75,9 @@ const PROGRAMS: [(&str, &str); 3] = [
     (GUEST_INIT, "guest-init"),
 ];
 
-/// The kernel and the root disk of each flavor, each with the SHA-256 of
-/// its bytes.
-const IMAGES: [(&str, &str, &str); 4] = [
+/// The kernel, the root disk of each flavor and the root disk of each
+/// service image, each with the SHA-256 of its bytes.
+const IMAGES: [(&str, &str, &str); 5] = [
     (
         "vmlinux",
         "",
@@ -96,6 +97,11 @@ const IMAGES: [(&str, &str, &str); 4] = [
         "coding.ext4",
         "coding",
         "9623c1ece5cf9eac8c087030d2c4be5747556cf40920ebfeba1fcc0cc976f123",
+    ),
+    (
+        "browser.ext4",
+        "browser",
+        "d4c3e8a11256ab82a4fc72560eb4a2b0e87bad820c290dd9b03616de240aa6db",
     ),
 ];
 
@@ -144,6 +150,7 @@ impl Scratch {
                     "VMM_IMAGE_ROOT" => self.path("images"),
                     "VMM_EGRESS_LOG" => self.path("egress.jsonl"),
                     "VMM_MIRROR_ROOT" => self.path("mirror"),
+                    "VMM_GIT_SPOOL_ROOT" => self.path("spool"),
                     key if key.ends_with("_GIB") || key.ends_with("_ADDR") => good.to_owned(),
                     key => match PROGRAMS.iter().find(|program| program.0 == key) {
                         Some((_, file)) => self.path(&format!("bin/{file}")),
@@ -171,6 +178,7 @@ impl Scratch {
             "base": entry(IMAGES[1]),
             "python": entry(IMAGES[2]),
             "coding": entry(IMAGES[3]),
+            "browser": entry(IMAGES[4]),
         });
         let digests_file = self.0.join("images").join(DIGESTS_FILE);
         std::fs::write(&digests_file, digests.to_string()).unwrap();
@@ -217,7 +225,7 @@ fn sudo(command: &[&str], path: &Path) {
     assert!(status.success(), "sudo {command:?}: {status}");
 }
 
-/// A hard `RLIMIT_NOFILE` below the fd need of the vmm (102720), and
+/// A hard `RLIMIT_NOFILE` below the fd need of the vmm (128128), and
 /// below the hard limit of each host that runs the tests.
 const SHORT_NOFILE: &str = "1024";
 
@@ -440,8 +448,12 @@ fn kvm_a_short_hard_fd_limit_refuses_before_the_bind() {
         .collect();
 
     let (output, stderr) = serve(&env);
-    let need = planes::fd_need() + family_state::fd_need() + mirror::fd_need() + proxy::fd_need();
-    assert_eq!(need, 102_720);
+    let need = planes::fd_need()
+        + family_state::fd_need()
+        + mirror::fd_need()
+        + proxy::fd_need()
+        + spool::fd_need();
+    assert_eq!(need, 128_128);
     assert_eq!(output.status.code(), Some(EX_CONFIG), "{stderr}");
     let unit = match VmmUnit::of_self() {
         Ok(_) => String::new(),

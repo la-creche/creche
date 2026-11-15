@@ -103,9 +103,10 @@ Write "the operator", "the host", "the host's LAN address" and "the backup
 host". In an example that needs an address, use `192.0.2.10` and the other
 TEST-NET-1 addresses.
 
-The design documents and the contracts of the original deployment are in a
-private repository. A citation such as `docs/rework/spec.md` or
-`contract 04 §6` resolves there. Keep the citation as it is.
+Some design documents and contracts of the original deployment are in a
+private repository. `docs/README.md` says which ones. A citation such as
+`docs/rework/spec.md` or `contract 04 §6` resolves there. Keep the citation
+as it is.
 
 ## 7. Checklist before you commit a document
 

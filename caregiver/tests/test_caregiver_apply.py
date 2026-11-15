@@ -108,6 +108,15 @@ def test_apply_once_writes_the_repos_file(tmp_path: Path, state_root: Path) -> N
     assert body == {"repos": ["creche", "mcp"]}
 
 
+def test_apply_once_writes_the_git_platform_file(tmp_path: Path, state_root: Path) -> None:
+    """Decision CH3: a family with no grant gets a file that grants
+    nothing, so the vmm binds no spool listener."""
+    registry_root = write_registry(tmp_path / "registry")
+    apply_chat(registry_root, state_root)
+    body = json.loads(paths.git_platform_path(state_root, "chat").read_bytes())
+    assert body == {"fetch": False, "push": False}
+
+
 def test_an_egress_list_over_the_cap_stops_the_apply(registry_root: Path, state_root: Path) -> None:
     """Decision CH71: the refusal comes before the key step, so no key is
     minted and the last good file stays byte for byte. The one error names
@@ -414,3 +423,4 @@ def test_a_folded_fault_still_lets_the_credentials_and_the_files_apply(
     assert litellm.minted == 1
     assert paths.egress_path(state_root, "chat").exists()
     assert paths.repos_path(state_root, "chat").exists()
+    assert paths.git_platform_path(state_root, "chat").exists()

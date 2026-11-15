@@ -255,7 +255,7 @@ The start follows the order of the files:
 
 The six scenarios of phase 2 row 30 left the exit test at the Cloud
 Hypervisor cut (plan PR CR1). Each one ran a turn of the built facade
-through door-acp, `attendance` and `sbx exec`. After the cut the vmm starts
+through door-acp, `attendance` and `sbx exec`. Since the cut the vmm starts
 the facade in a VM, one per session (decisions CH1, CH9), and the facade
 reads the fixed guest paths of the VM (decisions CH80, CH81). No process of
 this suite can start that VM. The kvm job runs a turn of the real facade in

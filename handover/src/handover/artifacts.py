@@ -55,6 +55,7 @@ from .catalog import (
     MAIN_BRANCH,
     RELEASE_WORKFLOW,
     RETIRING,
+    SERVICE_IMAGES,
     Kind,
     Repo,
 )
@@ -162,8 +163,10 @@ class AssetLimit:
 def disk_files() -> tuple[AssetLimit, ...]:
     """The files of a disk-image component, each with its largest size:
     `digests.json`, the kernel, then one root disk for each flavor of
-    `catalog.DISK_FLAVORS` (contract 06 §8.4 rule 2, CH76 rules 5 and 7)."""
-    disks = (f"{flavor}{DISK_SUFFIX}" for flavor in DISK_FLAVORS)
+    `catalog.DISK_FLAVORS`, then one for each service image of
+    `catalog.SERVICE_IMAGES` (contract 06 §8.4 rule 2, CH76 rules 5 and 7,
+    browser design 10.5.2)."""
+    disks = (f"{name}{DISK_SUFFIX}" for name in (*DISK_FLAVORS, *SERVICE_IMAGES))
 
     return (
         AssetLimit(name=DIGESTS_FILE, max_bytes=DIGESTS_MAX_BYTES),

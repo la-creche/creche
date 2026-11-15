@@ -325,15 +325,15 @@ impl fmt::Display for Note {
 }
 
 /// The count of the stderr lines of one VM in the window that began at
-/// `since`.
+/// `since`. The spool of host port 1105 counts its lines with it too.
 #[derive(Debug)]
-struct Notes {
+pub(crate) struct Notes {
     since: Instant,
     count: u32,
 }
 
 impl Notes {
-    fn new(now: Instant) -> Self {
+    pub(crate) fn new(now: Instant) -> Self {
         Self {
             since: now,
             count: 0,
@@ -341,7 +341,7 @@ impl Notes {
     }
 
     /// Whether a line at `now` fits `NOTE_CAP`. A line that fits counts.
-    fn admit(&mut self, now: Instant) -> bool {
+    pub(crate) fn admit(&mut self, now: Instant) -> bool {
         if now.saturating_duration_since(self.since) >= NOTE_WINDOW {
             *self = Self::new(now);
         }

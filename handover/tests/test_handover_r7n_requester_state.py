@@ -172,10 +172,10 @@ def test_the_requester_still_prints_no_gate(
 
     report: object = json.loads(capsys.readouterr().out)
     assert isinstance(report, dict)
-    phone = report["phone"]
-    assert isinstance(phone, dict)
-    assert str(phone["review"]).startswith("local:")
-    assert "root computes it at step 2" in str(phone["manifest"])
+    record = report["record"]
+    assert isinstance(record, dict)
+    assert str(record["review"]).startswith("local:")
+    assert "root computes it at step 2" in str(record["manifest"])
 
 
 def test_the_corpus_is_fetched_before_the_tags_are_read(tmp_path: Path) -> None:

@@ -126,15 +126,16 @@ command prints `<file>: cannot be read: <reason>` and exits with status 78.
 7. A change of the grammar or of a layer changes the vectors of
    `envfile.*` in the same pull request. The Rust reader must give the same
    result for each vector.
-8. No component installs the package yet. A change in this directory thus
-   mints no tag. A component that installs the package must bundle `env`.
-   A change here then mints a tag for that component. Each change of
-   `uv.lock` mints a tag for each venv component.
+8. `handover` installs the package, and its catalog row bundles `env`. A
+   change in this directory thus mints a tag of `handover`. Each other
+   component that installs the package must bundle `env` too. Each change
+   of `uv.lock` mints a tag for each venv component.
 
 ## Known gaps
 
-- No program of a component reads the package yet. Each program keeps its
-  reader of today until a change moves it to this package.
+- Only `handover` reads the package, at the env fill of a release
+  (`handover/AGENTS.md`). Each other program keeps its reader of today
+  until a change moves it to this package.
 - No program applies the rule of the environment yet. `check_environment`
   holds the rule for a program of root. The command reads no catalog key
   from its environment.

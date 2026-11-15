@@ -1,5 +1,5 @@
-"""The two reach files of a family beside its config mount (contract 01
-§6.1.1): `egress.json` and `repos.json`.
+"""The reach files of a family beside its config mount (contract 01
+§6.1.1): `egress.json`, `repos.json` and `git-platform.json`.
 
 `egress.json` is the egress allowlist of the vmm proxy, the wire type
 `FamilyEgress` of `creche-wire` (decisions CH6-4, CH69 rules 3 and 5). It
@@ -37,7 +37,16 @@ twice (decision CH73 rule 3), so the file has no name twice.
 `repos.json` gets no refusal of its own. The vmm cap `REPOS_CAP` is 4 KiB
 (decision CH73 rule 2), and the longest list that `check_family` passes,
 32 names of 100 characters (decision CH69 rule 15), renders to 3476
-bytes. `test_reach_files.py` holds that bound."""
+bytes. `test_reach_files.py` holds that bound.
+
+`git-platform.json` is the git platform grant of the vmm spool, the wire
+type `FamilyGitPlatform` (decision CH3, phase 12 PR2). It sits beside
+`repos.json`, with the same mode and the same byte compare. It holds
+whether the grant `tools.git-platform` of the family file names `fetch`
+and `push`. A grant of `all` names both. A family with no grant gets
+`{"fetch": false, "push": false}`, and the vmm then binds no spool
+listener. The file has at most 38 bytes, under the 256-byte
+`GIT_PLATFORM_CAP` of the vmm, so it gets no refusal of its own."""
 
 from __future__ import annotations
 
@@ -47,7 +56,15 @@ from pathlib import Path
 from typing import Final
 
 from agent_family import FamilyFile
-from creche_wire import EgressHost, FamilyEgress, FamilyRepos, HostName, RepoList, RepoName
+from creche_wire import (
+    EgressHost,
+    FamilyEgress,
+    FamilyGitPlatform,
+    FamilyRepos,
+    HostName,
+    RepoList,
+    RepoName,
+)
 
 from . import paths
 from .atomic import atomic_write
@@ -57,6 +74,15 @@ REACH_FILE_MODE: Final = 0o640
 
 #: The port of a bare host (contract 01 §3.7 rule 7).
 BARE_HOST_PORT: Final = 443
+
+#: The server of the git platform grant: the key of `tools` in the family
+#: file (decision CH3).
+GIT_PLATFORM_SERVER: Final = "git-platform"
+
+#: The tools of the server that the spool serves: a get for `fetch`, a put
+#: for `push`.
+FETCH_TOOL: Final = "fetch"
+PUSH_TOOL: Final = "push"
 
 #: `EGRESS_CAP` of `rust/crates/vmm-confine/src/family.rs`: the most bytes
 #: of `egress.json` that the vmm reads (decisions CH70 rule 1, CH71).
@@ -113,6 +139,22 @@ def write_repos_file(family: FamilyFile, state_root: Path) -> bool:
     return _write_when_changed(paths.repos_path(state_root, family.name), body)
 
 
+def write_git_platform_file(family: FamilyFile, state_root: Path) -> bool:
+    """Write `git-platform.json` of `family` when its bytes change, as
+    `write_repos_file` writes `repos.json`. Answers whether it wrote."""
+    body = _json_text(_git_platform(family))
+    return _write_when_changed(paths.git_platform_path(state_root, family.name), body)
+
+
+def _git_platform(family: FamilyFile) -> FamilyGitPlatform:
+    """The grant of the git platform tools of `family`. `all` grants both."""
+    if family.grants_all(GIT_PLATFORM_SERVER):
+        return FamilyGitPlatform(fetch=True, push=True)
+
+    tools = family.tool_names(GIT_PLATFORM_SERVER)
+    return FamilyGitPlatform(fetch=FETCH_TOOL in tools, push=PUSH_TOOL in tools)
+
+
 def _egress_text(entries: list[str]) -> bytes:
     """The canonical text of `FamilyEgress` for the `egress` entries of a
     valid family file. `egress_problem` of `family/grammar.py` passed each
@@ -122,7 +164,7 @@ def _egress_text(entries: list[str]) -> bytes:
     return _json_text(FamilyEgress(hosts=hosts))
 
 
-def _json_text(file: FamilyEgress | FamilyRepos) -> bytes:
+def _json_text(file: FamilyEgress | FamilyRepos | FamilyGitPlatform) -> bytes:
     """The text of one reach file: JSON with an indent of 2 and one end of
     line."""
     return json.dumps(file.model_dump(mode="json"), indent=2).encode("utf-8") + b"\n"

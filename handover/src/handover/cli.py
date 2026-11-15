@@ -766,7 +766,8 @@ def _run_request(args: argparse.Namespace) -> int:
             "id": request.id,
             "filed": filed,
             "corpus": fetched.lines if fetched else [],
-            "phone": view.summary.as_dict(),
+            "phone": view.phone(),
+            "record": view.summary.as_dict(),
         }
         print(json.dumps(report, indent=2))
 

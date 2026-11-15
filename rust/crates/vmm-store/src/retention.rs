@@ -12,6 +12,9 @@
 //!    every older one (decision CH19 (5), `key.rs`).
 //! 3. Remove the newest generation when a claim consumed it (decision
 //!    CH50 rule 8). It never restores again (decision CH19 (5)). Also
+//!    remove it when its key can never equal a key of this vmm
+//!    (`key::may_restore`): the next start would drop it (decision CH7-6),
+//!    and until then its key keeps its images in the digest store. Also
 //!    remove it when it is older than `MAX_AGE` (decision CH2).
 //! 4. While the snapshots that stay take more than the budget, remove the
 //!    oldest one first (decision CH8-7, fact 63).
@@ -31,6 +34,9 @@
 //! generation in use. It also never removes a generation while an older
 //! one of the same session stays, so an older generation never becomes the
 //! newest and restores onto a session disk that moved on.
+//!
+//! `plan` runs the same steps and removes nothing. Its `Swept` lists what
+//! `sweep` would remove now. `vmm gc` prints it as its dry run.
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -43,7 +49,7 @@ use std::time::{Duration, SystemTime};
 use creche_wire::SessionId;
 
 use crate::claim::CONSUMED;
-use crate::key::remove_generation;
+use crate::key::{CurrentImages, may_restore, remove_generation};
 use crate::layout::{SessionDir, SnapshotGeneration, StateRoot};
 use crate::snapshot::{MEMORY_RANGES, generations};
 
@@ -70,6 +76,10 @@ pub enum Reason {
     /// The newest generation holds the consumed mark (step 3, decision
     /// CH50 rule 8).
     Consumed,
+    /// The newest generation can never restore: its key does not read, or
+    /// it names images, a CH rev or a guest init protocol other than the
+    /// current ones (step 3, `key::may_restore`).
+    Stale,
     /// The generation is older than `MAX_AGE` (step 3).
     Aged,
     /// The snapshots took more than the budget (step 4).
@@ -124,23 +134,90 @@ struct Kept {
     may_drop: bool,
 }
 
+/// What a pass does with each generation that a step names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Act {
+    /// Remove it (`sweep`).
+    Remove,
+    /// Only list it (`plan`).
+    List,
+}
+
+/// What one pass reads besides the state root.
+#[derive(Debug, Clone, Copy)]
+struct Pass<'a> {
+    now: SystemTime,
+    in_use: &'a InUse,
+    current: &'a CurrentImages,
+    act: Act,
+}
+
 /// Runs the four steps over every session of `state`. `now` is the current
 /// time, `budget` the most allocated bytes of all snapshots (`BUDGET` by
-/// design). Run it while no take, key check or claim of a session runs, or
-/// name the newest generation of that session in `in_use`.
+/// design), `current` the images of each new start. Run it while no take,
+/// key check or claim of a session runs, or name the newest generation of
+/// that session in `in_use`.
 ///
 /// # Errors
 ///
 /// A failed read of `sessions/`. An absent dir gives an empty `Swept`.
 /// Each later failure goes to `Swept::failures`, and the sweep goes on.
-pub fn sweep(state: &StateRoot, now: SystemTime, budget: u64, in_use: &InUse) -> io::Result<Swept> {
+pub fn sweep(
+    state: &StateRoot,
+    now: SystemTime,
+    budget: u64,
+    in_use: &InUse,
+    current: &CurrentImages,
+) -> io::Result<Swept> {
+    run(
+        state,
+        budget,
+        Pass {
+            now,
+            in_use,
+            current,
+            act: Act::Remove,
+        },
+    )
+}
+
+/// The steps of `sweep` with no remove. `Swept::dropped` and
+/// `Swept::retired` list what `sweep` would remove now, and `kept_bytes`
+/// the bytes that would stay. A failed read goes to `Swept::failures`, as
+/// in `sweep`. Each step reads the state as it is, so a later `sweep` can
+/// differ once a take, a claim or a drop ran.
+///
+/// # Errors
+///
+/// A failed read of `sessions/`.
+pub fn plan(
+    state: &StateRoot,
+    now: SystemTime,
+    budget: u64,
+    in_use: &InUse,
+    current: &CurrentImages,
+) -> io::Result<Swept> {
+    run(
+        state,
+        budget,
+        Pass {
+            now,
+            in_use,
+            current,
+            act: Act::List,
+        },
+    )
+}
+
+/// The four steps of the module doc, with the act of `pass`.
+fn run(state: &StateRoot, budget: u64, pass: Pass<'_>) -> io::Result<Swept> {
     let mut swept = Swept::default();
     let mut kept = Vec::new();
     for id in sessions(state)? {
         let session = state.session(&id);
-        remove_retired(&session, &mut swept);
+        remove_retired(&session, pass.act, &mut swept);
         match generations(&session) {
-            Ok(list) => first_pass(id, session, &list, now, in_use, &mut kept, &mut swept),
+            Ok(list) => first_pass(id, session, &list, pass, &mut kept, &mut swept),
             Err(source) => swept.failures.push(Failure {
                 path: session.snapshots(),
                 source,
@@ -159,7 +236,7 @@ pub fn sweep(state: &StateRoot, now: SystemTime, budget: u64, in_use: &InUse) ->
         if total <= budget {
             break;
         }
-        if drop_one(each, Reason::Budget, &mut swept) {
+        if drop_one(each, Reason::Budget, pass.act, &mut swept) {
             total = total.saturating_sub(each.bytes);
         }
     }
@@ -172,8 +249,7 @@ fn first_pass(
     id: SessionId,
     session: SessionDir,
     list: &[SnapshotGeneration],
-    now: SystemTime,
-    in_use: &InUse,
+    pass: Pass<'_>,
     kept: &mut Vec<Kept>,
     swept: &mut Swept,
 ) {
@@ -193,11 +269,11 @@ fn first_pass(
                 continue;
             }
         };
-        let used = in_use.contains(&(id.clone(), generation));
+        let used = pass.in_use.contains(&(id.clone(), generation));
         // Decision CH50 rule 7: the 7 days of CH2 run from the take, so the
         // age runs from the last write of `memory-ranges`. A time after
         // `now` gives age 0.
-        let age = now.duration_since(taken).unwrap_or(Duration::ZERO);
+        let age = pass.now.duration_since(taken).unwrap_or(Duration::ZERO);
         // Decision CH50 rule 8: a consumed newest generation with no VM on
         // it drops at this sweep. Lifecycle names a generation in `in_use`
         // from the key check until its Cloud Hypervisor ends, so a restore
@@ -208,6 +284,8 @@ fn first_pass(
             Some(Reason::Superseded)
         } else if consumed {
             Some(Reason::Consumed)
+        } else if !restorable(&session, generation, pass.current, swept) {
+            Some(Reason::Stale)
         } else if age > MAX_AGE {
             Some(Reason::Aged)
         } else {
@@ -221,7 +299,7 @@ fn first_pass(
             bytes,
             may_drop: !used && !older_stays,
         };
-        let removed = reason.is_some_and(|reason| drop_one(&each, reason, swept));
+        let removed = reason.is_some_and(|reason| drop_one(&each, reason, pass.act, swept));
         if !removed {
             older_stays = true;
             kept.push(Kept {
@@ -232,9 +310,32 @@ fn first_pass(
     }
 }
 
-/// Removes one generation. True when the remove succeeded.
-fn drop_one(each: &Kept, reason: Reason, swept: &mut Swept) -> bool {
-    match remove_generation(&each.session, each.generation) {
+/// False when the key of the newest `generation` can never restore. A
+/// failed read of the key goes to `swept` and keeps the generation.
+fn restorable(
+    session: &SessionDir,
+    generation: SnapshotGeneration,
+    current: &CurrentImages,
+    swept: &mut Swept,
+) -> bool {
+    let path = session.snapshot_key(generation);
+    may_restore(&path, current).unwrap_or_else(|error| {
+        swept.failures.push(Failure {
+            path: error.path,
+            source: error.source,
+        });
+        true
+    })
+}
+
+/// Removes one generation, or with `Act::List` only lists it. True when
+/// the remove succeeded or the generation is listed.
+fn drop_one(each: &Kept, reason: Reason, act: Act, swept: &mut Swept) -> bool {
+    let removed = match act {
+        Act::Remove => remove_generation(&each.session, each.generation),
+        Act::List => Ok(()),
+    };
+    match removed {
         Ok(()) => {
             swept.dropped.push(Dropped {
                 session: each.id.clone(),
@@ -321,9 +422,10 @@ fn measure(dir: &Path) -> io::Result<Measured> {
 }
 
 /// Step 1: removes each `<n>.retired` dir of `session` and syncs
-/// `snapshots/` (decision CH44 rule 6). A failed read of `snapshots/`
-/// counts once, as a failure of `generations` right after.
-fn remove_retired(session: &SessionDir, swept: &mut Swept) {
+/// `snapshots/` (decision CH44 rule 6). With `Act::List` it only lists
+/// each one. A failed read of `snapshots/` counts once, as a failure of
+/// `generations` right after.
+fn remove_retired(session: &SessionDir, act: Act, swept: &mut Swept) {
     let snapshots = session.snapshots();
     let Ok(entries) = fs::read_dir(&snapshots) else {
         return;
@@ -339,6 +441,10 @@ fn remove_retired(session: &SessionDir, swept: &mut Swept) {
             continue;
         }
         let path = entry.path();
+        if act == Act::List {
+            swept.retired.push(path);
+            continue;
+        }
         match fs::remove_dir_all(&path) {
             Ok(()) => {
                 swept.retired.push(path);

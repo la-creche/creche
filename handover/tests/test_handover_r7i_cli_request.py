@@ -126,9 +126,10 @@ def test_the_review_row_never_claims_safe(
         ["request", "noticeboard", *_tree(tmp_path), "--spool", str(_spool(tmp_path)), "--dry-run"]
     )
     printed = capsys.readouterr().out
+    review = next(line for line in printed.splitlines() if line.strip().startswith("review"))
 
-    assert "safe:" not in printed
-    assert "local:" in printed
+    assert "safe:" not in review
+    assert "local:" in review
 
 
 def test_a_component_the_catalog_does_not_list_is_refused(tmp_path: Path) -> None:
@@ -168,7 +169,8 @@ def test_json_prints_one_object_with_the_id_and_the_path(
 
     assert report["ok"] is True
     assert report["filed"] == str(_filed(spool)[0])
-    assert set(report["phone"]) == {
+    assert set(report["phone"]) == {"title", "message"}
+    assert set(report["record"]) == {
         "review",
         "components",
         "contracts",

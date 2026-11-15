@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use creche_vmm::egress::proxy;
 use creche_vmm::mirror::{self, DENIED, LINE_CAP, LINE_WAIT, LINK_CAP, Mirror, Server, bind};
-use creche_vmm::{family_state, planes};
+use creche_vmm::{family_state, planes, spool};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::launch::Program;
 use creche_vmm_confine::mirror::MirrorRoot;
@@ -770,6 +770,10 @@ fn alive(pid: &str) -> bool {
 #[test]
 fn the_fd_need_holds_every_full_mirror() {
     assert_eq!(mirror::fd_need(), (8 * 64 + 1) * 64);
-    let raise = planes::fd_need() + family_state::fd_need() + mirror::fd_need() + proxy::fd_need();
-    assert_eq!(raise, 102_720);
+    let raise = planes::fd_need()
+        + family_state::fd_need()
+        + mirror::fd_need()
+        + proxy::fd_need()
+        + spool::fd_need();
+    assert_eq!(raise, 128_128);
 }

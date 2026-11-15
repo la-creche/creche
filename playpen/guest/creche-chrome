@@ -1,0 +1,15 @@
+#!/bin/sh
+# creche-chrome: Google's Chrome for agent-browser in the browser service
+# image (browser design note, section 10). Chrome keeps its own sandbox:
+# no flag here turns it off. Every request goes through the egress proxy
+# row of guest init, guest 127.0.0.1:3128, and the vmm checks each name.
+# The other flags stop the background traffic that Chrome sends with no
+# page open (spike fact 5).
+exec /usr/bin/google-chrome-stable \
+  --proxy-server=http://127.0.0.1:3128 \
+  --disable-background-networking \
+  --disable-component-update \
+  --disable-sync \
+  --no-first-run \
+  --no-pings \
+  "$@"

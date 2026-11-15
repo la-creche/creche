@@ -78,6 +78,7 @@ def settle(wiring: Wiring, request_id: str, note: SelfNote) -> Entry:
     paths = _paths_of(note)
     if installed_version(paths.to) != note.to_version:
         remove_staged(paths.new, note.component, entry)
+        entry.failed_component = note.component
         entry.reason = NEVER_SWITCHED
         _add(entry, StepName.SWITCH, StepStatus.FAILED, started, wiring, NEVER_SWITCHED)
 
@@ -100,6 +101,7 @@ def _verify(wiring: Wiring, note: SelfNote, entry: Entry, started: float) -> Ent
 
         return entry
 
+    entry.failed_component = note.component
     entry.reason = VERIFY_FAILED
     _add(entry, StepName.SWITCH, StepStatus.FAILED, started, wiring, VERIFY_FAILED)
     entry.status = _put_back(wiring, installer, note, entry)
@@ -119,6 +121,7 @@ def _put_back(wiring: Wiring, installer: Installer, note: SelfNote, entry: Entry
 
         return Outcome.FAILED
 
+    entry.rolled_back.append(note.component)
     remove_staged(paths.new, note.component, entry)
     outcome = installer.run_hook(note.component, note.verify)
     _record(entry, outcome)

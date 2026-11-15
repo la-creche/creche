@@ -30,6 +30,7 @@ from typing import Final
 from handover.executor.approval import (
     ACTION_RE,
     Decision,
+    Move,
     Summary,
     Verdict,
     action_id_of,
@@ -55,6 +56,8 @@ def _summary() -> Summary:
         restore="automatic",
         requested_by="creche",
         manifest="6b84c0e5aa10",
+        moves=(Move("chaperone", "2.0.3", "2.1.0"),),
+        unsafe=(),
     )
 
 

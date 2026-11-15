@@ -30,6 +30,8 @@ def seed(state_root: Path, family: str) -> None:
     (config / "instructions.md").write_text("Be helpful.\n", encoding="utf-8")
     paths.egress_path(state_root, family).write_text('{"hosts": []}\n', encoding="utf-8")
     paths.repos_path(state_root, family).write_text('{"repos": ["creche"]}\n', encoding="utf-8")
+    git_platform = '{"fetch": true, "push": true}\n'
+    paths.git_platform_path(state_root, family).write_text(git_platform, encoding="utf-8")
 
 
 def _delete(state_root: Path, vmm: FakeVmm, litellm: FakeLiteLLMKeys | None = None) -> None:
@@ -74,6 +76,7 @@ def test_the_family_files_are_gone_when_the_vmm_drops(tmp_path: Path) -> None:
         checked["config_gone"] = not paths.config_dir(state_root, family).exists()
         checked["egress_gone"] = not paths.egress_path(state_root, family).exists()
         checked["repos_gone"] = not paths.repos_path(state_root, family).exists()
+        checked["git_platform_gone"] = not paths.git_platform_path(state_root, family).exists()
         checked["state_kept"] = paths.family_dir(state_root, family).is_dir()
 
     _delete(state_root, FakeVmm(on_drop=look), litellm)
@@ -85,6 +88,7 @@ def test_the_family_files_are_gone_when_the_vmm_drops(tmp_path: Path) -> None:
         "config_gone": True,
         "egress_gone": True,
         "repos_gone": True,
+        "git_platform_gone": True,
         "state_kept": True,
     }
 

@@ -100,6 +100,14 @@ fn nibble(character: u8) -> Result<u8, DigestParseError> {
     }
 }
 
+impl ImageDigest {
+    /// The SHA-256 of `bytes`. `ImageStore::put_made` names its copy so.
+    #[must_use]
+    pub fn of(bytes: &[u8]) -> Self {
+        Self(Sha256::digest(bytes).into())
+    }
+}
+
 impl fmt::Display for ImageDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0
@@ -484,7 +492,7 @@ impl ImageStore {
     /// `Check` when the copy at the name fails the check, `Io` on a failed
     /// step.
     pub fn put_made(&self, bytes: &[u8]) -> Result<CheckedImage, MadeError> {
-        let digest = ImageDigest(Sha256::digest(bytes).into());
+        let digest = ImageDigest::of(bytes);
         let identity_path = self.identity_path(&digest);
         match fs::symlink_metadata(&identity_path) {
             Ok(_) => return self.check(digest).map_err(MadeError::Check),

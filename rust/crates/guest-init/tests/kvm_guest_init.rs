@@ -4,7 +4,7 @@
 //! 6, 8, 9 and 12), of the local link (decisions CH21, CH32 rules 6
 //! and 7, CH62 rules 10 and 11), of the 1201 splice (decisions CH13,
 //! CH50 rule 2, CH62 rules 14 and 16) and of the host rows (decisions
-//! CH6-2, CH14, CH46 rules 1 and 4, CH62 rules 13 and 14). CH boots the guest kernel with the `guest-init.cpio`
+//! CH3, CH6-2, CH14, CH46 rules 1 and 4, CH62 rules 13 and 14). CH boots the guest kernel with the `guest-init.cpio`
 //! of `bin/vm-smoke-setup.sh` and the disks that each test builds, with
 //! the stand-in facade of the script on the root disk. The test runs CH
 //! directly, with no vmm, and speaks the link itself.
@@ -29,7 +29,9 @@ use common::{
     hello, hex, lines, listen_host, logged, now, pulled, reach, running, session_disk,
     standin_turn_end, starting, vm_with_env, wait_for, wait_for_exit, wait_for_line, work,
 };
-use creche_wire::guest::{CHAPERONE_PORT, EGRESS_PROXY_PORT, LITELLM_PORT, MIRROR_PORT, WORKSPACE};
+use creche_wire::guest::{
+    CHAPERONE_PORT, EGRESS_PROXY_PORT, GIT_SPOOL_PORT, LITELLM_PORT, MIRROR_PORT, WORKSPACE,
+};
 use creche_wire::{
     ControlCommand, ControlStop, ControlSync, ControlSynced, CredsMissing, FacadeState,
     FamilyStatePull, FamilyStateReply, GuestEvent, GuestPort, HostPort, TurnEvent, TurnStart,
@@ -736,7 +738,9 @@ fn kvm_guest_init_synced_writes_survive_a_ch_kill() {
 /// header included, and the answer comes back (decisions CH6-2, CH14,
 /// fact 46). With no listener of port 1100, the family-state dial fails,
 /// and guest init closes the link of the facade at once (decision CH62
-/// rule 14).
+/// rule 14). So the stand-in has no value and sends no `Authorization`.
+/// Each host listener takes one link and then closes, so the third GET,
+/// with a wrong value, finds no 1101 listener and ends `closed`.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_guest_init_bridges_the_planes() {
@@ -754,7 +758,7 @@ fn kvm_guest_init_bridges_the_planes() {
     let pid = starting(&hello(&mut link, now()));
 
     let words = pulled(&work, pid);
-    assert_eq!(words[..3], ["closed", "200", "200"], "{words:?}");
+    assert_eq!(words[..4], ["closed", "200", "200", "closed"], "{words:?}");
     for (guest, host) in planes {
         assert_eq!(
             host.join().unwrap(),
@@ -811,11 +815,11 @@ fn kvm_guest_init_bridges_the_family_state() {
 
     let words = pulled(&work, pid);
     assert_eq!(
-        words[..3],
-        ["creds_missing", "closed", "closed"],
+        words[..4],
+        ["creds_missing", "closed", "closed", "closed"],
         "{words:?}"
     );
-    let pull_ms: u64 = words[3].parse().unwrap();
+    let pull_ms: u64 = words[4].parse().unwrap();
     eprintln!("the pull took {pull_ms} ms");
     let (line, listener) = host.join().unwrap();
     let mut pull = serde_json::to_string(&FamilyStatePull {}).unwrap();
@@ -968,6 +972,58 @@ fn kvm_guest_init_closes_a_proxy_dial_with_no_host_listener() {
     );
     assert_eq!(proxy.join().unwrap(), [b"again\n".to_vec()]);
     wait_for_line(&mut vm, &serial, "guest-init: egress link 2 host connected");
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// A guest tool dials guest 127.0.0.1:1105, the git platform spool. With
+/// no host listener of port 1105, the family holds no grant, and guest
+/// init closes the link at once (decision CH3: the host side is the
+/// guard). A link after the bind reaches the host listener byte for byte,
+/// and the reply of the spool comes back, a NUL included.
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_bridges_the_spool_port() {
+    let (work, mut vm) = booted_with("kvm-guest-init-spool", Standin::Reach);
+    let serial = work.join("serial.log");
+    let mut link = dial(&work, GuestPort::Control);
+    starting(&hello(&mut link, now()));
+    let mut acp = dial(&work, GuestPort::Acp);
+
+    assert_eq!(
+        reach(&mut acp, &format!("dial s {GIT_SPOOL_PORT} -")),
+        "reply s - closed"
+    );
+    let fault = "guest-init: spool link 1 host dial failed: ";
+    wait_for(&mut vm, &serial, fault, |lines| {
+        lines.iter().any(|line| line.starts_with(fault))
+    });
+
+    let spool = listen_host(&work, HostPort::GitPlatformSpool);
+    let host = thread::spawn(move || answer_lines(&spool, &[b"ok 4\nb\0n\n"]));
+    let request = b"get creche-01JC9Z6A0B1C2D3E4F5G6H7J8K.bundle\n";
+    assert_eq!(
+        reach(
+            &mut acp,
+            &format!("dial t {GIT_SPOOL_PORT} {}", hex(request))
+        ),
+        format!("reply t {} open", hex(b"ok 4\n"))
+    );
+    assert_eq!(host.join().unwrap(), [request.to_vec()]);
+    assert_eq!(
+        reach(&mut acp, "send t -"),
+        format!("reply t {} open", hex(b"b\0n\n"))
+    );
+    // The host closed its side, so the next read ends at the close.
+    assert_eq!(reach(&mut acp, "send t -"), "reply t - closed");
+    for step in ["host connected", "closed"] {
+        wait_for_line(
+            &mut vm,
+            &serial,
+            &format!("guest-init: spool link 2 {step}"),
+        );
+    }
 
     drop(vm);
     fs::remove_dir_all(&work).unwrap();

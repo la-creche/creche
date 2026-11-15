@@ -47,8 +47,8 @@ class ReconcileStep(StrEnum):
     """Contract 05 §3.4's `step`: the step in flight. Minor 20 drops
     `create_sandbox`, `switch_sandbox` and `destroy_sandbox`, because
     caregiver creates, switches and destroys no VM (decisions CH1,
-    CH21-1). `set_egress` writes `egress.json` and `repos.json` (decision
-    CH69 rule 6)."""
+    CH21-1). `set_egress` writes `egress.json`, `repos.json` and
+    `git-platform.json` (decisions CH69 rule 6, CH3)."""
 
     VALIDATE = "validate"
     WRITE_GRANTS = "write_grants"

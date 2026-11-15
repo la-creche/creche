@@ -21,6 +21,10 @@
 //! each hook reads its keys from the env file of the unit
 //! (`crate::env_file`) and passes its lookup here. Each key gets the check
 //! of `Config`.
+//!
+//! `GcConfig` is the config of `vmm gc`, which the operator runs by hand.
+//! It reads the same env file, so it collects the state root of the unit
+//! with the images and the budget of the unit.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -31,6 +35,7 @@ use creche_vmm_confine::admission::{GIB, Limits};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::launch::Program;
 use creche_vmm_confine::mirror::MirrorRoot;
+use creche_vmm_confine::spool::SpoolRoot;
 use creche_vmm_store::layout::{RootError, RunRoot, StateRoot};
 
 use crate::planes::Upstreams;
@@ -86,6 +91,9 @@ pub const MIRROR_ROOT: &str = "VMM_MIRROR_ROOT";
 /// The `git` that runs `upload-pack` for each clone on host port 1103
 /// (decision CH69 rule 17).
 pub const GIT: &str = "VMM_GIT_PROGRAM";
+/// The git platform spool that host port 1105 serves: `push/` and
+/// `fetch/` (decision CH3).
+pub const GIT_SPOOL_ROOT: &str = "VMM_GIT_SPOOL_ROOT";
 
 /// What the vmm reads from its env.
 #[derive(Debug)]
@@ -133,6 +141,10 @@ pub struct Config {
     /// `VMM_GIT_PROGRAM`. The compose step checks its file with
     /// `root_owned::check_program` (decision CH69 rule 17, as CH67 rule 1).
     pub git: Program,
+    /// `VMM_GIT_SPOOL_ROOT`. The config checks its form only. The compose
+    /// step sweeps its `push/`, and each request opens a folder of it
+    /// (`SpoolRoot`).
+    pub git_spool_root: SpoolRoot,
 }
 
 /// What is wrong with one key. A fault never holds the value, as in
@@ -241,6 +253,8 @@ impl Config {
             mirror_root: MirrorRoot::new(path_of(MIRROR_ROOT)?)
                 .map_err(|e| root(MIRROR_ROOT, e))?,
             git: program_of(GIT)?,
+            git_spool_root: SpoolRoot::new(path_of(GIT_SPOOL_ROOT)?)
+                .map_err(|e| root(GIT_SPOOL_ROOT, e))?,
         })
     }
 }
@@ -321,6 +335,40 @@ impl CheckImagesConfig {
         Ok(Self {
             image_root: path(&lookup, IMAGE_ROOT)?,
             zstd: program(&lookup, ZSTD)?,
+        })
+    }
+}
+
+/// What `vmm gc` reads from the env file of the vmm unit: the state
+/// root, the image root, the guest init program, the `zstd` of the store
+/// and the snapshot budget.
+#[derive(Debug)]
+pub struct GcConfig {
+    /// `VMM_STATE_ROOT`.
+    pub state: StateRoot,
+    /// `VMM_IMAGE_ROOT`.
+    pub image_root: PathBuf,
+    /// `VMM_GUEST_INIT_PROGRAM`.
+    pub guest_init: Program,
+    /// `VMM_ZSTD_PROGRAM`. The store names it, and gc never runs it.
+    pub zstd: Program,
+    /// `VMM_SNAPSHOT_BUDGET_GIB`, in bytes.
+    pub budget: u64,
+}
+
+impl GcConfig {
+    /// Reads each key through `lookup`, the lookup of the env file.
+    ///
+    /// # Errors
+    ///
+    /// The first key that is missing or bad, in the order of the struct.
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, ConfigError> {
+        Ok(Self {
+            state: StateRoot::new(path(&lookup, STATE_ROOT)?).map_err(|e| root(STATE_ROOT, e))?,
+            image_root: path(&lookup, IMAGE_ROOT)?,
+            guest_init: program(&lookup, GUEST_INIT)?,
+            zstd: program(&lookup, ZSTD)?,
+            budget: gib(&lookup, BUDGET, Zero::Refused)?,
         })
     }
 }

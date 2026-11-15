@@ -83,23 +83,23 @@
 # component the two jobs build nothing, sign nothing and pass, and the
 # `release` job fetches no cosign.
 #
-# THE DISK-IMAGE COMPONENT `disks` SHIPS FOUR FILES AND FOUR SIGNATURES
+# THE DISK-IMAGE COMPONENT `disks` SHIPS SIX FILES AND SIX SIGNATURES
 # (decisions CH7-2, CH35 (4), CH76 rule 5). The `disks` job runs its build,
 # disks/bin/playpen-release-disks, when the plan tags `disks`. The `sign`
 # job signs each of its files beside the archives, and the tag script
-# attaches the eight assets to its Release.
+# attaches the twelve assets to its Release.
 #
 # EACH SIGNATURE IS PUBLIC AND PERMANENT. It writes one record to the
 # transparency log of the public Sigstore instance. The record names this
 # repository, this workflow file and the commit. A run with no archive and
-# no disk file writes no record. A run that tags `disks` writes four.
+# no disk file writes no record. A run that tags `disks` writes six.
 #
-# agent-mcp has a SIBLING of the `release` job, in its own
+# The mcp repository has a SIBLING of the `release` job, in its own
 # rework-component-tags.yml. `mcp-servers` is its component, not
 # creche's (contract 06 §1 row 6), and the planner scopes every
 # decision to one repository, so this run never tags it. That workflow
 # checks creche out at a pinned commit and runs the same script
-# against agent-mcp's tree.
+# against the mcp tree.
 #
 # `workflow_dispatch` starts the same run by hand, for a commit a missed run
 # left behind. Read the plan first, from any checkout:
@@ -328,7 +328,7 @@ jobs:
   # The job runs the suite with the pytest command that
   # integration/AGENTS.md tells a person to run. integration/tests held a
   # second suite until the session API left attendance (phase 2 plan, row
-  # 21). Its stand-in for `sbx` left at the Cloud Hypervisor cut.
+  # 21). Its stand-in for the old playpen left at the Cloud Hypervisor cut.
   #
   # A test of the suite can skip itself, and a run in which every test
   # skips is green and judged nothing. The suite reads no switch that makes
@@ -424,10 +424,11 @@ jobs:
       - run: uv run pytest
         working-directory: memory
 
-  # Build each flavor of the disks row and its root disk, then check what
-  # the build alone cannot: /etc/creche/env equals the image config env
-  # (CH7-7, CH49). The steps live in playpen/bin/playpen-ci. This run also
-  # catches a missing source file and an import that only the image sees.
+  # Build each flavor and each service image of the disks row and its root
+  # disk, then check what the build alone cannot: /etc/creche/env equals
+  # the image config env (CH7-7, CH49). The steps live in
+  # playpen/bin/playpen-ci. This run also catches a missing source file and
+  # an import that only the image sees.
   playpen-image:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
@@ -731,8 +732,8 @@ jobs:
           retention-days: 7
 
   # The files of the disks row (decisions CH7-2, CH7-3, CH35 (4), CH41 rule
-  # 1, CH76 rule 5): one root disk for each flavor, the kernel and
-  # digests.json. No pull request runs this job, and gate.yml has no copy of
+  # 1, CH76 rule 5): one root disk for each flavor and each service image,
+  # the kernel and digests.json. No pull request runs this job, and gate.yml has no copy of
   # it: the playpen-image job builds each disk on each PR. The step runs the
   # build argv of disks/component.toml, with DISK_OUT set, only when the plan
   # names `disks`. Else it writes an empty SHA256SUMS: the next job cannot
@@ -810,7 +811,7 @@ jobs:
   #      of `disks` name, and only when each one has the SHA-256 of those
   #      outputs. A file that no output names stops the job. `dotglob`: a name that starts with a period
   #      is such a file too. An asset is an archive `*.tar.gz` or one of the
-  #      four files of a disk-image row (decision CH76 rule 5).
+  #      six files of a disk-image row (decision CH76 rule 5).
   #   2. With no archive it prints one line, signs nothing and uploads an
   #      empty SHA256SUMS.
   #   3. It takes cosign from a release of the cosign repository, and
@@ -862,7 +863,7 @@ jobs:
             fi
             DIGESTS+="$DISK_DIGESTS"
           fi
-          asset='([A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz|digests[.]json|vmlinux-x86_64[.]zst|base[.]ext4[.]zst|python[.]ext4[.]zst|coding[.]ext4[.]zst)'
+          asset='([A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz|digests[.]json|vmlinux-x86_64[.]zst|base[.]ext4[.]zst|python[.]ext4[.]zst|coding[.]ext4[.]zst|browser[.]ext4[.]zst)'
           line="^[0-9a-f]{64}  $asset\$"
           whole="^$asset\$"
           named=""
@@ -903,7 +904,7 @@ jobs:
           (cd "$assets" && sha256sum --check --strict <<< "$DIGESTS")
           cosign="$RUNNER_TEMP/cosign"
           shopt -s extglob
-          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst|coding.ext4.zst)" > /dev/null; then
+          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst|coding.ext4.zst|browser.ext4.zst)" > /dev/null; then
             curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
               --output "$cosign" \
               "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
@@ -1000,7 +1001,7 @@ jobs:
           set -euo pipefail
           cosign="$RUNNER_TEMP/cosign"
           shopt -s extglob
-          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst|coding.ext4.zst)" > /dev/null; then
+          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst|coding.ext4.zst|browser.ext4.zst)" > /dev/null; then
             curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
               --output "$cosign" \
               "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"

@@ -11,14 +11,18 @@
 # image installs them from the facade's lockfile, so the Flue pin is the one
 # that `facade/pnpm-lock.yaml` holds and no second copy exists.
 #
-# Three image targets and one build-only stage:
+# Four image targets and one build-only stage:
 #   agent-sandbox         every family
 #   agent-sandbox-python  the python flavor: pandas, numpy and matplotlib
 #                         for the analysis stack, plus the 3.12 test venv
 #                         that runs this repository's own test suites. All
 #                         installed at BUILD time, so a run needs no network
 #   agent-sandbox-coding  the coding flavor of code and creche (CH7-1): the
-#                         python flavor plus uv, pnpm and cargo
+#                         python flavor plus uv, pnpm, cargo, the git
+#                         platform spool helper and Chrome
+#   service-browser       not a family flavor: the root disk of the browser
+#                         service VM (ServiceImage::Browser), with Chrome,
+#                         agent-browser and creche-browser-facade
 #   creche-test-venv      build-only: it resolves uv.lock and installs the
 #                         test venv and the 3.12 interpreter. It ships in
 #                         no image. Only the coding flavor copies its uv
@@ -298,12 +302,12 @@ RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env
 # the python flavor's. Agents install a repo's locked dependencies through
 # the egress proxy (CH6-1), then run its checks.
 #
-# It also holds Chromium, for a repo whose checks drive a browser. Both
-# halves land at build time: the Debian packages a Chromium needs, and one
-# browser at the Playwright version pinned below. `PLAYWRIGHT_BROWSERS_PATH`
-# at the foot of this stage names it. A browser matches the Playwright that
-# launches it, so a repo on another version overrides that name for its own
-# commands and fetches the revision it wants through the egress proxy.
+# It also holds Chrome, for a repo whose checks drive a browser. Chrome comes
+# from Google's signed apt repo, unpinned, exactly as the service-browser
+# stage takes it (decision B5): a browser should not wait for a pin bump to
+# get a security fix. A repo's Playwright reaches it with `channel: 'chrome'`,
+# so this image bakes no Playwright browser and couples to no Playwright
+# version.
 #
 # This flavor ALONE breaks the no-installer rule of the python flavor. Every
 # other flavor keeps it. "For now": revisit with the mirror trigger of
@@ -312,10 +316,10 @@ FROM agent-sandbox-python AS agent-sandbox-coding
 ARG RUST_VERSION=1.92.0
 ARG RUST_SHA256=d2ccef59dd9f7439f2c694948069f789a044dc1addcc0803613232af8f88ee0c
 ARG PNPM_VERSION=11.20.0
-# The one Playwright version this image bakes a browser for. It is the
-# latest stable at 2026-11-14. The version and the browser it installs are
-# one pin: raise the two together.
-ARG PLAYWRIGHT_VERSION=1.65.1
+# The fingerprint of Google's Linux package signing key. The same ARG as the
+# service-browser stage, and a key with any other fingerprint fails the
+# build.
+ARG GOOGLE_SIGNER_FPR=EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796
 
 # uv: the binary that the creche-test-venv stage installed from the pinned
 # wheel. It needs no Python of its own.
@@ -338,26 +342,48 @@ RUN tarball="rust-${RUST_VERSION}-x86_64-unknown-linux-gnu" \
 RUN corepack enable pnpm \
     && corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
-# Chromium, for a repo whose checks drive a browser. `install --with-deps`
-# is both halves at once: the Debian packages a Chromium needs, and the
-# browser itself. The build proves the browser landed, so a silent fetch
-# failure is a failed image and never a broken sandbox.
-#
-# The path is set on this RUN because the ENV below comes too late for the
-# install to read it, and `/root` is a tmpfs mount, so a browser left in the
-# default cache would not reach the disk.
-RUN PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
-      npx --yes "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium \
-    && find /opt/ms-playwright -type f -name chrome -print -quit | grep -q . \
-    && rm -rf /root/.npm /var/lib/apt/lists/*
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+# Chrome, for a repo whose checks drive a browser. The same recipe as the
+# service-browser stage: Google's signed apt repo, the signer's fingerprint
+# checked, and no version, so a new Chrome stable reaches the fleet as a
+# disks release (decisions B5 and V3). `procps` stays out: the browser
+# service needs it, a repo's test runner does not.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg \
+    && curl -fsSL -o /tmp/google.pub https://dl.google.com/linux/linux_signing_key.pub \
+    && gpg --show-keys --with-colons /tmp/google.pub | grep -qx "fpr:::::::::${GOOGLE_SIGNER_FPR}:" \
+    && install -d -m 0755 /etc/apt/keyrings \
+    && gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg /tmp/google.pub \
+    && rm -f /tmp/google.pub \
+    && echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main' \
+       > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
+    && apt-get purge -y gnupg && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
-# Fail the BUILD, not the first switch: each installer starts.
+# As in the service-browser stage: Chrome starts its sandbox from user
+# namespaces alone, the setuid helper goes, and no setuid file of Chrome
+# stays in the image. A family sandbox runs its tools as root, so a repo's
+# Playwright launches Chrome with `chromiumSandbox: false` anyway.
+RUN chmod u-s /opt/google/chrome/chrome-sandbox
+
+# The guest end of the git platform spool (CH3, phase 12): an agent moves
+# a branch as a git bundle through guest 127.0.0.1:1105, and the
+# git-platform tools push and fetch it. It runs on python3.12 with -I, so a
+# module in the repo under work never loads. playpen/AGENTS.md has the flow.
+# The mode is set by chmod, not by a COPY flag: the bundles test of
+# handover reads each COPY word as a copied path.
+COPY playpen/guest/creche_git_spool.py /usr/local/bin/creche-git-spool
+RUN chmod 0755 /usr/local/bin/creche-git-spool
+
+# Fail the BUILD, not the first switch: each installer starts, and so does
+# the spool helper and the browser.
 RUN uv --version \
     && cargo --version && rustc --version \
     && cargo fmt --version && cargo clippy --version \
     && pnpm --version \
-    && python3.12 --version
+    && python3.12 --version \
+    && creche-git-spool --help >/dev/null \
+    && google-chrome-stable --version
 
 # The egress proxy of the tools: guest init bridges guest 127.0.0.1:3128 to
 # the host proxy (CH46 rule 1). No tool reads this name. The agent gives its
@@ -368,4 +394,76 @@ ENV CRECHE_TOOL_HTTPS_PROXY=http://127.0.0.1:3128
 
 RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
     sh /run/creche-env-write CRECHE_TOOL_HTTPS_PROXY HOME MPLBACKEND MPLCONFIGDIR NODE_ENV \
-       NODE_VERSION PATH PLAYWRIGHT_BROWSERS_PATH TMPDIR YARN_VERSION > /etc/creche/env
+       NODE_VERSION PATH TMPDIR YARN_VERSION > /etc/creche/env
+
+# --- service-browser: the root disk of the browser service VM ---------------
+# Not a family flavor: `ServiceImage::Browser` of the wire, `browser` of the
+# disks row (browser design note, section 10). The vmm boots it for the
+# `browser` MCP upstream. Guest init starts creche-browser-facade at the
+# facade path, and the facade runs agent-browser and Chrome as the user
+# `browser`, with Chrome's own sandbox on. The guest has no network device:
+# Chrome reaches the web only through the egress row, guest 127.0.0.1:3128,
+# and the vmm checks each name there.
+FROM ${PYTHON_IMAGE} AS service-browser
+ARG AGENT_BROWSER_VERSION=0.43.0
+ARG AGENT_BROWSER_SHA256=8e69c9fb662514c9cf36e4911e94e913742ba066e55102486350e049dd847612
+# The fingerprint of Google's Linux package signing key. A key with any
+# other fingerprint fails the build.
+ARG GOOGLE_SIGNER_FPR=EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796
+
+# Chrome comes from Google's signed apt repo at BUILD time. Chrome for
+# Testing publishes no sha256 (decision B5), so a new Chrome stable reaches
+# the host as a new disks release (decision V3).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg procps \
+    && curl -fsSL -o /tmp/google.pub https://dl.google.com/linux/linux_signing_key.pub \
+    && gpg --show-keys --with-colons /tmp/google.pub | grep -qx "fpr:::::::::${GOOGLE_SIGNER_FPR}:" \
+    && install -d -m 0755 /etc/apt/keyrings \
+    && gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg /tmp/google.pub \
+    && rm -f /tmp/google.pub \
+    && echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main' \
+       > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
+    && apt-get purge -y gnupg && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# Chrome starts its sandbox from user namespaces alone. The setuid helper
+# goes, so no setuid file of Chrome stays in the image.
+RUN chmod u-s /opt/google/chrome/chrome-sandbox
+
+# agent-browser, the bare release asset at its GitHub digest.
+RUN curl -fsSL -o /usr/local/bin/agent-browser \
+      "https://github.com/vercel-labs/agent-browser/releases/download/v${AGENT_BROWSER_VERSION}/agent-browser-linux-x64" \
+    && echo "${AGENT_BROWSER_SHA256}  /usr/local/bin/agent-browser" | sha256sum -c - \
+    && chmod 0755 /usr/local/bin/agent-browser
+
+# The mount points of guest init, as the agent-sandbox stage makes them
+# (CH62 rules 4 and 5, CH81 rule 1). playpen-disk reads them back.
+RUN mkdir -p -m 0755 /var/lib/creche/session \
+    && for dir in /tmp /run /root /var/cache /var/tmp; do \
+         [ -d "$dir" ] || { echo "no mount point $dir" >&2; exit 1; }; \
+       done
+
+# The user of agent-browser and Chrome. Its home is made fresh on the guest
+# tmpfs at each start (decision V4), so the root disk holds none.
+RUN useradd --system --user-group --no-create-home --home-dir /nonexistent \
+      --shell /usr/sbin/nologin browser
+
+# The facade at the facade path of guest init, and the Chrome wrapper. The
+# mode is set by chmod, not by a COPY flag: the bundles test of handover
+# reads each COPY word as a copied path.
+COPY playpen/guest/creche_browser_facade.py /usr/local/bin/creche-facade
+COPY playpen/guest/creche-chrome /usr/local/bin/creche-chrome
+RUN chmod 0755 /usr/local/bin/creche-facade /usr/local/bin/creche-chrome
+
+# Fail the BUILD, not the first boot: Chrome and agent-browser start, and
+# the facade refuses to run outside guest init.
+RUN google-chrome-stable --version && agent-browser --version
+RUN status=0; /usr/local/bin/creche-facade 2>/dev/null || status=$?; \
+    [ "$status" -eq 17 ] || { echo "creche-facade: exit $status, want 17" >&2; exit 1; }
+
+# The image env for guest init (CH7-7, CH49). This RUN stays the last step.
+RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
+    mkdir -p /etc/creche \
+    && sh /run/creche-env-write GPG_KEY LANG PATH PYTHON_SHA256 PYTHON_VERSION \
+       > /etc/creche/env

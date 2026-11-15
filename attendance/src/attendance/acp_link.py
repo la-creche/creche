@@ -61,7 +61,7 @@ MAX_ACP_LINE_BYTES = 1_048_576
 
 #: How long the facade has to answer the handshake. The vmm answers 101
 #: after the first `ControlReady` (decision CH34 rule 7), so the facade
-#: listens by then. The number is the one of the sbx link.
+#: listens by then. The number is the one of the first link.
 HANDSHAKE_DEADLINE_S = 90
 
 #: The id of the handshake. It is the first line on each stream, and its

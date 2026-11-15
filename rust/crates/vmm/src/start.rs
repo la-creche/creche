@@ -21,7 +21,9 @@
 //!    lists a repo or does not read (plan PR M1, decisions CH69 rule 13,
 //!    CH73 rule 1), and the egress
 //!    proxy listener binds when `egress.json` of the family lists a host
-//!    (plan PR E2, decision CH49 rule 3). Then the kernel, the initramfs and the root disk
+//!    (plan PR E2, decision CH49 rule 3). The spool listener binds when
+//!    `git-platform.json` of the family grants `fetch` or `push` or does
+//!    not read (decision CH3). Then the kernel, the initramfs and the root disk
 //!    pass the store check (PR D6, decision CH44 rule 2), the session disk exists (PR D7, decision
 //!    CH21-4), the run dir `vm/<id>/` links to the slot of the start (PR
 //!    D16), `snapshots/` exists, and `sessions/<id>/serial.log` in the
@@ -32,15 +34,16 @@
 //!    ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8, CH30, CH55).
 //! 4. The plane bridges serve their listeners (`planes`), the
 //!    family-state reply serves its own (`family_state`), and so do the
-//!    mirror (`mirror`) and the egress proxy (`egress::proxy`). A restore
+//!    mirror (`mirror`), the egress proxy (`egress::proxy`) and the spool
+//!    (`spool`). A restore
 //!    only: `ch-remote info` must say `Paused`, the device check passes,
 //!    then `ch-remote resume` (decision CH50 rule 10).
 //! 5. The first `ControlReady` (plan PR L10). It clears the faults of the
 //!    family (contract 05 §3.3.1 rule 8).
 //! 6. The deny check (PR C8, decision CH6-3), with the family-state port,
-//!    the plane ports, and the mirror port and the egress port when each
-//!    one is bound, as the bound set (decisions CH49 rule 3, CH69 rule
-//!    13).
+//!    the plane ports, and the mirror port, the egress port and the spool
+//!    port when each one is bound, as the bound set (decisions CH3, CH49
+//!    rule 3, CH69 rule 13).
 //! 7. The dial of guest port 1201 (decision CH50 rule 2).
 //! 8. The VM joins the table, and the follow of its reach files starts
 //!    (`egress::watch`, plan PR E3, decisions CH49 rule 3, CH69 rules 11
@@ -85,12 +88,13 @@ use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::limits::VmLimits;
 use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
+use creche_vmm_confine::spool::SpoolRoot;
 use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::ChRemoteError;
 use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
 use creche_vmm_store::image_retention::{self, Collected, Failure as ImageFailure, ScanError};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
-use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
+use creche_vmm_store::key::{CheckedCh, CurrentImages, KeyCheck, SnapshotKey, check_newest};
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot as PoolSlot, StateRoot, VmRunDir};
 use creche_vmm_store::retention::{InUse, Swept, sweep};
 use creche_vmm_store::rows::Rows;
@@ -98,7 +102,9 @@ use creche_vmm_store::serial_log::SerialLog;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
-use creche_wire::{FamilyName, FamilyShape, GuestEvent, PerFlavor, SessionId, SessionRow};
+use creche_wire::{
+    FamilyName, FamilyShape, GuestEvent, PerFlavor, PerService, SessionId, SessionRow,
+};
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
@@ -116,11 +122,12 @@ use crate::handlers::drop::{StopVm, VmStopFailed};
 use crate::handlers::list::RunningVms;
 use crate::image_lifecycle::ImageLifecycle;
 use crate::mirror::{self, Mirror};
-use crate::planes::{Bound, Planes, Upstreams, bind};
+use crate::planes::{self, Bound, Planes, Upstreams, bind};
 use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
 use crate::shutdown::{Taken, VmSet};
 use crate::sleep::SERIAL_CAP;
+use crate::spool;
 use crate::stop::{VmProcess, stop};
 
 /// The mode of the run dir and the snapshots dir of a VM.
@@ -131,15 +138,37 @@ const DIR_MODE: u32 = 0o700;
 /// change costs one constant.
 const SLOT_POLL: Duration = Duration::from_millis(10);
 
-/// The store digests of the guest kernel and of the root disk of each
-/// flavor (decisions CH7-3, CH8-8). The vmm keeps one root disk for each
-/// value of the wire flavor enum (decision CH58 rule 4).
+/// The store digests of the guest kernel, of the root disk of each flavor
+/// and of the root disk of each service image (decisions CH7-3, CH8-8,
+/// browser design 10.5.2). The vmm keeps one root disk for each value of
+/// the wire flavor enum and of the wire enum `ServiceImage` (decision
+/// CH58 rule 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Digests {
     /// The guest kernel. Every flavor boots it.
     pub kernel: ImageDigest,
     /// The root disk of each flavor.
     pub roots: PerFlavor<ImageDigest>,
+    /// The root disk of each service image (browser design 10.5.2), or
+    /// `None` when `digests.json` has no entry for it (`image_root`). No
+    /// VM boots it yet. The store keeps it, so a later service VM kind
+    /// reads it from here as a start reads `roots`, and refuses a start
+    /// on `None` with its own reason.
+    pub services: PerService<Option<ImageDigest>>,
+}
+
+impl Digests {
+    /// The images of each new start with the guest init `initramfs` of
+    /// this vmm: what snapshot and image retention keep.
+    #[must_use]
+    pub fn with_initramfs(&self, initramfs: ImageDigest) -> CurrentImages {
+        CurrentImages {
+            kernel: self.kernel,
+            initramfs,
+            roots: self.roots,
+            services: self.services,
+        }
+    }
 }
 
 /// What a cold boot reads. Plan PR L20 builds it from the vmm config.
@@ -194,6 +223,8 @@ pub struct StartConfig {
     /// The mirror root and the `git` that the mirror of each VM runs
     /// (decision CH69 rule 17).
     pub mirror: Mirror,
+    /// The git platform spool of host port 1105 (decision CH3).
+    pub spool: SpoolRoot,
 }
 
 /// The start of a launch step. `Spawner` is the one of the vmm, and a
@@ -258,8 +289,9 @@ struct Vm<P> {
 /// The served host listeners of one VM: the plane bridges (plan PR V6),
 /// the family-state reply (plan PR V8), and the follow of the reach files
 /// (plan PR E3), which holds the mirror of a family with a clone list
-/// (plan PR M1) and the egress proxy of a family with a list (plan PR
-/// E2). The drop closes each one.
+/// (plan PR M1), the egress proxy of a family with a list (plan PR E2)
+/// and the spool of a family with the git platform grant (decision CH3).
+/// The drop closes each one.
 #[derive(Debug)]
 struct Listeners {
     _planes: Planes,
@@ -1049,11 +1081,20 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             self.config.state.clone(),
             self.config.budget,
         );
+        // A snapshot whose key names images of an older set never
+        // restores: the next start of its session drops it (decision
+        // CH7-6). The sweep drops it now, so the images of its key can
+        // leave the store at the collection after this sweep.
+        let current = self
+            .config
+            .digests
+            .borrow()
+            .with_initramfs(self.config.initramfs);
         spawn_blocking(move || {
             let _takes = takes;
             let _claims = lock_claims(&claims);
             let in_use = lock_in_use(&in_use).clone();
-            sweep(&state, SystemTime::now(), budget, &in_use)
+            sweep(&state, SystemTime::now(), budget, &in_use, &current)
         })
         .await
         .unwrap_or_else(|_| Err(io::Error::other("the sweep panicked")))
@@ -1077,9 +1118,11 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             if !lock(&table).is_empty() {
                 return Ok(None);
             }
-            let digests = config.digests.borrow().clone();
-            let mut current = HashSet::from([digests.kernel, config.initramfs]);
-            current.extend(digests.roots.iter().map(|(_, digest)| *digest));
+            let current = config
+                .digests
+                .borrow()
+                .with_initramfs(config.initramfs)
+                .digests();
             image_retention::collect(&config.images, &config.state, &current).map(Some)
         })
         .await
@@ -1797,6 +1840,9 @@ struct Booted<P> {
     /// whose list holds a host or does not read (decisions CH49 rule 3,
     /// CH72 rule 3).
     egress: Option<proxy::Bound>,
+    /// The spool listener, bound before CH started for a family whose
+    /// grant names `fetch` or `push` or does not read (decision CH3).
+    spool: Option<spool::Bound>,
 }
 
 /// Step 3: the link of `vm/<id>` to `slot`, the files of the boot, the
@@ -1841,6 +1887,14 @@ fn launch<L: Launcher>(
     };
     let egress = if reach.egress() {
         let bound = proxy::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
+        Some(bound)
+    } else {
+        None
+    };
+    // Decision CH3: the spool listener has the same lifecycle, for a
+    // family whose grant names `fetch` or `push` or does not read.
+    let spool = if reach.spool() {
+        let bound = spool::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
         Some(bound)
     } else {
         None
@@ -1923,6 +1977,7 @@ fn launch<L: Launcher>(
         reach,
         mirror,
         egress,
+        spool,
     })
 }
 
@@ -1944,6 +1999,19 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let (shape, free) = match blocking(move || read_shape(&config, &name)).await {
             Ok(read) => read,
             Err(message) => return Err(self.fault(family, sandbox, message).await),
+        };
+        // Openshell ideas plan, idea 1: the row holds the placeholders that
+        // the family-state reply sends and the planes swap. A restore finds
+        // the values that its guest memory holds.
+        let placeholders = self
+            .rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .placeholders(id)
+            .cloned();
+        let Some(placeholders) = placeholders else {
+            let message = "the session has no row with placeholders".to_owned();
+            return Err(self.fault(family, sandbox, message).await);
         };
         let guest_ram = VmLimits::from(shape).guest_ram();
         // `host_full` is no fault of decision CH6-3, so it writes none.
@@ -1992,6 +2060,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
                     booted.reach,
                     booted.mirror,
                     booted.egress,
+                    booted.spool,
                 ),
             ))
         })
@@ -2004,11 +2073,23 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let vsock = pending.run.vsock_socket();
         let link = self.control().replace(id);
         // A fault from here on drops `served`, which closes the bridges,
-        // the family-state listener, the mirror and the egress proxy.
-        let (planes, state, reach, mirror, egress) = bound;
+        // the family-state listener, the mirror, the egress proxy and the
+        // spool.
+        let (planes, state, reach, mirror, egress, spool) = bound;
         let families = &self.config.families;
-        let served = planes.serve().and_then(|planes| {
-            let family_state = state.serve(families.clone(), family.clone(), id.clone())?;
+        let session = planes::Session {
+            families: families.clone(),
+            family: family.clone(),
+            id: id.clone(),
+            placeholders,
+        };
+        let served = planes.serve(&session).and_then(|planes| {
+            let family_state = state.serve(
+                families.clone(),
+                family.clone(),
+                id.clone(),
+                session.placeholders.clone(),
+            )?;
             let mirror = mirror
                 .map(|bound| {
                     let mirror = self.config.mirror.clone();
@@ -2019,12 +2100,19 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             let egress = egress
                 .map(|bound| bound.serve(families.clone(), family.clone(), id.clone(), log))
                 .transpose()?;
+            let spool = spool
+                .map(|bound| {
+                    let root = self.config.spool.clone();
+                    bound.serve(root, families.clone(), family.clone(), id.clone())
+                })
+                .transpose()?;
             Ok((
                 planes,
                 family_state,
                 Served {
                     mirror: mirror.into(),
                     egress: egress.into(),
+                    spool: spool.into(),
                 },
             ))
         });
@@ -2064,6 +2152,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             planes: self.config.planes,
             mirror: self.config.mirror.clone(),
             log: Arc::clone(&self.config.egress_log),
+            spool: self.config.spool.clone(),
             cmdline,
             ch: self.config.ch.clone(),
             start,
@@ -2076,9 +2165,10 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // The bound set is the family-state port 1100 (plan PR V8), the
         // plane ports 1101 and 1102 (plan PR V6), 1103 for a family whose
         // clone list holds a repo or does not read (plan PR M1, decisions
-        // CH69 rule 13, CH73 rule 1), and 1104 for a family whose list
-        // holds a host or does not read (plan PR E2, decisions CH49 rule
-        // 3, CH72 rule 3).
+        // CH69 rule 13, CH73 rule 1), 1104 for a family whose list holds a
+        // host or does not read (plan PR E2, decisions CH49 rule 3, CH72
+        // rule 3), and 1105 for a family whose grant names `fetch` or
+        // `push` or does not read (decision CH3).
         let denied = follow.check(&reach).await;
         if let Err(message) = denied {
             let egress = StartCode::Egress;

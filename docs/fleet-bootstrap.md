@@ -91,7 +91,7 @@ holds each command.
 | R5 | Make `/etc/chaperone`, mode 1775, group `chaperone`, with `plugins/`, `secrets/` and `install.toml` (A6). | The mode and the group. Each of the three paths is there. |
 | R6 | Add `CHAPERONE_LISTEN` and `AGENT_COSIGN_PROGRAM` to the site file (A8). | `creche-env check` of the site file. The file sets `CHAPERONE_LISTEN`. |
 | R7 | Install the unit of the Rust chaperone and its drop-in (A7, C2). Release the chaperone. | The binary at `/opt/components/chaperone/bin/chaperone`. A listener on port 8310. |
-| R9 | Put `LITELLM_MASTER_KEY` into `hooks.env`. `docs/rework/cutover.md` §4.1 gives the one command. | The key in `hooks.env` or in `caregiver.env`. The value is never printed. |
+| R9 | Put `LITELLM_MASTER_KEY` into `hooks.env`. The operator's private notes give the one command. | The key in `hooks.env` or in `caregiver.env`. The value is never printed. |
 | R10 | After the first `up`: copy `tokens/chaperone-delegate.token` and `tokens/chaperone-dispatch.token` into `/etc/chaperone/secrets`. Mint `approval-token` and `resume-token` there (A6). | Nothing. The operator cannot read `secrets/`. |
 | R11 | Review the firewall (A10). | Nothing. |
 

@@ -13,6 +13,7 @@ pub mod images;
 pub mod initramfs;
 pub mod key;
 pub mod layout;
+pub mod placeholder;
 pub mod remove;
 pub mod retention;
 pub mod rows;

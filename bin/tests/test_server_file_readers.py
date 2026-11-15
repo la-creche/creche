@@ -163,6 +163,11 @@ RULES_OF_ROOT: dict[str, dict[str, Any]] = {
     "fence-value-length": {"arg_denies": _fences(1, ["v" * 257])},
     "fence-value-nul": {"arg_denies": _fences(1, ["a\x00"])},
     "shared-count": _shared(9),
+    "entity-domains-not-a-list": {"entity_domains": "light"},
+    "entity-domain-form": {"entity_domains": ["Light"]},
+    "entity-domain-length": {"entity_domains": ["a" * 65]},
+    "entity-domains-twice": {"entity_domains": ["light", "light"]},
+    "entity-domains-count": {"entity_domains": [f"d{n}" for n in range(257)]},
 }
 
 
@@ -182,4 +187,20 @@ def test_root_and_the_validator_accept_the_base_of_the_rules() -> None:
     text = _toml(BASE)
 
     assert mcpserver.parse_server(text.encode(), "kagi", mcpserver.Markup.TOML).name == "kagi"
+    assert _server_issues(text, "kagi") == ()
+
+
+def test_root_and_the_validator_accept_entity_domains() -> None:
+    text = _toml({**BASE, "entity_domains": ["light", "sun", "binary_sensor"]})
+
+    read = mcpserver.parse_server(text.encode(), "kagi", mcpserver.Markup.TOML)
+
+    assert read.entity_domains == ("light", "sun", "binary_sensor")
+    assert _server_issues(text, "kagi") == ()
+
+
+def test_root_and_the_validator_accept_an_empty_entity_domain_list() -> None:
+    text = _toml({**BASE, "entity_domains": []})
+
+    assert mcpserver.parse_server(text.encode(), "kagi", mcpserver.Markup.TOML).entity_domains == ()
     assert _server_issues(text, "kagi") == ()
