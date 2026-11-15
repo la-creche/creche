@@ -140,7 +140,7 @@ def installed_registry_rev(tree: Path) -> str | None:
             return None
 
         text = stamp.read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return None
 
     return text if REGISTRY_STAMP_RE.fullmatch(text) else None
@@ -202,7 +202,7 @@ def _toml_stamp_text(stamp: Path) -> str | None:
             data = handle.read(FileKind.MANIFEST.byte_limit + 1)
 
         return data.decode("utf-8")
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return None
 
 
@@ -212,7 +212,7 @@ def _yaml_stamp_text(stamp: Path) -> str | None:
             return None
 
         return stamp.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return None
 
 
@@ -224,7 +224,7 @@ def installed_version(tree: Path) -> str | None:
             return None
 
         text = stamp.read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return None
 
     return text or None

@@ -353,6 +353,6 @@ def _tool_text(result: dict[str, object]) -> ToolText | McpFailure:
 def _json(text: str) -> object | None:
     try:
         return json.loads(text)
-    except (ValueError, RecursionError):
+    except ValueError, RecursionError:
         # RecursionError: a text that nests too deep is not a ValueError.
         return None

@@ -155,6 +155,6 @@ def test_the_browser_target_ships_only_here() -> None:
     assert "COPY playpen/guest/creche-chrome /usr/local/bin/creche-chrome" in browser
     assert "RUN chmod u-s /opt/google/chrome/chrome-sandbox" in browser
     assert '[ "$status" -eq 17 ]' in browser
-    assert FACADE.read_text(encoding="utf-8").startswith("#!/usr/local/bin/python3.12 -I\n")
+    assert FACADE.read_text(encoding="utf-8").startswith("#!/usr/local/bin/python3.14 -I\n")
     for flavor in text.split(TARGET, 1)[0].split("\nFROM ")[1:]:
         assert "creche_browser_facade" not in flavor

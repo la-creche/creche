@@ -120,7 +120,7 @@ def test_the_image_fixes_no_address() -> None:
 
 
 def test_the_test_venv_installs_the_locked_dependencies() -> None:
-    """The python flavor holds a second venv, /opt/test: CPython 3.12 and
+    """The python flavor holds a second venv, /opt/test: CPython 3.14 and
     the locked test dependencies of this workspace. The pins come from
     uv.lock, installed at build time, and the workspace's own code stays
     out, so a test imports the code of the clone under test."""
@@ -160,7 +160,7 @@ def test_the_build_inputs_are_content_pinned() -> None:
 
     assert re.search(r"^ARG NODE_IMAGE=node:24-bookworm@sha256:[0-9a-f]{64}$", text, re.MULTILINE)
     assert re.search(
-        r"^ARG PYTHON_IMAGE=python:3\.12-slim-bookworm@sha256:[0-9a-f]{64}$",
+        r"^ARG PYTHON_IMAGE=python:3\.14-slim-bookworm@sha256:[0-9a-f]{64}$",
         text,
         re.MULTILINE,
     )
@@ -185,7 +185,7 @@ def test_the_final_stage_keeps_the_interpreter_links() -> None:
 
     assert "COPY --from=creche-test-venv /usr/local/bin/python /usr/local/bin/" in stage
     assert "COPY --from=creche-test-venv /usr/local/bin/python3 /usr/local/bin/" in stage
-    assert "COPY --from=creche-test-venv /usr/local/bin/python3.12 /usr/local/bin/" in stage
+    assert "COPY --from=creche-test-venv /usr/local/bin/python3.14 /usr/local/bin/" in stage
 
 
 def test_the_wrappers_do_not_import_from_the_current_directory() -> None:
@@ -220,9 +220,9 @@ def test_the_image_ships_no_installer() -> None:
     assert "python3-pip-whl python3-setuptools-whl" in stage
     assert "/usr/lib/python3.11/ensurepip" in stage
     assert "/usr/share/python-wheels" in stage
-    assert "rm -rf /usr/local/lib/python3.12/site-packages/pip*" in venv_stage
-    assert "/usr/local/lib/python3.12/site-packages/uv*" in venv_stage
-    assert "/usr/local/lib/python3.12/ensurepip" in venv_stage
+    assert "rm -rf /usr/local/lib/python3.14/site-packages/pip*" in venv_stage
+    assert "/usr/local/lib/python3.14/site-packages/uv*" in venv_stage
+    assert "/usr/local/lib/python3.14/ensurepip" in venv_stage
     assert 'ENV PATH="/opt/py/bin:/opt/test/bin:${PATH}"' in stage
     assert "/opt/test/bin/pytest --version" in stage
     assert "the image ships pip in /usr/local" in stage

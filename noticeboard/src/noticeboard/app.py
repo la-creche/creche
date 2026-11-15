@@ -455,7 +455,7 @@ def _kept(config: Config, name: str, models: tuple[dict[str, Any], dict[str, Any
 
     try:
         original = family_path(config.registry_dir, name).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         # The registry read this file as UTF-8 a moment ago. This is a second
         # read, and another writer can change the file between the two.
         return None

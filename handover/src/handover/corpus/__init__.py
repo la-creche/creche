@@ -172,7 +172,7 @@ def _one(name: str, repo: Path, runner: RunFn) -> str | None:
     argv = [GIT, *git_ground(repo), "-c", f"core.sshCommand={SSH}", "-C", str(repo), *_VERB]
     try:
         code = runner(argv, repo, git_env(), FETCH_TIMEOUT_S)
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return "the fetch could not start"
 
     if code != 0:
@@ -293,7 +293,7 @@ def read_git(argv: Sequence[str], cwd: Path) -> str | None:
             timeout=READ_TIMEOUT_S,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
 
     if done.returncode != 0:

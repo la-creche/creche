@@ -824,7 +824,7 @@ def _check_daily(family: FamilyFile, daily: DailyCall, index: Index, issues: Iss
 
     try:
         ZoneInfo(daily.zone)
-    except (KeyError, ValueError, OSError):
+    except KeyError, ValueError, OSError:
         issues.error("quiet.daily.zone", f"'{daily.zone}' is not an IANA time zone")
 
 

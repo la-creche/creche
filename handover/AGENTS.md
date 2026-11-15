@@ -376,6 +376,10 @@ needs and the file does not hold (`executor/envfill.py`).
 1. A `kind: venv` component is built with `uv venv --relocatable` first, so
    the tree survives its own rename.
 2. The action id root pushes is a 26-character lower-case ULID.
+3. A venv builds on an interpreter that the `requires-python` of its
+   project allows. The floor thus names the Python of the host: 3.14 in
+   each `pyproject.toml` of this repository. When the host has two
+   interpreters that the floor allows, uv can build on either one.
 
 ## Binary builds
 

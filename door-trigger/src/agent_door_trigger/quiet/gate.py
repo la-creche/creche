@@ -153,7 +153,7 @@ class QuietGate:
 
         try:
             local = now.astimezone(ZoneInfo(daily.zone))
-        except (KeyError, ValueError, OSError):
+        except KeyError, ValueError, OSError:
             return Daily.OWED
 
         if daily.weekdays_only and local.weekday() >= SATURDAY:

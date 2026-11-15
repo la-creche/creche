@@ -14,7 +14,7 @@
 # Four image targets and one build-only stage:
 #   agent-sandbox         every family
 #   agent-sandbox-python  the python flavor: pandas, numpy and matplotlib
-#                         for the analysis stack, plus the 3.12 test venv
+#                         for the analysis stack, plus the 3.14 test venv
 #                         that runs this repository's own test suites. All
 #                         installed at BUILD time, so a run needs no network
 #   agent-sandbox-coding  the coding flavor of code and creche (CH7-1): the
@@ -24,10 +24,10 @@
 #                         service VM (ServiceImage::Browser), with Chrome,
 #                         agent-browser and creche-browser-facade
 #   creche-test-venv      build-only: it resolves uv.lock and installs the
-#                         test venv and the 3.12 interpreter. It ships in
+#                         test venv and the 3.14 interpreter. It ships in
 #                         no image. Only the coding flavor copies its uv
 ARG NODE_IMAGE=node:24-bookworm@sha256:e7add2a490bb17d97b485b8641bd88455fff7839ade0f5eba493c3508124d413
-ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337
+ARG PYTHON_IMAGE=python:3.14-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b
 ARG UV_VERSION=0.13.6
 ARG UV_WHEEL_SHA256=22759b8895e1103578de6fb4cd27e94b4399d021023378d29f01333717751fba
 
@@ -128,8 +128,8 @@ RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env
 # --- creche-test-venv -------------------------------------------------------
 # Build-only stage. It resolves the Python workspace of this repository
 # from uv.lock and installs its test environment into /opt/test, on
-# CPython 3.12. The workspace needs 3.12: its code uses PEP 695 type
-# parameters, which 3.11 cannot read.
+# CPython 3.14. The workspace needs 3.14: its `requires-python` names
+# the Python of the host.
 #
 # The pins are the pins of uv.lock, the same file the host's test
 # environment uses. A dependency change for the test venv is a lockfile
@@ -195,11 +195,11 @@ RUN printf '%s\n' \
 # The interpreter ships without an installer. pip and its friends leave
 # the site-packages of the stage, and ensurepip leaves the stdlib, so no
 # venv of the image can rebuild pip from its bundled wheels either.
-RUN rm -rf /usr/local/lib/python3.12/site-packages/pip* \
-           /usr/local/lib/python3.12/site-packages/setuptools* \
-           /usr/local/lib/python3.12/site-packages/uv* \
-           /usr/local/lib/python3.12/site-packages/wheel* \
-           /usr/local/lib/python3.12/ensurepip \
+RUN rm -rf /usr/local/lib/python3.14/site-packages/pip* \
+           /usr/local/lib/python3.14/site-packages/setuptools* \
+           /usr/local/lib/python3.14/site-packages/uv* \
+           /usr/local/lib/python3.14/site-packages/wheel* \
+           /usr/local/lib/python3.14/ensurepip \
     && /opt/test/bin/pytest --version
 
 # --- agent-sandbox-python ---------------------------------------------------
@@ -248,7 +248,7 @@ RUN mkdir -p "${MPLCONFIGDIR}" \
     && python3 -c "import matplotlib.pyplot, pandas, numpy"
 
 # --- The test venv of this repository's own workspace -----------------------
-# A second venv, /opt/test, holds CPython 3.12 and the locked test
+# A second venv, /opt/test, holds CPython 3.14 and the locked test
 # dependencies of this repository: pytest, its plugins, and the third-party
 # dependencies the suites import. The creche-test-venv stage built it and
 # stripped the interpreter it needs. `/opt/test/bin/pytest` runs it; on
@@ -259,9 +259,9 @@ RUN mkdir -p "${MPLCONFIGDIR}" \
 # runtime libraries above. The self-test updates the loader cache.
 COPY --from=creche-test-venv /usr/local/bin/python /usr/local/bin/
 COPY --from=creche-test-venv /usr/local/bin/python3 /usr/local/bin/
-COPY --from=creche-test-venv /usr/local/bin/python3.12 /usr/local/bin/
-COPY --from=creche-test-venv /usr/local/lib/python3.12 /usr/local/lib/python3.12
-COPY --from=creche-test-venv /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/
+COPY --from=creche-test-venv /usr/local/bin/python3.14 /usr/local/bin/
+COPY --from=creche-test-venv /usr/local/lib/python3.14 /usr/local/lib/python3.14
+COPY --from=creche-test-venv /usr/local/lib/libpython3.14.so.1.0 /usr/local/lib/
 COPY --from=creche-test-venv /opt/test /opt/test
 ENV PATH="/opt/py/bin:/opt/test/bin:${PATH}"
 
@@ -271,12 +271,12 @@ ENV PATH="/opt/py/bin:/opt/test/bin:${PATH}"
 # image. pip, uv, ensurepip and nodeenv must all stay unavailable.
 RUN ldconfig \
     && /opt/test/bin/pytest --version \
-    && /usr/local/bin/python3.12 -c "import sqlite3, ssl" \
+    && /usr/local/bin/python3.14 -c "import sqlite3, ssl" \
     && grep -F 'exec /opt/test/bin/python -P -c' /opt/test/bin/creche-env >/dev/null \
-    && if /usr/local/bin/python3.12 -m pip --version >/dev/null 2>&1; then \
+    && if /usr/local/bin/python3.14 -m pip --version >/dev/null 2>&1; then \
          echo "the image ships pip in /usr/local" >&2; exit 1; \
        fi \
-    && if /usr/local/bin/python3.12 -m uv --version >/dev/null 2>&1; then \
+    && if /usr/local/bin/python3.14 -m uv --version >/dev/null 2>&1; then \
          echo "the image ships uv in /usr/local" >&2; exit 1; \
        fi \
     && if [ -e /opt/test/bin/pip ]; then \
@@ -298,7 +298,7 @@ RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env
 # --- agent-sandbox-coding ---------------------------------------------------
 # The coding flavor of code and creche (CH7-1, for now). It is the python
 # flavor plus the installers that a repo's checks need: uv, pnpm through
-# corepack, and cargo with Rust 1.92.0, rustfmt and clippy. Python 3.12 is
+# corepack, and cargo with Rust 1.92.0, rustfmt and clippy. Python 3.14 is
 # the python flavor's. Agents install a repo's locked dependencies through
 # the egress proxy (CH6-1), then run its checks.
 #
@@ -333,7 +333,7 @@ RUN corepack enable pnpm \
 
 # The guest end of the git platform spool (CH3, phase 12): an agent moves
 # a branch as a git bundle through guest 127.0.0.1:1105, and the
-# git-platform tools push and fetch it. It runs on python3.12 with -I, so a
+# git-platform tools push and fetch it. It runs on python3.14 with -I, so a
 # module in the repo under work never loads. playpen/AGENTS.md has the flow.
 # The mode is set by chmod, not by a COPY flag: the bundles test of
 # handover reads each COPY word as a copied path.
@@ -346,7 +346,7 @@ RUN uv --version \
     && cargo --version && rustc --version \
     && cargo fmt --version && cargo clippy --version \
     && pnpm --version \
-    && python3.12 --version \
+    && python3.14 --version \
     && creche-git-spool --help >/dev/null
 
 # The egress proxy of the tools: guest init bridges guest 127.0.0.1:3128 to

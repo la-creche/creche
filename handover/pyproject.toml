@@ -2,7 +2,7 @@
 name = "handover"
 version = "0.1.0"
 description = "handover: component manifests, the resolver, and tags allocated at merge (contract 06)."
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 # `creche-env` is the one reader of the env files. Root reads the catalog
 # and the site file with it, at the env fill of a release. It uses the
 # standard library only.

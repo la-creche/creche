@@ -311,7 +311,7 @@ def test_the_coding_flavor_ships_the_helper() -> None:
     assert line in coding
     assert mode in coding
     assert "creche-git-spool --help >/dev/null" in coding
-    assert HELPER.read_text(encoding="utf-8").startswith("#!/usr/local/bin/python3.12 -I\n")
+    assert HELPER.read_text(encoding="utf-8").startswith("#!/usr/local/bin/python3.14 -I\n")
 
 
 def test_push_puts_a_bundle_over_the_remote_base(

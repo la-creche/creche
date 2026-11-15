@@ -52,7 +52,7 @@ class HttpTransport:
                 headers={"Authorization": f"Bearer {bearer}"},
                 timeout=_TIMEOUT,
             )
-        except (httpx.LocalProtocolError, httpx.InvalidURL, UnicodeEncodeError):
+        except httpx.LocalProtocolError, httpx.InvalidURL, UnicodeEncodeError:
             # The client itself refused a header or a path that HTTP cannot
             # carry. The text of such an error quotes what it refused, and a
             # header holds the token (invariant 13). The page gets a fixed
