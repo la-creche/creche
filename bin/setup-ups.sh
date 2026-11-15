@@ -16,7 +16,7 @@
 #   mains fails ──> ups1 on battery ──> 5 min timer (upssched) ──> shutdown
 #                                  └──> low battery (UPS flag) ──> shutdown
 #
-# General Sherman keeps its own NUT. Nothing here depends on it.
+# Another host keeps its own NUT. Nothing here depends on it.
 #
 # WHAT IT REFUSES TO DO. It never tells the UPS to cut its output: the UPS
 # also feeds the router, the switch and the rack vent. `upsmon` runs as a
