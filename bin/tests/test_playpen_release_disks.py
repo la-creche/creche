@@ -12,12 +12,13 @@ digest of each other file.
 
 The tests hold the output to three other sources:
 
-1. `artifacts.disk_files`: the five files that `handover disk-assets`
+1. `artifacts.disk_files`: the six files that `handover disk-assets`
    names, and so the files that root installs.
 2. `rust/crates/wire/vectors/digests.json`: the keys and the file names of
    `digests.json`. The vmm parses the same vector
    (`rust/crates/vmm/src/image_root/tests.rs`).
-3. `catalog.DISK_FLAVORS` and the flavor pairs of `playpen/bin/playpen-ci`.
+3. `catalog.DISK_FLAVORS` and the flavor pairs of `playpen/bin/playpen-ci`,
+   and `catalog.SERVICE_IMAGES` and its service pairs.
 
 The last two tests run a copy of the script beside stand-ins for the three
 playpen scripts, so a digest line can name another file.
@@ -34,7 +35,13 @@ from typing import Final
 
 import pytest
 from handover.artifacts import disk_files
-from handover.catalog import DIGESTS_FILE, DISK_FLAVORS, DISK_SUFFIX, KERNEL_FILE
+from handover.catalog import (
+    DIGESTS_FILE,
+    DISK_FLAVORS,
+    DISK_SUFFIX,
+    KERNEL_FILE,
+    SERVICE_IMAGES,
+)
 from handover.discovery import read_one
 
 REPO: Final = Path(__file__).resolve().parents[2]
@@ -55,7 +62,7 @@ def _kernel_pin() -> str:
 
 KERNEL_PIN: Final = _kernel_pin()
 
-#: The digest list that the script writes beside the five files.
+#: The digest list that the script writes beside the six files.
 SUMS: Final = "SHA256SUMS"
 
 #: `docker`: one argv line per call into STUB_LOG.
@@ -170,7 +177,7 @@ def _written(tmp_path: Path) -> dict[str, object]:
 
 
 def test_the_script_writes_one_file_per_flavor_and_the_kernel(tmp_path: Path) -> None:
-    """The five files of `handover disk-assets` and SHA256SUMS, nothing
+    """The six files of `handover disk-assets` and SHA256SUMS, nothing
     else. SHA256SUMS holds the digest of each file as it ships."""
     done = _run(tmp_path)
 
@@ -209,32 +216,39 @@ def test_the_digest_lines_are_the_decompressed_digests(tmp_path: Path) -> None:
     assert written == {
         "kernel": {"file": KERNEL_FILE, "sha256": KERNEL_PIN},
         **{
-            flavor: {"file": f"{flavor}{DISK_SUFFIX}", "sha256": _sha(f"raw {flavor}\n")}
-            for flavor in DISK_FLAVORS
+            disk: {"file": f"{disk}{DISK_SUFFIX}", "sha256": _sha(f"raw {disk}\n")}
+            for disk in (*DISK_FLAVORS, *SERVICE_IMAGES)
         },
     }
     zst = (tmp_path / "out" / f"{DISK_FLAVORS[0]}{DISK_SUFFIX}").read_text(encoding="utf-8")
     assert zst == f"zst {DISK_FLAVORS[0]}\n"
 
 
+def _pairs(path: Path, variable: str) -> dict[str, str]:
+    """The `<disk>:<target>` pairs of the line `VARIABLE="..."` of `path`."""
+    found = re.search(rf'^{variable}="([^"]*)"$', path.read_text(encoding="utf-8"), re.MULTILINE)
+    assert found is not None, f"{path} has no {variable}"
+    return dict(pair.split(":") for pair in found.group(1).split())
+
+
 def test_the_flavors_are_the_disk_flavors_and_the_targets_of_playpen_ci(tmp_path: Path) -> None:
     """One root disk for each flavor of `catalog.DISK_FLAVORS`, in that
-    order, each from its target in playpen-ci (decision CH76 rule 7)."""
-    pairs = re.search(r'^FLAVORS="([^"]*)"$', SCRIPT.read_text(encoding="utf-8"), re.MULTILINE)
-    ci = re.search(r'^FLAVORS="([^"]*)"$', PLAYPEN_CI.read_text(encoding="utf-8"), re.MULTILINE)
-    assert pairs is not None
-    assert ci is not None
-    ours = dict(pair.split(":") for pair in pairs.group(1).split())
-    theirs = dict(pair.split(":") for pair in ci.group(1).split())
+    order, then one for each service image of `catalog.SERVICE_IMAGES`,
+    each from its target in playpen-ci (decision CH76 rule 7, browser
+    design 10.5.2)."""
+    flavors = _pairs(SCRIPT, "FLAVORS")
+    services = _pairs(SCRIPT, "SERVICES")
 
-    assert tuple(ours) == DISK_FLAVORS
-    assert ours == {flavor: theirs[flavor] for flavor in DISK_FLAVORS}
+    assert tuple(flavors) == DISK_FLAVORS
+    assert tuple(services) == SERVICE_IMAGES
+    assert flavors == _pairs(PLAYPEN_CI, "FLAVORS")
+    assert services == _pairs(PLAYPEN_CI, "SERVICES")
 
     done = _run(tmp_path)
     assert done.returncode == 0, done.stderr
     log = (tmp_path / "docker.log").read_text(encoding="utf-8").splitlines()
     targets = [line.split("--target ")[1].split()[0] for line in log if line.startswith("buildx ")]
-    assert targets == list(ours.values())
+    assert targets == [*flavors.values(), *services.values()]
 
 
 def test_the_manifest_build_runs_this_script() -> None:
@@ -244,7 +258,7 @@ def test_the_manifest_build_runs_this_script() -> None:
     assert argv[-1] == str(SCRIPT.relative_to(REPO))
 
 
-@pytest.mark.parametrize("fail", ["agent-sandbox-python", "base"])
+@pytest.mark.parametrize("fail", ["agent-sandbox-python", "base", "service-browser", "browser"])
 def test_a_failed_step_leaves_disk_out_empty(tmp_path: Path, fail: str) -> None:
     """A failed tar or a failed disk stops the run, and DISK_OUT holds no
     file: the job uploads nothing to sign."""
@@ -318,7 +332,7 @@ def _run_with_playpen_stubs(tmp_path: Path, name: str) -> subprocess.CompletedPr
 
 def test_the_stand_ins_of_the_digest_check_build_the_files(tmp_path: Path) -> None:
     """The positive control of the next test: each digest line names its
-    own file, and the run writes the five files and SHA256SUMS."""
+    own file, and the run writes the six files and SHA256SUMS."""
     done = _run_with_playpen_stubs(tmp_path, "")
 
     assert done.returncode == 0, done.stderr

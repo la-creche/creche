@@ -16,7 +16,7 @@ use creche_vmm::root_owned::OwnerError;
 use creche_vmm::start::Digests;
 use creche_vmm_store::images::ImageStore;
 use creche_vmm_store::layout::StateRoot;
-use creche_wire::{PerFlavor, SandboxFlavor};
+use creche_wire::{PerFlavor, PerService, SandboxFlavor, ServiceImage};
 
 /// The SHA-256 of no bytes.
 const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -37,16 +37,16 @@ impl Drop for Root {
 #[cfg(test)]
 impl Root {
     /// An image root with the file `vmlinux` (no bytes), one file
-    /// `<flavor>.ext4` (`abc`) for each flavor, and a good `digests.json`
-    /// that the test user owns.
+    /// `<name>.ext4` (`abc`) for each flavor and each service image, and a
+    /// good `digests.json` that the test user owns.
     fn new(name: &str) -> Self {
         let dir =
             std::env::temp_dir().join(format!("creche-vmm-images-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("images")).unwrap();
         fs::write(dir.join("images/vmlinux"), "").unwrap();
-        for (_, &flavor) in PerFlavor::every(SandboxFlavor::name).iter() {
-            fs::write(dir.join(format!("images/{flavor}.ext4")), "abc").unwrap();
+        for name in disk_names() {
+            fs::write(dir.join(format!("images/{name}.ext4")), "abc").unwrap();
         }
         let root = Self(dir);
         fs::write(root.digests(), good()).unwrap();
@@ -100,14 +100,27 @@ fn chown_root(path: &Path) {
     assert!(status.success(), "sudo chown: {status}");
 }
 
-/// The good `digests.json`: the kernel and one entry for each flavor.
+/// The wire name of each flavor, then of each service image: the keys of
+/// `digests.json` that name a root disk.
+#[cfg(test)]
+fn disk_names() -> Vec<&'static str> {
+    let flavors = PerFlavor::every(SandboxFlavor::name);
+    let services = PerService::every(ServiceImage::name);
+    let flavors = flavors.iter().map(|(_, &name)| name);
+    flavors
+        .chain(services.iter().map(|(_, &name)| name))
+        .collect()
+}
+
+/// The good `digests.json`: the kernel and one entry for each flavor and
+/// each service image.
 #[cfg(test)]
 fn good() -> String {
     let entry = |file: &str, sha256: &str| serde_json::json!({ "file": file, "sha256": sha256 });
     let mut json = serde_json::Map::new();
     json.insert(KERNEL_KEY.to_owned(), entry("vmlinux", EMPTY));
-    for (_, &flavor) in PerFlavor::every(SandboxFlavor::name).iter() {
-        json.insert(flavor.to_owned(), entry(&format!("{flavor}.ext4"), ABC));
+    for name in disk_names() {
+        json.insert(name.to_owned(), entry(&format!("{name}.ext4"), ABC));
     }
     serde_json::Value::Object(json).to_string()
 }
@@ -180,6 +193,7 @@ fn kvm_a_root_owned_file_gives_the_digests() {
         let expected = Digests {
             kernel: EMPTY.parse().unwrap(),
             roots: PerFlavor::every(|_| ABC.parse().unwrap()),
+            services: PerService::every(|_| Some(ABC.parse().unwrap())),
         };
         assert_eq!(root.read().unwrap(), expected, "{mode:o}");
     }

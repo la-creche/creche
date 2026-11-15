@@ -75,9 +75,9 @@ const PROGRAMS: [(&str, &str); 3] = [
     (GUEST_INIT, "guest-init"),
 ];
 
-/// The kernel and the root disk of each flavor, each with the SHA-256 of
-/// its bytes.
-const IMAGES: [(&str, &str, &str); 4] = [
+/// The kernel, the root disk of each flavor and the root disk of each
+/// service image, each with the SHA-256 of its bytes.
+const IMAGES: [(&str, &str, &str); 5] = [
     (
         "vmlinux",
         "",
@@ -97,6 +97,11 @@ const IMAGES: [(&str, &str, &str); 4] = [
         "coding.ext4",
         "coding",
         "9623c1ece5cf9eac8c087030d2c4be5747556cf40920ebfeba1fcc0cc976f123",
+    ),
+    (
+        "browser.ext4",
+        "browser",
+        "d4c3e8a11256ab82a4fc72560eb4a2b0e87bad820c290dd9b03616de240aa6db",
     ),
 ];
 
@@ -173,6 +178,7 @@ impl Scratch {
             "base": entry(IMAGES[1]),
             "python": entry(IMAGES[2]),
             "coding": entry(IMAGES[3]),
+            "browser": entry(IMAGES[4]),
         });
         let digests_file = self.0.join("images").join(DIGESTS_FILE);
         std::fs::write(&digests_file, digests.to_string()).unwrap();

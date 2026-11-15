@@ -9,14 +9,15 @@
 #
 # DISK_OUT names a directory that is absent or empty. The script writes
 # these files into it:
-#   1. `<flavor>.ext4.zst` for each flavor of FLAVORS: playpen-rootfs
-#      exports the tar of the flavor's target, and playpen-disk makes the
-#      disk from it.
+#   1. `<flavor>.ext4.zst` for each flavor of FLAVORS, then
+#      `<image>.ext4.zst` for each service image of SERVICES: playpen-rootfs
+#      exports the tar of the target, and playpen-disk makes the disk from
+#      it.
 #   2. `vmlinux-x86_64.zst`: playpen-kernel fetches the pinned kernel.
 #   3. `digests.json`: the digest line of each of those scripts, the
-#      SHA-256 of the decompressed bytes (CH41 rule 1). It holds `kernel`
-#      and one key for each flavor, each {file, sha256}, with the keys
-#      sorted and no other key (CH58 rule 4). The vmm reads it from
+#      SHA-256 of the decompressed bytes (CH41 rule 1). It holds `kernel`,
+#      one key for each flavor and one key for each service image, each
+#      {file, sha256}, with the keys sorted and no other key (CH58 rule 4). The vmm reads it from
 #      VMM_IMAGE_ROOT (CH57 rule 1). rust/crates/wire/vectors/digests.json
 #      holds one good file of this shape, and the vmm parses it.
 #   4. `SHA256SUMS`: the SHA-256 of each file above, as sha256sum prints
@@ -25,10 +26,14 @@
 #
 # FLAVORS holds `catalog.DISK_FLAVORS` with the target of each one in
 # playpen/Dockerfile. Coding joined with the PR that added it to the wire
-# enum, before the cut (CH76 rule 7, CH79 rule 1).
+# enum, before the cut (CH76 rule 7, CH79 rule 1). SERVICES holds
+# `catalog.SERVICE_IMAGES`, the values of the wire enum `ServiceImage`,
+# with the target of each one. A service image is no flavor: no family
+# file may choose it (browser design 10.5.2).
 # bin/tests/test_playpen_release_disks.py holds FLAVORS equal to
-# DISK_FLAVORS and to the pairs of playpen-ci, and its files equal to the
-# files of `handover disk-assets`.
+# DISK_FLAVORS, SERVICES equal to SERVICE_IMAGES, both equal to the pairs
+# of playpen-ci, and its files equal to the files of `handover
+# disk-assets`.
 #
 # Exit 0 with each file written. Exit 1 when a step fails. A step that
 # fails before the last one leaves DISK_OUT empty.
@@ -40,6 +45,7 @@ die() { printf 'playpen-release-disks: %s\n' "$*" >&2; exit 1; }
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 PLAYPEN_BIN="$ROOT/playpen/bin"
 FLAVORS="base:agent-sandbox python:agent-sandbox-python coding:agent-sandbox-coding"
+SERVICES="browser:service-browser"
 KERNEL=vmlinux-x86_64
 DIGESTS=digests.json
 SUMS=SHA256SUMS
@@ -75,16 +81,18 @@ entry() {
 entries=""
 names=("$DIGESTS" "$KERNEL.zst")
 
-for pair in $FLAVORS; do
-  flavor="${pair%%:*}"
+# A flavor and a service image make their disk the same way. Only the key
+# of digests.json tells the vmm which set the disk is in.
+for pair in $FLAVORS $SERVICES; do
+  disk="${pair%%:*}"
   target="${pair#*:}"
-  "$PLAYPEN_BIN/playpen-rootfs" "$target" "$work/$flavor.tar" || die "the $flavor tar failed"
-  line="$("$PLAYPEN_BIN/playpen-disk" "$work/$flavor.tar" "$work/files" "$flavor")" ||
-    die "the $flavor disk failed"
-  rm -f -- "$work/$flavor.tar"
-  sha="$(digest_of "$line" "$flavor.ext4")"
-  entries+="$(entry "$flavor" "$flavor.ext4.zst" "$sha")"$'\n'
-  names+=("$flavor.ext4.zst")
+  "$PLAYPEN_BIN/playpen-rootfs" "$target" "$work/$disk.tar" || die "the $disk tar failed"
+  line="$("$PLAYPEN_BIN/playpen-disk" "$work/$disk.tar" "$work/files" "$disk")" ||
+    die "the $disk disk failed"
+  rm -f -- "$work/$disk.tar"
+  sha="$(digest_of "$line" "$disk.ext4")"
+  entries+="$(entry "$disk" "$disk.ext4.zst" "$sha")"$'\n'
+  names+=("$disk.ext4.zst")
 done
 
 line="$("$PLAYPEN_BIN/playpen-kernel" "$work/files")" || die "the kernel failed"

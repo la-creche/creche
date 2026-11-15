@@ -165,7 +165,7 @@ pub fn sha256(path: &Path) -> String {
 
 /// The image root (decision CH57 rule 1): the guest kernel and the root
 /// disk that `disk` places in it. Root owns `digests.json`, which names
-/// that one disk for each flavor.
+/// that one disk for each flavor and each service image.
 fn image_root(work: &Path, disk: impl FnOnce(&Path, &Path) -> RootDisk) -> PathBuf {
     let root = work.join("image");
     fs::create_dir(&root).unwrap();
@@ -175,7 +175,7 @@ fn image_root(work: &Path, disk: impl FnOnce(&Path, &Path) -> RootDisk) -> PathB
     let disk = entry(&placed.file, &placed.sha256);
     let digests = root.join("digests.json");
     let text = format!(
-        r#"{{"kernel":{},"base":{disk},"python":{disk},"coding":{disk}}}"#,
+        r#"{{"kernel":{},"base":{disk},"python":{disk},"coding":{disk},"browser":{disk}}}"#,
         entry("vmlinux", &sha256(&root.join("vmlinux")))
     );
     fs::write(&digests, text).unwrap();
