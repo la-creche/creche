@@ -13,7 +13,7 @@
 #
 # Steps 4-8: the state dirs, the clone of the private
 # nodered-flows repo, the sync's env file (the password is typed at a
-# prompt, never argv, never echoed), then `nodered-flows-sync --scan-only`
+# prompt, never argv, never echoed), then `python3 -m agent_flowsync.noderedsync --scan-only`
 # and a question — the first push is irreversible, so nothing is installed
 # or enabled until the operator has read what it would send and answered y. With no
 # terminal it never asks and never enables. Every step skips what a missing
@@ -95,8 +95,6 @@ FLOWS_REPO="${APPROVAL_FLOWS_REPO:?set APPROVAL_FLOWS_REPO to the git URL of the
 HA_URL="${HA_URL:?set HA_URL to the base URL of Home Assistant}"
 # The flows sync. Its env file sits beside the other operator-only secrets,
 # not under nodered/ (group agents can traverse that one).
-DEPLOYED=/opt/creche
-UNIT_DIR="$HOME/.config/systemd/user"
 # The reviewer key, on the strongest alias.
 # LiteLLM's address: LITELLM_URL when it is set, else the host's own LAN IP.
 # NOT loopback — `creche-litellm` publishes to the LAN address and nothing
@@ -114,8 +112,10 @@ NR_CLONE="$NR_STATE/flows-repo"
 NR_LATCH="$NR_STATE/sync.latch"
 SYNC_ENV=/srv/agents/state/nodered-sync.env
 SYNC_USER=nodered-sync
-SYNC_UNIT=nodered-flows-sync
-SYNC_BIN="$DEPLOYED/.venv/bin/$SYNC_UNIT"
+SYNC_UNIT=creche-nodered-flows-sync
+# flowsync runs from its source in the `host` release of creche-release, with
+# the system python, as the unit does (PYTHONPATH of creche-nodered-flows-sync.service).
+SYNC_SRC=/opt/components/host/flowsync/src
 SYNC_REPO="${NODERED_FLOWS_REPO:?set NODERED_FLOWS_REPO to the git URL of the flows repo}"
 NODERED_URL_VALUE="${NODERED_URL:?set NODERED_URL to the base URL of the Node-RED admin API}"
 
@@ -127,7 +127,7 @@ run_scan() (
     [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
     export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
   done < "$SYNC_ENV"
-  exec "$SYNC_BIN" --scan-only
+  PYTHONPATH="$SYNC_SRC" exec /usr/bin/python3 -m agent_flowsync.noderedsync --scan-only
 )
 
 # Only this exit means a latch was written (noderedsync.Exit.LATCHED). Any
@@ -217,8 +217,8 @@ say "7. what the first push would send (--scan-only: one GET; nothing written, c
 ENABLE=0
 if [[ "$CLONED" != "1" ]] || ! grep -q '^NODERED_SYNC_PASSWORD=' "$SYNC_ENV"; then
   echo "skipped: needs the clone (5) and the password (6)"
-elif [[ ! -x "$SYNC_BIN" ]]; then
-  echo "skipped: $SYNC_BIN missing — sudo creche-deploy first"
+elif [[ ! -d "$SYNC_SRC/agent_flowsync" ]]; then
+  echo "skipped: $SYNC_SRC/agent_flowsync missing — the host release is not installed"
 elif systemctl --user is-enabled --quiet "$SYNC_UNIT.timer" 2>/dev/null; then
   ENABLE=1
   echo "timer already enabled: consent was given on an earlier run"
@@ -235,10 +235,8 @@ else
   fi
 fi
 
-say "8. units: $SYNC_UNIT.{service,timer}"
+say "8. timer: $SYNC_UNIT.timer (the host release links the unit files)"
 if [[ "$ENABLE" == "1" ]]; then
-  mkdir -p "$UNIT_DIR"
-  install -m 0644 "$DEPLOYED/systemd/$SYNC_UNIT.service" "$DEPLOYED/systemd/$SYNC_UNIT.timer" "$UNIT_DIR/"
   systemctl --user daemon-reload
   systemctl --user enable --now "$SYNC_UNIT.timer"
   echo "enabled; first run within 5 min, or now: systemctl --user start $SYNC_UNIT.service"

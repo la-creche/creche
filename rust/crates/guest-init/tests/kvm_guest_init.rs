@@ -738,7 +738,9 @@ fn kvm_guest_init_synced_writes_survive_a_ch_kill() {
 /// header included, and the answer comes back (decisions CH6-2, CH14,
 /// fact 46). With no listener of port 1100, the family-state dial fails,
 /// and guest init closes the link of the facade at once (decision CH62
-/// rule 14).
+/// rule 14). So the stand-in has no value and sends no `Authorization`.
+/// Each host listener takes one link and then closes, so the third GET,
+/// with a wrong value, finds no 1101 listener and ends `closed`.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_guest_init_bridges_the_planes() {
@@ -756,7 +758,7 @@ fn kvm_guest_init_bridges_the_planes() {
     let pid = starting(&hello(&mut link, now()));
 
     let words = pulled(&work, pid);
-    assert_eq!(words[..3], ["closed", "200", "200"], "{words:?}");
+    assert_eq!(words[..4], ["closed", "200", "200", "closed"], "{words:?}");
     for (guest, host) in planes {
         assert_eq!(
             host.join().unwrap(),
@@ -813,11 +815,11 @@ fn kvm_guest_init_bridges_the_family_state() {
 
     let words = pulled(&work, pid);
     assert_eq!(
-        words[..3],
-        ["creds_missing", "closed", "closed"],
+        words[..4],
+        ["creds_missing", "closed", "closed", "closed"],
         "{words:?}"
     );
-    let pull_ms: u64 = words[3].parse().unwrap();
+    let pull_ms: u64 = words[4].parse().unwrap();
     eprintln!("the pull took {pull_ms} ms");
     let (line, listener) = host.join().unwrap();
     let mut pull = serde_json::to_string(&FamilyStatePull {}).unwrap();

@@ -225,7 +225,7 @@ fn sudo(command: &[&str], path: &Path) {
     assert!(status.success(), "sudo {command:?}: {status}");
 }
 
-/// A hard `RLIMIT_NOFILE` below the fd need of the vmm (103552), and
+/// A hard `RLIMIT_NOFILE` below the fd need of the vmm (128128), and
 /// below the hard limit of each host that runs the tests.
 const SHORT_NOFILE: &str = "1024";
 
@@ -453,7 +453,7 @@ fn kvm_a_short_hard_fd_limit_refuses_before_the_bind() {
         + mirror::fd_need()
         + proxy::fd_need()
         + spool::fd_need();
-    assert_eq!(need, 103_552);
+    assert_eq!(need, 128_128);
     assert_eq!(output.status.code(), Some(EX_CONFIG), "{stderr}");
     let unit = match VmmUnit::of_self() {
         Ok(_) => String::new(),

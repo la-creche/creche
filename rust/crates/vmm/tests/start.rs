@@ -1369,6 +1369,21 @@ fn the_sweep_skips_a_snapshot_in_use() {
     assert!(!dir.exists());
 }
 
+/// The sweep drops a snapshot whose key names another CH rev: no start
+/// restores it (decision CH7-6), and its key would keep its images in
+/// the store. A snapshot with the key of the current images stays.
+#[test]
+fn the_sweep_drops_a_snapshot_with_a_stale_key() {
+    let test = Test::new("sweep-stale", |_| {});
+    let stale = test.snapshot(0, None);
+    let kept = test.snapshot(1, Some(&test.key()));
+    let swept = test.runtime.block_on(test.hook.sweep()).unwrap();
+    let reasons: Vec<Reason> = swept.dropped.iter().map(|each| each.reason).collect();
+    assert_eq!(reasons, [Reason::Stale]);
+    assert!(!stale.exists());
+    assert!(kept.is_dir());
+}
+
 /// The sweep reads the budget of `StartConfig`, the key
 /// `VMM_SNAPSHOT_BUDGET_GIB` (gap G14). A budget of 1 byte drops a keyed
 /// generation that `BUDGET` keeps.
@@ -2550,40 +2565,68 @@ fn a_restore_binds_the_listeners_again() {
     assert_eq!(*test.fake.listening.lock().unwrap(), [NO_EGRESS; 2]);
 }
 
-/// A dial of 1101 reaches the plane of the config while the VM runs. The
-/// stop of the VM closes the listener (plan PR V6).
+/// A request on 1101 with the placeholder of the row reaches the plane of
+/// the config with the real key of the family while the VM runs, so the
+/// start hands the proxy the right session, family and root. The stop of
+/// the VM closes the listener (plan PR V6, openshell ideas plan idea 1).
 #[test]
 fn the_listeners_go_with_the_vm() {
     let plane = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = plane.local_addr().unwrap();
+    // The plane answers each request with its `Authorization` line.
     spawn(move || {
         for stream in plane.incoming() {
-            let mut stream = stream.unwrap();
+            let stream = stream.unwrap();
             spawn(move || {
-                let mut buffer = [0; 64];
-                while let Ok(read @ 1..) = stream.read(&mut buffer) {
-                    stream.write_all(&buffer[..read]).unwrap();
+                let mut authorization = String::new();
+                for line in BufReader::new(&stream).lines() {
+                    let line = line.unwrap();
+                    if line.is_empty() {
+                        break;
+                    }
+                    if line.to_ascii_lowercase().starts_with("authorization:") {
+                        authorization = line;
+                    }
                 }
+                let answer = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{authorization}",
+                    authorization.len()
+                );
+                (&stream).write_all(answer.as_bytes()).unwrap();
             });
         }
     });
     let test = Test::new("planes-stop", |config| config.planes.litellm = addr);
+    let family = test.dir.join("families/chat");
+    fs::create_dir_all(family.join("creds")).unwrap();
+    fs::write(family.join("creds/creds.json"), CREDS).unwrap();
     assert_eq!(test.start(0), Ok(()));
+    let id = &test.rows[0].id;
+    let placeholders = test.store.lock().unwrap().placeholders(id).unwrap().clone();
+    let placeholder = placeholders.litellm_key().reveal().to_owned();
     let listener = test.dir.join("run/slot/0/vsock.sock_1101");
     let path = listener.clone();
-    // The current-thread runtime runs the bridge only inside `block_on`,
+    // The current-thread runtime runs the proxy only inside `block_on`,
     // so the guest side runs in `spawn_blocking`.
-    let echoed = test.runtime.block_on(test.runtime.spawn_blocking(move || {
+    let answer = test.runtime.block_on(test.runtime.spawn_blocking(move || {
         let mut guest = UnixStream::connect(path).unwrap();
         guest
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        guest.write_all(b"ping").unwrap();
-        let mut back = [0; 4];
-        guest.read_exact(&mut back).unwrap();
-        back
+        let request = format!(
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1:4000\r\nAuthorization: Bearer {placeholder}\r\nConnection: close\r\n\r\n"
+        );
+        guest.write_all(request.as_bytes()).unwrap();
+        let mut answer = String::new();
+        guest.read_to_string(&mut answer).unwrap();
+        answer
     }));
-    assert_eq!(&echoed.unwrap(), b"ping");
+    let answer = answer.unwrap();
+    assert!(answer.starts_with("HTTP/1.1 200 OK"), "{answer}");
+    assert!(
+        answer.ends_with("Authorization: Bearer sk-start-key"),
+        "{answer}"
+    );
 
     let id = test.rows[0].id.clone();
     assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
@@ -3485,7 +3528,12 @@ fn a_pull_does_not_set_last_use() {
         reply
     }));
     let reply: serde_json::Value = serde_json::from_str(&reply.unwrap()).unwrap();
-    assert_eq!(reply["state"]["creds"]["litellm_key"], "sk-start-key");
+    // The reply carries the placeholder of the row, not the real key
+    // (openshell ideas plan, idea 1).
+    let id = &test.rows[0].id;
+    let placeholders = test.store.lock().unwrap().placeholders(id).unwrap().clone();
+    let key = &reply["state"]["creds"]["litellm_key"];
+    assert_eq!(key, placeholders.litellm_key().reveal());
     let at = started + IDLE_TIMEOUT + Duration::from_millis(100);
     let slept = test.runtime.block_on(test.hook.sleep_idle(at));
     assert_eq!(slept, [test.rows[0].id.clone()]);

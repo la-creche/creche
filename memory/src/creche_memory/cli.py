@@ -27,6 +27,7 @@ from types import FrameType
 
 from .config import Config, ConfigError, check, from_env
 from .graph import Dead, NotAVerdict, close_cognee_graph, cognee_graph_state, drain_cognee_graph
+from .logs import plain_console
 from .search import STOP_TIMEOUT_S, Searcher, StoreLoop
 from .server import MemoryServer, Service
 from .store import configure
@@ -170,11 +171,18 @@ def _serve(config: Config) -> int:
     places = config.places
     places.store_root.mkdir(mode=STORE_MODE, exist_ok=True)
     configure(config.store)
-
     # The sync loop sets `stop` when it ends, so a dead graph or an error
     # ends the wait below and stops the service.
     stop = threading.Event()
     stop_signals(stop)
+    # The first import of Cognee. Its own console handler draws a traceback
+    # box of many lines for each failed document, so swap it before the
+    # first sync (`logs.py`).
+    try:
+        plain_console()
+    except RuntimeError as error:
+        return _fail(str(error))
+
     loop = StoreLoop()
     loop.start()
     # The first open of the graph database. A dead one stops the start

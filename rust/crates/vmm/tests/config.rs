@@ -1,7 +1,8 @@
 //! The config of the vmm (plan PR L20): each key, each fault, and the
 //! defaults of `env/src/creche_env/default.env`. The plane addresses come
 //! from plan PR V6. Also the config of `vmm
-//! kill-scopes` (decision CH63): one key, with the check of `Config`.
+//! kill-scopes` (decision CH63): one key, with the check of `Config`, and
+//! the config of `vmm gc`: five keys, with the checks of `Config`.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -10,8 +11,9 @@ use std::path::Path;
 
 use creche_vmm::config::{
     BUDGET, CH, CH_REMOTE, CHAPERONE, Config, ConfigError, EGRESS_LOG, FALLOCATE, FAMILY_ROOT,
-    FAULTS_ROOT, FREE_FLOOR, Fault, GIT, GIT_SPOOL_ROOT, GUEST_INIT, IMAGE_ROOT, KillScopesConfig,
-    LITELLM, MIRROR_ROOT, MKE2FS, RAM_CAP, RUN_ROOT, STATE_ROOT, SYSTEMCTL, SYSTEMD_RUN, ZSTD,
+    FAULTS_ROOT, FREE_FLOOR, Fault, GIT, GIT_SPOOL_ROOT, GUEST_INIT, GcConfig, IMAGE_ROOT,
+    KillScopesConfig, LITELLM, MIRROR_ROOT, MKE2FS, RAM_CAP, RUN_ROOT, STATE_ROOT, SYSTEMCTL,
+    SYSTEMD_RUN, ZSTD,
 };
 use creche_vmm::planes::Upstreams;
 use creche_vmm_confine::admission::{GIB, Limits};
@@ -364,4 +366,40 @@ fn the_catalog_defaults_are_the_design_values() {
     let config = read(&env).unwrap();
     assert_eq!(config.limits, Limits::DESIGN);
     assert_eq!(config.budget, retention::BUDGET);
+}
+
+/// `vmm gc` reads the state root, the image root, the guest init program,
+/// `zstd` and the budget from the env of the unit, each with the check of
+/// `Config`, and no other key.
+#[test]
+fn the_gc_config_reads_its_five_keys() {
+    let gc =
+        |env: &HashMap<&'static str, OsString>| GcConfig::from_lookup(|key| env.get(key).cloned());
+    let config = gc(&good()).unwrap();
+    assert_eq!(config.state.path(), Path::new("/srv/VMM_STATE_ROOT"));
+    assert_eq!(config.image_root, Path::new("/srv/VMM_IMAGE_ROOT"));
+    assert_eq!(
+        config.guest_init.path(),
+        Path::new("/srv/VMM_GUEST_INIT_PROGRAM")
+    );
+    assert_eq!(config.zstd.path(), Path::new("/srv/VMM_ZSTD_PROGRAM"));
+    assert_eq!(config.budget, retention::BUDGET);
+
+    let five = [STATE_ROOT, IMAGE_ROOT, GUEST_INIT, ZSTD, BUDGET];
+    let only: HashMap<_, _> = good()
+        .into_iter()
+        .filter(|(key, _)| five.contains(key))
+        .collect();
+    assert!(gc(&only).is_ok());
+    for key in five {
+        let mut env = only.clone();
+        env.remove(key);
+        assert_eq!(gc(&env).unwrap_err().key, key);
+    }
+    let mut env = only.clone();
+    env.insert(BUDGET, OsString::from("0"));
+    assert_eq!(gc(&env).unwrap_err().fault, Fault::Zero);
+    env.insert(BUDGET, OsString::from("150"));
+    env.insert(STATE_ROOT, OsString::from("state"));
+    assert_eq!(gc(&env).unwrap_err().fault, Fault::NotAbsolute);
 }

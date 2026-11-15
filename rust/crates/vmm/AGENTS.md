@@ -34,7 +34,9 @@ other failure exits 1. `vmm verify --json --env-file <path>` and `vmm
 check-images --json --env-file <path>` are the verify hooks of the vmm
 row and of the disks row (decision CH76 rules 2 and 6, see "The verify
 hooks"). Each takes exactly those three words, in that order, and a
-wrong list exits 78. `vmm serve` raises its soft `RLIMIT_NOFILE` to
+wrong list exits 78. `vmm gc --env-file <path>` and `vmm gc --apply
+--env-file <path>` run the snapshot and image retention by hand (see
+"The gc verb"). `vmm serve` raises its soft `RLIMIT_NOFILE` to
 `planes::fd_need` plus `family_state::fd_need` plus `proxy::fd_need`
 in step 4 of the compose step, after the start checks and before the
 bind (decision CH67 rule 4 for the bridge need, Known gap 23 for the
@@ -71,7 +73,10 @@ component of this repository") holds its rules. In short:
 
 1. `shutdown::sigterm` registers the handler of SIGTERM inside the
    runtime, before any other step (caller duty 8).
-2. In `spawn_blocking`: `leftovers::stop_all` stops each VM scope of an
+2. In `spawn_blocking`: `StateRoot::lock` takes the state root lock and
+   holds it until the vmm exits. A `vmm gc --apply` that holds it makes
+   the start wait, with one stderr line (see "The gc verb"). Then
+   `leftovers::stop_all` stops each VM scope of an
    earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
    `root_owned::check_program` checks the files of `VMM_CH_PROGRAM`,
    `VMM_CH_REMOTE_PROGRAM` and `VMM_GIT_PROGRAM` before any run of one
@@ -486,6 +491,52 @@ verify passes on the CI build of CH (decision CH75), ch-remote, guest
 init and the vmm itself, and that check-images passes on root-owned
 `.zst` disks and fails on a changed one.
 
+## The gc verb
+
+`src/gc.rs` runs the two passes of the sweep tick by hand, for the
+operator. `vmm gc --env-file <path>` takes the `vmm.env` of the unit, as
+the verify hooks do (see "The verify hooks"), and reads `GcConfig` from
+it: `VMM_STATE_ROOT`, `VMM_IMAGE_ROOT`, `VMM_GUEST_INIT_PROGRAM`,
+`VMM_ZSTD_PROGRAM` and `VMM_SNAPSHOT_BUDGET_GIB`, each with the check of
+`Config`.
+
+1. The current images are the digests of `digests.json`
+   (`ImageSet::digests`, with the root-owned check of `image_root::read`)
+   and the digest of the guest init initramfs
+   (`guest_init::initramfs_digest`, the pack of `write_initramfs` with no
+   write). A vmm start reads the same two.
+2. With no `--apply`, the dry run: `retention::plan`, then
+   `image_retention::plan`, whose mark skips each generation that the
+   first plan lists. It removes nothing and takes no lock, so it may run
+   beside `vmm serve`. A take, a claim or a drop of that vmm can then
+   change what a later run removes, and the plan runs no
+   `ImageStore::check`.
+3. With `--apply`: `StateRoot::try_lock`. `vmm serve` holds the lock
+   while it runs, so gc refuses and removes nothing. With the lock, no VM
+   runs, so `retention::sweep` runs with an empty `InUse`, then
+   `image_retention::collect`. gc holds the lock through both, and a vmm
+   start waits for it.
+
+It writes one line per item on stdout (`would remove` or `removed`, then
+the kind, the name and the allocated bytes), one `failed` line per failed
+step and a total line. It exits 0 when no step failed and 1 when a step
+failed. A wrong argument list, a bad env file, key, `digests.json` or
+guest init program, and a held lock exit 78 before any remove.
+
+`tests/gc.rs` runs `gc::collect` on a scratch state root with real store
+pairs and keys: a stale snapshot and the images that only its key names,
+a current snapshot, and an import temp file. It proves the dry run, an
+apply that removes what the dry run listed, a held lock that refuses the
+apply, and a refused image scan. No test of `tests/gc.rs` starts a
+process. A process that another test thread starts holds a copy of each
+open fd until its exec, and such a copy keeps a dropped `flock`. So the
+binary tests are in `tests/gc_binary.rs`, and `tests/gc_host/mod.rs`
+holds the scratch host of the two files. The rust job cannot make a
+root-owned file, so the binary tests prove the refusals with exit 78.
+The ignored `kvm_the_binary_lists_then_removes` makes `digests.json` and
+the guest init program root-owned with the runner's sudo (decision CH36
+G20) and runs the binary end to end.
+
 ## The server
 
 `src/server/` holds the host API server (decisions CH20, CH26).
@@ -666,7 +717,12 @@ CH33 rule 3). So create reads the family a second time under the lock
 of the rows, before the write. A drop of the family then sees the new
 row, or that read sees no family, and no row outlives its family. A
 create makes no session disk and boots no VM: the first boot makes the
-disk (decision CH21-4).
+disk (decision CH21-4). A create also makes the `Placeholders` of the
+session from `/dev/urandom` and writes them in the row file, beside
+`order` and `row` (openshell ideas plan, idea 1). A failed read of
+`/dev/urandom` gets `internal`. A load of a row file with no
+placeholders makes them and writes the file again. `SessionRow`, and
+so a list page, does not hold them.
 
 `src/handlers/list.rs` serves `list` (decisions CH21-5, CH21-7). It
 answers `Rows::page` from the rows in memory, so a list boots no VM. The
@@ -802,7 +858,7 @@ table, and the start boots it again. A cold boot runs these steps:
    admission names runs (see "The eviction").
 3. In `spawn_blocking`: `RunRoot::link_vm` links `vm/<id>` to the slot
    (PR D16), then `remove_stale` (decision CH19 (4)), `planes::bind` of
-   the listeners of host ports 1101 and 1102 (see "The plane bridges"),
+   the listeners of host ports 1101 and 1102 (see "The plane proxies"),
    `family_state::bind` of the listener of host port 1100 (see "The
    family-state reply"), `mirror::bind` of the listener of host port
    1103 when `repos.json` of the family lists a repo or does not read
@@ -820,7 +876,7 @@ table, and the start boots it again. A cold boot runs these steps:
    files of the VM, the vmm unit and `Launch::in_slot` (decisions CH8-3,
    CH8-5, CH8-8, CH30, CH55, CH60 rule 1). A vmm with no unit fails the
    start before the link, with no file touched.
-4. `Bound::serve` starts the plane bridges, the family-state reply, the
+4. `Bound::serve` starts the plane proxies, the family-state reply, the
    mirror and the egress proxy.
    Then `control::open` for
    the first `ControlReady`. It keeps the facade
@@ -848,59 +904,100 @@ The `Launcher` trait
 lets `tests/start.rs` fake the launch, the command line file and the
 guest. Every other step there is the real one on a scratch dir.
 
-## The plane bridges
+## The plane proxies
 
-`src/planes.rs` bridges the planes on host ports 1101 and 1102 (plan PR
-V6, decisions CH6-2, CH14). Guest init splices guest 127.0.0.1:4000 and
-:8300 to a vsock dial of 1101 and 1102, and CH connects each dial to
-`vsock.sock_<port>` in the run dir (decision CH24). The vmm splices each
-connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
-`VMM_CHAPERONE_ADDR`, with no allowlist lookup and no rewrite (fact 46).
+`src/planes.rs` serves the planes on host ports 1101 and 1102 (plan PR
+V6, decisions CH6-2, CH14, openshell ideas plan idea 1). Guest init
+splices guest 127.0.0.1:4000 and :8300 to a vsock dial of 1101 and 1102,
+and CH connects each dial to `vsock.sock_<port>` in the run dir
+(decision CH24). The vmm serves HTTP/1.1 on each connection and forwards
+each request to `VMM_LITELLM_ADDR` or `VMM_CHAPERONE_ADDR`. The
+family-state reply sends the placeholders of the session in place of
+the real values (see "The family-state reply"), and the proxy swaps
+them back. So no real LiteLLM key and no real `pep_token` sit in guest
+memory or in a snapshot, and a value read out of a guest works on that
+VM's plane only.
 
 1. `planes::bind` binds both listeners after `link_vm` emptied the slot
    (decision CH56 rule 1) and after `remove_stale`, before CH starts. A
    cold boot and each restore run it, so a restored guest that dials
    again finds both (fact 45, decision CH62 rule 14).
-2. `Bound::serve` gives each listener a task. Each connection gets a
-   connect within `CONNECT_WAIT` (5 s). A connect that fails or takes
-   longer closes the guest side, and nothing retries (decision CH62 rule
-   14). Guest clients treat the close as transient (decision CH20).
-3. Each listener holds at most `SPLICE_CAP` (64) open splices, with no
-   idle timeout (decision CH62 rule 14). A connection past the cap
-   closes at once (decision CH67 rule 3).
-4. The copy is `relay::Splice`, the copy of the ACP relay, on the tokio
-   `net` types. `copy_bidirectional` needs the tokio feature `io-util`,
-   which adds a lock entry, so the vmm does not use it.
-5. `Vm::listeners` holds the bridges, the family-state reply and the
+2. `Bound::serve` takes a `planes::Session`: the family root, the
+   family, the session and its `Placeholders` from the row (see "The
+   create and list routes"). The start reads them from `Rows` before
+   the launch, and a session with no row faults the start. Each listener
+   gets a task. Each connection serves HTTP/1.1 with keep-alive, no
+   timer and no idle timeout, and keeps the case of each header name.
+3. A request passes only with exactly one `Authorization` header whose
+   value is `Bearer <placeholder>`, the placeholder of this session for
+   this port. Pi's LiteLLM provider (the OpenAI SDK) and Flue's MCP
+   client (`@modelcontextprotocol/client` 2.0.0, `_commonHeaders`) send
+   their key in that header. Any other value, two headers or none gets
+   403 with no body and one stderr line with the session, the port and
+   the reason. The line holds no byte of the header. The plane sees no
+   byte of a refused request.
+4. A request that passes reads `creds.json` with
+   `FamilyRoot::read_creds` in `spawn_blocking`, once per request, so a
+   rotation reaches the next request. The proxy sets `Authorization` to
+   `Bearer <real value>`, marks it sensitive, and keeps every other
+   header as it came, `Host` too (fact 46). This amends CH6-2 ("no
+   rewrite"): the proxy rewrites that one header. A `creds.json` that
+   does not read gets 503 and one stderr line with the fault kind.
+5. Each guest connection keeps at most one upstream connection: a TCP
+   connect within `CONNECT_WAIT` (5 s) with `TCP_NODELAY`, then the
+   hyper HTTP/1.1 handshake. The next request reuses it when it takes a
+   request at once, else the proxy connects again. A connect that fails
+   or takes longer gets 502, and nothing retries (decision CH62 rule
+   14). Guest clients treat it as transient (decision CH20).
+6. The bodies stream both ways, unbuffered. The task of the guest
+   connection drives the upstream connection future itself: in the
+   request future, then in the poll of the response body (`Relayed`).
+   The body channel of hyper holds one chunk, so a client connection on
+   a task of its own costs two task wakes per chunk, about +5 ms on a
+   burst of 301 chunks (S0). Each poll of `Relayed` takes every chunk
+   that is ready, up to `GATHER_CAP` (64 KiB), and gives them as one
+   frame. A paced stream goes out chunk by chunk with no wait. At the
+   end of the body the upstream goes back to the guest connection.
+7. Each listener holds at most `SPLICE_CAP` (64) open connections
+   (decision CH62 rule 14). A connection past the cap closes at once
+   (decision CH67 rule 3).
+8. `Vm::listeners` holds the proxies, the family-state reply and the
    follow, which holds the mirror, the egress proxy and the spool (see
-   "The edit follow"). The drop of the entry, when the VM leaves the table, ends
-   each listener task and each open splice. A VM that the vmm killed
-   drops them at the kill.
-6. The deny check gets 1100, the ports of `Upstreams::rows`, 1103 for
+   "The edit follow"). The drop of the entry, when the VM leaves the
+   table, ends each listener task and each open connection. A VM that
+   the vmm killed drops them at the kill.
+9. The deny check gets 1100, the ports of `Upstreams::rows`, 1103 for
    a family with a clone list, 1104 for a family with egress and 1105
    for a family with the git platform grant as its bound set, so a
    listener of any other port fails it (decisions CH3, CH6-3, CH49 rule
    3, CH69 rule 13).
-7. A full row holds 129 fds: its listener and two streams per splice.
-   `planes::fd_need` is that for both rows of all `SLOTS` (64), plus a
-   headroom of 4096: 20608. `vmm serve` raises its soft `RLIMIT_NOFILE`
-   to it plus `family_state::fd_need`, `mirror::fd_need`,
-   `proxy::fd_need` and `spool::fd_need` after its start checks and
-   before it serves (step 4
-   of "The compose step", see also "The family-state reply", "The git
-   mirror" and "The egress proxy"), and a
-   hard limit below the sum exits 78
-   (`creche_vmm_confine::nofile`, decision CH67 rule 4, Known gap 23).
-   So the busy guests of
-   a few VMs cannot use every fd of the vmm.
+10. A full row holds 321 fds: its listener, and per connection a Unix
+    stream, a TCP stream and the 3 fds of one `creds.json` read.
+    `planes::fd_need` is that for both rows of all `SLOTS` (64), plus a
+    headroom of 4096: 45184. `vmm serve` raises its soft `RLIMIT_NOFILE`
+    to it plus `family_state::fd_need`, `mirror::fd_need`,
+    `proxy::fd_need` and `spool::fd_need` after its start checks and
+    before it serves (step 4 of "The compose step", see also "The
+    family-state reply", "The git mirror" and "The egress proxy"), and
+    a hard limit below the sum exits 78 (`creche_vmm_confine::nofile`,
+    decision CH67 rule 4, Known gap 23). So the busy guests of a few
+    VMs cannot use every fd of the vmm.
 
-`tests/planes.rs` runs the bridges on real Unix and TCP sockets in
-process: each row reaches its own plane, the bytes pass unchanged, a
-refused connect closes the guest side, the cap, and the drop.
-`tests/start.rs` proves that both listeners take a dial at the launch of
-a boot and of a restore, that a dial reaches the plane of the config,
-that the listener closes with the VM, and the bound set of the deny
-check.
+`tests/planes.rs` runs the proxies on real Unix and TCP sockets in
+process, over a scratch family root: each row swaps its own
+placeholder for its real value and keeps `Host` and the body, each
+wrong `Authorization` gets 403 and reaches no plane, no `creds.json`
+gets 503, a rotation reaches the next request on one link, one guest
+link keeps one upstream and streams 1 MiB both ways, a refused connect
+gets 502, the cap, the drop and the fd need. Its test
+`a_burst_of_301_chunks_passes_whole` sends a burst of 301 chunks, in
+one write per chunk and in one write, and writes the end-of-stream p50
+and p99 through the proxy and on a direct TCP link to the job log. It
+asserts no time. `tests/start.rs` proves that both listeners take a
+dial at the launch of a boot and of a restore, that a request with the
+placeholder of the row reaches the plane of the config with the real
+key and its header case, that the listener closes with the VM, and the
+bound set of the deny check.
 
 ## The family-state reply
 
@@ -922,7 +1019,12 @@ CH24).
 3. Each pull runs `FamilyRoot::read_state` in `spawn_blocking`
    (decision CH50 rule 9) and answers with one `FamilyStateReply` line.
    A fault is its typed reply, and the link stays open (decision CH23
-   rule 2). Nothing keeps a last good state (decision CH53 rule 2).
+   rule 2). Nothing keeps a last good state (decision CH53 rule 2). The
+   creds of a `state` reply are the `Placeholders` of the session, which
+   `Bound::serve` takes from the start, in the shape of `FamilyCreds`.
+   So the wire type, the facade and the contracts do not change, and the
+   guest never gets a real value (openshell ideas plan, idea 1). The
+   read of `creds.json` still gives `creds_missing` and `not_valid`.
 4. A `state` reply waits until the host time passes `model_live_at`, for
    at most `HOLD_CAP` (10 s, decision CH31 rule 1).
 5. A refused line closes the link with no reply, and one stderr line
@@ -941,7 +1043,7 @@ CH24).
 9. `family_state::fd_need` counts per slot the listener, and per link its
    stream and the 6 fds that one `read_state` holds at most: 449 per
    slot, 28736 for all `SLOTS`. `vmm serve` adds it to
-   `planes::fd_need`, so the raised soft limit is 49344 (decision CH68
+   `planes::fd_need`, so the two give 73920 of the raise (decision CH68
    rule 2).
 
 `tests/family_state.rs` runs the listener on real Unix sockets over a
@@ -1009,7 +1111,7 @@ and removes it after each edit (see "The edit follow").
    stream and 4 more fds (the family dir and `egress.json` of the read, a
    resolver socket, the upstream socket): 321 per slot, 20544 for all
    `SLOTS`. With the 1103 need of "The git mirror" and the 1105 need of
-   "The git platform spool", the raised soft limit is 103552 (decision
+   "The git platform spool", the raised soft limit is 128128 (decision
    CH69 rule 14).
 
 `src/egress/log.rs` writes the log of `VMM_EGRESS_LOG` (decisions CH6-4,
@@ -1106,7 +1208,7 @@ removes it after each edit (see "The edit follow").
 10. `mirror::fd_need` counts per slot the listener, and per link its
     stream and 7 more fds (the spawn holds both ends of two pipes,
     `/dev/null` and both ends of the exec pipe of std): 513 per slot,
-    32832 for all `SLOTS`. The raised soft limit is 103552 with the 1105
+    32832 for all `SLOTS`. The raised soft limit is 128128 with the 1105
     need (decision CH69 rule 14, Known gap 28).
 
 `tests/mirror.rs` runs the mirror on a real Unix socket over a scratch
@@ -1192,7 +1294,7 @@ follow").
    CH69 rule 20).
 10. `spool::fd_need` counts per slot the listener, and per link its
     stream and 2 more fds (a folder and a file): 13 per slot, 832 for all
-    `SLOTS`. The raised soft limit is 103552.
+    `SLOTS`. The raised soft limit is 128128.
 
 The guest end: guest init splices each link of guest 127.0.0.1:1105 to
 host port 1105 in every VM (`rust/crates/guest-init/AGENTS.md`, the host
@@ -1499,13 +1601,25 @@ the passes on paused time.
    a restored VM goes. The lock of `InUse` lasts one insert or remove,
    so no runtime worker waits behind the sweep (decision CH36 G21). The
    write lock of the takes keeps each take out of the sweep, as
-   `retention::sweep` asks. The blocking step owns both locks.
+   `retention::sweep` asks. The blocking step owns both locks. The sweep
+   also drops a newest generation whose key names images of an older
+   set, another CH rev or another guest init protocol, or does not read
+   (`Reason::Stale`, `key::may_restore`). The next start of its session
+   would drop it (decision CH7-6), and until then its key keeps its images
+   in the store. The current set is the set of new starts at the sweep,
+   with the initramfs of this vmm start. A start that selected the old set
+   before a swap and did not reach its key check yet then cold-boots. The
+   shape is not read, so a shape change still drops the snapshot at the
+   next start.
 3. The same sweep tick runs image collection after the snapshot sweep.
    Collection takes the image write gate before it checks the VM table.
    A nonempty table skips collection. A later start waits for collection
    before it selects, checks and launches its images. The mark phase keeps
    the current image set, the guest init initramfs and all snapshot keys.
-   A failed mark removes nothing.
+   A failed mark removes nothing. The sweep phase also removes the
+   leftovers of the store: an identity of an unmarked digest with no
+   image, and each temp file of an import or an identity write. The write
+   gate keeps each import and each identity write out of the pass.
 
 The last use of a VM is the latest of its start, its last door close
 and its last turn event (decision CH50 rule 5). `ControlState::turn`
@@ -1622,8 +1736,11 @@ declares.
   its local link, so it is `running` and may sleep (decision CH32 rule
   6).
 - The steps: a cold boot with start 1, a `facade` line that says
-  `running`, a `pull` on 1201 that gets `state` and a 200 from each stub
-  plane, a sleep with a guest sync and one snapshot, a restore that
+  `running`, a `pull` on 1201 that gets `state`, a 200 from each stub
+  plane with the real value of `creds.json` in the head that the stub
+  got, and a 403 for a GET with a wrong value that reaches no stub
+  (openshell ideas plan, idea 1), a sleep with a guest sync and one
+  snapshot that holds no real value, a restore that
   claims it and whose ready says `running` with the same pid and start
   1, a second `pull` with the same answer, and a stop that leaves a
   clean session disk (decisions CH19 rules 1 to 3, CH62 rules 9, 13, 14
@@ -1663,8 +1780,13 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
   120 s, then on 1201 `initialize` and a prompt of the host's id with no
   `session/new` (decision CH21-8) that ends with `end_turn` and the stub
   text. Each stub gets a
-  request through the guest splice with the bearer of `creds.json`. Then
-  a sleep with one snapshot, a restore with the same pid and start 1 and
+  request through the proxy with the real bearer of `creds.json`, which
+  the proxy swapped in for the placeholder of the 1100 reply. Then
+  a sleep with one snapshot. The snapshot read of `tests/snapshot_scan`
+  finds no real key and no real token in the files of that generation,
+  as one-byte text or as UTF-16LE text, and finds both placeholders, so
+  the read reaches the guest memory (openshell ideas plan, section
+  3.6). Then a restore with the same pid and start 1 and
   no `up` line, and a fresh 1201 link with `session/load`, which replays
   the first turn, and a second prompt. A stop inside `FACADE_STOP_WAIT`
   then holds the facade's stop line, no signal, a clean session disk and
@@ -1679,6 +1801,11 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
   an exit status.
 - A crate exposes `pub` items only for the crates that list it in their
   row (decision CH36, gap G24 of the phase 2 plan).
+- No real LiteLLM key and no real `pep_token` go to a guest (openshell
+  ideas plan, idea 1). The 1100 reply carries the placeholders of the
+  session. Only the plane proxies read the real values, once per request,
+  and they put them only in the `Authorization` header to the plane. No
+  log line holds a placeholder or a real value.
 
 ## Known gaps
 
@@ -1931,7 +2058,7 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
     `bin/fleet-up up` writes must hold them before this vmm starts on a
     host, or the start exits 78. Root must own the file
     of `VMM_GIT_PROGRAM` (`/usr/bin/git` of Ubuntu). The hard
-    `RLIMIT_NOFILE` of the user unit must hold 103552 (decision CH67
+    `RLIMIT_NOFILE` of the user unit must hold 128128 (decision CH67
     rule 4, plan risk 3).
 11. Closed by plan PR E3 (decision CH69 rules 11 and 13): plan PR M1
     binds 1103 at each boot and each restore from the clone list of that

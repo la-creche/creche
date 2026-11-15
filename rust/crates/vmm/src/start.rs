@@ -94,7 +94,7 @@ use creche_vmm_store::ch_remote::ChRemoteError;
 use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
 use creche_vmm_store::image_retention::{self, Collected, Failure as ImageFailure, ScanError};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
-use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
+use creche_vmm_store::key::{CheckedCh, CurrentImages, KeyCheck, SnapshotKey, check_newest};
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot as PoolSlot, StateRoot, VmRunDir};
 use creche_vmm_store::retention::{InUse, Swept, sweep};
 use creche_vmm_store::rows::Rows;
@@ -122,7 +122,7 @@ use crate::handlers::drop::{StopVm, VmStopFailed};
 use crate::handlers::list::RunningVms;
 use crate::image_lifecycle::ImageLifecycle;
 use crate::mirror::{self, Mirror};
-use crate::planes::{Bound, Planes, Upstreams, bind};
+use crate::planes::{self, Bound, Planes, Upstreams, bind};
 use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
 use crate::shutdown::{Taken, VmSet};
@@ -155,6 +155,20 @@ pub struct Digests {
     /// reads it from here as a start reads `roots`, and refuses a start
     /// on `None` with its own reason.
     pub services: PerService<Option<ImageDigest>>,
+}
+
+impl Digests {
+    /// The images of each new start with the guest init `initramfs` of
+    /// this vmm: what snapshot and image retention keep.
+    #[must_use]
+    pub fn with_initramfs(&self, initramfs: ImageDigest) -> CurrentImages {
+        CurrentImages {
+            kernel: self.kernel,
+            initramfs,
+            roots: self.roots,
+            services: self.services,
+        }
+    }
 }
 
 /// What a cold boot reads. Plan PR L20 builds it from the vmm config.
@@ -1067,11 +1081,20 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             self.config.state.clone(),
             self.config.budget,
         );
+        // A snapshot whose key names images of an older set never
+        // restores: the next start of its session drops it (decision
+        // CH7-6). The sweep drops it now, so the images of its key can
+        // leave the store at the collection after this sweep.
+        let current = self
+            .config
+            .digests
+            .borrow()
+            .with_initramfs(self.config.initramfs);
         spawn_blocking(move || {
             let _takes = takes;
             let _claims = lock_claims(&claims);
             let in_use = lock_in_use(&in_use).clone();
-            sweep(&state, SystemTime::now(), budget, &in_use)
+            sweep(&state, SystemTime::now(), budget, &in_use, &current)
         })
         .await
         .unwrap_or_else(|_| Err(io::Error::other("the sweep panicked")))
@@ -1095,10 +1118,11 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             if !lock(&table).is_empty() {
                 return Ok(None);
             }
-            let digests = config.digests.borrow().clone();
-            let mut current = HashSet::from([digests.kernel, config.initramfs]);
-            current.extend(digests.roots.iter().map(|(_, digest)| *digest));
-            current.extend(digests.services.iter().filter_map(|(_, digest)| *digest));
+            let current = config
+                .digests
+                .borrow()
+                .with_initramfs(config.initramfs)
+                .digests();
             image_retention::collect(&config.images, &config.state, &current).map(Some)
         })
         .await
@@ -1976,6 +2000,19 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             Ok(read) => read,
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         };
+        // Openshell ideas plan, idea 1: the row holds the placeholders that
+        // the family-state reply sends and the planes swap. A restore finds
+        // the values that its guest memory holds.
+        let placeholders = self
+            .rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .placeholders(id)
+            .cloned();
+        let Some(placeholders) = placeholders else {
+            let message = "the session has no row with placeholders".to_owned();
+            return Err(self.fault(family, sandbox, message).await);
+        };
         let guest_ram = VmLimits::from(shape).guest_ram();
         // `host_full` is no fault of decision CH6-3, so it writes none.
         let (mut pending, evictions) = self
@@ -2040,8 +2077,19 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // spool.
         let (planes, state, reach, mirror, egress, spool) = bound;
         let families = &self.config.families;
-        let served = planes.serve().and_then(|planes| {
-            let family_state = state.serve(families.clone(), family.clone(), id.clone())?;
+        let session = planes::Session {
+            families: families.clone(),
+            family: family.clone(),
+            id: id.clone(),
+            placeholders,
+        };
+        let served = planes.serve(&session).and_then(|planes| {
+            let family_state = state.serve(
+                families.clone(),
+                family.clone(),
+                id.clone(),
+                session.placeholders.clone(),
+            )?;
             let mirror = mirror
                 .map(|bound| {
                     let mirror = self.config.mirror.clone();

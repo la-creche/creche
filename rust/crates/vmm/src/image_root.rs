@@ -383,6 +383,24 @@ impl ImageSet {
         absent.map(|(image, _)| image.name()).collect()
     }
 
+    /// The digest of the kernel, of each root disk and of each service
+    /// image as the file names them, with no import and no read of a disk:
+    /// the set of new starts once these entries import. `vmm gc` keeps it.
+    #[must_use]
+    pub fn digests(&self) -> Digests {
+        Digests {
+            kernel: self.manifest.kernel.sha256.0,
+            roots: PerFlavor::every(|flavor| self.manifest.roots.get(flavor).sha256.0),
+            services: PerService::every(|image| {
+                self.manifest
+                    .services
+                    .get(image)
+                    .as_ref()
+                    .map(|entry| entry.sha256.0)
+            }),
+        }
+    }
+
     /// Hashes the kernel and each root disk, of a flavor or of a service
     /// image, with `hash_source` of the store, one file at a time, and
     /// compares each digest with its entry (decision CH76 rule 6). `zstd`

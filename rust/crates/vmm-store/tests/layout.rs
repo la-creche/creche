@@ -2,7 +2,7 @@
 //! and the slot dirs with their `vm/<id>` links (decisions CH51, CH55).
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use creche_vmm_store::layout::{
@@ -333,4 +333,31 @@ fn the_link_empties_the_slot() {
     assert!(dir.join("sub/kept").exists());
     assert!(outside.is_dir());
     assert!(outside.join("kept").exists());
+}
+
+/// The state root lock: `try_lock` sees a holder, and the drop frees
+/// it. The lock makes an absent root with mode
+/// 0700 and adds no file to it (decision CH39 rule 3).
+#[test]
+fn the_state_root_lock_is_exclusive() {
+    let dir = std::env::temp_dir().join(format!("vmm-state-lock-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let state = StateRoot::new(dir.join("state")).expect("a state root");
+
+    let held = state.lock().expect("the lock");
+    assert_eq!(
+        fs::metadata(state.path()).expect("the root").mode() & 0o7777,
+        0o700
+    );
+    assert!(
+        state.try_lock().expect("a try").is_none(),
+        "the lock is held"
+    );
+    drop(held);
+    let again = state.try_lock().expect("a try");
+    assert!(again.is_some(), "the drop freed the lock");
+    assert!(state.try_lock().expect("a try").is_none());
+    drop(again);
+    assert_eq!(fs::read_dir(state.path()).expect("the root").count(), 0);
+    let _ = fs::remove_dir_all(&dir);
 }

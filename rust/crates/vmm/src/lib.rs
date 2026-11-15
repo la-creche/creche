@@ -11,6 +11,7 @@ pub mod control;
 pub mod egress;
 pub mod env_file;
 pub mod family_state;
+pub mod gc;
 pub mod guest_init;
 pub mod handlers;
 mod image_lifecycle;

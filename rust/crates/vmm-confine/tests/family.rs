@@ -19,6 +19,7 @@ use creche_vmm_confine::family::{
     ReachFault, SHAPE_CAP, ShapeFault, StateFault, StateRead,
 };
 use creche_vmm_store::layout::RootError;
+use creche_vmm_store::placeholder::Placeholders;
 use creche_wire::{
     FAMILY_STATE_CAP, FamilyEgress, FamilyGitPlatform, FamilyName, FamilyRepos, FamilyShape,
     FamilyStateReply,
@@ -30,6 +31,17 @@ const BIGGER: &str = r#"{"cpus":4,"flavor":"python","memory_mib":8192}"#;
 const EGRESS: &str = r#"{"hosts":[{"host":"github.com","port":443}]}"#;
 const REPOS: &str = r#"{"repos":["chaperone","creche"]}"#;
 const GIT_PLATFORM: &str = r#"{"fetch":false,"push":true}"#;
+
+/// The placeholders of the session of each read: the reply carries them in
+/// place of the values of `creds.json` (openshell ideas plan, idea 1).
+const LITELLM_PLACEHOLDER: &str = "sk-PLACEHOLDERplaceholder";
+const PEP_PLACEHOLDER: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+#[cfg(test)]
+fn placeholders() -> Placeholders {
+    let text = json!({"litellm_key": LITELLM_PLACEHOLDER, "pep_token": PEP_PLACEHOLDER});
+    serde_json::from_value(text).unwrap()
+}
 
 // Each helper with `cfg(test)` may unwrap (rust/clippy.toml).
 
@@ -80,7 +92,7 @@ impl Root {
     }
 
     fn state(&self) -> Result<StateRead, StateFault> {
-        self.families().read_state(&code())
+        self.families().read_state(&code(), &placeholders())
     }
 }
 
@@ -318,11 +330,14 @@ fn reads_creds_and_config_into_one_state() {
             "system_prompt": "replace",
         },
         "creds": {
-            "litellm_key": "sk-fixture-key-0001",
-            "pep_token": "ab".repeat(32),
+            "litellm_key": LITELLM_PLACEHOLDER,
+            "pep_token": PEP_PLACEHOLDER,
         },
     }});
     assert_eq!(reply(&read), expected);
+    // No byte of the real values of creds.json reaches the reply.
+    let text = String::from_utf8(read.line().to_vec()).unwrap();
+    assert!(!text.contains("sk-fixture-key-0001") && !text.contains("abab"));
     assert!(!read.line().contains(&b'\n'));
     // 2026-11-06T12:00:10Z, as integer milliseconds (decision CH22-1).
     let live = UNIX_EPOCH + Duration::from_millis(1_793_966_410_000);
@@ -330,6 +345,19 @@ fn reads_creds_and_config_into_one_state() {
     // The skills go in ascending name order, whatever the dir order.
     let text = String::from_utf8(read.line().to_vec()).unwrap();
     assert!(text.find("\"alpha\"").unwrap() < text.find("\"beta\"").unwrap());
+}
+
+/// `read_creds` gives the real values of `creds.json`, which the plane
+/// proxies swap in.
+#[test]
+fn read_creds_gives_the_real_values() {
+    let root = Root::fixture("real-creds");
+    let creds = root.families().read_creds(&code()).unwrap();
+    assert_eq!(creds.litellm_key.reveal(), "sk-fixture-key-0001");
+    assert_eq!(creds.pep_token.reveal(), "ab".repeat(32));
+    fs::remove_file(root.at("creds/creds.json")).unwrap();
+    let missing = root.families().read_creds(&code());
+    assert_eq!(missing.unwrap_err(), StateFault::CredsMissing);
 }
 
 #[test]
@@ -382,7 +410,7 @@ fn missing_creds_is_creds_missing() {
     fs::remove_dir(root.at("creds")).unwrap();
     assert_eq!(root.state().unwrap_err(), StateFault::CredsMissing);
     let other: FamilyName = "other".parse().unwrap();
-    let read = root.families().read_state(&other);
+    let read = root.families().read_state(&other, &placeholders());
     assert_eq!(read.unwrap_err(), StateFault::CredsMissing);
 }
 
