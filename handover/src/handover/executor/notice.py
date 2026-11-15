@@ -4,11 +4,27 @@
 appears, and nothing else.
 
 1. The requester is woken with the entry.
-2. The phone gets one push, **not actionable**: `chaperone 2.1.0 restored: verify
-   failed` or `chaperone 2.1.0 succeeded (9 verify hooks ok)`.
+2. The phone gets one push, **not actionable**.
 
-This module is the second one. It carries what was asked, what happened,
-and where the ledger entry is.
+This module is the second one. The message of the push has the words that
+the operator decided:
+
+```
+All succeeded
+
+Release failed at vmm release.
+Rolled back components: vmm, caregiver
+
+Release failed at approve step.
+Rolled back components: none
+```
+
+The place is `<component> release` when one component caused the end, and
+`<step> step` when none did. The rolled back components are the ones that
+the restore put back, in the order of the restore. The executor records
+both in the entry (`Entry.failed_component`, `Entry.rolled_back`). Nothing
+here reads the text of an error. The journal line keeps what was asked and
+the closed-list reason.
 
 **The wake-up is deliberately NOT here**: root holds no session credential
 and `attendance` runs as the operator, so root cannot start a turn without a new
@@ -28,22 +44,31 @@ from dataclasses import dataclass
 from typing import Final, cast
 
 from ..catalog import Action
-from .ledger import Entry, Outcome
-from .spool import DONE_DIR, REQUEST_SUFFIX, SPOOL_ROOT
+from .ledger import Entry, Outcome, StepName, StepStatus
 
 #: §2.5's cap, applied here too: one field, one line, one screen.
 NOTICE_MAX_CHARS: Final = 120
 
 CUT_MARK: Final = "…"
 
-#: What a push says when a release ended with no reason recorded.
+#: What a journal line says when a release ended with no reason recorded.
 NO_REASON: Final = "no reason recorded"
+
+#: The message of the push, as the operator decided it.
+ALL_SUCCEEDED: Final = "All succeeded"
+FAILED_AT: Final = "Release failed at {where}.\nRolled back components: {back}"
+COMPONENT_PLACE: Final = "{name} release"
+STEP_PLACE: Final = "{name} step"
+NOTHING_BACK: Final = "none"
+
+#: The step statuses that end a release.
+STOPPED: Final = frozenset({str(StepStatus.FAILED), str(StepStatus.REFUSED)})
 
 
 @dataclass(frozen=True)
 class Notice:
-    """One outcome push. Four fields, all built by root from root's own
-    record — never from a byte a requester wrote."""
+    """One outcome push, and its journal line. Root builds each field from
+    its own record, and never from a byte that a requester wrote."""
 
     #: The request id, which is also the ledger entry's file name.
     id: str
@@ -54,21 +79,12 @@ class Notice:
     outcome: str
     #: Why, in root's own words. A closed-list reason or a step name.
     detail: str
-    #: Where the entry is, so the reader never has to guess the path.
-    ledger: str
+    #: The message of the push (the module docstring).
+    message: str
 
     def line(self) -> str:
-        """The one line a notification shows: §2.6's own two examples."""
+        """The journal line: `chaperone 2.1.0 restored: verify failed`."""
         return _cut(f"{self.asked} {self.outcome}: {self.detail}")
-
-    def as_dict(self) -> dict[str, str]:
-        return {
-            "id": self.id,
-            "asked": _cut(self.asked),
-            "outcome": _cut(self.outcome),
-            "detail": _cut(self.detail),
-            "ledger": _cut(self.ledger),
-        }
 
 
 #: The seam. One function: tell the operator, answer whether it was delivered.
@@ -94,10 +110,6 @@ def _cut(value: str) -> str:
     return value[: NOTICE_MAX_CHARS - len(CUT_MARK)] + CUT_MARK
 
 
-def ledger_path(request_id: str, root: str = SPOOL_ROOT) -> str:
-    return f"{root}/{DONE_DIR}/{request_id}{REQUEST_SUFFIX}"
-
-
 def notice_of(entry: Entry, component: str | None = None) -> Notice:
     """§2.6's push, built from the entry root just wrote.
 
@@ -109,8 +121,39 @@ def notice_of(entry: Entry, component: str | None = None) -> Notice:
         asked=_asked(entry, component),
         outcome=str(entry.status),
         detail=_detail(entry),
-        ledger=ledger_path(entry.id),
+        message=_message(entry),
     )
+
+
+def _message(entry: Entry) -> str:
+    """The message of the push: `All succeeded`, or the place of the end
+    and each component that the restore put back."""
+    if entry.status is Outcome.SUCCEEDED:
+        return ALL_SUCCEEDED
+
+    if entry.failed_component is not None:
+        where = COMPONENT_PLACE.format(name=entry.failed_component)
+    else:
+        where = STEP_PLACE.format(name=_stopped_step(entry))
+
+    back = ", ".join(entry.rolled_back) or NOTHING_BACK
+
+    return FAILED_AT.format(where=where, back=back)
+
+
+def _stopped_step(entry: Entry) -> str:
+    """The step that ended the release: the first step that failed or
+    refused. A restore that failed comes after the step that ended the
+    release, so it is not the place. An entry with no such step names its
+    last step, and an entry with no step names the intake."""
+    for step in entry.steps:
+        if step.status in STOPPED:
+            return step.name
+
+    if entry.steps:
+        return entry.steps[-1].name
+
+    return str(StepName.INTAKE)
 
 
 def _asked(entry: Entry, component: str | None) -> str:

@@ -1,10 +1,15 @@
 """What the operator will see on the phone, printed before the request is filed.
 
-`stage7-releases.md` §2.5 fixes seven fields and says **root is the only
-actor that ever computes `manifest_sha256`**. So this module prints the seven
-fields and never a gate id, and it says plainly which two rows root will
-recompute. A requester that printed a gate would be claiming the approval
-binds to its own arithmetic, which is exactly what §2.5 exists to stop.
+The phone shows two lines: the `Components` line and the `Unsafe` line of
+`Summary.message`. This module prints the two lines as root builds them,
+from the same function over the same install trees. Then it prints the
+seven fields of §2.5, which root records in the log of the ledger entry.
+
+`stage7-releases.md` §2.5 says **root is the only actor that ever computes
+`manifest_sha256`**. So this module prints no gate id, and it says plainly
+which two rows root will recompute. A requester that printed a gate would be
+claiming the approval binds to its own arithmetic, which is exactly what
+§2.5 exists to stop.
 
 Two rows differ from root's, always, and both say so on the line. A third
 differs for a `units` component:
@@ -20,8 +25,8 @@ differs for a `units` component:
    the release changes, from the tree it fetched (contract 06 §8.3 item 6).
    This side reads no such tree, so it says that root names them.
 
-`Summary` itself comes from `executor/approval.py`, so the field list and the
-120-character cut are the executor's own and not a second copy.
+`Summary` itself comes from `executor/approval.py`, so the message, the field
+list and the 120-character cut are the executor's own and not a second copy.
 """
 
 from __future__ import annotations
@@ -30,7 +35,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from ..catalog import Action, Kind, RestoreMode
-from ..executor.approval import Summary, contracts_row
+from ..executor.approval import APPROVAL_TITLE, Move, Summary, contracts_row
 from ..executor.live_state import Chosen
 from ..manifest import ComponentManifest
 from ..resolve import Resolution
@@ -44,16 +49,20 @@ NO_UNIT: Final = "no unit"
 #: drop-ins it changes, and this side does not.
 UNITS_RESTARTS: Final = "each unit whose drop-in changes, named by root"
 
-#: The one line above the table. It is not a field: it is what keeps the two
-#: recomputed rows from reading as promises.
+#: The one line above the two lines of the phone. It is not a field.
 HEADER: Final = (
     "what the operator's phone will show (root re-resolves at the tag and recomputes the hash)"
 )
 
+#: The one line above the table. It is what keeps the two recomputed rows
+#: from reading as promises.
+RECORD_HEADER: Final = "what root records at step 5"
+
 
 @dataclass(frozen=True)
 class Preview:
-    """The seven rows, and the local hash that is not a gate."""
+    """The push, its seven rows of record, and the local hash that is not a
+    gate."""
 
     summary: Summary
     local_hash: str
@@ -63,8 +72,16 @@ class Preview:
 
         return [(name, fields[name]) for name in fields]
 
+    def phone(self) -> dict[str, str]:
+        """The title and the message of the push, as root builds them."""
+        return {"title": APPROVAL_TITLE, "message": self.summary.message()}
+
     def lines(self) -> list[str]:
-        return [f"  {name:<14}{value}" for name, value in self.rows()]
+        """The two lines of the phone, then the table of the record."""
+        phone = [f"  {line}" for line in self.summary.message().splitlines()]
+        table = [f"  {name:<14}{value}" for name, value in self.rows()]
+
+        return [*phone, RECORD_HEADER, *table]
 
 
 def preview_of(
@@ -73,7 +90,8 @@ def preview_of(
     requested_by: str,
     local_hash: str | None = None,
 ) -> Preview:
-    """§2.5's seven fields, from the resolution this side computed.
+    """The push and §2.5's seven fields, from the resolution this side
+    computed.
 
     `chosen` is `live_state.select_manifests`'s answer, which is the SAME
     function root runs over the same install trees, so this side never
@@ -91,6 +109,8 @@ def preview_of(
             restore=_restore(resolution, manifests),
             requested_by=requested_by,
             manifest=_manifest_row(short),
+            moves=_move_rows(resolution),
+            unsafe=(*_manual(resolution, manifests), *chosen.unverified),
         ),
         local_hash=short,
     )
@@ -141,6 +161,17 @@ def _moves(resolution: Resolution) -> list[str]:
     ]
 
 
+def _move_rows(resolution: Resolution) -> tuple[Move, ...]:
+    """Each deploying component of the set, for the `Components` line."""
+    rows = {item.name: item for item in resolution.components}
+
+    return tuple(
+        Move(name, rows[name].from_version, str(rows[name].to_version))
+        for name in resolution.order
+        if name in rows and rows[name].action is Action.DEPLOY
+    )
+
+
 def _units(resolution: Resolution, manifests: dict[str, ComponentManifest]) -> list[str]:
     return [_unit_of(name, manifests[name]) for name in resolution.order if name in manifests]
 
@@ -155,14 +186,19 @@ def _unit_of(name: str, manifest: ComponentManifest) -> str:
     return manifest.unit or f"{name}: {NO_UNIT}"
 
 
-def _restore(resolution: Resolution, manifests: dict[str, ComponentManifest]) -> str:
-    """§2.5: `manual` on the phone is the signal that a failed verify stops
-    rather than reverses, and the operator must read it before the tap."""
-    manual = [
+def _manual(resolution: Resolution, manifests: dict[str, ComponentManifest]) -> list[str]:
+    """Each component of the set whose restore mode is not automatic."""
+    return [
         name
         for name in resolution.order
         if name in manifests and manifests[name].restore.mode is not RestoreMode.AUTOMATIC
     ]
+
+
+def _restore(resolution: Resolution, manifests: dict[str, ComponentManifest]) -> str:
+    """§2.5: `manual` is the signal that a failed verify stops rather than
+    reverses, and the operator must read it before the tap."""
+    manual = _manual(resolution, manifests)
     if not manual:
         return "automatic"
 

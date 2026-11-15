@@ -37,7 +37,8 @@ from __future__ import annotations
 import errno
 import os
 import traceback
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -62,6 +63,7 @@ from ..site import cosign_program, github_owner, github_repo, systemd_run_progra
 from ..state import ReleaseState
 from .approval import (
     APPROVAL_TTL_S,
+    Move,
     Summary,
     Transport,
     action_id_of,
@@ -1077,9 +1079,13 @@ class Release:
         # The action id is this release's own id, lower-cased, because that
         # is the only shape the live phone flow accepts (`phone.ACTION_RE`).
         action_id = action_id_of(self.request.id)
-        decision = self.wiring.transport(
-            action_id, self.approved_gate, self._summary(plan), APPROVAL_TTL_S
-        )
+        summary = self._summary(plan)
+        # The push carries the two lines of `message`. The log keeps §2.5's
+        # seven fields, so the ledger entry says what the tap approved.
+        for name, value in summary.as_dict().items():
+            self.entry.say(f"summary {name}: {value}")
+
+        decision = self.wiring.transport(action_id, self.approved_gate, summary, APPROVAL_TTL_S)
         self.entry.approved_at = check_decision(
             decision, self.approved_gate, self.wiring.host.clock()
         )
@@ -1087,16 +1093,20 @@ class Release:
         return f"gate {self.approved_gate}"
 
     def _summary(self, plan: Plan) -> Summary:
-        """§2.5's seven fields, built from root's OWN resolution. The
-        requester cannot show the operator one thing and deploy another.
+        """The push and §2.5's seven fields, built from root's OWN
+        resolution. The requester cannot show the operator one thing and
+        deploy another.
 
-        Every field is per SET now. `restore` names the components that
-        would stop a restore, because §2.5 says `restore: manual` on the
-        phone is the signal that a failed verify will stop rather than
-        reverse — and the operator must see it before the tap, not after.
+        Every field is per SET now. The `Unsafe` line of the push names
+        each component that has no automatic rollback: its restore mode is
+        `manual`, or root could not verify its manifest. The operator must
+        read that before the tap, not after.
         """
         manual = [name for name in plan.order if not restorable(plan.manifest(name))]
         units = [self._restarts_of(plan, name) for name in plan.order]
+        moves = tuple(
+            Move(name, plan.from_version(name), plan.to_version(name)) for name in plan.order
+        )
 
         return Summary(
             review=self._review(plan),
@@ -1106,6 +1116,8 @@ class Release:
             restore="automatic" if not manual else f"manual: {', '.join(manual)}",
             requested_by=self.request.requested_by,
             manifest=plan.hash().removeprefix("sha256:")[:12],
+            moves=moves,
+            unsafe=(*manual, *self.unverified),
         )
 
     def _restarts_of(self, plan: Plan, name: str) -> str:
@@ -1200,7 +1212,8 @@ class Release:
         # failed stage removes the `.new` trees and NOTHING on the host has
         # changed. That property is what makes a set safe to order.
         for name in plan.order:
-            self._stage_one(plan, name)
+            with self._blame(name):
+                self._stage_one(plan, name)
 
         return f"staged in order: {', '.join(plan.order)}"
 
@@ -1341,11 +1354,14 @@ class Release:
         plan = self._require_plan()
         live = _switch_order(plan)
         for name in live:
-            self._switch_one(plan, name)
+            with self._blame(name):
+                self._switch_one(plan, name)
 
         said = [f"live in order: {', '.join(live)}"] if live else []
         if SELF_COMPONENT in plan.order:
-            self._note_self(plan)
+            with self._blame(SELF_COMPONENT):
+                self._note_self(plan)
+
             said.append(SELF_AFTER)
 
         return "; ".join(said)
@@ -1587,6 +1603,7 @@ class Release:
             return []
 
         self._restore_servers(MCP_COMPONENT)
+        self.entry.rolled_back.append(MCP_COMPONENT)
 
         return [f"{MCP_COMPONENT} servers"]
 
@@ -1612,6 +1629,7 @@ class Release:
             else None
         )
         self._move_back(name, paths)
+        self.entry.rolled_back.append(name)
         if units is not None:
             self.installer.link_units(name, units, paths.to)
 
@@ -1683,6 +1701,16 @@ class Release:
         return "ledger written"
 
     # -- plumbing -------------------------------------------------------
+
+    @contextmanager
+    def _blame(self, name: str) -> Generator[None]:
+        """Name `name` as the component of an end that leaves the block.
+        The outcome push says `Release failed at <name> release`. A block
+        that ends clean names nobody, so a later end of a whole step names
+        its step."""
+        self.entry.failed_component = name
+        yield
+        self.entry.failed_component = None
 
     def _require_plan(self) -> Plan:
         if self.plan is None:
@@ -1779,6 +1807,7 @@ def repair(spool: Spool, wiring: Wiring, request_id: str, note: SwitchNote) -> E
     """
     entry = Entry(id=request_id, kind=str(RequestKind.RELEASE), requested_by="unknown")
     entry.reason = CRASH_REASON
+    entry.failed_component = note.component
     entry.previous = {note.component: None}
     entry.say(f"repairing an unfinished switch of {note.component}")
     started = wiring.host.clock()
@@ -1823,6 +1852,7 @@ def _put_back(wiring: Wiring, note: SwitchNote, entry: Entry) -> str:
         return f"nothing to put back for {note.component}"
 
     installer.swap_back(paths)
+    entry.rolled_back.append(note.component)
     # The same sweep `_restore_one`'s run makes, for the crash-repair path:
     # `swap_back` has just put the tree of the crashed switch at `.new`,
     # and a tree root leaves there is what the next release and the next

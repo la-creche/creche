@@ -3,7 +3,7 @@
  "contract": "stage7-releases.md \u00a72.5",
  "entry": "handover.executor.approval.Summary.as_dict",
  "format": 1,
- "notes": ["The input is the seven fields of one summary.","value is the summary as the phone gets it. A field of more than 120 characters is cut to 119 characters and one ellipsis. A character is one code point."],
+ "notes": ["The input is the seven fields of one summary.","value is the record of the summary: the log of the ledger entry and the preview of the requester. A field of more than 120 characters is cut to 119 characters and one ellipsis. A character is one code point."],
  "surface": "manifest.summary",
  "vectors": [
   {"id":"short","input":{"args":{"components":"chaperone 2.0.3 \u2192 2.1.0","contracts":"6 contracts satisfied","manifest":"0123456789ab","requested_by":"creche","restarts":"creche-chaperone.service","restore":"automatic","review":"safe: every manifest verified"}},"result":"accepted","value":{"components":"chaperone 2.0.3 \u2192 2.1.0","contracts":"6 contracts satisfied","manifest":"0123456789ab","requested_by":"creche","restarts":"creche-chaperone.service","restore":"automatic","review":"safe: every manifest verified"}},

@@ -256,6 +256,31 @@ has the name of the markup of the manifest: `.component.toml` or
 2. Everything builds before anything swaps. The restore runs in reverse.
 3. The phone transport is the chaperone's, not a second one. `phone.py`
    polls the hook for the verdict, because root owns no HTTP server.
+3a. The operator decided the text of the two pushes. Each arrow is the
+    ASCII `->`.
+    1. The approval push has the title `Release Approval` and a message of
+       two lines. `Components:` lists each deploy row in name order, as
+       `name from -> to`, with `absent` for a first install. `Unsafe:`
+       lists in name order each component with no automatic rollback: its
+       restore mode is `manual`, or root could not verify its manifest. An
+       empty list is `none`.
+    2. The outcome push has the title `Release Result`. Its message is
+       `All succeeded`, or `Release failed at <where>.` and a second line
+       `Rolled back components: <names or none>`. `<where>` is
+       `<component> release` when one component caused the end, and
+       `<step> step` when none did. The executor records the component and
+       each component that the restore put back (`Entry.failed_component`,
+       `Entry.rolled_back`). No code reads the text of an error for them.
+    3. Each push carries `summary`, the message cut to 200 characters.
+       Contract 04 §8.4 rule 1 needs it, and the live flow shows it until
+       the operator imports the flow that reads `title` and `message`. The
+       message has 900 characters at most, and the title 60.
+    4. The approval push carries no `fields`. The outcome push carries
+       `fields` with the request `id` only, and the flow builds the tag of
+       the card from it.
+    5. The log of the ledger entry keeps §2.5's seven fields, one line for
+       each field. The requester's preview prints the two lines of the
+       phone, then the seven fields.
 4. `phone.py` and `quiet.py` are stdlib only. A release re-syncs `handover`'s
    own venv under the running executor.
 5. A signal root cannot read is never quiet, and it restarts the window.
@@ -707,7 +732,7 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `requester/`, `corpus/` | one request file, one `git fetch`, and the fetch of the signed assets of a binary or disk-image component into the store (`corpus/artifacts.py`) |
 | `follow/` | the set a newer tag moves, the marker, the decision |
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P6 |
-| `executor/approval.py`, `phone.py`, `notice.py`, `quiet.py` | the gate, the transport, the outcome push, the busy check of step 7 and the quiet minutes |
+| `executor/approval.py`, `phone.py`, `notice.py`, `quiet.py` | the gate and the text of the approval push, the transport, the outcome push, the busy check of step 7 and the quiet minutes |
 | `executor/host.py`, `install.py`, `mcpbuild.py`, `self_switch.py` | the one spawn and the unit of the verifier, steps 8 to 10, a server tree, the self-release |
 | `executor/unpack.py`, `artifact.py` | the unpack of a tar archive and the member list of a component archive, root's copy of the signed assets of a binary or disk-image component and its digest |
 | `executor/ledger.py`, `steps.py`, `drain.py` | the entry, the ten steps, the unit's entry point |
