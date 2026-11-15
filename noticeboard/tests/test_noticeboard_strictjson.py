@@ -1371,6 +1371,19 @@ def test_the_writer_refuses_a_value_whose_text_is_not_strict() -> None:
             assert caught.value.__context__ is None
 
 
+def test_a_shared_container_is_walked_once_for_each_depth() -> None:
+    """Each level holds one child two times, so the value has 2**70 paths.
+    The depth walk opens each list once, and the refusal comes at once."""
+    value: list[object] = []
+    for _ in range(70):
+        value = [value, value]
+
+    with pytest.raises(NotStrictJson) as caught:
+        strictjson.dumps(value, indent=1)
+
+    assert caught.value.rule is Rule.TOO_DEEP
+
+
 def test_the_writer_refuses_two_keys_that_have_one_text() -> None:
     """The standard writer writes the key 1 and the key "1" as one text."""
     for value in ({1: "a", "1": "b"}, {None: "a", "null": "b"}, [{2.5: 1, "2.5": 2}]):
