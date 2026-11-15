@@ -26,7 +26,7 @@ from concurrent.futures import Future, wait
 from types import FrameType
 
 from .config import Config, ConfigError, check, from_env
-from .graph import Dead, NotAVerdict, close_cognee_graph, cognee_graph_state
+from .graph import Dead, NotAVerdict, close_cognee_graph, cognee_graph_state, drain_cognee_graph
 from .search import STOP_TIMEOUT_S, Searcher, StoreLoop
 from .server import MemoryServer, Service
 from .store import configure
@@ -113,9 +113,13 @@ def stop_store(loop: StoreLoop, syncing: Future[Dead | None] | None) -> int:
     A task that still runs `STOP_TIMEOUT_S` after its cancel can still send
     statements, a checkpoint among them. A checkpoint or a close of the stop
     could then follow a failed checkpoint of that task. So the stop then
-    writes nothing and ends the process at once (`os._exit`). The task gets
-    no further statement, and the database stays open until the exit. The
-    next start replays its WAL. A normal exit would wait: Python joins
+    writes nothing. It refuses every further statement to the graph worker,
+    waits for each statement that the worker runs (`drain_cognee_graph`),
+    and then ends the process at once (`os._exit`). The exit ends the
+    worker at once, on Linux and on macOS. Without the wait, the exit can
+    end the worker in a checkpoint of the task, and then the next open can
+    crash or fail. The database stays open until the exit.
+    The next start replays its WAL. A normal exit would wait: Python joins
     Cognee's query threads at the exit. And on Linux the end of the loop
     thread sends SIGTERM to the graph worker (`PR_SET_PDEATHSIG`), and
     Cognee answers a dead worker with a new one, which opens the database
@@ -133,6 +137,12 @@ def stop_store(loop: StoreLoop, syncing: Future[Dead | None] | None) -> int:
             "The graph database stays open until the service exits. "
             "The next start replays its WAL."
         )
+        if status != EX_CONFIG:
+            try:
+                loop.spawn(drain_cognee_graph()).result()
+            except Exception as error:
+                # Only the type: a message can hold the URL of a service.
+                _say(f"the wait for the graph worker failed: {type(error).__name__}.")
         sys.stdout.flush()
         os._exit(status)
 

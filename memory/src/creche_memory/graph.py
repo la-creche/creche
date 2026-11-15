@@ -23,7 +23,8 @@ The stop of the service is the one place that closes the engine
 (`close_graph`). It runs `CHECKPOINT` first, and it closes only after that
 checkpoint ends well. After a failed checkpoint of the same open, both a
 checkpoint and a close leave a file that does not open, so the stop then
-writes nothing.
+writes nothing. After a task that ignored its cancel, the stop does not
+close: it waits for the statements of that task (`drain_cognee_graph`).
 
 An error of the open is a verdict only when ladybug raises it for the
 file. An error of Cognee's worker process, a lock that another opener
@@ -31,10 +32,13 @@ still holds, or an error of the host such as a full disk says nothing
 about the file. A restart can clear it, so the check passes it to the
 caller."""
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from concurrent.futures import Executor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from cognee_db_workers.harness import SubprocessTransportError
 
@@ -288,3 +292,27 @@ async def close_cognee_graph() -> GraphClose:
         await engine.close()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
     return await close_graph(graph_file, probe, checkpoint, close)
+
+
+async def drain_cognee_graph() -> None:
+    """Refuse every further statement to Cognee's graph engine, and wait for
+    each statement that already runs. The database stays open, and the graph
+    worker is idle at the end. Call it only after the start check.
+
+    It is for the stop after a task that ignored its cancel (`cli.stop_store`).
+    That task can still send statements, a checkpoint among them. The exit
+    after the drain then ends an idle worker, never a worker in a checkpoint.
+
+    The ladybug adapter runs each statement in a thread of its executor, and
+    that thread waits for the answer of the worker. The shutdown of the
+    executor makes each later statement raise a `RuntimeError` before it
+    reaches the worker. It cancels each statement that no thread has started.
+    It waits for each statement that a thread runs."""
+    from cognee.infrastructure.databases.graph import get_graph_engine
+
+    engine = await get_graph_engine()
+    # The interface of a graph engine has no executor. The ladybug adapter
+    # of the pinned Cognee has one.
+    executor = cast(Executor, engine.executor)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
+    await asyncio.to_thread(executor.shutdown, wait=True, cancel_futures=True)
