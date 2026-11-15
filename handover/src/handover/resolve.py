@@ -30,6 +30,7 @@ from .catalog import (
     MANIFEST_CONTRACT_MAJOR,
     MANIFEST_CONTRACT_MINOR,
     MAX_REQUEST_COMPONENTS,
+    RELEASES_ALONE,
     Action,
     Releases,
 )
@@ -64,6 +65,10 @@ REDEPLOY_NOT_LIVE = "{name}: a redeploy names the live version"
 
 #: The components no request may name as a set of their own. Empty.
 NO_REDEPLOY: frozenset[str] = frozenset()
+
+#: The refusal of a set that deploys `handover` and another component
+#: (`catalog.RELEASES_ALONE`). The executor and the requester give it.
+HANDOVER_ALONE = "handover releases alone: file the other components after it is installed"
 
 
 @dataclass(frozen=True)
@@ -222,6 +227,16 @@ def deploying_names(
     return frozenset(deploying_versions(state, request, redeploy))
 
 
+def check_alone(deploying: frozenset[str]) -> None:
+    """Refuse a set that deploys `handover` and another component.
+
+    Only a deploy row counts. A component named at its live version is
+    `unchanged`, so a set with `handover` unchanged is not a mixed set. A
+    redeploy is a deploy row, and it counts."""
+    if RELEASES_ALONE in deploying and len(deploying) > 1:
+        raise Refusal(RefusalCode.REQUEST, "request", HANDOVER_ALONE)
+
+
 def resolve(
     manifests: dict[str, ComponentManifest],
     state: ReleaseState,
@@ -231,7 +246,9 @@ def resolve(
     """Decide what this release does, or refuse the set with one report.
 
     `redeploy` names the components that deploy at their live version
-    (contract 06 §9.2). It is empty for a `release`."""
+    (contract 06 §9.2). It is empty for a `release`. Step 2 of the executor
+    and the requester both call it, so both refuse a mixed set with
+    `handover` (`check_alone`) before the push and before a file."""
     for name in sorted(request):
         _check_requested(name, manifests)
 
@@ -241,6 +258,7 @@ def resolve(
     components = tuple(_one_component(row.name, request, state, redeploy) for row in CATALOG)
     ordered = tuple(sorted(components, key=lambda item: item.name))
     deploying = frozenset(item.name for item in ordered if item.action is Action.DEPLOY)
+    check_alone(deploying)
 
     order = deploy_order(build_graph(manifests), deploying)
     table = build_table(manifests, deploying, state.provided)
