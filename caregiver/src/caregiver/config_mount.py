@@ -180,7 +180,7 @@ def _shape_text(shape: FamilyShape) -> str:
 def _read(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return None
 
 

@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.12 -I
+#!/usr/local/bin/python3.14 -I
 """creche-browser-facade: the facade of the browser service image.
 
 The browser VM runs headless Chrome for the `browser` MCP upstream, with

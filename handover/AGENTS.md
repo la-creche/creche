@@ -123,8 +123,18 @@ The console script is `handover`. The verify hook and the operator's
    `catalog.py`.
 2. Every list in the resolved document is ordered here, so two runs over one
    set produce one hash whatever order the arguments arrived in.
-3. `handover` is last in `order`, whatever `depends_on` says. Nothing may
-   depend on it.
+3. `handover` releases alone. The executor that runs a set is the
+   installed `handover`. Only a newer one can know how to stage a newer
+   component, for example a new disk flavor.
+   - `resolve.check_alone` refuses a set that deploys `handover` and
+     another component, with the code `request`. `resolve` calls it, so
+     step 2 of the executor refuses before the push, and the requester
+     refuses before the file.
+   - Only a deploy row counts. A set with `handover` at its live version
+     is not a mixed set. A redeploy is a deploy row.
+   - `order.py` still puts `handover` last, but a set with `handover`
+     holds nothing else. Nothing may depend on it.
+   - The follower files `handover` alone first (`follow/` rule 10).
 4. `FIRST_VERSION` and the bump arithmetic live in one place.
 5. The site file holds everything that differs between deployments. `site.py`
    reads it. A required value that is missing refuses with the `site` code.
@@ -239,6 +249,17 @@ has the name of the markup of the manifest: `.component.toml` or
    and never above it, and it prints one note for each newer tag the
    ceiling holds back. A file that breaks one of the five rules of
    `policy.py` stops the run before the fetch, with exit 2.
+10. `handover` releases alone, and first ("Rules the design depends on",
+    rule 3). When the newer tags move `handover` and another component,
+    the run takes `handover` alone, at its newest tag under the ceiling,
+    into rules 2 to 8. It holds the rest and prints one line:
+    `split: handover 0.1.94 goes alone first. Held until it is installed:
+    disks 0.1.15, vmm 0.1.22`. When the stamp of `handover` reads that
+    version, the rest is a new set for rules 2 to 8. While `handover` still
+    moves, each run splits again. So a denial of the set of `handover`
+    holds the rest too (rule 4), and a newer tag of `handover` is a new set
+    of one. The registry watch reads the whole set, so a held
+    `mcp-servers` tag still stops a redeploy.
 
 ## Rules `mcpbuild.py` adds
 
@@ -355,6 +376,10 @@ needs and the file does not hold (`executor/envfill.py`).
 1. A `kind: venv` component is built with `uv venv --relocatable` first, so
    the tree survives its own rename.
 2. The action id root pushes is a 26-character lower-case ULID.
+3. A venv builds on an interpreter that the `requires-python` of its
+   project allows. The floor thus names the Python of the host: 3.14 in
+   each `pyproject.toml` of this repository. When the host has two
+   interpreters that the floor allows, uv can build on either one.
 
 ## Binary builds
 
@@ -391,9 +416,6 @@ needs and the file does not hold (`executor/envfill.py`).
     changes its kind. Root compares a manifest with the catalog of the
     installed code. Until the installed catalog holds the new row:
     - Root refuses the release of that component, with the code `catalog`.
-    - Root refuses a set that holds that component and `handover`. Root
-      reads each manifest of a set before it swaps a tree. The follower
-      then holds that set (`follow/` rule 4).
     - The installed `handover request` refuses each request. It reads each
       manifest of its roots.
 11. File the request for that release from a checkout that holds the new
@@ -548,10 +570,11 @@ Kind.BINARY, Releases.YES)` (CH7-5, CH9, item 12 (1)). Its manifest is
    the four programs, the version that CH prints and a static guest-init.
    It opens no socket and reads no disk (CH76 rule 2). `bin/fleet-up up`
    writes `vmm.env` (CH59 rule 1). The file must exist before the first
-   vmm release. When the vmm manifest has an `env` table, a release also
-   adds each absent key of the table to `vmm.env` ("The env fill"). A later
-   PR adds that table, after a host installs the `handover` that reads
-   it.
+   vmm release. The `env` table of the vmm manifest lists each key of
+   `vmm.env`, so a release also adds each absent key to the file ("The env
+   fill"). `bin/tests/test_vmm_manifest.py` holds the table equal to
+   `rust/crates/vmm/src/config.rs` and to the `VMM_KEYS` of
+   `bin/fleet-up`.
 5. The manifest requires `family-file` 0.19. Minor 16 is the first with
    the reach files that the vmm reads (CH76 rule 3), minor 17 adds the
    flavor `coding` (CH79 rule 1), minor 18 drops `files` (CH10-10), and
@@ -743,6 +766,18 @@ other reader of the file.
    the field, and never the value.
 7. `SERVER_FILE_NAME` and `SERVER_FILE_NAME_YAML` hold the two names. Write
    no other copy of a name.
+8. `install.source` has four values: `pypi`, `github-release`,
+   `forge-release` and `agent-mcp`. A `forge-release` pin has the fields
+   of a `github-release` pin and one more, `host`. The build of the two
+   sources is one path (`ASSET_SOURCES`). Only the host of the URL
+   differs: `CODE_HOST` for `github-release`, and `host` for
+   `forge-release`.
+9. `host` is a DNS name in lower case, with two labels at least and 253
+   characters at most. Its last label starts with a letter. Root refuses
+   a scheme, a port, a path, a user, an IP address and `github.com`
+   (`HOST_RE`, rule 17 of `mcpserver.py`).
+10. Release `handover` before the first server file says
+    `forge-release`. An older executor refuses that file.
 
 ## An `mcp-servers` release
 
@@ -865,6 +900,11 @@ that wants a refusal changes one field.
   that is no failed hook still stops the restore at its component
   (`executor/steps.py`).
 - `arg_allows` is applied by nothing (`mcpserver.py`).
+- Contract 01b §3 names no `forge-release` source and no `host` field.
+  Root takes the strict reading: a DNS name in lower case, no name of one
+  label, no end dot, and no list of allowed hosts. The file that names
+  the host is the file that the operator reviews (`mcpserver.py`,
+  `HOST_RE`).
 - Contract 06 §3 names `chaperone` as the owner of `pep-grant`. The
   manifest of the Rust `chaperone` provides no contract. Each floor on
   `pep-grant` is then a line `not verified`, and not a refusal

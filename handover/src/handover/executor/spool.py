@@ -572,7 +572,7 @@ class Spool:
     def _read_note(self, name: str) -> dict[str, object] | None:
         try:
             raw = read_capped(self.running_fd, name, MAX_RECORD_BYTES, None)
-        except (NotAFile, Refusal):
+        except NotAFile, Refusal:
             return None
 
         try:

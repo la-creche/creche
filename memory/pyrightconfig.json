@@ -1,7 +1,7 @@
 {
     "include": ["src"],
     "typeCheckingMode": "strict",
-    "pythonVersion": "3.12",
+    "pythonVersion": "3.14",
     "venvPath": ".",
     "venv": ".venv",
     "reportMissingTypeStubs": false

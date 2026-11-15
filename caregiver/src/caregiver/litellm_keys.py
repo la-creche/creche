@@ -205,7 +205,7 @@ def _json_object(what: str, resp: httpx.Response) -> dict[str, Any]:
     and on a mint the body may hold the key."""
     try:
         body: object = resp.json()
-    except (ValueError, RecursionError):
+    except ValueError, RecursionError:
         raise LiteLLMError(f"{what} answered a body that is not JSON") from None
 
     if not isinstance(body, dict):

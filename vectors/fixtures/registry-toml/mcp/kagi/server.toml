@@ -5,7 +5,7 @@ install.source = "pypi"
 install.package = "kagimcp"
 install.version = "1.0.2"
 install.lock = "mcp/kagi/install.lock"
-install.python = "3.12"
+install.python = "3.14"
 
 run.entrypoint = "kagimcp"
 run.env.KAGI_API_KEY = "secret:kagi_api_key"

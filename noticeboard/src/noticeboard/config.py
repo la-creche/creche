@@ -236,7 +236,7 @@ def _refuse_half_channel(url: str, token_file: Path | None) -> None:
 
     try:
         held = token_file.read_text(encoding="utf-8").strip()
-    except (OSError, ValueError):
+    except OSError, ValueError:
         # A decode error quotes bytes of the token, so it is not the cause.
         held = ""
 

@@ -149,7 +149,7 @@ async def _probe_writes(stub: Stub, writer: asyncio.StreamWriter) -> None:
             writer.write(b"{}\n")
             await writer.drain()
             await asyncio.sleep(0.01)
-    except (ConnectionError, OSError):
+    except ConnectionError, OSError:
         stub.saw_close.set()
 
 

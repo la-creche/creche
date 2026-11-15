@@ -18,7 +18,7 @@
 #           │                      the systemd of the runner, for a push
 #           │                      that touches systemd/
 #           ├── kvm         code   the kvm_ tests of rust/, on the KVM of
-#           │                      the runner
+#           │                      the runner, in two shards
 #           ├── artifacts ─┬── sign
 #           │              │  the archive of each binary component that the
 #           │              │  plan tags, then the keyless signature of each
@@ -414,6 +414,7 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
+          python-version: "3.14"
 
       - run: uv sync --locked
         working-directory: memory
@@ -568,19 +569,39 @@ jobs:
   # facade test of rust/crates/vmm/tests/kvm_facade.rs boots the facade of
   # this change (decisions CH75 rule 2, CH80). It needs no step here.
   #
-  # The time limit: the CH build takes about 6 minutes, with a limit of 12
-  # minutes in the script. The rest of the setup, the base disk build
+  # The time limit: the CH build takes about 3 to 6 minutes, with a limit
+  # of 12 minutes in the script. The rest of the setup, the base disk build
   # (about 80 s, 8 minutes for each of its steps at most) and the build of
-  # the tests run beside it. The tests take about 2 minutes after it, and
-  # the real facade test adds about 1.5 to 2 minutes, so the job takes
-  # about 12 to 12.5 of its 25 minutes.
+  # the tests run beside it. The setup took 208 s in gate run 43666120428.
+  #
+  # The two shards: the disk-swap test of tests/kvm_reach.rs waits for the
+  # follow of `vmm serve` (305 s) and for its idle timeout (300 s) at the
+  # same time. It holds the one vmm lock of its binary
+  # (tests/common/mod.rs) for all of that wait. In one job, the other
+  # kvm_reach tests waited behind it, and the test run took 650 s. So the
+  # shard `disk-swap` runs that test alone, on a runner of its own, and the
+  # shard `main` runs every other kvm_ test. Each shard runs the whole
+  # setup. The two shards run at once, and each takes about 9 of its 25
+  # minutes.
   kvm:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    strategy:
+      # A red shard does not stop the other: one run shows every failure.
+      fail-fast: false
+      matrix:
+        # `tests`: the words after `--ignored` in the count and in the run.
+        # `--skip` matches a part of a name, and `--exact` the whole name.
+        include:
+          - shard: main
+            tests: kvm_ --skip kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk
+          - shard: disk-swap
+            tests: --exact kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk
     env:
       CARGO_INCREMENTAL: 0
+      KVM_TESTS: ${{ matrix.tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -597,18 +618,20 @@ jobs:
           cargo --version
 
       # `cargo test` exits 0 when the filter matches no test. So a renamed
-      # test, a lost `#[ignore]` or a wrong cfg would leave the job green
-      # with no boot. This step fails when no ignored kvm_ test exists.
+      # test, a lost `#[ignore]` or a wrong cfg would leave the shard green
+      # with no boot. This step fails when the shard matches no ignored
+      # test. A rename of the disk-swap test fails the shard `disk-swap`.
+      # $KVM_TESTS has no quotes: it holds a filter and its flags.
       - name: count the kvm tests
         working-directory: rust
         run: |
-          count=$(cargo test --locked -q -- --ignored --list kvm_ | grep -c ': test$' || true)
-          echo "ignored kvm_ tests: $count"
+          count=$(cargo test --locked -q -- --ignored --list $KVM_TESTS | grep -c ': test$' || true)
+          echo "ignored kvm_ tests of the shard: $count"
           test "$count" -ge 1
 
       # `--no-fail-fast` runs every test binary, so one red binary does
       # not hide the result of the next one.
-      - run: cargo test --locked --no-fail-fast -- --ignored kvm_
+      - run: cargo test --locked --no-fail-fast -- --ignored $KVM_TESTS
         working-directory: rust
         env:
           CRECHE_KVM_DIR: ${{ runner.temp }}/kvm
@@ -650,6 +673,7 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
+          python-version: "3.14"
 
       # TAG_REPO: the catalog's name for this repository, as the tag step
       # gives it.
@@ -703,6 +727,7 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
+          python-version: "3.14"
 
       # musl-gcc for the C of ring under CH (plan risk 13). The
       # `vmm-archive` job of gate.yml holds the same step. Runner sudo
@@ -763,6 +788,7 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
+          python-version: "3.14"
 
       # DISK_REPO: the catalog's name for this repository, as ARTIFACT_REPO
       # of the `artifacts` job. DISK_ROW: the one disk-image row of this
@@ -1017,6 +1043,8 @@ jobs:
           fi
 
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: "3.14"
 
       # Idempotent: a component already tagged on this SHA is a no-op, and
       # a tag is never moved or deleted (handover/bin/allocate-tags.sh).

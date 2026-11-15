@@ -32,7 +32,7 @@ install:
   package: kagimcp
   version: 1.0.2
   lock: {lock}
-  python: "3.12"
+  python: "3.14"
 run:
   entrypoint: kagimcp
   env:
@@ -97,6 +97,31 @@ def kagi_server(lock: str = KAGI_LOCK_PATH) -> ServerFile:
 
 def github_server(sha256: str) -> ServerFile:
     return parse_server(GITHUB_YAML.format(sha256=sha256).encode("utf-8"), "github-code")
+
+
+#: A `forge-release` (rule 17): the pin of `github-release`, with the
+#: Forgejo host that serves the asset.
+FORGE_YAML = """
+name: forgejo-code
+identity: "Access token of the code bot on the Forgejo host."
+install:
+  source: forge-release
+  host: git.b4mad.industries
+  repo: agentic-forges/forgejo-mcp
+  version: 3.4.1
+  asset: forgejo-mcp_3.4.1_linux_amd64.tar.gz
+  sha256: "{sha256}"
+run:
+  entrypoint: forgejo-mcp
+  args: [--transport, stdio]
+tools:
+  - name: create_pull_request
+    description: Open a pull request.
+"""
+
+
+def forge_server(sha256: str) -> ServerFile:
+    return parse_server(FORGE_YAML.format(sha256=sha256).encode("utf-8"), "forgejo-code")
 
 
 #: A `format: binary` release (rule 16): the asset IS the program, the
@@ -167,6 +192,10 @@ class McpFake:
     """
 
     asset_bytes: bytes = b""
+    #: The bytes of one asset by its file name. A release of two release
+    #: assets serves each one its own bytes. Any other name gets
+    #: `asset_bytes`.
+    asset_by_name: dict[str, bytes] = field(default_factory=dict[str, bytes])
     #: An argv word to the exit code the child answers with.
     fails: dict[str, int] = field(default_factory=dict[str, int])
     #: `uv pip install` writes this instead of a plain console script, so a
@@ -178,8 +207,8 @@ class McpFake:
     #: Where `uv sync --frozen` was told to build, read off the child's env.
     venv_env: str = ""
     #: The minors the host itself provides (`uv python find` answers for
-    #: them). 3.12 is the host's; `ha-mcp` wants 3.13, which it does not have.
-    pythons_on_host: tuple[str, ...] = ("3.12",)
+    #: them). 3.14 is the host's; `ha-mcp` wants 3.13, which it does not have.
+    pythons_on_host: tuple[str, ...] = ("3.14",)
     #: `UV_PYTHON_INSTALL_DIR`, read off a child's env.
     python_root: Path | None = None
     #: A path OUTSIDE the tree that the install leaves in a `.pth`, the way
@@ -282,7 +311,7 @@ class McpFake:
         script.chmod(0o755)
         # What a real install leaves beside the script: the site-packages
         # `check_tree` walks. Empty is self-contained.
-        site = venv / "lib" / "python3.12" / "site-packages"
+        site = venv / "lib" / "python3.14" / "site-packages"
         site.mkdir(parents=True, exist_ok=True)
         if self.pth_outside:
             (site / "_editable_impl_agent_mcp.pth").write_text(
@@ -304,7 +333,8 @@ class McpFake:
         if not argv[0].endswith("curl"):
             return None
 
-        Path(argv[argv.index("--output") + 1]).write_bytes(self.asset_bytes)
+        output = Path(argv[argv.index("--output") + 1])
+        output.write_bytes(self.asset_by_name.get(output.name, self.asset_bytes))
 
         return RunResult(0, "", "")
 

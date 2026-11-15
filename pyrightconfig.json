@@ -1,7 +1,7 @@
 {
     "include": ["family/src", "caregiver/src", "attendance/src", "door-trigger/src", "door-acp/src", "noticeboard/src", "handover/src", "env/src", "wire/src", "vectors", "playpen/guest"],
     "typeCheckingMode": "strict",
-    "pythonVersion": "3.12",
+    "pythonVersion": "3.14",
     "venvPath": ".",
     "venv": ".venv",
     "reportMissingTypeStubs": false

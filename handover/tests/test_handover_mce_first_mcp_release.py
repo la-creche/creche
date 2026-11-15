@@ -1,6 +1,6 @@
 """The FIRST MCP server release, on a host where none has run yet.
 
-`mcp-servers` moves one component tree AND eleven per-server trees, and
+`mcp-servers` moves one component tree AND twelve per-server trees, and
 reads a second repository's declarations.
 
 | What the host had on 2026-09-22 | What this module does |
@@ -8,6 +8,7 @@ reads a second repository's declarations.
 | `/opt/mcp` `root:root 0755`, EMPTY | the directory, and nothing under it |
 | no `/var/lib/mcp` | the root `0755`, empty, as the visit makes it |
 | eleven `mcp/<name>/server.yaml` | **the eleven declarations in TOML, comments removed** |
+| no `forge-release` server | `forgejo-code`, the first one |
 | `mcp-servers-v0.1.0` on mcp `a1b2c3d` | one tag, one SHA, that tag |
 | `caregiver`'s `mcp-servers=latest` request | the same body, alone in the spool |
 | no `/opt/components/mcp-servers` | `handover` and `chaperone` only |
@@ -120,6 +121,7 @@ REGISTRY_FIXTURE: Final = Path(__file__).resolve().parent / "handover_mce_regist
 
 DECLARED: Final = (
     "board-lead",
+    "forgejo-code",
     "github-code",
     "github-platform",
     "ha",
@@ -159,6 +161,12 @@ COMPOSITE_ARG: Final = "owner/repo"
 #: github-mcp-server 1.12.0's Linux x86_64 asset.
 PUBLISHED_SHA256: Final = "f34de295acd8f1012c7f2c0e3b909d87361d0993b9489b57ee92ac72b85d7cca"
 
+#: The one `forge-release` server, and the checksum that its host
+#: published for forgejo-mcp 3.4.1's Linux amd64 asset.
+FORGE_SERVER: Final = "forgejo-code"
+FORGE_PUBLISHED_SHA256: Final = "940d3ed08a5535bf1baaf426cb93610cfef5ad02adbda76b7c70a618f08fa53c"
+FORGE_ASSET_NAME: Final = "forgejo-mcp_3.4.1_linux_amd64.tar.gz"
+
 #: The real pinned requirement of each `pypi` server and the hashes its
 #: committed closure carries for it, read out of the registry's own
 #: `install.lock` files. The rest of each lock — about 1100 lines of
@@ -193,6 +201,7 @@ LOCK_PINS: Final = {
 #: `McpFake` writes one script per build and needs to know which.
 ENTRYPOINTS: Final = {
     "board-lead": "board-lead-mcp",
+    "forgejo-code": "forgejo-mcp",
     "github-code": "github-mcp-server",
     "github-platform": "github-mcp-server",
     "ha": "ha-mcp",
@@ -302,6 +311,10 @@ def _registry_tree(corpus: Path) -> Path:
         text = path.read_text(encoding="utf-8")
         path.write_text(text.replace(PUBLISHED_SHA256, ASSET_SHA256), encoding="utf-8")
 
+    path = registry / REGISTRY_MCP_DIR / FORGE_SERVER / SERVER_FILE_NAME
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace(FORGE_PUBLISHED_SHA256, FORGE_ASSET_SHA256), encoding="utf-8")
+
     return registry
 
 
@@ -323,12 +336,23 @@ def _lock_text(name: str, requirement: str, hashes: tuple[str, ...]) -> str:
 #: another matched only while both landed in the same second.
 ASSET: Final = release_tarball(entrypoint=ENTRYPOINTS["github-code"])
 ASSET_SHA256: Final = sha256_of(ASSET)
+FORGE_ASSET: Final = release_tarball(entrypoint=ENTRYPOINTS[FORGE_SERVER])
+FORGE_ASSET_SHA256: Final = sha256_of(FORGE_ASSET)
 
 
 def _asset_url() -> str:
     return (
         "https://github.com/github/github-mcp-server/releases/download/"
         "v1.12.0/github-mcp-server_Linux_x86_64.tar.gz"
+    )
+
+
+def _forge_asset_url() -> str:
+    """The URL of a `forge-release`: the path of `github-release`, on the
+    host that the file names."""
+    return (
+        "https://git.b4mad.industries/agentic-forges/forgejo-mcp/releases/download/"
+        f"v3.4.1/{FORGE_ASSET_NAME}"
     )
 
 
@@ -402,7 +426,7 @@ def _build_the_component_tree(components: Path) -> None:
 
 def _entrypoint_for(command: Command) -> str:
     """Which console script `McpFake` leaves behind. One fake serves one
-    build and this release runs eleven, so the name is read off the staged
+    build and this release runs twelve, so the name is read off the staged
     tree's own path — in the argv for a `pypi` build, in the environment
     for an `mcp` one, whose argv is `uv sync --frozen` and holds no
     path at all.
@@ -440,7 +464,8 @@ def bench(tmp_path: Path) -> Bench:
     state_root = tmp_path / "var-lib-agent-mcp"
     state_root.mkdir()
     state_root.chmod(OPEN_DIR_MODE)
-    _teach(run, McpFake(asset_bytes=ASSET), components, _manifest(components))
+    fake = McpFake(asset_bytes=ASSET, asset_by_name={FORGE_ASSET_NAME: FORGE_ASSET})
+    _teach(run, fake, components, _manifest(components))
 
     return Bench(
         tmp_path=tmp_path,
@@ -493,8 +518,8 @@ def _server_names(bench: Bench) -> tuple[str, ...]:
 
 
 def test_the_fixture_is_the_registry_as_agent_registry_holds_it(bench: Bench) -> None:
-    """Eleven declarations, and the count matters: `MAX_SERVERS` is 20, so
-    a twelfth is not what refuses this release."""
+    """Twelve declarations, and the count matters: `MAX_SERVERS` is 20, so
+    a thirteenth is not what refuses this release."""
     found = tuple(sorted(one.name for one in (bench.registry / REGISTRY_MCP_DIR).iterdir()))
 
     assert found == DECLARED
@@ -587,7 +612,7 @@ def test_an_agent_mcp_server_that_still_names_a_ref_is_refused(
     bench: Bench,
 ) -> None:
     """The registry pull request, half applied. One file kept its ref, and
-    root refuses the whole set rather than installing ten of eleven."""
+    root refuses the whole set rather than installing eleven of twelve."""
     bench.rewrite("board-lead", AGENT_MCP_SOURCE, f'{AGENT_MCP_SOURCE}\ninstall.ref = "{TAG}"')
 
     result = _release(bench)
@@ -603,11 +628,11 @@ def test_an_agent_mcp_server_that_still_names_a_ref_is_refused(
 
 
 def test_a_refusal_names_the_server_it_refused(bench: Bench) -> None:
-    """The ledger line the operator reads at 02:00, with eleven servers declared.
+    """The ledger line the operator reads at 02:00, with twelve servers declared.
 
     `_step` records `refusal.detail` as the reason and drops
     `refusal.subject`, so `done/<ULID>.json` alone says "pins v0.4.6, this
-    release deploys mcp-servers-v0.1.0" and never which of the eleven
+    release deploys mcp-servers-v0.1.0" and never which of the twelve
     files said it. Every refusal also writes one log line carrying the
     subject, so a line in `log_tail` holds `mcp/board-lead`.
     """
@@ -626,11 +651,12 @@ def test_a_refusal_names_the_server_it_refused(bench: Bench) -> None:
 def test_the_whole_registry_installs(
     bench: Bench,
 ) -> None:
-    """One `mcp-servers` release, end to end, on the eleven real files
-    with both registry pull requests merged.
+    """One `mcp-servers` release, end to end, on the twelve files with
+    both registry pull requests merged.
 
-    Eleven servers install: three `pypi` from their committed closures,
-    two `github-release` from one hash-pinned asset, six `mcp` from
+    Twelve servers install: three `pypi` from their committed closures,
+    two `github-release` from one hash-pinned asset, one `forge-release`
+    from the asset of its own host, six `mcp` from
     the checkout this release already fetched. The component's own tree
     lands under the install root.
     """
@@ -872,6 +898,8 @@ def test_the_ledger_names_the_artifact_and_the_closure_of_each_server(
     assert f"  closure kagi: --hash=sha256:{hashes[0]} \\" in lines
     assert f"staged github-code: {_asset_url()}" in lines
     assert f"  closure github-code: sha256:{ASSET_SHA256}" in lines
+    assert f"staged forgejo-code: {_forge_asset_url()}" in lines
+    assert f"  closure forgejo-code: sha256:{FORGE_ASSET_SHA256}" in lines
     assert f"staged board-lead: agent-mcp@{TAG}" in lines
     assert "secret:" not in "\n".join(f"{one}" for one in lines if one.startswith("staged "))
 
@@ -930,7 +958,7 @@ def test_ha_and_ha_read_each_get_a_directory_of_their_own(bench: Bench) -> None:
     `/tmp/ha-mcp` under the PEP's `PrivateTmp`.
 
     Made as root at step 8 for that server's own user, before its tree
-    goes live, and for no other of the eleven."""
+    goes live, and for no other of the twelve."""
     _release(bench)
 
     assert _state_dirs(bench) == list(STATEFUL)
@@ -981,7 +1009,7 @@ def test_a_failed_verify_takes_the_trees_and_leaves_the_state(bench: Bench) -> N
 
 def test_today_s_host_is_refused_until_the_visit_makes_the_root(bench: Bench) -> None:
     """The host on 2026-09-22 had no `/var/lib/mcp`, and two of the
-    eleven files declare `run.state_dir`. The release refuses at step 8
+    twelve files declare `run.state_dir`. The release refuses at step 8
     with nothing staged and names the command that makes the root. It does
     not make the root itself: the PEP's `ReadWritePaths` binds only a path
     that exists as the PEP starts, so a root made now would be read-only
@@ -1016,7 +1044,7 @@ def test_the_caregiver_request_is_the_only_one_in_the_spool(bench: Bench) -> Non
 
 
 def test_a_failed_verify_puts_every_server_tree_back(bench: Bench) -> None:
-    """Contract 06 §5.1 over a set that is one component and eleven server
+    """Contract 06 §5.1 over a set that is one component and twelve server
     trees. The component's verify fails, step 10 walks `deployed`, and the
     server trees go back with it.
     """

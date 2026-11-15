@@ -35,8 +35,9 @@
 //! swap names the new set. A snapshot of a VM on the old disk holds the
 //! old key, so the next start drops it and cold-boots on the new disk. The
 //! VM sleeps on the idle timeout of `vmm serve`, 300 s, while the follow
-//! waits its 305 s. So the job kvm waits about 5 min once for both
-//! proofs, and the test proves that the compose step runs the follow. The
+//! waits its 305 s. So the V1 test waits about 5 min once for both
+//! proofs, and the shard `disk-swap` of the job kvm runs it alone. The
+//! test proves that the compose step runs the follow. The
 //! rust job proves the follow on the bytes
 //! (`src/image_root/follow/tests.rs`), because only the runner's sudo
 //! makes a root-owned file (decision CH36 G20).

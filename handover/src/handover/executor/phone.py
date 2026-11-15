@@ -155,7 +155,7 @@ def _post(url: str, token: str, body: dict[str, object]) -> dict[str, object] | 
                 return None
 
             raw = reply.read(MAX_REPLY_BYTES + 1)
-    except (urllib.error.URLError, OSError, ValueError):
+    except urllib.error.URLError, OSError, ValueError:
         return None
 
     if len(raw) > MAX_REPLY_BYTES:

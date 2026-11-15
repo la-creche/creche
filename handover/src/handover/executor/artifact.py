@@ -313,7 +313,7 @@ def _copy(
                 _copy_one(tag_fd, signed, target / signed.name, operator_uid, component, sink)
                 _copy_one(tag_fd, bundle, target / bundle.name, operator_uid, component, None)
                 digests[signed.name] = digest.hexdigest()
-        except (_Fault, OSError):
+        except _Fault, OSError:
             _discard(target, parts)
             raise
 

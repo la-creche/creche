@@ -178,7 +178,7 @@ def _pth_faults(site: Path, root: Path) -> list[str]:
         name = safe_token(path.name)
         try:
             text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except OSError, UnicodeDecodeError:
             faults.append(f"{UNREADABLE_PTH}: {name}")
             continue
 
@@ -205,7 +205,7 @@ def _inside(root: Path, site: Path, line: str) -> bool:
     # with a path entry that nobody can state.
     try:
         candidate = (site / line.rstrip()).resolve()
-    except (OSError, ValueError, RuntimeError):
+    except OSError, ValueError, RuntimeError:
         # Python 3.12 raises `RuntimeError` for a link loop, and it is no
         # `OSError`.
         return False

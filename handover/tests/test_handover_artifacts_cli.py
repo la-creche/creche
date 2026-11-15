@@ -198,7 +198,7 @@ def test_each_download_url_starts_with_the_one_code_host() -> None:
     url = download_url(OWNER, HOSTED, "caregiver-v1.2.3", asset_names("caregiver").archive)
     pin = ServerPin(
         source=Source.GITHUB_RELEASE,
-        python="3.12",
+        python="3.14",
         version="1.12.0",
         repo="github/github-mcp-server",
         asset="github-mcp-server_Linux_x86_64.tar.gz",

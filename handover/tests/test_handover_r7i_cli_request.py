@@ -16,6 +16,7 @@ import pytest
 from handover.catalog import CATALOG
 from handover.cli import EXIT_OK, EXIT_REFUSED, EXIT_USAGE, main
 from handover.executor.request import parse_request
+from handover.resolve import HANDOVER_ALONE
 from handover_fixtures import manifest_text, write_manifest
 
 SPOOL = "spool"
@@ -37,7 +38,7 @@ def _tree(tmp_path: Path) -> list[str]:
 
 def _state_file(tmp_path: Path) -> str:
     body = {
-        "live": {"noticeboard": "2.0.3", "attendance": "1.4.7"},
+        "live": {"noticeboard": "2.0.3", "attendance": "1.4.7", "handover": "0.1.6"},
         "provided": {},
         "latest": {"noticeboard": "2.1.0", "attendance": "1.5.0"},
         "facts": {},
@@ -149,6 +150,22 @@ def test_a_malformed_version_is_refused_before_anything_is_written(tmp_path: Pat
 
     assert code == EXIT_REFUSED
     assert _filed(spool) == []
+
+
+def test_a_set_of_handover_and_another_is_refused_before_the_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Root's own reason (`resolve.check_alone`), before the file and the tap."""
+    spool = _spool(tmp_path)
+
+    code = main(
+        ["request", "handover@0.1.7", "noticeboard", *_tree(tmp_path), "--spool", str(spool)]
+    )
+
+    assert code == EXIT_REFUSED
+    assert _filed(spool) == []
+    printed = capsys.readouterr()
+    assert HANDOVER_ALONE in printed.out + printed.err
 
 
 def test_a_spool_this_host_does_not_have_is_a_usage_error(tmp_path: Path) -> None:

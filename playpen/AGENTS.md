@@ -20,8 +20,9 @@ host address: the facade reaches the two planes on guest loopback, which
 guest init splices to the host. The `python` flavor adds pandas, numpy and matplotlib.
 
 The `python` flavor also adds a second venv, `/opt/test`. It has CPython
-3.12, `pytest`, and the locked test dependencies of the Python workspace.
-The workspace needs 3.12 because its code uses PEP 695 type parameters.
+3.14, `pytest`, and the locked test dependencies of the Python workspace.
+The workspace needs 3.14 because its `requires-python` names the Python of
+the host.
 On `PATH`, `pytest` runs the venv. `python3` stays the 3.11 interpreter of
 the analysis stack.
 
@@ -127,7 +128,7 @@ A fetch, end to end:
 A family with no grant has no host listener on 1105. Guest init then
 closes each link with no reply, and the helper says so. The helper checks
 only the size cap and the line cap before it dials. The vmm and the
-upstream check every rule again. It runs on `python3.12 -I`, so no module
+upstream check every rule again. It runs on `python3.14 -I`, so no module
 of the repo under work loads. `rust/crates/wire/src/spool.rs` holds the
 protocol.
 

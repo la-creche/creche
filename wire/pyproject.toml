@@ -2,7 +2,7 @@
 name = "creche-wire"
 version = "0.1.0"
 description = "creche-wire: the pydantic models of the wire types of the VM owner."
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = ["pydantic>=2.8"]
 
 [build-system]

@@ -515,7 +515,7 @@ def check_artifact(
     _check_signature(run, component, policy, copy.archive, copy.bundle)
     try:
         programs = list_component_archive(copy.archive, component)
-    except (UnpackRefused, OSError):
+    except UnpackRefused, OSError:
         # A copy whose member list root cannot read has no shape that
         # passed.
         raise _refuse_artifact(component, ArtifactRefusal.SHAPE_REFUSED) from None

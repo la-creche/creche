@@ -77,7 +77,7 @@ def parse(text: str) -> datetime | None:
 
     try:
         return datetime.fromisoformat(f"{found['date']}T{found['time']}{offset}").astimezone(UTC)
-    except (ValueError, OverflowError):
+    except ValueError, OverflowError:
         # `ValueError`: the month does not have the day, or the year is 0000.
         # `OverflowError`: the offset moves the instant out of the years 0001
         # to 9999.

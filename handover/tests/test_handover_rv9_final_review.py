@@ -33,7 +33,7 @@ def _server_yaml(name: str, secrets: dict[str, str]) -> str:
         "  package: a-package\n"
         "  version: 1.0.0\n"
         f"  lock: mcp/{name}/install.lock\n"
-        '  python: "3.12"\n'
+        '  python: "3.14"\n'
         "run:\n"
         "  entrypoint: a-package\n"
         "  env:\n"

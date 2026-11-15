@@ -182,7 +182,7 @@ class AcpStream:
 
             try:
                 chunk = await self._stream.read(READ_CHUNK_BYTES)
-            except (httpcore.NetworkError, OSError):
+            except httpcore.NetworkError, OSError:
                 chunk = b""
 
             if not chunk:

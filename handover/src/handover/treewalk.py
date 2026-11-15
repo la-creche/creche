@@ -204,7 +204,7 @@ def _link_fault(name: str, root: Path, path: Path) -> str | None:
             return f"{name} {ABSOLUTE_LINK}"
 
         real = (path.parent / target).resolve()
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return f"{name} {UNREADABLE_FILE}"
     except RuntimeError:
         # Python 3.12 raises this for a link loop, and it is no `OSError`.

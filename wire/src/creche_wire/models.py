@@ -1,8 +1,6 @@
 # Generated from rust/crates/wire/schema/wire.json. Do not edit.
 # To write it again, run `uv run datamodel-codegen` at the root of the repository.
 
-from __future__ import annotations
-
 from enum import StrEnum
 from typing import Annotated, Literal
 

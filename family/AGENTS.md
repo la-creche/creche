@@ -150,11 +150,15 @@ each rule of root:
 1. An identity and a description count each character.
 2. The grammar of `package`, `repo`, `asset`, `python`, `entrypoint` and
    `state_dir_env`.
-3. A value of `run.env`, a word of `run.args` and a value of a fence have
+3. The grammar of `host`, the field of the source `forge-release`: a DNS
+   name in lower case, with two labels at least and 253 characters at
+   most. The validator refuses `github.com` as a host, because that host
+   takes the source `github-release`.
+4. A value of `run.env`, a word of `run.args` and a value of a fence have
    256 characters at most and no NUL character.
-4. The key after `secret:` matches `[a-z][a-z0-9_]{1,62}`.
-5. A fence names one tool at least, or `all`.
-6. Each count has a cap:
+5. The key after `secret:` matches `[a-z][a-z0-9_]{1,62}`.
+6. A fence names one tool at least, or `all`.
+7. Each count has a cap:
    - 200 tools.
    - 32 words of `run.args`.
    - 32 variables of `run.env`.
@@ -267,12 +271,13 @@ uv run pytest family/tests
   2. `model.py`, `Strict`, contract 01 §2 and contract 01b. The contracts do
      not say how strict the read of a type is. The reader uses the strict
      mode.
-  3. `serverrules.py`, seven comments, contract 01b §3 to §7. The contract
+  3. `serverrules.py`, eight comments, contract 01b §3 to §7. The contract
      does not give these rules, and the validator takes the rules of root
      ("The grammar of root for a server file"):
      - The count of an identity and of a description.
      - The grammar of `package`, `repo`, `asset`, `python`, `entrypoint`
        and `state_dir_env`.
+     - The source `forge-release` and the grammar of its `host`.
      - The grammar of a value and of a secret key.
      - A fence with an empty list of tools.
      - Each other cap on a length and on a count.

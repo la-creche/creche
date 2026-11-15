@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.12 -I
+#!/usr/local/bin/python3.14 -I
 """creche-git-spool: move one git branch through the git platform spool.
 
 A VM of the coding flavor has no route to GitHub and holds no token. The

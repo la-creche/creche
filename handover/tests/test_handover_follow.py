@@ -34,9 +34,12 @@ from handover.follow import (
     NOTICE_SERVICE,
     NOTICES_FILE,
     REQUESTED_BY,
+    SPLIT,
     Answer,
     Marker,
+    Split,
     Step,
+    alone_first,
     decide,
     registry_moving,
 )
@@ -45,6 +48,7 @@ from handover import cli, notices
 
 BOARD = "noticeboard"
 CARE = "caregiver"
+SELF = "handover"
 SERVERS = "mcp-servers"
 LIVE = "0.1.0"
 NEXT = "0.1.1"
@@ -150,6 +154,18 @@ class _Host:
         entry.reason = not_granted(verdict)
         (self.done / newest.name).write_text(json.dumps(entry.as_dict()), encoding="utf-8")
         newest.rename(self.root / "spool" / "taken" / newest.name)
+
+    def succeed(self) -> None:
+        """Root's ledger entry for the newest request: it succeeded."""
+        newest = sorted(self.requests.glob("*.json"))[-1]
+        entry = Entry(id=newest.stem, kind="release", requested_by=REQUESTED_BY)
+        entry.status = Outcome.SUCCEEDED
+        (self.done / newest.name).write_text(json.dumps(entry.as_dict()), encoding="utf-8")
+        newest.rename(self.root / "spool" / "taken" / newest.name)
+
+    def restamp(self, name: str, version: str) -> None:
+        """The stamp a release writes into the live tree."""
+        write_stamp(self.root / "components" / name, version)
 
     def taken(self) -> int:
         return len(list((self.root / "spool" / "taken").glob("*.json")))
@@ -343,6 +359,99 @@ def test_a_newer_tag_asks_again_after_a_denial(host: _Host) -> None:
     host.follow(BOARD)
 
     assert [item["components"] for item in host.filed()] == [{BOARD: LATER}]
+
+
+# -- rule 10: `handover` releases alone, and first ----------------------------
+
+
+def _split_mixed(host: _Host) -> None:
+    """`handover` and `noticeboard` both have a newer tag, and two runs
+    filed the first request."""
+    host.install(SELF, LIVE)
+    host.install(BOARD, LIVE)
+    host.tag(SELF, NEXT)
+    host.tag(BOARD, NEXT)
+    host.follow(SELF, BOARD)
+    host.follow(SELF, BOARD)
+
+
+def test_handover_and_another_file_handover_alone_first(
+    host: _Host, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _split_mixed(host)
+
+    assert [item["components"] for item in host.filed()] == [{SELF: NEXT}]
+    line = SPLIT.format(name=SELF, version=NEXT, held=f"{BOARD} {NEXT}")
+    assert line in capsys.readouterr().out
+
+
+def test_the_set_of_handover_is_not_filed_again(host: _Host) -> None:
+    _split_mixed(host)
+
+    for _ in range(3):
+        host.now += 120
+        host.follow(SELF, BOARD)
+
+    assert [item["components"] for item in host.filed()] == [{SELF: NEXT}]
+
+
+def test_the_rest_files_once_handover_is_installed(host: _Host) -> None:
+    """The stamp of `handover` reads its new version, so the rest is a new
+    set: one run reads it, and the next run files it."""
+    _split_mixed(host)
+    host.succeed()
+    host.restamp(SELF, NEXT)
+
+    host.follow(SELF, BOARD)
+    assert host.filed() == []
+
+    host.follow(SELF, BOARD)
+    assert [item["components"] for item in host.filed()] == [{BOARD: NEXT}]
+
+
+def test_a_denied_handover_holds_the_rest_too(
+    host: _Host, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Rule 4 holds the set of `handover`. The rest waits for the installed
+    `handover`, so the older executor never runs it."""
+    _split_mixed(host)
+    host.answer(Verdict.DENIED)
+    capsys.readouterr()
+
+    for _ in range(3):
+        host.now += AGAIN_S * 10
+        host.follow(SELF, BOARD)
+
+    assert host.filed() == []
+    assert f"held: {SELF} {NEXT} is asked already" in capsys.readouterr().out
+
+
+def test_a_newer_handover_tag_while_the_rest_waits_asks_again(host: _Host) -> None:
+    _split_mixed(host)
+    host.answer(Verdict.DENIED)
+
+    host.tag(SELF, LATER)
+    host.follow(SELF, BOARD)
+    host.follow(SELF, BOARD)
+
+    assert [item["components"] for item in host.filed()] == [{SELF: LATER}]
+
+
+@pytest.mark.parametrize(
+    ("moving", "expected"),
+    [
+        ({}, Split(moving={}, held={})),
+        ({BOARD: NEXT}, Split(moving={BOARD: NEXT}, held={})),
+        ({SELF: NEXT}, Split(moving={SELF: NEXT}, held={})),
+        ({SELF: NEXT, BOARD: NEXT, CARE: LATER}, Split({SELF: NEXT}, {BOARD: NEXT, CARE: LATER})),
+    ],
+)
+def test_the_split(moving: dict[str, str], expected: Split) -> None:
+    assert alone_first(moving) == expected
+
+
+def test_a_set_kept_whole_prints_no_split_line() -> None:
+    assert alone_first({SELF: NEXT}).lines() == ()
 
 
 def test_a_component_no_release_has_stamped_is_not_followed(

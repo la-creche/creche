@@ -116,7 +116,7 @@ def in_the_tree(tail: str) -> bool:
 def _text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, IsADirectoryError):
+    except UnicodeDecodeError, IsADirectoryError:
         return ""
 
 

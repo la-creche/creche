@@ -122,7 +122,7 @@ async def forward(client: WebSocket, family: str, upstream: Upstream) -> None:
             compression=None,
             open_timeout=CONNECT_TIMEOUT_S,
         )
-    except (OSError, TimeoutError, WebSocketException):
+    except OSError, TimeoutError, WebSocketException:
         await _close_client(client, End(Side.DOOR, Close.UNREACHABLE, UNREACHABLE_REASON))
         return
 
@@ -191,7 +191,7 @@ async def _to_client(attendance: ClientConnection, client: WebSocket) -> End:
 
         try:
             await client.send_text(frame)
-        except (OSError, RuntimeError, WebSocketDisconnect):
+        except OSError, RuntimeError, WebSocketDisconnect:
             return End(Side.CLIENT, Close.GOING_AWAY)
 
 
