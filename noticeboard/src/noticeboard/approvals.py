@@ -19,9 +19,7 @@ state of its own.
 
 Three rules this module keeps.
 
-1. **The bearer is read from a file at each call**, never from the
-   environment, and it appears in one place: an `Authorization` header.
-   No page, log line or URL holds it (invariant 13).
+1. **The bearer is read from a file at each call** (`bearercall.py`).
 2. **A missing channel decides nothing.** With no URL or no token file,
    each call answers a problem, and the page shows no button.
 3. **Every answer of the plugin is untrusted input.** It is read through
@@ -38,7 +36,7 @@ from typing import Final
 
 import httpx
 
-from . import jsonfiles
+from . import bearercall, jsonfiles
 from .jsonfiles import Surface
 
 #: A job id of the plugin: 26 lower-case characters of the ULID alphabet.
@@ -54,19 +52,12 @@ MAX_ANSWER_BYTES: Final = 64 * 1024
 #: The cap of the summary on the page. The plugin cuts it to 400.
 MAX_SUMMARY_CHARS: Final = 400
 
-#: The plugin is on the same host. A call that takes longer is a plugin
-#: that does not answer.
-_TIMEOUT: Final = httpx.Timeout(5.0)
-
 _OK: Final = 200
 _NOT_FOUND: Final = 404
 _CONFLICT: Final = 409
 
-#: What a page says when the client refuses a request. It names no part of
-#: the request, because a header holds the bearer.
-_NOT_SENT: Final = "cannot call the approval plugin: the client refused the request"
-_NO_CHANNEL: Final = "the approval page is not set up on this host"
-_NO_TOKEN: Final = "the approval token file cannot be read"
+#: The words of the problems of this page (`bearercall.py`).
+_PEER: Final = bearercall.Peer(name="the approval plugin", page="approval")
 
 
 def is_job(value: str) -> bool:
@@ -166,32 +157,7 @@ class ApprovalChannel:
     def _call(
         self, method: str, path: str, body: dict[str, str] | None
     ) -> tuple[httpx.Response | None, str]:
-        if self.client is None or self.token_file is None:
-            return None, _NO_CHANNEL
-
-        bearer = _token(self.token_file)
-
-        if not bearer:
-            return None, _NO_TOKEN
-
-        try:
-            reply = self.client.request(
-                method,
-                path,
-                json=body,
-                # The bearer appears here and in no URL, no log line and no
-                # page (invariant 13).
-                headers={"Authorization": f"Bearer {bearer}"},
-                timeout=_TIMEOUT,
-            )
-        except httpx.LocalProtocolError, httpx.InvalidURL, UnicodeEncodeError:
-            # The text of such an error can quote the header that holds the
-            # bearer. The page gets a fixed sentence.
-            return None, _NOT_SENT
-        except httpx.HTTPError as error:
-            return None, f"cannot reach the approval plugin: {type(error).__name__}"
-
-        return reply, ""
+        return bearercall.call(_PEER, self.client, self.token_file, (method, path, body))
 
 
 def build_channel(url: str, token_file: Path | None) -> ApprovalChannel:
@@ -200,15 +166,6 @@ def build_channel(url: str, token_file: Path | None) -> ApprovalChannel:
         return ApprovalChannel(client=None, token_file=token_file)
 
     return ApprovalChannel(client=httpx.Client(base_url=url), token_file=token_file)
-
-
-def _token(path: Path) -> str:
-    """The bearer, or empty for a file that cannot be read."""
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except OSError, ValueError:
-        # A decode error quotes bytes of the file, so it reaches no page.
-        return ""
 
 
 def _gate_of(raw: bytes, job: str) -> Lookup:

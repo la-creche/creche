@@ -93,6 +93,12 @@ class Config:
     #: The file that holds the plugin's bearer. `approvals.py` reads it at
     #: each call and is its only reader.
     approval_token_file: Path | None = None
+    #: The URL of the hook of the approvals Node-RED (`releases.py`).
+    #: Empty means no release page: each one says so and shows no button.
+    release_hook_url: str = ""
+    #: The file that holds the bearer of the release page. `releases.py`
+    #: reads it at each call and is its only reader.
+    release_token_file: Path | None = None
 
     @property
     def on_loopback(self) -> bool:
@@ -127,7 +133,13 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
 
     approval_url = _text(source, "APPROVAL_URL", "")
     approval_token_file = _optional_path(source, "APPROVAL_TOKEN_FILE")
-    _refuse_half_channel(approval_url, approval_token_file)
+    _refuse_half_channel(approval_url, approval_token_file, "APPROVAL_URL", "APPROVAL_TOKEN_FILE")
+
+    release_hook_url = _text(source, "RELEASE_HOOK_URL", "")
+    release_token_file = _optional_path(source, "RELEASE_TOKEN_FILE")
+    _refuse_half_channel(
+        release_hook_url, release_token_file, "RELEASE_HOOK_URL", "RELEASE_TOKEN_FILE"
+    )
 
     socket_path = _text(source, "ATTENDANCE_SOCKET", DEFAULT_ATTENDANCE_SOCKET)
     url = _text(source, "ATTENDANCE_URL", "")
@@ -147,6 +159,8 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
         access_key=key,
         approval_url=approval_url,
         approval_token_file=approval_token_file,
+        release_hook_url=release_hook_url,
+        release_token_file=release_token_file,
     )
 
 
@@ -218,20 +232,20 @@ def _path(source: dict[str, str], name: str, fallback: str) -> Path:
     return Path(_text(source, name, fallback))
 
 
-def _refuse_half_channel(url: str, token_file: Path | None) -> None:
-    """The approval page needs both values, or neither.
+def _refuse_half_channel(url: str, token_file: Path | None, url_name: str, file_name: str) -> None:
+    """A page of a channel needs both values, or neither.
 
-    With neither, the page is off and decides nothing. With one, the
-    operator meant to turn it on, so the service refuses to start. The
-    token file must hold a value at start. `approvals.py` reads it again
-    at each call, so a new token needs no restart.
+    With neither, the page is off and sends nothing. With one, the operator
+    meant to turn it on, so the service refuses to start. The token file
+    must hold a value at start. `bearercall.py` reads it again at each
+    call, so a new token needs no restart.
     """
     if not url and token_file is None:
         return
 
     if not url or token_file is None:
         raise ConfigError(
-            f"set both {ENV_PREFIX}APPROVAL_URL and {ENV_PREFIX}APPROVAL_TOKEN_FILE, or neither"
+            f"set both {ENV_PREFIX}{url_name} and {ENV_PREFIX}{file_name}, or neither"
         )
 
     try:
@@ -241,7 +255,7 @@ def _refuse_half_channel(url: str, token_file: Path | None) -> None:
         held = ""
 
     if not held:
-        raise ConfigError(f"{ENV_PREFIX}APPROVAL_TOKEN_FILE is unreadable or empty: {token_file}")
+        raise ConfigError(f"{ENV_PREFIX}{file_name} is unreadable or empty: {token_file}")
 
 
 def _optional_path(source: dict[str, str], name: str) -> Path | None:

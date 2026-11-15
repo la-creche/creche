@@ -74,6 +74,12 @@ class Surface(enum.StrEnum):
     # in a notice. The reading here gives it a word of its own. A change
     # costs this member.
     APPROVAL_ANSWER = "approval.answer"
+    #: The body of an answer of the approvals Node-RED (`releases.py`).
+    #
+    # CONTRACT-QUESTION: no contract names the surface word of this answer
+    # in a notice. The reading here gives it a word of its own. A change
+    # costs this member.
+    RELEASE_ANSWER = "release.answer"
 
 
 def read_object(
