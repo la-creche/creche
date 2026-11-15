@@ -16,7 +16,11 @@ The PDFs of the same folders go in as a second source beside the notes
 (`pdf.py`).
 
 After a failed sync, the loop checks the graph database (`graph.py`). A
-graph that does not open ends the loop: the next check cannot repair it."""
+graph that does not open ends the loop: the next check cannot repair it.
+After any other failed sync, the loop waits before the next one, and the
+wait doubles with each failed sync in a row, up to 30 minutes. From
+2026-11-04 to 2026-11-09, a sync that failed every 8 to 9 minutes filled
+the journal (`memory/AGENTS.md`, the journal)."""
 
 import asyncio
 import hashlib
@@ -35,6 +39,9 @@ from .pdf import PDF_SUFFIX, PdfTexts, pdf_source
 
 POLL_S = 30.0
 QUIET_S = 30.0
+
+#: The longest wait before the next sync after failed syncs in a row.
+BACKOFF_MAX_S = 1800.0
 
 #: The dataset and the sync state of the vault. A fixed name, so a move of
 #: the vault folder does not ingest every note again.
@@ -64,8 +71,18 @@ class Outcome(Enum):
     NOTHING_TO_READ = auto()
     UNCHANGED = auto()
     WAITING = auto()
+    BACKING_OFF = auto()
     SYNCED = auto()
     FAILED = auto()
+
+
+def backoff_s(failures: int, first_s: float) -> float:
+    """The wait before the next sync after `failures` failed syncs in a row:
+    `first_s` after one, then twice as long for each more, at most
+    `BACKOFF_MAX_S`."""
+    # The exponent stops at 32, so a long run of failures cannot overflow
+    # the float. 2**32 polls is far past the cap.
+    return min(first_s * 2 ** min(failures - 1, 32), BACKOFF_MAX_S)
 
 
 def _folders_in(path: Path) -> list[str]:
@@ -248,6 +265,10 @@ class Syncer:
         self._poll_s = poll_s
         self._clock = clock
         self._debounce = Debounce(quiet_s)
+        #: The failed syncs in a row, and the time before which the loop
+        #: does not sync again.
+        self._failures = 0
+        self._retry_at = 0.0
         self._wrote = threading.Event()
         self._wake = threading.Event()
         #: Set after the first sync that ends well. Search waits for it.
@@ -263,6 +284,10 @@ class Syncer:
         self._wake.set()
 
     async def step(self) -> Outcome | Dead:
+        # A write in the wait keeps its flag, so it syncs after the wait.
+        if self._failures and self._clock() < self._retry_at:
+            return Outcome.BACKING_OFF
+
         folders = ingest_folders(self._root)
         if not folders:
             return Outcome.NOTHING_TO_READ
@@ -282,20 +307,44 @@ class Syncer:
         try:
             await self._ingest(folders)
         except Exception as error:
-            # Only the type is printed: a message can hold a URL.
-            _say(f"sync failed after {self._clock() - started:.0f} s: {type(error).__name__}")
-            # A dead graph stops the loop. Any other failed sync does not:
-            # the next check tries again.
-            state = await self._check()
-            return state if isinstance(state, Dead) else Outcome.FAILED
+            return await self._failed(error, self._clock() - started)
 
         self._debounce.done(stamp)
         first = not self.ready.is_set()
         self.ready.set()
         ready = "; search is ready" if first else ""
-        _say(f"sync done in {self._clock() - started:.0f} s{ready}")
+        after = f" after {self._failures} failed syncs" if self._failures else ""
+        self._failures = 0
+        _say(f"sync done in {self._clock() - started:.0f} s{after}{ready}")
 
         return Outcome.SYNCED
+
+    async def _failed(self, error: Exception, seconds: float) -> Outcome | Dead:
+        """Count a failed sync, check the graph, and print one line.
+
+        Only the type of the error is printed: a message can hold a URL. A
+        dead graph stops the loop, and the command prints its own line. Any
+        other failed sync does not: the loop tries again after the wait."""
+        self._failures += 1
+        wait = backoff_s(self._failures, self._poll_s)
+        self._retry_at = self._clock() + wait
+        line = (
+            f"sync failed after {seconds:.0f} s: {type(error).__name__}. "
+            f"Failed syncs in a row: {self._failures}."
+        )
+        try:
+            state = await self._check()
+        except BaseException:
+            _say(line)
+            raise
+
+        if isinstance(state, Dead):
+            _say(line)
+            return state
+
+        _say(f"{line} The next sync waits at least {wait:.0f} s.")
+
+        return Outcome.FAILED
 
     async def run(self, stop: threading.Event) -> Dead | None:
         """Check and sync until `stop` is set, or until a failed sync finds a
