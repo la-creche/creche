@@ -19,12 +19,13 @@ Cognee's engine, and that build runs three `CREATE ... IF NOT EXISTS`
 statements. Their commit can write a `.wal` and can checkpoint a replayed
 WAL (`memory/AGENTS.md`, known gaps).
 
-The stop of the service is the one place that closes the engine
-(`close_graph`). It runs `CHECKPOINT` first, and it closes only after that
-checkpoint ends well. After a failed checkpoint of the same open, both a
-checkpoint and a close leave a file that does not open, so the stop then
-writes nothing. After a task that ignored its cancel, the stop does not
-close: it waits for the statements of that task (`drain_cognee_graph`).
+The stop of the service closes the engine (`close_graph`), and so does
+the reopen after each sync (`reopen_graph`). The close runs `CHECKPOINT`
+first, and it closes only after that checkpoint ends well. After a failed
+checkpoint of the same open, both a checkpoint and a close leave a file
+that does not open, so the stop then writes nothing. After a task that
+ignored its cancel, the stop does not close: it waits for the statements
+of that task (`drain_cognee_graph`).
 
 An error of the open is a verdict only when ladybug raises it for the
 file. An error of Cognee's worker process, a lock that another opener
@@ -38,7 +39,7 @@ from collections.abc import Awaitable, Callable
 from concurrent.futures import Executor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from cognee_db_workers.harness import SubprocessTransportError
 
@@ -222,6 +223,26 @@ class LeftOpen:
 
 type GraphClose = Closed | LeftOpen
 
+
+@dataclass(frozen=True)
+class Reopened:
+    """The reopen closed the database as the stop does, and a new open of
+    it answers."""
+
+    #: The seconds from the start of the close to the end of the new open.
+    seconds: float
+
+    def report(self) -> str:
+        return f"The graph database reopened in {self.seconds:.1f} s."
+
+
+#: What a reopen did. `LeftOpen`: it wrote nothing, and the old open stays.
+#: `Dead`: the new open does not open.
+type GraphReopen = Reopened | LeftOpen | Dead
+
+#: A call that reopens the graph database.
+type GraphReopener = Callable[[], Awaitable[GraphReopen]]
+
 #: A call that runs one statement, or the close, on the open engine.
 type GraphCall = Callable[[], Awaitable[object]]
 
@@ -237,8 +258,8 @@ def unfinished_files(graph_file: Path) -> tuple[str, ...]:
 async def close_graph(
     graph_file: Path, probe: GraphCall, checkpoint: GraphCall, close: GraphCall
 ) -> GraphClose:
-    """Close the graph database at the stop, or leave it open when a close
-    could kill it.
+    """Close the graph database at the stop or at a reopen, or leave it open
+    when a close could kill it.
 
     1. `probe` (`RETURN 1`) writes nothing. The worker runs one statement
        at a time, so the probe ends after the statement that runs now. Then
@@ -270,10 +291,55 @@ async def close_graph(
     return Closed(time.monotonic() - started)
 
 
+async def reopen_graph(
+    close: Callable[[], Awaitable[GraphClose]], check: GraphCheck
+) -> GraphReopen:
+    """Close the graph database as the stop does, then open it again.
+
+    Ladybug 0.19.0 never gives back the buffer frames that a checkpoint
+    takes for its shadow pages. The frames of one open add up over each
+    checkpoint, and `KUZU_MAX_DB_SIZE` caps their sum, not the size of the
+    file. At the cap, each statement fails with `Maximum database size of
+    <n> bytes has been reached` (`memory/AGENTS.md`, the reopen). A new
+    open starts again from zero.
+
+    1. `close` is `close_graph`. When it leaves the database open, the
+       reopen writes nothing more, and the old open stays.
+    2. `check` opens the database again and asks it `RETURN 1`. A dead
+       graph goes to the caller as a `Dead`."""
+    started = time.monotonic()
+    closed = await close()
+    if isinstance(closed, LeftOpen):
+        return closed
+
+    state = await check()
+    if isinstance(state, Dead):
+        return state
+
+    return Reopened(time.monotonic() - started)
+
+
 async def close_cognee_graph() -> GraphClose:
     """`close_graph` on Cognee's cached engine. Call it only after the
     start check, and after every task that writes has ended."""
+    return await _close_cognee_graph(evict=False)
+
+
+async def reopen_cognee_graph() -> GraphReopen:
+    """`reopen_graph` on Cognee's cached engine. Call it only from the sync
+    loop, between two syncs, while no search runs (`StoreLoop.alone`).
+
+    After the close, the cache of Cognee still holds the closed engine.
+    The eviction removes it, so the next call into Cognee opens a new
+    engine. An engine handle that a caller still holds goes to the new
+    engine at its next use."""
+    return await reopen_graph(lambda: _close_cognee_graph(evict=True), cognee_graph_state)
+
+
+async def _close_cognee_graph(*, evict: bool) -> GraphClose:
     from cognee.infrastructure.databases.graph import get_graph_config, get_graph_engine
+    from cognee.infrastructure.databases.graph.config import get_graph_context_config
+    from cognee.infrastructure.databases.graph.get_graph_engine import graph_engine_cache
 
     graph_file = Path(get_graph_config().graph_file_path)
     engine = await get_graph_engine()
@@ -290,6 +356,11 @@ async def close_cognee_graph() -> GraphClose:
         # and the database, and ends its worker process. The interface of a
         # graph engine has no `close`.
         await engine.close()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        if evict:
+            # The engine is closed already, so the eviction closes nothing.
+            # Cognee types the config as a bare `dict`.
+            config = cast(dict[str, Any], get_graph_context_config())
+            graph_engine_cache.evict(**config)  # pyright: ignore[reportUnknownMemberType]
 
     return await close_graph(graph_file, probe, checkpoint, close)
 

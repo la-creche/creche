@@ -10,8 +10,9 @@ every task of the store loop, then checkpoints and closes the graph database
 graph worker runs until the close ends it. Exit 78 (EX_CONFIG) for a config
 or a host that stops the start, so systemd does not restart the unit in a
 loop (systemd/creche-caregiver.service, the restart policy). Exit 78 too for
-a graph database that does not open, at the start or after a failed sync
-(`graph.py`): a restart cannot repair it.
+a graph database that does not open, at the start, after a failed sync or
+after the reopen that follows each sync (`graph.py`): a restart cannot
+repair it.
 
 Exit 75 (EX_TEMPFAIL) for an error that ends the start check or the sync
 loop and is not a verdict on the database, such as a worker that did not
@@ -26,7 +27,15 @@ from concurrent.futures import Future, wait
 from types import FrameType
 
 from .config import Config, ConfigError, check, from_env
-from .graph import Dead, NotAVerdict, close_cognee_graph, cognee_graph_state, drain_cognee_graph
+from .graph import (
+    Dead,
+    GraphReopen,
+    NotAVerdict,
+    close_cognee_graph,
+    cognee_graph_state,
+    drain_cognee_graph,
+    reopen_cognee_graph,
+)
 from .logs import plain_console
 from .search import STOP_TIMEOUT_S, Searcher, StoreLoop
 from .server import MemoryServer, Service
@@ -200,7 +209,10 @@ def _serve(config: Config) -> int:
     if stop.is_set():
         return stop_store(loop, None)
 
-    syncer = Syncer(places.vault_root, cognee_ingest(places.vault_root), cognee_graph_state)
+    async def reopen() -> GraphReopen:
+        return await loop.alone(reopen_cognee_graph)
+
+    syncer = Syncer(places.vault_root, cognee_ingest(places.vault_root), cognee_graph_state, reopen)
     searcher = Searcher(syncer.ready, cognee_backend, cognee_paths)
 
     def search(request: SearchRequest) -> SearchReply | RefusedReply:

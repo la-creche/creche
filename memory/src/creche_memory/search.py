@@ -6,13 +6,18 @@ passages, and each passage maps back to its note or PDF through its document. Th
 calling agent reads both and reasons over them itself.
 
 Cognee runs in one asyncio loop in one thread, `StoreLoop`. The syncer runs
-there, and each search goes there from the thread of its connection."""
+there, and each search goes there from the thread of its connection.
+
+A search and the reopen of the graph database never run at the same time
+(`StoreLoop.alone`). A search in the close of a reopen would get an engine
+that is closed."""
 
 import asyncio
 import threading
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -103,6 +108,15 @@ class StoreLoop:
     def __init__(self) -> None:
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        #: The searches that run now. Only the loop thread reads or writes
+        #: the count and the two events, so no lock is needed.
+        self._searches = 0
+        #: Set while no search runs.
+        self._no_search = asyncio.Event()
+        self._no_search.set()
+        #: Set while no `alone` work runs or waits.
+        self._shared = asyncio.Event()
+        self._shared.set()
 
     def start(self) -> None:
         self._thread.start()
@@ -110,9 +124,44 @@ class StoreLoop:
     def spawn[T](self, work: Coroutine[Any, Any, T]) -> Future[T]:
         return asyncio.run_coroutine_threadsafe(work, self._loop)
 
+    @asynccontextmanager
+    async def _one_search(self) -> AsyncGenerator[None]:
+        # No await between the end of the wait and the count, so no `alone`
+        # work starts in between.
+        while not self._shared.is_set():
+            await self._shared.wait()
+
+        self._searches += 1
+        self._no_search.clear()
+        try:
+            yield
+        finally:
+            self._searches -= 1
+            if not self._searches:
+                self._no_search.set()
+
+    async def alone[T](self, work: Callable[[], Awaitable[T]]) -> T:
+        """Run `work` on the loop while no search runs. Call it from the loop.
+
+        New searches wait until `work` ends. `work` waits for each search
+        that runs now. A search that waits keeps its `SEARCH_TIMEOUT_S`.
+        One task calls it: the sync loop."""
+        self._shared.clear()
+        try:
+            await self._no_search.wait()
+            return await work()
+        finally:
+            self._shared.set()
+
+    async def _search(
+        self, searcher: Searcher, request: SearchRequest
+    ) -> SearchReply | RefusedReply:
+        async with self._one_search():
+            return await searcher.search(request)
+
     def search(self, searcher: Searcher, request: SearchRequest) -> SearchReply | RefusedReply:
         """Run one search on the loop, from the thread of a connection."""
-        future = asyncio.run_coroutine_threadsafe(searcher.search(request), self._loop)
+        future = asyncio.run_coroutine_threadsafe(self._search(searcher, request), self._loop)
         try:
             return future.result(SEARCH_TIMEOUT_S)
         except FutureTimeout:

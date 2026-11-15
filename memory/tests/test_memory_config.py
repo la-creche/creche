@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from creche_memory.cli import EX_CONFIG, EX_OK, EX_TEMPFAIL, ended, main
 from creche_memory.config import ConfigError, check, from_env
-from creche_memory.graph import GraphCheck, GraphState, side_files
+from creche_memory.graph import GraphCheck, GraphReopen, GraphState, side_files
 from creche_memory.search import STOP_TIMEOUT_S, StoreLoop
 from creche_memory.sync import Syncer
 from memory_graph_helpers import (
@@ -241,12 +241,16 @@ async def _failing_sync(folders: list[str]) -> None:
     raise ConnectionError("http://secret.test/ refused")
 
 
+async def _no_reopen() -> GraphReopen:
+    raise AssertionError("a graph that failed its check was reopened")
+
+
 def _end_of_sync_loop(root: Path, check: GraphCheck) -> int:
     """Run a real sync loop whose sync fails, as `_serve` runs it, then
     read its exit status as `_serve` does after the stop."""
     (root / "profile" / "memories").mkdir(parents=True)
     (root / "profile" / "memories" / "a.md").write_text("a", encoding="utf-8")
-    syncer = Syncer(root, _failing_sync, check, poll_s=60.0, quiet_s=0.0)
+    syncer = Syncer(root, _failing_sync, check, _no_reopen, poll_s=60.0, quiet_s=0.0)
     loop = StoreLoop()
     loop.start()
     stop = threading.Event()
