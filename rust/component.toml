@@ -32,12 +32,20 @@
 # drops `sandbox.max_resident_processes` (CH8-6). The vmm reads no field
 # that minors 18 and 19 drop.
 #
+# `env`: the one EnvironmentFile= of the unit, and each key of
+# `rust/crates/vmm/src/config.rs` but RUNTIME_DIRECTORY, which systemd
+# sets. A release adds each key that `vmm.env` does not hold, from the
+# catalog at the release commit (handover/AGENTS.md, "The env fill"). So
+# a new key of the vmm reaches the host with the vmm. bin/fleet-up writes
+# the same keys first on a new host. bin/tests/test_vmm_manifest.py holds
+# the list equal to `config.rs` and to the VMM_KEYS of bin/fleet-up.
+#
 # `restore.keep = 1`: the host keeps one previous tree, and a value above 1
 # keeps no more (fact 51).
 #
 # The AppArmor slot profile does not ship here. A change to it is a
 # one-off sudo step, and its SHA-256 is pinned (CH76 rule 9).
-manifest_version = "0.22"
+manifest_version = "0.27"
 name = "vmm"
 repo = "creche"
 path = "rust"
@@ -60,6 +68,30 @@ requires = [{ contract = "family-file", major = 0, min_minor = 19 }]
 verify.command = ["/opt/components/vmm/bin/vmm", "verify", "--json", "--env-file", "/srv/agents/state/creche/vmm.env"]
 verify.user = "operator"
 verify.timeout_s = 60
+env.file = "/srv/agents/state/creche/vmm.env"
+env.keys = [
+  "VMM_STATE_ROOT",
+  "VMM_FAMILY_ROOT",
+  "VMM_FAULTS_ROOT",
+  "VMM_IMAGE_ROOT",
+  "VMM_CH_PROGRAM",
+  "VMM_CH_REMOTE_PROGRAM",
+  "VMM_GUEST_INIT_PROGRAM",
+  "AGENT_SYSTEMD_RUN_PROGRAM",
+  "AGENT_SYSTEMCTL_PROGRAM",
+  "VMM_ZSTD_PROGRAM",
+  "VMM_MKE2FS_PROGRAM",
+  "VMM_FALLOCATE_PROGRAM",
+  "VMM_RAM_CAP_GIB",
+  "VMM_FREE_FLOOR_GIB",
+  "VMM_SNAPSHOT_BUDGET_GIB",
+  "VMM_LITELLM_ADDR",
+  "VMM_CHAPERONE_ADDR",
+  "VMM_EGRESS_LOG",
+  "VMM_MIRROR_ROOT",
+  "VMM_GIT_PROGRAM",
+  "VMM_GIT_SPOOL_ROOT",
+]
 restore.mode = "automatic"
 restore.keep = 1
 release = true

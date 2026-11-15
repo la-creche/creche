@@ -14,6 +14,9 @@ the same build, and each one can move alone:
 4. `rust/crates/vmm-confine/apparmor/cloud-hypervisor-slots.profile` does
    not ship with the release. A change to it is a one-off sudo step on the
    host (CH76 rule 9), so its SHA-256 is pinned here.
+5. `rust/crates/vmm/src/config.rs` names each key that the vmm reads, and
+   `bin/fleet-up` writes the same keys first. The `env` table of the
+   manifest lists them, so a release adds a new key to `vmm.env`.
 
 The verify `--env-file` of the manifest is held equal to the unit's
 `EnvironmentFile=` by handover/tests/test_handover_r7r_verify_env.py.
@@ -22,6 +25,7 @@ The verify `--env-file` of the manifest is held equal to the unit's
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Final
 
@@ -32,6 +36,18 @@ from test_artifactrows import CH_BUILD_WORDS
 REPO: Final = Path(__file__).resolve().parents[2]
 DEFAULT_ENV: Final = REPO / "env" / "src" / "creche_env" / "default.env"
 UNIT: Final = REPO / "systemd" / "creche-vmm.service"
+CONFIG_RS: Final = REPO / "rust" / "crates" / "vmm" / "src" / "config.rs"
+FLEET_UP: Final = REPO / "bin" / "fleet-up"
+
+#: The key of `config.rs` that systemd sets from `RuntimeDirectory=`. It
+#: is in no env file.
+RUN_ROOT_KEY: Final = "RUNTIME_DIRECTORY"
+
+#: One key constant of `config.rs`: `pub const NAME: &str = "KEY";`.
+CONFIG_KEY_RE: Final = re.compile(r'^pub const [A-Z0-9_]+: &str = "([A-Z0-9_]+)";$', re.MULTILINE)
+
+#: The VMM_KEYS list of `bin/fleet-up`, with its line continuations.
+FLEET_KEYS_RE: Final = re.compile(r'^VMM_KEYS="([^"]*)"$', re.MULTILINE)
 SLOT_PROFILE: Final = (
     REPO / "rust" / "crates" / "vmm-confine" / "apparmor" / "cloud-hypervisor-slots.profile"
 )
@@ -155,3 +171,38 @@ def test_the_slot_profile_is_pinned() -> None:
     found = hashlib.sha256(SLOT_PROFILE.read_bytes()).hexdigest()
 
     assert found == SLOT_PROFILE_SHA256, "the slot profile changed: see SLOT_PROFILE_SHA256"
+
+
+def _config_keys() -> set[str]:
+    """Each key that the vmm reads from its env, but the run root."""
+    keys = set(CONFIG_KEY_RE.findall(CONFIG_RS.read_text(encoding="utf-8")))
+    assert RUN_ROOT_KEY in keys, "config.rs no longer reads the run root"
+
+    return keys - {RUN_ROOT_KEY}
+
+
+def _fleet_keys() -> list[str]:
+    """The VMM_KEYS of `bin/fleet-up`, in its order."""
+    found = FLEET_KEYS_RE.search(FLEET_UP.read_text(encoding="utf-8"))
+    assert found is not None, "bin/fleet-up no longer sets VMM_KEYS"
+
+    return found.group(1).replace("\\\n", " ").split()
+
+
+def test_the_env_table_lists_each_key_of_the_vmm() -> None:
+    """A key that the vmm reads and the table leaves out is a key that no
+    release adds, and the next start of the vmm exits 78."""
+    env = _manifest().env
+
+    assert env is not None
+    assert set(env.keys) == _config_keys()
+    assert list(env.keys) == _fleet_keys()
+
+
+def test_the_env_file_is_the_verify_env_file() -> None:
+    """The fill writes the one file that the unit and the hook read."""
+    env = _manifest().env
+    command = _manifest().verify.command
+
+    assert env is not None
+    assert command[command.index("--env-file") + 1] == env.file
