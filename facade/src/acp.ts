@@ -19,10 +19,14 @@ import type {
   ContentBlock,
   InitializeResponse,
   LoadSessionRequest,
+  LoadSessionResponse,
   PromptRequest,
   PromptResponse,
+  SessionConfigOption,
   SessionInfoUpdate,
   SessionUpdate,
+  SetSessionConfigOptionRequest,
+  SetSessionConfigOptionResponse,
   StopReason,
   Stream,
 } from "@agentclientprotocol/sdk";
@@ -37,10 +41,14 @@ export type {
   CancelNotification,
   ContentBlock,
   LoadSessionRequest,
+  LoadSessionResponse,
   PromptRequest,
   PromptResponse,
+  SessionConfigOption,
   SessionInfoUpdate,
   SessionUpdate,
+  SetSessionConfigOptionRequest,
+  SetSessionConfigOptionResponse,
   StopReason,
   Stream,
 };
@@ -69,8 +77,10 @@ export interface Peer {
  * with method not found.
  */
 export interface SessionService {
-  loadSession(params: LoadSessionRequest, peer: Peer): Promise<Outcome<Record<string, never>>>;
+  loadSession(params: LoadSessionRequest, peer: Peer): Promise<Outcome<LoadSessionResponse>>;
   prompt(params: PromptRequest, peer: Peer): Promise<Outcome<PromptResponse>>;
+  /** The thinking level of the session (`src/thinking.ts`). */
+  setConfigOption(params: SetSessionConfigOptionRequest): Promise<Outcome<SetSessionConfigOptionResponse>>;
   cancel(params: CancelNotification): Promise<void>;
 }
 
@@ -139,6 +149,7 @@ export function facadeApp(sessions: SessionService): AgentApp {
     })
     .onRequest(methods.agent.session.load, ({ params }) => answer(sessions.loadSession(params, peer)))
     .onRequest(methods.agent.session.prompt, ({ params }) => answer(sessions.prompt(params, peer)))
+    .onRequest(methods.agent.session.setConfigOption, ({ params }) => answer(sessions.setConfigOption(params)))
     .onNotification(methods.agent.session.cancel, ({ params }) => sessions.cancel(params));
 }
 

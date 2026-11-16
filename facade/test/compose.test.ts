@@ -1,6 +1,7 @@
 // The facade with the real agent module, in process: one family on a fake
 // vmm, the agent's fake LiteLLM and fake chaperone (`test/served-family.ts`).
 // One turn calls a `ch` tool: `tool_call`, then `tool_call_update` completed.
+// A thinking level reaches the model call, and the turn ends with the meter.
 
 import { existsSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -46,5 +47,24 @@ describe("the facade with the agent module", () => {
     expect(ch.calls).toEqual([{ name: SEARCH_TOOL, args: { text: "weather" } }]);
     expect(existsSync(served.start.store)).toBe(true);
     expect(existsSync(served.start.workspace)).toBe(true);
+  });
+
+  it("sends the chosen thinking level, then ends the turn with the meter", async () => {
+    const { id, wire } = served;
+    model.keyInfo = { info: { spend: 12.4, max_budget: 60, budget_duration: "1d" } };
+    const set = await wire.request("session/set_config_option", { sessionId: id, configId: "mode", value: "high" });
+    const before = model.seen.length;
+    await wire.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "Again?" }] });
+
+    expect(set.result).toMatchObject({ configOptions: [{ id: "mode", currentValue: "high" }] });
+    expect(model.seen[before]?.reasoningEffort).toBe("high");
+    // The fake model reports 2 tokens for each call. It gives no model list,
+    // so the window is the fallback of `agent/src/litellm.ts`.
+    expect(wire.updates(id).at(-1)).toEqual({
+      sessionUpdate: "usage_update",
+      used: 2,
+      size: 128000,
+      _meta: { "creche/spend": { amount: 12.4, budget: 60, currency: "USD" } },
+    });
   });
 });

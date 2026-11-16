@@ -140,6 +140,18 @@ window for the alias, the read gives a 128000-token window and a fault,
 and the facade writes the fault to stderr. A router alias has no window of
 its own: the LiteLLM config sets it in the alias's `model_info`.
 
+The provider marks each alias as a reasoning model, and keeps the role
+`system` for the instructions. `ThinkingLevels` holds the level of each
+session (`src/thinking.ts`), and each render gives it to `useModel`. pi
+sends no `reasoning_effort` for `off`, the default, so a session that sets
+no level calls the model as before. `readKeySpend` reads the family key's
+spend and budget from LiteLLM's `GET /key/info` with the family key.
+
+Each response keeps two values in its metadata (`src/usage.ts`):
+`thinkingLevel` at its start, and `contextTokens` at its finish.
+`contextTokens` is the size of the last agent call of the response, from
+Flue's `turn` event, counted as Flue's compaction counts it.
+
 Each step gives a typed refusal, not an exception. The store of
 `start()` is `FLUE_DB`. The facade writes the names in
 `composed.skippedSkills` to stderr.

@@ -7,7 +7,8 @@ request and notification by its `sessionId`, over one vmm ACP stream per
 session (decisions CH20, CH33 rule 7):
 
     initialize      -> INITIALIZE_RESPONSE
-    session/new     -> mint an id -> vmm create, origin door -> {"sessionId"}
+    session/new     -> mint an id -> vmm create, origin door
+                       -> {"sessionId", "configOptions"}
     session/list    -> vmm list -> {"sessions", "nextCursor"}
     session/delete  -> vmm drop -> {}
     each other      -> the vmm ACP stream of its sessionId -> the facade of that VM
@@ -160,6 +161,32 @@ INITIALIZE_RESPONSE: Final[dict[str, Any]] = {
     },
     "authMethods": [],
 }
+
+#: The config options of a new session: the thinking level at its default.
+#: The door answers `session/new` with no boot, so it holds the facade's
+#: list. `test_acp_door.py` holds it equal to `new_session.configOptions` of
+#: `facade/vectors/creche-extensions.json`. The facade answers
+#: `session/set_config_option` and `session/load` with the same list. A
+#: level changes the model call only and widens no grant.
+NEW_SESSION_CONFIG_OPTIONS: Final[list[dict[str, Any]]] = [
+    {
+        "id": "mode",
+        "name": "Thinking",
+        "description": (
+            "How much the model reasons before it answers. "
+            "More thinking takes longer and costs more."
+        ),
+        "category": "mode",
+        "type": "select",
+        "currentValue": "off",
+        "options": [
+            {"value": "off", "name": "Thinking off"},
+            {"value": "low", "name": "Thinking low"},
+            {"value": "medium", "name": "Thinking medium"},
+            {"value": "high", "name": "Thinking high"},
+        ],
+    }
+]
 
 #: JSON-RPC's and ACP's error codes.
 RPC_METHOD_NOT_FOUND = -32601
@@ -507,7 +534,8 @@ class _Door:
         return None
 
     async def _new_session(self, params: dict[str, Any] | None) -> dict[str, Any]:
-        """Contract 02 §5.3: check the `cwd`, mint an id, create the row.
+        """Contract 02 §5.3: check the `cwd`, mint an id, create the row,
+        answer the id and the config options of a new session.
 
         The family decides the tools and the work directory of the agent, so
         a client MCP server or an additional directory is refused, as the
@@ -542,7 +570,7 @@ class _Door:
         except VmmRefused as error:
             raise _vmm_refusal(error) from error
 
-        return {"sessionId": session}
+        return {"sessionId": session, "configOptions": NEW_SESSION_CONFIG_OPTIONS}
 
     async def _list_sessions(self, params: dict[str, Any] | None) -> dict[str, Any]:
         """Contract 02 §5.4: one page of the host list, newest created first."""

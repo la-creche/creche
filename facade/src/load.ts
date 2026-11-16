@@ -1,16 +1,20 @@
 // `session/load`: the replay of a session's history, then its live updates.
 //
 //   hold the peer's live items ──► read the history ──► send the replay
-//     ──► send the held items after the last replayed chunk ──► answer {}
+//     ──► seed the meter ──► send its usage_update
+//     ──► send the held items after the last replayed chunk
+//     ──► answer {configOptions}: the thinking option at the session's level
 
 import type { ConversationStreamStore } from "@flue/runtime/adapter";
 
-import type { LoadSessionRequest, Outcome, Peer } from "./acp.js";
+import type { LoadSessionRequest, LoadSessionResponse, Outcome, Peer } from "./acp.js";
 import { readHistory } from "./flue-history.js";
 import type { Live } from "./live.js";
 import { replay } from "./replay.js";
 import { sessionFault } from "./sessions.js";
 import type { OneSession } from "./sessions.js";
+import { configOptionsOf } from "./thinking.js";
+import type { SessionMeter } from "./usage.js";
 
 export class Loader {
   public constructor(
@@ -18,9 +22,10 @@ export class Loader {
     private readonly live: Live,
     private readonly store: () => ConversationStreamStore | null,
     private readonly agentName: string,
+    private readonly meter: SessionMeter,
   ) {}
 
-  public async loadSession(params: LoadSessionRequest, peer: Peer): Promise<Outcome<Record<string, never>>> {
+  public async loadSession(params: LoadSessionRequest, peer: Peer): Promise<Outcome<LoadSessionResponse>> {
     const fault = sessionFault(params);
     if (fault !== null) {
       return { ok: false, refusal: { kind: "invalid_params", detail: fault } };
@@ -48,8 +53,14 @@ export class Loader {
       await peer.send(sessionId, update);
     }
 
+    this.meter.seed(history.chunks);
+    const usage = await this.meter.usageUpdate();
+    if (usage !== null) {
+      await peer.send(sessionId, usage);
+    }
+
     await gate.release(last);
 
-    return { ok: true, value: {} };
+    return { ok: true, value: { configOptions: configOptionsOf(this.meter.level) } };
   }
 }

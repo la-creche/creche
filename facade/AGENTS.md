@@ -130,6 +130,46 @@ starts from the last `conversation-reset` (`src/replay.ts`). Live items
 that come during the replay wait, and only those after the last replayed
 position follow it.
 
+## The thinking level and the meter
+
+The client's mode picker shows one config option: `mode`, of category
+`mode`, with the levels `off`, `low`, `medium` and `high`
+(`src/thinking.ts`). `new_session.configOptions` of
+`vectors/creche-extensions.json` holds the option at its default, `off`.
+attendance answers `session/new` with no VM boot, so the ACP door holds a
+copy of that list, and its test holds the copy equal to the vector.
+
+1. `session/set_config_option` sets the level of the next prompt and
+   answers the option list with the new level. A turn that runs keeps its
+   level, because Flue reads `useModel` once per submission. Another
+   option id, a boolean or an unlisted value gets `invalidParams`.
+2. `session/load` answers the same list with the session's level.
+3. A level changes the model call only. pi sends `reasoning_effort` for
+   each level other than `off`. A level widens no tool and no grant.
+4. The agent keeps the level and the context tokens of each response in
+   the response's metadata (`agent/src/usage.ts`), so they live in
+   `flue.db`. After a cold start, the facade reads the history once and
+   takes the values of the last response (`src/usage.ts`). A value that
+   the process saw wins. A level set with no later prompt is not in
+   `flue.db`. So after a cold start, the session has the level of its last
+   response, and `session/load` answers that level.
+
+Each turn end sends a `usage_update` after `session_info_update`. A
+`session/load` sends one after the replay. Both need a count, so a
+session with no response sends none.
+
+- `used` is the context fill of the last model call: its input, its
+  cache reads and writes, and its output.
+- `size` is the context window of the alias of the last pull.
+- `_meta["creche/spend"]` holds `amount`, `budget` and `currency`: the
+  family key's spend of its budget day and `model.budget_usd_per_day`, in
+  USD. The facade reads them from LiteLLM's `GET /key/info` with the
+  family key, with a wait of at most 1 s. A read that fails leaves the key
+  out, with one stderr line. ACP's `cost` is the cost of the session, and
+  LiteLLM gives none, so the facade sends no `cost`.
+- LiteLLM writes spend in batches, so the spend can miss the last calls
+  for some seconds.
+
 ## Rules
 
 1. Pin each runtime dependency to one exact version. Do not use a range.

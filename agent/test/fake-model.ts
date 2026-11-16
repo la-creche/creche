@@ -23,6 +23,8 @@ export interface SeenCompletion {
   readonly maxTokens: number | null;
   readonly tools: readonly string[];
   readonly messages: readonly { readonly role: string; readonly content: unknown }[];
+  /** `reasoning_effort` of the request, or null when pi sent none. */
+  readonly reasoningEffort: string | null;
 }
 
 interface CompletionBody {
@@ -31,6 +33,7 @@ interface CompletionBody {
   readonly max_completion_tokens?: number;
   readonly tools?: readonly { readonly function?: { readonly name?: string } }[];
   readonly messages?: readonly { readonly role: string; readonly content: unknown }[];
+  readonly reasoning_effort?: string;
 }
 
 const CALL_ID = "call_fake_1";
@@ -40,6 +43,9 @@ const COMPLETIONS_PATH = "/chat/completions";
 
 /** LiteLLM's model list, which the facade reads at start and at a model change. */
 const MODEL_INFO_PATH = "/v1/model/info";
+
+/** LiteLLM's info of the calling key, which the facade reads after each turn. */
+const KEY_INFO_PATH = "/key/info";
 
 function readBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
@@ -87,6 +93,9 @@ export class FakeModel {
   /** The `authorization` header of each model list request, in order. */
   public readonly infoAuthorizations: string[] = [];
 
+  /** The body of `GET /key/info`. Null: the key info gets 404. */
+  public keyInfo: unknown = null;
+
   private server: Server | null = null;
 
   public constructor(private readonly script: readonly FakeReply[]) {}
@@ -96,10 +105,15 @@ export class FakeModel {
     const server = createServer((request, response) => {
       // Only a chat completions request takes a reply of the script. The
       // model list gets `modelInfo`, or 404, so the agent keeps its
-      // fallback limits.
+      // fallback limits. The key info gets `keyInfo`, or 404.
       if (request.method === "GET" && request.url === MODEL_INFO_PATH && this.modelInfo !== null) {
         this.infoAuthorizations.push(request.headers.authorization ?? "");
         response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(this.modelInfo));
+        return;
+      }
+
+      if (request.method === "GET" && request.url === KEY_INFO_PATH && this.keyInfo !== null) {
+        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(this.keyInfo));
         return;
       }
 
@@ -117,6 +131,7 @@ export class FakeModel {
           maxTokens: body.max_completion_tokens ?? body.max_tokens ?? null,
           tools: (body.tools ?? []).map((tool) => tool.function?.name ?? ""),
           messages: body.messages ?? [],
+          reasoningEffort: body.reasoning_effort ?? null,
         });
 
         const reply = this.script[Math.min(this.seen.length, this.script.length) - 1] ?? { text: "" };

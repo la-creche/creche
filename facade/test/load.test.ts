@@ -7,11 +7,15 @@ import { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "@ear
 import { defineTool, useModel, useTool } from "@flue/runtime";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
+import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { facadeApp } from "../src/acp.js";
 import type { SessionService } from "../src/acp.js";
 import { sessionService } from "../src/service.js";
 import { Wire } from "./acp-wire.js";
 import { FAUX_MODEL, faux, startFlue } from "./faux-flue.js";
+
+/** The answer to `session/load`: the thinking option at its default. */
+const LOADED = { configOptions: vectors.new_session.configOptions };
 
 const echo = defineTool({ name: "echo", description: "Answers echoed.", run: () => "echoed" });
 
@@ -68,7 +72,7 @@ async function oneTurn(wire: Wire): Promise<void> {
 }
 
 describe("session/load", () => {
-  it("replays the history as the first link saw it, then answers {}", async () => {
+  it("replays the history as the first link saw it, then answers the config options", async () => {
     const first = link();
     await oneTurn(first);
     const second = link();
@@ -77,7 +81,7 @@ describe("session/load", () => {
       (update) => (update as Record<string, unknown>)["sessionUpdate"] !== "session_info_update",
     );
 
-    expect(answer.result).toEqual({});
+    expect(answer.result).toEqual(LOADED);
     expect(joined(second.updates(id))).toEqual([
       { sessionUpdate: "user_message_chunk", content: { type: "text", text: "Echo, please." } },
       ...live,
@@ -102,7 +106,7 @@ describe("session/load", () => {
   it("replays nothing for a session with no turn", async () => {
     const wire = link();
 
-    expect((await load(wire, id)).result).toEqual({});
+    expect((await load(wire, id)).result).toEqual(LOADED);
     expect(wire.updates(id)).toEqual([]);
   });
 
