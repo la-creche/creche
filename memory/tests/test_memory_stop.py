@@ -183,12 +183,12 @@ def test_a_failed_statement_or_checkpoint_keeps_the_graph_open(tmp_path: Path) -
     assert closes == []
 
 
-def test_the_unit_signals_the_main_process_alone_and_gives_the_stop_60_s() -> None:
+def test_the_unit_signals_the_main_process_alone_and_gives_the_stop_480_s() -> None:
     lines = UNIT.read_text(encoding="utf-8").splitlines()
 
     assert "KillMode=mixed" in lines
     assert "KillSignal=SIGTERM" in lines
-    assert "TimeoutStopSec=60" in lines
+    assert "TimeoutStopSec=480" in lines
 
 
 def test_the_unit_throttles_at_8g_before_the_kill_at_12g_and_caps_its_swap() -> None:

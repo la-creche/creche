@@ -438,9 +438,18 @@ left one. So the stop never ends the graph worker in a statement.
    systemd kills a `pdftext.py` child that still runs after the main process
    exits. The child only reads.
 9. The stop waits at most 10 s for the tasks of the loop, then for the
-   close or the drain of step 3, with no deadline of its own. `TimeoutStopSec=60` bounds it. On
-   2026-11-13 the close took 1.1 to 2.3 s and the whole stop 1.9 to 3.1 s,
-   with a graph of 110 to 185 MiB and statements of 200,000 rows.
+   close or the drain of step 3, with no deadline of its own.
+   `TimeoutStopSec=480` bounds it. On 2026-11-13 the close took 1.1 to
+   2.3 s and the whole stop 1.9 to 3.1 s, with a graph of 110 to 185 MiB
+   and statements of 200,000 rows.
+10. Memory pressure slows the stop. On 2026-11-16 a release stopped the
+    unit at 8.8 GiB, over `MemoryHigh=8G`, with its 2 GiB of swap full. The
+    drain waited for a checkpoint of a 602 KB WAL that began at 17:23:18.
+    It still wrote the graph file at 17:25:55.7, when the old limit of
+    `TimeoutStopSec=60` killed every process of the unit. The graph did not
+    open again: "Checksum verification failed, the WAL file is corrupted".
+    480 s covers that checkpoint. handover's restart waits 600 s for the
+    stop and the start together, and the start may take 90 s.
 
 Why the stop writes nothing after a failed checkpoint, from runs on
 2026-11-13 through Cognee's engine, with a checkpoint that failed on
@@ -544,7 +553,9 @@ dead-graph check. Gaps 5 and 7 belong to the exit 75 of the check.
    WAL. Then it opens again. A WAL file can hold committed writes.
 4. A kill of the worker inside a checkpoint can leave a file that does not
    open. A stop no longer kills it ("The stop"). systemd still kills it
-   when a stop takes over 60 s (`TimeoutStopSec=60`). A crash of the host
+   when a stop takes over 480 s (`TimeoutStopSec=480`). On 2026-11-16 the
+   old limit of 60 s killed it in a throttled checkpoint ("The stop", rule
+   10). A crash of the host
    can kill it too. So can an OOM kill at `MemoryMax=12G`: the OOM killer
    picks the largest process of the unit, and that is the graph worker.
    The unit comment holds the measurements of 2026-11-15. With the first
