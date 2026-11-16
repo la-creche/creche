@@ -35,14 +35,14 @@ The operator decided these rows on 2026-11-15:
 | FR3 | Runners | CI runs in throwaway Cloud Hypervisor VMs on the host (`ci-runner.md`). The daemon runs as the system user `ci-runner` with a system unit. | "as recommended" | 2026-11-15 |
 | FR4 | Cutover | The five repositories move in one frozen window behind a bridge release. The bridge is a release shipped from GitHub whose executor already speaks Forgejo and holds the signing public key. The current executor verifies the bridge. | "as recommended" | 2026-11-15 |
 
-This note proposes these rows. None is decided.
+This note proposes these rows. The operator answered the open questions of the first draft on 2026-11-15 (section 9). The rows become decided when the operator merges this note.
 
 | # | Topic | Proposal | Why |
 | - | ----- | -------- | --- |
 | FR5 | The signer | A separate program `ci-signer` holds the private key. It runs as its own system user `ci-signer`, in its own unit `creche-ci-signer.service`. It ships in the `ci-runner` component. | Each CH process runs as `ci-runner` (`ci-runner.md` section 4.7). A CH escape must not reach the key. |
 | FR6 | The channel | Only a VM of a job with the label `release`, in a run that passes the checks of section 4.4, gets a vsock device. The signer serves the host end. No other VM has a path to the signer. | A vsock device is no network card. The nftables fence of `ci-runner.md` section 4.5 does not change. |
 | FR7 | What is signed | One release statement per run. The signer writes the repository, the workflow file, the event, the ref, the commit and the run id from its own read of Forgejo. The job gives only the tags and the SHA-256 of each asset. | `verify-blob --key` alone binds no workflow, ref or commit. Keyless signing bound all three (`artifacts.py:332-345`). The statement puts that binding back. |
-| FR8 | Where the statement travels | In the message of the annotated tag, with its bundle. The per-asset bundles `*.sigstore.json` retire. | A tag never moves. Root already reads the tag object for P2 (`provenance.py:248-257`). The follower fetches nothing new. |
+| FR8 | Where the statement travels | In the message of the annotated tag, with its bundle. The signer creates each release tag through the API with the token of the Forgejo bot `ci-signer`, the only user allowed on the tag protection of `*-v*` (section 6). The per-asset bundles `*.sigstore.json` retire. | A tag never moves. Root already reads the tag object for P2 (`provenance.py:248-257`). The follower fetches nothing new. |
 | FR9 | P1 for every kind | Each Release of a component with `Releases.YES` carries a statement, also a `venv` and a `units` component. mcp and creche-release join `catalog.RELEASE_WORKFLOW`. | FR2. Without a statement, P1 of a `venv` component has no anchor at all. |
 | FR10 | The public key on the host | A root-owned file `/etc/creche/release-signing.pub`, outside every release. The executor refuses P1 without it. A copy in creche serves the self-check of the allocator in CI. | The thing that deploys code is not deployed by code (`handover/AGENTS.md`, executor rule 8). A rotation then needs no release. See question 2. |
 | FR11 | Reach to Forgejo | Root and the follower reach the Forgejo host by HTTPS only, at a DNS name from the site file. The executor reads a token of a read-only bot `release-reader`. | Root refuses plain HTTP today (`provenance.py:151`, `executor/source.py:252`). P1 to P5 over plain HTTP would trust the LAN. |
@@ -65,7 +65,7 @@ This note proposes these rows. None is decided.
 | M8 | Newest tag | `provenance.py:606-628` (`git/matching-refs/tags/{prefix}`) | `GET /repos/{o}/{r}/git/refs/tags/{prefix}`, then an exact match on each `ref` | Not measured |
 | M9 | The API client | `provenance.py:90-94` (`api.github.com`, the API version header), `:146-176` (`Bearer`) | `https://<forgejo-host>/api/v1`, the header `Authorization: token <t>` | The API base is measured. HTTPS on the Forgejo host: not available today |
 | M10 | The release token | `drain.py:76` (`RELEASE_GITHUB_TOKEN`), `:386`. `steps.py:981` | `RELEASE_FORGE_TOKEN`: a token of the bot `release-reader`, read-only collaborator on the five repositories | The plan's inventory: a Forgejo token has scopes and no list of repositories |
-| M11 | The allocator | `allocate-tags.sh:183-187` (the PR read), `:200-210` (the bump labels), `:442-448` (the signature check), `:501-507` (tag push, `gh release create`) | curl to `/api/v1`: `commits/{sha}/pull`, the merged PRs with a `bump:` label, `POST releases` and one asset upload each. An annotated tag with the statement | Measured: the job token creates a Release (201) and pushes a tag. Basic auth with `x-access-token` works. Asset upload and the label filter: not measured |
+| M11 | The allocator | `allocate-tags.sh:183-187` (the PR read), `:200-210` (the bump labels), `:442-448` (the signature check), `:501-507` (tag push, `gh release create`) | curl to `/api/v1`: `commits/{sha}/pull`, the merged PRs with a `bump:` label, `POST releases` and one asset upload each. The signer creates the annotated tag with the statement (section 4.5) | Measured: the job token creates a Release (201). It pushes an unprotected tag, and tag protection refuses it on a protected name (422). Basic auth with `x-access-token` works. Asset upload and the label filter: not measured |
 | M12 | Artifact upload and download | creche `release.yml:752`, `:821`, `:953`, `:866`, `:871`, `:1002-1012`. chaperone `release.yml:254-327` | The forks of `data.forgejo.org/forgejo`, by full URL, pinned by SHA | Verification appendix: v4 and later of the upstream actions refuse Forgejo. The artifact limit for the disks (about 1 GB): not measured |
 | M13 | Merge queue | creche `gate.yml:63-66` (`merge_group`), `:409` and `release.yml:486` (`GROUP_BASE`), `test_gate_workflow.py:154`, `:910-927` | FR13 | Verification appendix |
 | M14 | `!retest` | `retest.yml:27` (`issue_comment`), `:40` (`author_association`), `:62-96` (`gh`). `bin/tests/test_retest_workflow.py` | FR14 | Measured: the rerun API |
@@ -149,12 +149,13 @@ The daemon then asks the signer to open a session for that run. The signer does 
 
 ### 4.5 The exchange
 
-1. The allocator in the `release` job plans its tags. It knows each tag and each asset before it pushes a tag.
+1. The allocator in the `release` job plans its tags. It knows each tag and each asset before any tag exists.
 2. It sends one request over vsock: a list of tags, each with its assets as a name and a SHA-256. A `venv` or `units` tag has no asset.
 3. The signer refuses a request that breaks a limit: at most 32 tags, at most 16 assets for each tag, a tag of the form `<component>-vX.Y.Z`, a plain asset name, 64 lower-case hex digits.
 4. The signer builds the statement. It writes its own fields from section 4.4 and the tags of the request. It signs the bytes with `cosign sign-blob --key`, with no log entry.
 5. The signer answers the statement and its bundle. It serves one statement for each run id. A second request of the same run is refused.
-6. The allocator checks the bundle with `handover/release-signing.pub` before it pushes a tag. A check that fails tags nothing.
+6. The signer creates each annotated tag of the request at the run's commit, through `POST /repos/{o}/{r}/tags` with the token of the Forgejo bot `ci-signer`. Tag protection refuses that call to every other user, the job token included (measured, section 6).
+7. The allocator reads the tags back and checks the bundle with `handover/release-signing.pub`. It then creates each Release and uploads its assets with the job token. A check that fails releases nothing.
 
 The statement, in its strict JSON form:
 
@@ -175,13 +176,13 @@ The statement, in its strict JSON form:
 }
 ```
 
-The allocator writes each tag of the run as an annotated tag. Its message has three lines: the word `release-statement-1`, the statement in base64, and the bundle in base64. Base64 has no character that `git tag --cleanup=verbatim` changes.
+The signer writes each tag of the run as an annotated tag. Its message has three lines: the word `release-statement-1`, the statement in base64, and the bundle in base64. Base64 has no character that `git tag --cleanup=verbatim` changes.
 
 ### 4.6 What a branch run gets
 
 1. A run of a branch push, of a PR or of `workflow_dispatch` fails check 2 or check 3. Its VM gets no vsock device, also when the job asks for the label `release`.
-2. Its allocator gets no statement. It tags no component of `Releases.YES`, and the run ends red.
-3. Its job token can still create a tag and a Release (measured). Root refuses that release at P1, because no statement names the tag at its commit.
+2. Its allocator gets no statement and no tag. It releases no component of `Releases.YES`, and the run ends red.
+3. Its job token cannot create or delete a release tag, because tag protection refuses it (measured, section 6). It can still create a Release on another tag name. Root refuses that release at P1, because no statement names the tag at its commit.
 
 A rerun of a run that already got a statement gets no second one. The next green run on `main` tags what the rerun left, as today (`release.yml:40-45`).
 
@@ -262,10 +263,16 @@ Each name is `<workflow name> / <job name> (<event>)` from the workflow files at
 
 Tag protection (`/repos/{o}/{r}/tag_protections`):
 
-1. Protect the name pattern of release tags, `*-v*`. The allowlist holds the Actions user only, if Forgejo allows it. That is not measured.
-2. Protect the name `main` with an empty allowlist. It closes the short ref of section 4.4 as a second layer.
+1. Protect the name pattern of release tags, `*-v*`. The allowlist holds the Forgejo bot `ci-signer` only. The signer creates each annotated release tag itself, with the statement in its message (FR8). No job pushes a release tag.
+2. Protect the name `main`. Its allowlist holds a user with no write on the repository, so nobody can make the tag. It closes the short ref of section 4.4 as a second layer.
 
-Tag protection cannot tell a run of `main` from a branch run. Each job token is the same user `forgejo-actions` (measured). So a branch run can still make a release tag. The signature is the guard (section 4.6). Tag protection only keeps the bot users and a hand push away from release tags.
+Measured on Forgejo 17.0.1 on 2026-11-15, on a scratch repository:
+- The Actions user cannot be on an allowlist. `forgejo-actions` is refused with 422 "user does not exist".
+- An empty allowlist is refused with 400 ("both whitelist_usernames and whitelist_teams are empty").
+- An allowlist that names a user with no write on the repository is accepted and stored as empty.
+- The job token of a branch run is refused (422) on a protected tag name, and creates an unprotected tag (201).
+
+So tag protection does what the signature cannot do alone: a branch run can neither make nor delete a release tag. The signature stays the guard of what root installs (section 4.6).
 
 ## 7. The bridge release and the window
 
@@ -303,12 +310,24 @@ Each PR holds one idea. "Before" means the PR merges before the window and works
 8. **chaperone on Forgejo** (chaperone, window). `CRECHE_REF`, no job `sign`, the label `release`, the artifact forks, `tests/release.rs`, `docs/design.md` section 12 (`:616-618`). Proof: the host installs the next `chaperone` tag, and P6 passes.
 9. **creche-release on Forgejo** (creche-release, window). `CRECHE_REF`, the label `release`, `require-pr-merge.sh`, both secrets guards, the git dependencies and `uv.lock`, the old site keys out, and the contract text: contract 06 section 3.4 and section 8.4, and `docs/releases.md` section 2.4 step 3 and section 6 rows 1, 2 and 22. Proof: the host installs the next `host` tag.
 
-## 9. Open questions for the operator
+## 9. Answers of the operator (2026-11-15)
 
-1. **Tag protection and the Actions user.** Not measured: whether `forgejo-actions` (id -2) can be on the allowlist of a tag protection. Default: measure it in the rehearsal. If it cannot, protect only the name `main`, and let the signature guard release tags (section 6).
-2. **FR10 against FR4.** FR4 says that the bridge executor "holds" the public key. FR10 reads that as: the bridge reads a root-owned key file outside every release. Default: FR10. The other way puts the key in the `handover` tree: a rotation is then a release, and a loss needs a by-hand root step.
-3. **FR9: a statement for every kind.** FR2 makes the key the only anchor of P1. A `venv` or `units` component has no signed asset, so without FR9 its P1 has no anchor. A tag on an old `main` commit could then name a new version. Default: FR9, so mcp and creche-release also use the signer.
-4. **HTTPS on the Forgejo host.** Root and the follower refuse plain HTTP. The API of the Forgejo host is plain HTTP today. Who gives it a certificate that the host's CA store trusts?
-5. **Visibility of creche and chaperone on Forgejo.** The follower downloads assets with no token, and `CRECHE_REF` checkouts use no token. A private repository needs a token for each. Default: both public, as today on GitHub.
-6. **Two new accounts.** The system user `ci-signer` on the host and the bot `release-reader` on Forgejo. Default: yes.
-7. **Who merges.** The merge allowlist holds the operator's account only, on all five repositories. An agent that merges its own creche PR does it as that account today. Default: keep it so.
+The operator answered each open question of the first draft on 2026-11-15.
+
+1. **Tag protection and the Actions user.** "Your recommendation." Measured: the Actions user cannot be allowed (section 6). Taken: a Forgejo bot `ci-signer` is the only user allowed on `*-v*`, and the signer creates each release tag. This bot is a third account beside the two of answer 6. It holds write on the five repositories and nothing else. Its token lives with the signer, never in Forgejo.
+2. **FR10 against FR4.** "Your recommendation." Taken: FR10. The bridge reads the root-owned key file `/etc/creche/release-signing.pub`.
+3. **FR9: a statement for every kind.** "Your recommendation." Taken: FR9.
+4. **HTTPS on the Forgejo host.** The operator sets up HTTPS through a reverse proxy. Requirements:
+   1. A DNS name that the host resolves to the proxy.
+   2. A certificate from a CA that the host's CA store trusts.
+   3. The proxy forwards to the Forgejo HTTP port, with a body limit and timeouts that fit the largest release asset (the disks asset is about 1 GB).
+   4. Forgejo's `ROOT_URL` names the HTTPS address, so API replies and clone URLs carry it.
+   5. SSH stays on its own port and does not pass the proxy.
+   6. The ci-runner fence of `ci-runner.md` section 4.5 allows the proxy address and port in place of the Forgejo HTTP port. The client of ci-runner PR 4 then speaks HTTPS too.
+5. **Visibility of creche and chaperone.** "Private." Consequences:
+   1. The follower and root read with the token of `release-reader`.
+   2. A job token reads only its own repository. Measured on 2026-11-15: a job of one repository got "User permission denied" from git and 404 from the API for another private repository of the organization.
+   3. So the `CRECHE_REF` checkouts of registry, mcp, chaperone and creche-release need a read token. A second token of `release-reader`, with read scope only, is an organization Actions secret. Branch runs can read it (section 3), so it must hold read scope only. The token of root is a different token of the same bot and never enters Forgejo.
+6. **Two new accounts.** "Yes." The system user `ci-signer` on the host and the bot `release-reader` on Forgejo. Answer 1 adds the Forgejo bot `ci-signer`.
+7. **Who merges.** "Yes." The merge allowlist holds the operator's account only, on all five repositories.
+
