@@ -847,7 +847,9 @@ forge_provenance.py    the rules P1 to P6 and the chain
    change in the crate. Each refused vector names its reason. The map
    `REASONS` of that test gives each word its `StatementReason`. So the
    checks of `decode_message` and `read_statement` keep the order of the
-   crate.
+   crate. One reason differs, and no vector holds it. The integer `-0` and
+   an integer past 64 bits give `NOT_JSON` here and `field` in the crate
+   (decision CH40 rule 7). Both readers refuse these texts.
 7. Root reads the message only from the git tag object of P2, which adds
    one LF. `decode_message` does not parse the statement.
 8. `check_signature` writes the statement and the bundle into
