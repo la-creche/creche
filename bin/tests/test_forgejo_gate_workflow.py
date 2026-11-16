@@ -37,8 +37,9 @@ result with the Forgejo job. A difference that is not in this list fails.
 8. **User.** The Docker runner runs a step as root with the umask 0000. The
    jobs of `RUNNER_USER_STEPS` run `.forgejo/actions/runner-user`, at a
    stated place, and name its `as-runner` as the shell of their run steps.
-   Those steps then run as a user that is not root, with the umask 0022, as
-   on the hosted GitHub runner.
+   Those steps then run as a user that is not root, with the umask 0022,
+   the open file limit 65536 and a RUNNER_TEMP that is not /tmp, as on the
+   hosted GitHub runner.
 9. **Load.** The workflow `env` holds cargo, the Rust test threads, xdist
    and vitest to 6 workers each: 24 CPUs of the Docker runner for its 4
    jobs at once.
@@ -157,7 +158,13 @@ RUSTUP_STEPS: dict[str, tuple[int, dict[str, str]]] = {
 #: and the shell of the run steps of that job. The index counts the rustup
 #: step of difference 6.
 RUNNER_USER = "./.forgejo/actions/runner-user"
-RUNNER_USER_STEPS = {"tests": 2, "proc": 4, "suites": 2, "rust": 2}
+RUNNER_USER_STEPS: dict[str, tuple[int, dict[str, str]]] = {
+    "tests": (2, {"uses": RUNNER_USER}),
+    "proc": (4, {"uses": RUNNER_USER}),
+    "suites": (2, {"uses": RUNNER_USER}),
+    "rust": (2, {"uses": RUNNER_USER}),
+    "vmm-archive": (3, {"uses": RUNNER_USER, "if": ONLY_VMM}),
+}
 AS_RUNNER = {"run": {"shell": "as-runner {0}"}}
 
 #: The time limit of each job that has none in the GitHub file
@@ -231,7 +238,8 @@ def _port_job(name: str, job: dict[str, Any]) -> dict[str, Any]:
         index, step = RUSTUP_STEPS[name]
         port["steps"].insert(index, step)
     if name in RUNNER_USER_STEPS:
-        port["steps"].insert(RUNNER_USER_STEPS[name], {"uses": RUNNER_USER})
+        index, step = RUNNER_USER_STEPS[name]
+        port["steps"].insert(index, step)
         port["defaults"] = AS_RUNNER
     if name in TIME_LIMITS:
         assert "timeout-minutes" not in port, f"{name}: the GitHub job has a limit"

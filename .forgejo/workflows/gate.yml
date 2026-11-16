@@ -24,9 +24,11 @@
 #   6. No `permissions` key: Forgejo ignores it, and each job token can
 #      write its own repository.
 #   7. User: the Docker runner runs a step as root with the umask 0000. The
-#      jobs tests, proc, suites and rust run .forgejo/actions/runner-user,
+#      jobs tests, proc, suites, rust and vmm-archive run
+#      .forgejo/actions/runner-user,
 #      and their run steps run as a user that is not root, with the umask
-#      0022, as on the hosted GitHub runner.
+#      0022, the open file limit 65536 and a RUNNER_TEMP that is not /tmp,
+#      as on the hosted GitHub runner.
 #   8. Load: the env block below holds each job to 6 CPUs.
 #   9. Time limits: each job has a `timeout-minutes`. A job of the GitHub
 #      file with a limit keeps it.
@@ -644,6 +646,9 @@ jobs:
     if: needs.scope.outputs.scope == 'code'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: as-runner {0}
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -659,6 +664,10 @@ jobs:
       # bin/build-artifacts.sh runs rustup, and the Docker runner has none
       # (.forgejo/actions/rustup).
       - uses: ./.forgejo/actions/rustup
+        if: needs.scope.outputs.vmm != 'false'
+
+      # Difference 7: the run steps below run as a user that is not root.
+      - uses: ./.forgejo/actions/runner-user
         if: needs.scope.outputs.vmm != 'false'
 
       # musl-gcc for the C of ring under CH (plan risk 13). The `artifacts`

@@ -13,8 +13,8 @@
 # users from the checkout. It gives `ubuntu` passwordless sudo, as on the
 # hosted runner. It then installs the program `as-runner`. A job names it as
 # the shell of its run steps (`defaults.run.shell: as-runner {0}`). That shell
-# runs the script of a step as `ubuntu`, with HOME /home/ubuntu and the umask
-# 0022.
+# runs the script of a step as `ubuntu`, with HOME /home/ubuntu, a
+# RUNNER_TEMP of its own, the umask 0022 and the open file limit 65536.
 #
 # Run it after the last step that installs a tool, and before the first run
 # step. A step of a local action keeps its own shell, and so runs as root.
@@ -27,6 +27,10 @@ runs:
     - shell: bash
       env:
         RUN_USER: ubuntu
+        RUN_TEMP: /home/ubuntu/work/_temp
+        # The open file limit of the hosted runner. The Docker runner gives
+        # a job less, and the vmm start tests then fail with EMFILE.
+        OPEN_FILES: "65536"
       run: |
         set -euo pipefail
         id -u -- "$RUN_USER"
@@ -50,14 +54,21 @@ runs:
         # repository that another user owns, unless the config names it.
         git config --system --add safe.directory "$GITHUB_WORKSPACE"
 
+        # RUNNER_TEMP is /tmp on the Docker runner. bin/build-artifacts.sh
+        # refuses a program that holds the path RUNNER_TEMP, and guest-init
+        # holds "/tmp" as a guest path. The hosted runner gives a directory
+        # of its own, so the run steps get one too.
+        install -d -m 0755 -o "$RUN_USER" -g "$RUN_USER" -- "$RUN_TEMP"
+
         # The heredoc expands $RUN_USER now. \$ keeps a name for the shell.
         cat > /usr/local/bin/as-runner <<SHELL
         #!/bin/bash
         # as-runner SCRIPT: the shell of a run step, as $RUN_USER.
         set -euo pipefail
         chmod a+r -- "\$1"
+        ulimit -n $OPEN_FILES
         exec setpriv --reuid=$RUN_USER --regid=$RUN_USER --init-groups \\
-          env HOME=/home/$RUN_USER USER=$RUN_USER LOGNAME=$RUN_USER \\
+          env HOME=/home/$RUN_USER USER=$RUN_USER LOGNAME=$RUN_USER RUNNER_TEMP=$RUN_TEMP \\
           bash -c 'umask 0022 && exec bash --noprofile --norc -eo pipefail "\$0"' "\$1"
         SHELL
         chmod 0755 /usr/local/bin/as-runner
