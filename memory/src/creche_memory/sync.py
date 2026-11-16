@@ -67,6 +67,11 @@ SKIPPED: tuple[tuple[str, ...], ...] = (("house", "ha"), ("house", "scrum"))
 DATA_PER_BATCH = 1
 CHUNKS_PER_BATCH = 4
 
+#: The time between two compactions of the vector store during a sync.
+#: Each upsert adds a fragment to a LanceDB table and reads all the others,
+#: and Cognee compacts only after a run that completed.
+COMPACT_EVERY_S = 120.0
+
 NOTE_SUFFIX = ".md"
 
 #: A sync of the given folders. It returns the count of notes and PDFs whose
@@ -243,6 +248,28 @@ async def _add(source: object) -> None:
     )
 
 
+async def _compact() -> None:
+    """One pass of Cognee's compaction of the vector store. It returns a
+    bare `dict` of counts per table, which the sync does not read."""
+    from cognee.infrastructure.databases.vector import compact_vector_store as compaction
+
+    # Read at each pass, as a test replaces it to count the passes.
+    await compaction.compact_vector_store()  # pyright: ignore[reportUnknownMemberType]
+
+
+async def _compact_every(seconds: float) -> None:
+    """Compact the vector store every `seconds`, until a cancel.
+
+    A pass rewrites at most 4 groups of fragments
+    (`DEFAULT_MAX_TASKS_PER_RUN`), so a large backlog drains over several
+    passes. The rewrite takes the lock of each upsert, so a pass and an
+    upsert never write together. A pass that starts while one runs returns
+    at once."""
+    while True:
+        await asyncio.sleep(seconds)
+        await _compact()
+
+
 async def _cognify() -> int:
     """One graph extraction of each item of the dataset that needs one.
 
@@ -251,26 +278,34 @@ async def _cognify() -> int:
     of those items again. With `raise_on_error=False`, a run that failed
     items returns them. An error of the run itself still raises.
 
-    Cognee compacts the vector store only after a run that completed. Each
-    upsert adds a fragment to a LanceDB table, and each later upsert reads
-    them all. So after a run that failed items, the sync compacts the store
-    itself, as Cognee does after a completed run. A compaction that fails
-    fails the sync, as it does after a completed run."""
+    Cognee compacts the vector store only after a run that completed. On
+    2026-11-16 the graph write of one item grew from 15 s to 16 minutes in
+    one run. So the store compacts every `COMPACT_EVERY_S` during the run,
+    and once after a run that failed items. A compaction that fails fails
+    the sync, as it does after a completed run."""
     import cognee
-    from cognee.infrastructure.databases.vector.compact_vector_store import (
-        compact_vector_store,  # pyright: ignore[reportUnknownVariableType]
-    )
 
-    runs = await cognee.cognify(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        datasets=[DATASET],
-        data_per_batch=DATA_PER_BATCH,
-        chunks_per_batch=CHUNKS_PER_BATCH,
-        raise_on_error=False,
-    )
+    compacting = asyncio.create_task(_compact_every(COMPACT_EVERY_S))
+    try:
+        runs = await cognee.cognify(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            datasets=[DATASET],
+            data_per_batch=DATA_PER_BATCH,
+            chunks_per_batch=CHUNKS_PER_BATCH,
+            raise_on_error=False,
+        )
+    finally:
+        # A pass that runs ends before the cancel takes effect.
+        compacting.cancel()
+        (stopped,) = await asyncio.gather(compacting, return_exceptions=True)
+
+    # A pass that failed during the run. A cancelled pass is not an
+    # `Exception`.
+    if isinstance(stopped, Exception):
+        raise stopped
 
     failed = failed_extractions(cast(object, runs))
     if failed:
-        await compact_vector_store()
+        await _compact()
 
     return failed
 

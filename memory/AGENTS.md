@@ -16,7 +16,7 @@ service of the vault. The service hosts the memory store and answers the
 | `src/creche_memory/vault.py` | `Vault`: it reads one note or lists one folder, inside the vault root. |
 | `src/creche_memory/writes.py` | `Writer`: it creates inbox notes and rewrites whole files in the agent areas. |
 | `src/creche_memory/store.py` | `StoreSettings` and `configure`: the settings of the memory store, as the env that Cognee reads. |
-| `src/creche_memory/sync.py` | `Syncer`: the checks of the vault and the syncs into the store. `failed_extractions`: the items of a partial sync. `_cognify` compacts the vector store after a partial run. |
+| `src/creche_memory/sync.py` | `Syncer`: the checks of the vault and the syncs into the store. `failed_extractions`: the items of a partial sync. `_cognify` compacts the vector store during the run and after a partial run. |
 | `src/creche_memory/logs.py` | `plain_console`: one plain journal line for each Cognee record at WARNING and above. |
 | `src/creche_memory/graph.py` | The graph check: it tells a dead graph database from one that opens. The close of the stop, and the reopen after each sync. |
 | `src/creche_memory/pdf.py` | The PDFs of the vault as a second source of the store: the listing, the rows, the cache of texts. |
@@ -31,7 +31,7 @@ service of the vault. The service hosts the memory store and answers the
 | `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
 | `tests/test_memory_writes.py` | The tests of the writes: the areas, the digest check, the modes and the symlink rules. |
 | `tests/test_memory_store.py` | The tests of the settings. One test imports Cognee in a process of its own and reads its settings back. |
-| `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure, the wait after failures, a dead graph, the reopen and a partial sync. Three syncs through Cognee against a fake model: one note that fits no schema, with the compaction after it, an auth error and a budget error. |
+| `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure, the wait after failures, a dead graph, the reopen and a partial sync. Four syncs through Cognee against a fake model: one note that fits no schema, with the compaction after it, a run with compactions during it, an auth error and a budget error. |
 | `tests/memory_model_helpers.py` | A fake model server for the chat and embedding routes, a tokenizer in the test's cache, and a sync through Cognee in a child process. |
 | `tests/test_memory_logs.py` | The tests of the journal lines: one plain line for a Cognee record, and the file log that keeps the traceback. |
 | `tests/test_memory_graph.py` | The tests of the graph check, on real ladybug databases. The cap of one open, and the reopen that empties it. |
@@ -235,18 +235,8 @@ sync failed, and search stayed `not_ready`.
 5. A partial sync keeps the vault stamp. So its failed items sync again at
    the next change of the vault, not at each check.
 6. The reopen follows a partial sync, as it follows a good one.
-7. After a partial run, the sync compacts the vector store with Cognee's
-   `compact_vector_store`. Cognee calls it only after a run that completed.
-   A compaction that fails fails the sync, as it does after a completed
-   run.
-
-Rule 7 comes from the host on 2026-11-16. No run had completed there, so
-LanceDB never compacted the store. `EdgeType_relationship_name` held 3223
-fragments in 805 MB. Each upsert adds a fragment and reads all the others.
-So the graph write of one item grew from 15 s to 16 minutes in one sync.
-One compaction does at most 4 tasks (`DEFAULT_MAX_TASKS_PER_RUN`), so a
-large backlog drains over several syncs. Inside one long run, the
-fragments still grow until the run ends.
+7. After a partial run, the sync compacts the vector store once
+   ("The compaction").
 
 What Cognee 1.6.6 does with a partial run, measured with a fake model on
 2026-11-15 (`test_a_sync_through_cognee_counts_the_note_that_fits_no_schema`):
@@ -267,6 +257,34 @@ What Cognee 1.6.6 does with a partial run, measured with a fake model on
    stopped the run. Cognee does not try an auth or a budget error again.
 6. Without rule 7, a partial run leaves 3 fragments in a table of the
    test's store. With rule 7 it leaves 1.
+
+## The compaction
+
+Each upsert adds a fragment to a LanceDB table of the vector store, and
+each later upsert reads all of them. Cognee 1.6.6 compacts the store only
+after a run that completed (`after_run_completed`).
+
+On 2026-11-16 no run had completed on the host, so LanceDB had never
+compacted the store. `EdgeType_relationship_name` held 3223 fragments in
+805 MB. In one sync, the graph write of one item grew from 15 s to 16
+minutes. The service sat idle while the LanceDB worker read that table.
+
+1. During each `cognify`, the sync compacts the store every
+   `COMPACT_EVERY_S` (120 s) with Cognee's `compact_vector_store`.
+2. After a partial run, the sync compacts the store once more. Cognee does
+   that itself after a completed run.
+3. A pass rewrites at most 4 groups of fragments
+   (`DEFAULT_MAX_TASKS_PER_RUN`). So a large backlog drains over several
+   passes.
+4. The rewrite takes the lock of each upsert (`VECTOR_DB_LOCK`), so a pass
+   and an upsert never write together. A pass that starts while another
+   one runs returns at once.
+5. A compaction that fails fails the sync, as it does after a completed
+   run.
+
+`test_a_sync_through_cognee_compacts_the_store_during_the_run` runs passes
+every 0.2 s beside the upserts of a real Cognee run. The run completes, and
+search finds each note.
 
 ## The journal
 
