@@ -13,7 +13,7 @@ creation, the unit and the catalog row.
 | Module | What it holds | Note section |
 |---|---|---|
 | `names.rs` | `Owner`, `RepoName`, `RepoFullName`, `WorkflowFile`, `ReleaseTag`, `AssetName`, `Sha256Hex`, `CommitSha`, `RunId`. A value of each type is always valid. | 4.4, 4.5 step 4 |
-| `limits.rs` | The caps of section 4.5, the three proposals, the workflow cap of this code and the measured Forgejo limit. A compile-time assertion holds the worst tag message below the cap. | 4.5 |
+| `limits.rs` | The caps of section 4.5, the workflow cap and the measured Forgejo limit. A compile-time assertion holds the worst tag message below the cap. | 4.5 |
 | `signed_at.rs` | `SignedAt`: whole seconds of UTC, written `YYYY-MM-DDTHH:MM:SSZ`. | 4.5 |
 | `statement.rs` | `Statement`, its canonical writer and `from_canonical`, its one reader. A private wire type is the serde form and the source of the schema. | FR7, 4.5, 5 |
 | `base64.rs` | Base64 of RFC 4648 section 4, with a strict decode. | 4.5 |
@@ -118,48 +118,74 @@ Each case fails closed. The rehearsal of section 7 records the real value.
 1. The `status` of a run that waits or runs (check 5). The crate passes only
    `waiting` and `running`, refuses `blocked` and each finished state, and
    treats each other text as a fault.
-2. The content and the size of a cosign v3 bundle with a key and no log
-   entry (M7). The crate keeps the bundle opaque and caps it at 4096 bytes.
-3. That a Forgejo rerun keeps the run id, and that it gives the run a
+2. That a Forgejo rerun keeps the run id, and that it gives the run a
    status that is not finished. The journal refuses a second statement for
    the same run id and for the same commit. So a rerun with a new run id
    gets no second statement either.
-4. The sha256 object format of git. The crate refuses a commit id that is
+3. The sha256 object format of git. The crate refuses a commit id that is
    not 40 hex digits.
+
+## Measured: cosign v3.1.4
+
+The records of 2026-11-16 measured cosign v3.1.4 with a P-256 key and no
+log entry (section 3 M7). `vectors/cosign-3.1.4/` holds a public key, a
+statement and its bundle that verify together. The private key is
+deleted.
+
+1. The bundle is 387 bytes for each signature and each statement size.
+   The cap of 4096 bytes leaves 3709 bytes.
+2. The bundle has the media type
+   `application/vnd.dev.sigstore.bundle.v0.3+json`, a key hint, the
+   SHA-256 of the statement and a signature. It has no log entry and no
+   final LF.
+3. Two signatures of one statement give two different bundles (ECDSA is
+   randomized). Both verify.
+4. The largest tag message with a real bundle is 108501 bytes, below the
+   cap of 120000 bytes.
+
+`tests/signer/cosign_vector.rs` checks these files with no cosign: the
+statement is canonical, the bundle fits `Bundle`, the bundle names the
+SHA-256 of the statement and of the key, and a `tag-message.json` case
+holds the two as one message. The crate still keeps the bundle opaque.
+cosign at root is the check.
+
+## Decided rules
+
+The operator decided these rules on 2026-11-16. Each was a
+`CONTRACT-QUESTION:` before.
+
+1. `limits.rs`: a tag name and an asset name hold at most 64 bytes, a
+   bundle at most 4096 bytes and a tag message at most 120000 bytes
+   (section 4.5).
+2. `limits.rs`, `MAX_WORKFLOW_BYTES`: a workflow file name holds at most
+   64 bytes.
+3. `exchange.rs`: the job VM and the signer exchange one strict JSON line
+   each, with the version field `v` 1.
+4. `statement.rs`, `Branch`: the statement spells the ref `main`.
+5. `statement.rs`, `Tags` and `Assets`: the signer sorts the tags and the
+   assets by name. It refuses a duplicate, an empty tag list and two tags
+   of one component.
+6. `statement.rs`, `Tags`: root checks every tag of a statement against
+   the catalog. The signer does not know component kinds, so it checks
+   neither the rule of section 4.5 step 3 nor that a component belongs to
+   the repository.
+7. `names.rs`: a version number has no leading zero and at most 9 digits.
+   The wiring PR (4b) gives `_TAG_RE` of `handover/executor/source.py` the
+   same rule.
+8. `eligibility.rs`: the run id is the API id, not the `index_in_repo` of
+   the URL. A reply with another id or repository is refused.
+9. `issue.rs`: one statement for each run and for each commit.
+10. `issue.rs`: the journal is the file `/var/lib/ci-signer/issued.tsv`,
+    owned by the signer user. The signer writes and syncs the line before
+    cosign signs. This crate has no I/O and holds no path. The program of
+    the next PR holds the path as its constant. `IssuedLine` gives the
+    line its text form.
 
 ## Known gaps
 
 Each item is a `CONTRACT-QUESTION:` in the code.
 
-1. `exchange.rs`: section 4.5 gives only the content of the request and of
-   the answer. The reading is one strict JSON line each, with `v` 1.
-2. `forgejo.rs`: the status words of an unfinished run (see "Not measured").
-3. `statement.rs`, `Branch`: the statement spells the ref `main`, as the
-   example of section 4.5 and the P1 row of section 5 do.
-4. `statement.rs`, `Tags`: section 4.5 gives no order and says nothing of an
-   empty list or of two tags of one component. The reading sorts by name,
-   refuses an empty list and refuses two tags of one component.
-5. `names.rs`: a version number has at most 9 digits and no leading zero.
-   So this grammar is a strict subset of `_TAG_RE` of
-   `handover/executor/source.py`. PR 4 can tighten `_TAG_RE` to the same
-   grammar.
-6. `statement.rs`, `Tags`: section 4.5 step 3 says that a `venv` or `units`
-   tag has no asset. The signer has no catalog, so it checks neither that
-   nor that a component belongs to the repository. Root's P1 refuses both.
-7. `names.rs`, `CommitSha`: a repository with the sha256 object format
+1. `forgejo.rs`: the status words of an unfinished run (see "Not
+   measured").
+2. `names.rs`, `CommitSha`: a repository with the sha256 object format
    fails closed.
-8. `message.rs`, `Bundle`: opaque bytes, 1 to 4096 (see "Not measured").
-9. `eligibility.rs`: the open line carries the API id of the run, not the
-   `index_in_repo`. A reply with another id or repository is refused.
-10. `issue.rs`: section 4.3 item 7 does not say where the journal lives.
-    The reading gives the line a strict text form. The program must append
-    and sync the line before it calls cosign.
-11. `issue.rs`: section 4.6 names one statement for each run. The reading
-    also refuses a second statement for the same commit, because a rerun
-    can get a new run id (see "Not measured").
-12. The three proposals of section 4.5 (64-byte tag and asset names, a
-    4096-byte bundle, a 120000-byte message) are constants in `limits.rs`.
-    The operator has not accepted them yet.
-13. `limits.rs`, `MAX_WORKFLOW_BYTES`: the note sets no cap on a workflow
-    file name. The code caps it at 64 bytes, its own reading and not part
-    of proposal 1.

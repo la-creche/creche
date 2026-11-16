@@ -177,11 +177,11 @@ pub fn decide_run(
 ) -> Result<RunChecked, Refusal> {
     let run = parse_run(reply).map_err(Refusal::Fault)?;
 
-    // CONTRACT-QUESTION: section 4.4 says that the signer takes the run id
-    // from the open line. The recorded run 48 has `index_in_repo` 23 in its
-    // `html_url`. The reading here takes the API id and refuses a reply
-    // whose id or repository differs from the key. The full name is
-    // compared byte for byte. A change is this one check.
+    // Decided by the operator on 2026-11-16: the run id is the API id, not
+    // the per-repository index of the URL. The recorded run 48 has
+    // `index_in_repo` 23 in its `html_url`. A reply whose id or repository
+    // differs from the key is refused. The full name is compared byte for
+    // byte.
     if run.id != key.run || run.repository != key.repository {
         return Err(Refusal::ReplyMismatch);
     }

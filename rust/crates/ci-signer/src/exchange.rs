@@ -9,9 +9,9 @@
 //!
 //! The job gives only tags and digests (FR7). A request with any other key,
 //! a repository, a commit or a run included, is refused.
-// CONTRACT-QUESTION: forgejo-release-path.md section 4.5 gives only the
-// content of the request and of the answer. The reading here is one strict
-// JSON line each, with the version field `v` 1 and no unknown key. A change
+// Decided by the operator on 2026-11-16: the job VM and the signer exchange
+// one strict JSON line each, with a version field (forgejo-release-path.md
+// section 4.5). Here the field is `v` 1 and no unknown key passes. A change
 // moves only this module and `vectors/exchange.json`. A version 2 can sit
 // beside version 1.
 

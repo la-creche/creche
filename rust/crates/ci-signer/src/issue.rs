@@ -18,18 +18,17 @@
 //!
 //! The set also refuses a second statement for a commit. A rerun that
 //! Forgejo gives a new run id then gets no second statement either.
-// CONTRACT-QUESTION: section 4.3 item 7 names one journal line for each
-// statement, with the run id, the commit and the SHA-256 of the statement.
-// It does not say whether the line lives in the systemd journal or in a
-// file. The reading here gives the line a strict text form that a file of
-// the unit's state directory can hold. The program of a later PR must
-// append and sync the line before it calls cosign. A change of the form is
-// `IssuedLine` and `from_journal`.
-// CONTRACT-QUESTION: section 4.6 says that a rerun gets no second
-// statement. Whether a Forgejo rerun keeps the run id is not measured. The
-// reading here also refuses a second statement for the same commit.
-// Section 4.6 lets the next green run on `main` tag what a run left, and
-// that run builds a new merge commit. A change is the commit set.
+// Decided by the operator on 2026-11-16: the journal of section 4.3 item 7
+// is the file `/var/lib/ci-signer/issued.tsv`, owned by the signer user.
+// The signer writes and syncs the line before cosign signs. This crate has
+// no I/O, so the program of the next PR holds the path. `IssuedLine` is
+// the strict text form of one line. A change of the form is `IssuedLine`
+// and `from_journal`.
+// Decided by the operator on 2026-11-16: one statement for each commit as
+// well as for each run. Whether a Forgejo rerun keeps the run id is not
+// measured, so the commit set holds the rule of section 4.6 either way.
+// The next green run on `main` tags what a run left, and that run builds a
+// new merge commit.
 
 use std::collections::BTreeSet;
 use std::fmt;

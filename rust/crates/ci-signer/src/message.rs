@@ -25,11 +25,12 @@ use crate::limits::{
 };
 
 /// A cosign bundle: 1 to `MAX_BUNDLE_BYTES` opaque bytes.
-// CONTRACT-QUESTION: forgejo-release-path.md section 3 M7 and section 4.5:
-// the content and the size of a cosign v3 bundle with a key and no log
-// entry are not measured. The reading here keeps the bytes opaque, caps
-// them at the proposal of 4096 bytes and refuses an empty bundle. cosign
-// at root is the check. A tighter rule changes only `Bundle::new`.
+// Decided by the operator on 2026-11-16: a bundle holds at most 4096 bytes
+// (forgejo-release-path.md section 4.5). The bytes stay opaque and an empty
+// bundle is refused. cosign at root is the check. cosign v3.1.4 with a
+// P-256 key and no log entry writes 387 bytes each time (section 3 M7,
+// measured on 2026-11-16, `vectors/cosign-3.1.4/`). A tighter rule changes
+// only `Bundle::new`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bundle(Vec<u8>);
 

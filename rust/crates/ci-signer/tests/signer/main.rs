@@ -5,6 +5,7 @@
 #![cfg(test)]
 
 mod common;
+mod cosign_vector;
 mod eligibility;
 mod exchange;
 mod issue;
