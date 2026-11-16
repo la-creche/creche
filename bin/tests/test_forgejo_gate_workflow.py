@@ -151,6 +151,7 @@ SCOPE_BASE = (
 RUSTUP = "./.forgejo/actions/rustup"
 ONLY_VMM = "needs.scope.outputs.vmm != 'false'"
 RUSTUP_STEPS: dict[str, tuple[int, dict[str, str]]] = {
+    "tests": (2, {"uses": RUSTUP}),
     "proc": (2, {"uses": RUSTUP}),
     "rust": (1, {"uses": RUSTUP}),
     "vmm-archive": (2, {"uses": RUSTUP, "if": ONLY_VMM}),
@@ -161,7 +162,7 @@ RUSTUP_STEPS: dict[str, tuple[int, dict[str, str]]] = {
 #: step of difference 6.
 RUNNER_USER = "./.forgejo/actions/runner-user"
 RUNNER_USER_STEPS: dict[str, tuple[int, dict[str, str]]] = {
-    "tests": (2, {"uses": RUNNER_USER}),
+    "tests": (3, {"uses": RUNNER_USER}),
     "proc": (4, {"uses": RUNNER_USER}),
     "suites": (2, {"uses": RUNNER_USER}),
     "vmm-archive": (3, {"uses": RUNNER_USER, "if": ONLY_VMM}),
