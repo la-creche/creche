@@ -135,15 +135,15 @@ registry has no row. Its component `registry-data` is `Releases.NO` (`catalog.py
 
 ### 4.4 Which run gets a signature
 
-The label `release` takes a plain slot of R6 (`ci-runner.md` section 3). The daemon reads the run of each waiting job with that label: `GET /repos/{o}/{r}/actions/runs/{id}`. Not measured: that the entry of a waiting job names its repository and its run id. The run reply has `event`, `prettyref` and `commit_sha`. A run is eligible only when each check passes:
+The label `release` takes a plain slot of R6 (`ci-runner.md` section 3). The daemon reads the run of each waiting job with that label: `GET /repos/{o}/{r}/actions/runs/{id}`. Measured on 2026-11-15: the entry of a waiting job has `repo_id`, `run_id`, `runs_on` and `handle`. The run reply has `workflow_id`, `event`, `trigger_event`, `prettyref`, `commit_sha` and `repository.full_name`. A run is eligible only when each check passes:
 
-1. The repository and the workflow file are a pair of the list of section 4.3. The field of the run reply that names the workflow file is not measured.
+1. The repository and the workflow file are a pair of the list of section 4.3. The run reply names the file in `workflow_id`, for example `test.yml` (measured 2026-11-15).
 2. `event` is `push`.
 3. `prettyref` is `main`.
 4. `GET /repos/{o}/{r}/commits/{commit_sha}/pull` answers one PR with `merged` true, `base.ref` `main` and `merge_commit_sha` equal to `commit_sha`.
 5. The run is not finished.
 
-Check 4 is not redundant with check 3. `prettyref` is a short ref name. A tag named `main` pushed from a branch could show the same `prettyref`. This reading comes from the code of Forgejo and is not measured. Check 4 refuses that run, because its commit is no merge into `main`. Tag protection of the name `main` is a second layer (section 6).
+Check 4 is not redundant with check 3. `prettyref` is a short ref name. A tag named `main` gives a run with `event` `push` and `prettyref` `main`, the same as a push to the branch `main` (measured 2026-11-15 on a scratch repository: run 15, from a tag `main` made through the API). So checks 2 and 3 alone accept a run from a tag. Check 4 refuses that run, because its commit is no merge into `main`. Tag protection of the name `main` is a second layer (section 6).
 
 The daemon then asks the signer to open a session for that run. The signer does not trust the daemon. It reads the run and the PR itself with its own token and runs the same five checks. Only then does it serve the host end of the vsock device of that one VM.
 
