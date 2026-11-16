@@ -19,7 +19,8 @@ result with the Forgejo job. A difference that is not in this list fails.
 3. **Runner labels.** The Docker runner gives a job no Docker socket, no
    systemd as process 1 and no /dev/kvm. A job that needs Docker or
    systemd runs on `vm-plain`. So does `memory`: its stop tests need a
-   process 1 that reaps orphans. The job that needs KVM runs on `vm-kvm`.
+   process 1 that reaps orphans. The jobs that need /dev/kvm run on
+   `vm-kvm`: `kvm`, and `rust`, two of whose tests open /dev/kvm.
 4. **Artifact actions.** Upstream upload-artifact and download-artifact v4
    and later refuse a server that is not GitHub. The gate uses neither, and
    a test holds that. A port of one must name the Forgejo action and add
@@ -118,6 +119,7 @@ VM_LABELS = {
     "memory": VM_PLAIN,
     "playpen-image": VM_PLAIN,
     "systemd-proof": VM_PLAIN,
+    "rust": VM_KVM,
     "kvm": VM_KVM,
 }
 
@@ -162,7 +164,6 @@ RUNNER_USER_STEPS: dict[str, tuple[int, dict[str, str]]] = {
     "tests": (2, {"uses": RUNNER_USER}),
     "proc": (4, {"uses": RUNNER_USER}),
     "suites": (2, {"uses": RUNNER_USER}),
-    "rust": (2, {"uses": RUNNER_USER}),
     "vmm-archive": (3, {"uses": RUNNER_USER, "if": ONLY_VMM}),
 }
 AS_RUNNER = {"run": {"shell": "as-runner {0}"}}

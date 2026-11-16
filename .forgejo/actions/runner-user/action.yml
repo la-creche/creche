@@ -42,8 +42,13 @@ runs:
         chmod 0711 /root
 
         chmod -R go-w -- "$GITHUB_WORKSPACE"
+        # uv installs a Python there when a step asks for one it lacks.
+        if [[ -n "${UV_PYTHON_INSTALL_DIR:-}" ]]; then
+          mkdir -p -- "$UV_PYTHON_INSTALL_DIR"
+        fi
+
         owned=("$GITHUB_WORKSPACE")
-        for dir in "${CARGO_HOME:-}" "${RUSTUP_HOME:-}"; do
+        for dir in "${CARGO_HOME:-}" "${RUSTUP_HOME:-}" "${UV_PYTHON_INSTALL_DIR:-}"; do
           if [[ -n "$dir" ]]; then
             owned+=("$dir")
           fi
