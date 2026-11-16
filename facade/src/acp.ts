@@ -35,8 +35,9 @@ import type {
 import { Readable } from "node:stream";
 
 import { describeRefusal, encodeLine } from "./line.js";
+import { MAX_NAME_BYTES } from "./mapper.js";
 import type { Say } from "./stdio.js";
-import { MAX_LINE_BYTES, PROTOCOL_VERSION } from "./vectors.js";
+import { MAX_LINE_BYTES, PROTOCOL_VERSION, REWIND_METHOD } from "./vectors.js";
 
 export type {
   AgentApp,
@@ -56,6 +57,31 @@ export type {
   StopReason,
   Stream,
 };
+
+/**
+ * The params of `_creche/session/rewind`: cut the session back to before
+ * the user message `messageId`, the `messageId` of its `user_message_chunk`
+ * (`src/rewind.ts`).
+ */
+export interface RewindRequest {
+  readonly sessionId: string;
+  readonly messageId: string;
+}
+
+/** The params of a rewind, or `invalidParams`. The SDK checks no extension. */
+export function rewindParams(params: unknown): RewindRequest {
+  const fields = typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
+  const { sessionId, messageId } = fields;
+  if (typeof sessionId !== "string" || typeof messageId !== "string") {
+    throw RequestError.invalidParams(undefined, "a rewind names a sessionId and a messageId");
+  }
+
+  if (Buffer.byteLength(messageId) > MAX_NAME_BYTES) {
+    throw RequestError.invalidParams(undefined, `the messageId is over ${String(MAX_NAME_BYTES)} bytes`);
+  }
+
+  return { sessionId, messageId };
+}
 
 /** Why the facade refuses a request. Each kind is one JSON-RPC error. */
 export type Refusal =
@@ -87,6 +113,7 @@ export interface SessionService {
   /** The thinking level of the session (`src/thinking.ts`). */
   setConfigOption(params: SetSessionConfigOptionRequest): Promise<Outcome<SetSessionConfigOptionResponse>>;
   cancel(params: CancelNotification): Promise<void>;
+  rewind(params: RewindRequest): Promise<Outcome<Record<string, never>>>;
 }
 
 function toError(refusal: Refusal): RequestError {
@@ -159,6 +186,7 @@ export function facadeApp(sessions: SessionService): AgentApp {
     .onRequest(methods.agent.session.resume, ({ params }) => answer(sessions.resumeSession(params, peer)))
     .onRequest(methods.agent.session.prompt, ({ params }) => answer(sessions.prompt(params, peer)))
     .onRequest(methods.agent.session.setConfigOption, ({ params }) => answer(sessions.setConfigOption(params)))
+    .onRequest(REWIND_METHOD, rewindParams, ({ params }) => answer(sessions.rewind(params)))
     .onNotification(methods.agent.session.cancel, ({ params }) => sessions.cancel(params));
 }
 

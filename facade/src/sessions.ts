@@ -1,9 +1,11 @@
 // The one session of the facade. A VM serves one session, and its id is the
 // host's: guest init passes it as `CRECHE_SESSION_ID` (`src/session-id.ts`,
-// decisions CH1, CH25 rule 2). The session is one Flue agent instance, and
-// its ACP session id is the instance id.
+// decisions CH1, CH25 rule 2). The session is one Flue agent instance at a
+// time. Before any rewind, the instance id is the ACP session id. Each
+// rewind moves the session to a new instance (`src/lineage.ts`).
 //
-//   start        ──► init(agent, {id}) ──► the one handle (decision CH21-8)
+//   start        ──► init(agent, {instance of the lineage}) ──► the handle (decision CH21-8)
+//   rewind       ──► adopt(the next lineage) ──► a new handle
 //   session/load ──► the one id, or resourceNotFound
 //   a turn ends  ──► the title of the first turn, `updatedAt` from the last
 //                    record ──► session_info_update
@@ -33,7 +35,10 @@ import type { Agent, AgentInstanceHandle } from "@flue/runtime";
 import type { Wire } from "agent/wire-read";
 
 import type { LoadSessionRequest, ResumeSessionRequest, SessionInfoUpdate } from "./acp.js";
+import type { Kept } from "./kept.js";
 import { cutToBytes } from "./line.js";
+import { FIRST_LINEAGE, instanceOf } from "./lineage.js";
+import type { Lineage } from "./lineage.js";
 
 /** The longest title, in UTF-8 bytes. */
 export const MAX_TITLE_BYTES = 256;
@@ -99,15 +104,18 @@ export function infoOf({ title, updatedAt }: TurnEnd, first: boolean): SessionIn
 }
 
 export class OneSession {
-  private readonly opened: AgentInstanceHandle;
+  private opened: AgentInstanceHandle;
+  private lineage: Lineage;
 
   public constructor(
     private readonly agent: Agent,
     /** The host's id of the one session (decision CH25 rule 2). */
     public readonly id: Wire<"SessionId">,
     private readonly now: () => Date = () => new Date(),
+    lineage: Lineage = FIRST_LINEAGE,
   ) {
-    this.opened = init(agent, { id });
+    this.lineage = lineage;
+    this.opened = init(agent, { id: this.instance });
   }
 
   /** True for the id of the one session. */
@@ -120,9 +128,33 @@ export class OneSession {
     return this.known(id) ? this.opened : null;
   }
 
-  /** True before the first send of the session: Flue holds no instance of it yet. */
+  /** The id of the Flue instance that holds the conversation now. */
+  public get instance(): string {
+    return instanceOf(this.id, this.lineage.generation);
+  }
+
+  /** The messages before the first message of the instance. */
+  public get seed(): readonly Kept[] {
+    return this.lineage.seed;
+  }
+
+  /** The lineage of a rewind that keeps `kept`. */
+  public next(kept: readonly Kept[]): Lineage {
+    return { generation: this.lineage.generation + 1, seed: kept };
+  }
+
+  /** Moves the session to the instance of `lineage`. The caller wrote it first. */
+  public adopt(lineage: Lineage): void {
+    this.lineage = lineage;
+    this.opened = init(this.agent, { id: this.instance });
+  }
+
+  /**
+   * True before the first send of the session: Flue holds no instance of it
+   * yet, and no rewind kept a message before it.
+   */
   public async fresh(): Promise<boolean> {
-    return (await getAgentInstance(this.agent, this.id)) === null;
+    return this.seed.length === 0 && (await getAgentInstance(this.agent, this.instance)) === null;
   }
 
   /** The end of a turn on the prompt `userText`. */

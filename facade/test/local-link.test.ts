@@ -21,7 +21,7 @@ import { EXIT_LOCAL_LINK, EXIT_OK, runSupervisor } from "../src/supervisor.js";
 import type { Runtime } from "../src/supervisor.js";
 import { Wire } from "./acp-wire.js";
 import { shortTmp } from "./facade-process.js";
-import { faux, Probe, startFlue } from "./faux-flue.js";
+import { faux, freshRewind, Probe, startFlue } from "./faux-flue.js";
 import { closeGuestInits, guestInit, NO_HANDLERS, until, WAIT_MS } from "./guest-init.js";
 import type { GuestInit } from "./guest-init.js";
 
@@ -41,7 +41,7 @@ function link(path: string, said: string[], stopMs = FLUE_STOP_MS): LocalLink {
 
 /** The one session of a supervisor on `facade`. No supervisor test prompts it. */
 function sessionsOn(facade: LocalLink): SessionService {
-  return sessionService({ agent: Probe, agentName: "Probe", sessionId: randomUUID(), link: facade, store: flue.store });
+  return sessionService({ agent: Probe, agentName: "Probe", sessionId: randomUUID(), link: facade, store: flue.store, rewind: freshRewind() });
 }
 
 /** Handlers that count the stop lines. */
@@ -106,7 +106,7 @@ describe("a prompt", () => {
     const facade = link(guest.path, []);
     facade.open(NO_HANDLERS);
     const id = randomUUID();
-    const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: facade, store: flue.store });
+    const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: facade, store: flue.store, rewind: freshRewind() });
     const wire = new Wire(facadeApp(service));
     // The start goes up while Flue runs the turn, not after: the vmm must
     // see a running turn (decisions CH19 rule 6, CH32 rule 6).

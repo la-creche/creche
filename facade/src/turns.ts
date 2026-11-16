@@ -20,7 +20,8 @@
 //
 // One turn runs per session at a time. A second prompt is refused: Flue
 // would join it to the running response, and its reply would have no turn
-// of its own.
+// of its own. A rewind holds the session as a turn does (`between`), so a
+// prompt never runs on the instance that a rewind replaces.
 
 import { AgentRunError } from "@flue/runtime";
 import type { AgentInstanceHandle, ConversationStreamChunk } from "@flue/runtime";
@@ -128,6 +129,8 @@ function describe(error: unknown): string {
 
 export class Turns {
   private readonly running = new Map<string, Running>();
+  /** The sessions that a rewind holds. */
+  private readonly held = new Set<string>();
 
   /** `link` is the local link of guest init, as the supervisor gives it to `serve` (`src/supervisor.ts`). */
   public constructor(
@@ -150,6 +153,10 @@ export class Turns {
 
     if (this.running.has(sessionId)) {
       return { ok: false, refusal: { kind: "busy", detail: "a prompt already runs on this session" } };
+    }
+
+    if (this.held.has(sessionId)) {
+      return { ok: false, refusal: { kind: "busy", detail: "a rewind runs on this session" } };
     }
 
     const text = promptText(params.prompt);
@@ -219,6 +226,23 @@ export class Turns {
     await sent;
 
     return settle(settlement.outcome, settlement.detail);
+  }
+
+  /**
+   * Runs `change` with the session held, so no prompt starts until it
+   * ends. A running prompt or another change refuses it as busy.
+   */
+  public async between<T>(sessionId: string, change: () => Promise<Outcome<T>>): Promise<Outcome<T>> {
+    if (this.running.has(sessionId) || this.held.has(sessionId)) {
+      return { ok: false, refusal: { kind: "busy", detail: "a prompt or a rewind runs on this session" } };
+    }
+
+    this.held.add(sessionId);
+    try {
+      return await change();
+    } finally {
+      this.held.delete(sessionId);
+    }
   }
 
   public async cancel(params: CancelNotification): Promise<void> {

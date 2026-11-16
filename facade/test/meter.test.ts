@@ -17,7 +17,7 @@ import { sessionService } from "../src/service.js";
 import { memoOf, usageUpdateOf } from "../src/usage.js";
 import type { MeterSource, Spend } from "../src/usage.js";
 import { Wire } from "./acp-wire.js";
-import { FAUX_MODEL, faux, startFlue } from "./faux-flue.js";
+import { FAUX_MODEL, faux, freshRewind, startFlue } from "./faux-flue.js";
 
 const INVALID_PARAMS = -32602;
 const RESOURCE_NOT_FOUND = -32002;
@@ -58,7 +58,7 @@ const meter: MeterSource = { window: () => WINDOW, spend: () => Promise.resolve(
 let id: string;
 
 function serve(): Wire {
-  return new Wire(facadeApp(sessionService({ agent: Metered, agentName: "Metered", sessionId: id, link: null, store: flue.store, thinking: levels, meter })));
+  return new Wire(facadeApp(sessionService({ agent: Metered, agentName: "Metered", sessionId: id, link: null, store: flue.store, thinking: levels, meter, rewind: freshRewind() })));
 }
 
 function setLevel(wire: Wire, params: Record<string, unknown>): ReturnType<Wire["request"]> {

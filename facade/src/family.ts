@@ -18,6 +18,7 @@ import type { Wire } from "agent/wire-read";
 
 import { commandsOf } from "./commands.js";
 import { tapStores } from "./flue-history.js";
+import { lineagePath, readLineage } from "./lineage.js";
 import { guestLink } from "./local-link.js";
 import type { LocalLink } from "./local-link.js";
 import { sessionService } from "./service.js";
@@ -33,6 +34,8 @@ export const EXIT_SESSION_ID = 17;
 export interface Family {
   /** The host's id of the one session of the VM. */
   readonly sessionId: Wire<"SessionId">;
+  /** The lineage file of the session, beside `flue.db` (`src/lineage.ts`). */
+  readonly lineageFile: string;
   readonly composed: ComposedAgent;
   /** The model's limits from LiteLLM, or the fallback and its fault. */
   readonly limits: LimitsRead;
@@ -70,8 +73,9 @@ export async function readFamily(env: NodeJS.ProcessEnv): Promise<FamilyRead> {
   const { composed, limits } = await composeStart(begun);
   const backend = vmmBackend(FAMILY_STATE_SOCKET, composed.state.config, say);
   const meter = meterOf(begun.planes, composed);
+  const lineageFile = lineagePath(begun.store);
 
-  return { ok: true, family: { sessionId: read.sessionId, composed, limits, backend, link: guestLink(say), meter } };
+  return { ok: true, family: { sessionId: read.sessionId, lineageFile, composed, limits, backend, link: guestLink(say), meter } };
 }
 
 /**
@@ -128,10 +132,19 @@ function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refr
   };
 }
 
-/** Flue on the composed store, and the methods of the one session. `link` is the local link of guest init. */
-export async function serveFamily({ sessionId, composed, backend, meter }: Family, link: LocalLink): Promise<ServingStart> {
+/**
+ * Flue on the composed store, and the methods of the one session. `link` is
+ * the local link of guest init. A lineage file that does not read refuses
+ * the start.
+ */
+export async function serveFamily({ sessionId, lineageFile, composed, backend, meter }: Family, link: LocalLink): Promise<ServingStart> {
   try {
     mkdirSync(composed.workspace, { recursive: true });
+    const read = await readLineage(lineageFile);
+    if (!read.ok) {
+      return { ok: false, detail: read.detail };
+    }
+
     const tapped = tapStores(composed.db);
     const runtime = await start({ agents: [composed.agent], db: tapped.adapter, providers: composed.providers });
     const refresh = refreshOf(backend, composed);
@@ -144,6 +157,7 @@ export async function serveFamily({ sessionId, composed, backend, meter }: Famil
       refresh,
       thinking: composed.thinking,
       meter,
+      rewind: { file: lineageFile, lineage: read.lineage, earlier: composed.earlier },
       commands: () => commandsOf(composed.state.configFor(sessionId).skills.map((skill) => skill.definition)),
     });
 

@@ -17,7 +17,7 @@ import { FLUE_STOP_MS, LocalLink } from "../src/local-link.js";
 import { sessionService } from "../src/service.js";
 import { EXIT_OK, runSupervisor } from "../src/supervisor.js";
 import { shortTmp } from "./facade-process.js";
-import { faux, Probe, startFlue } from "./faux-flue.js";
+import { faux, freshRewind, Probe, startFlue } from "./faux-flue.js";
 import { closeGuestInits, guestInit, until } from "./guest-init.js";
 import type { GuestInit } from "./guest-init.js";
 
@@ -77,7 +77,7 @@ async function facade(): Promise<Facade> {
       say,
       serve: async (link) => ({
         ok: true,
-        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link, store: flue.store }) },
+        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link, store: flue.store, rewind: freshRewind() }) },
       }),
       socketPath: socket,
     });
@@ -145,7 +145,7 @@ describe("the relay socket", () => {
       const message = (await second.nextMessage()) as { params: { update: { sessionUpdate: string } } };
       seen.push(message.params.update.sessionUpdate);
     }
-    expect(seen[0]).toBe("agent_message_chunk");
+    expect(seen.slice(0, 2)).toEqual(["user_message_chunk", "agent_message_chunk"]);
   });
 
   it("removes the socket at the stop line", async () => {

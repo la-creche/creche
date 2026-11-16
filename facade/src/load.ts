@@ -1,6 +1,7 @@
 // `session/load`: the replay of a session's history, then its live updates.
 //
-//   hold the peer's live items ──► read the history ──► send the replay
+//   hold the peer's live items ──► read the history of the instance
+//     ──► send the replay: the kept messages of the last rewind, then the history
 //     ──► seed the meter ──► send its usage_update
 //     ──► send the session's commands (`src/commands.ts`)
 //     ──► send the held items after the last replayed chunk
@@ -56,13 +57,13 @@ export class Loader {
     }
 
     const gate = this.live.hold(sessionId, peer);
-    const history = await readHistory(store, this.agentName, sessionId);
+    const history = await readHistory(store, this.agentName, this.session.instance);
     if (!history.ok) {
       await gate.release(null);
       return { ok: false, refusal: { kind: "failed", detail: history.detail } };
     }
 
-    const { updates, last } = replay(history.chunks);
+    const { updates, last } = replay(history.chunks, this.session.seed);
     for (const update of updates) {
       await peer.send(sessionId, update);
     }

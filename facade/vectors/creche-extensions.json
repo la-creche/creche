@@ -1,5 +1,5 @@
 {
-  "about": "The ACP v1 values of creche-facade: the protocol version, the line cap and the answer to initialize. Each message is one JSON-RPC line as the wire carries it. The facade and its tests read this file.",
+  "about": "The ACP v1 values of creche-facade: the protocol version, the line cap, the answer to initialize and the creche extensions. Each message is one JSON-RPC line as the wire carries it. The facade and its tests read this file. The door tests read the capability of each extension.",
   "protocol_version": 1,
   "max_line_bytes": 1048576,
   "initialize": {
@@ -53,5 +53,17 @@
     "about": "The usage_update of a turn end and of a session/load. used and size are the context fill of the last model call. The meta key holds the family key spend of its budget day and model.budget_usd_per_day, in USD.",
     "spend_meta_key": "creche/spend",
     "currency": "USD"
+  },
+  "rewind": {
+    "about": "Cut the session back to before one user message. messageId is the messageId of a user_message_chunk. The door lists the capability in the _meta of agentCapabilities in its initialize answer. A running prompt gets invalidRequest (-32600). A messageId of no user message gets invalidParams (-32602).",
+    "method": "_creche/session/rewind",
+    "capability": "creche/rewind",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "_creche/session/rewind",
+      "params": { "sessionId": "019a3f2e-6a5b-7c3d-8e9f-0a1b2c3d4e5f", "messageId": "msg-01" }
+    },
+    "response": { "jsonrpc": "2.0", "id": 4, "result": {} }
   }
 }

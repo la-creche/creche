@@ -101,9 +101,13 @@ export class SessionMeter {
   private contextTokens: number | null = null;
   private seeded = false;
 
-  /** `source` null: the facade sends no `usage_update`. */
+  /**
+   * `instance` gives the Flue instance that holds the session now: the
+   * agent reads the level by that id, and a rewind moves it
+   * (`src/rewind.ts`). `source` null: the facade sends no `usage_update`.
+   */
   public constructor(
-    private readonly sessionId: string,
+    private readonly instance: () => string,
     private readonly levels: ThinkingLevels,
     private readonly source: MeterSource | null,
     private readonly history: HistoryChunks,
@@ -111,12 +115,12 @@ export class SessionMeter {
 
   /** The thinking level of the session. */
   public get level(): ThinkingChoice {
-    return this.levels.of(this.sessionId);
+    return this.levels.of(this.instance());
   }
 
   /** Sets the level of the next prompt. A turn that runs keeps its level. */
   public choose(level: ThinkingChoice): void {
-    this.levels.set(this.sessionId, level);
+    this.levels.set(this.instance(), level);
   }
 
   /** Reads the count of a live chunk of the session. */
@@ -131,8 +135,8 @@ export class SessionMeter {
     this.seeded = true;
     const memo = memoOf(chunks);
     this.contextTokens ??= memo.contextTokens;
-    if (memo.thinking !== null && !this.levels.has(this.sessionId)) {
-      this.levels.set(this.sessionId, memo.thinking);
+    if (memo.thinking !== null && !this.levels.has(this.instance())) {
+      this.levels.set(this.instance(), memo.thinking);
     }
   }
 

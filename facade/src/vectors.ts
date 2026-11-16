@@ -49,3 +49,6 @@ export const SPEND_META_KEY = vectors.usage.spend_meta_key;
 
 /** The currency of the family spend: LiteLLM counts in USD. */
 export const SPEND_CURRENCY = vectors.usage.currency;
+
+/** The creche extension that cuts a session back (`src/rewind.ts`). */
+export const REWIND_METHOD = vectors.rewind.method;

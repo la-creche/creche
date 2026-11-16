@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -23,6 +24,13 @@ INITIALIZE_RESULT: dict[str, Any] = {
     "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"list": {}, "resume": {}}},
     "authMethods": [],
 }
+
+#: The creche extensions of the facade: the one file that the facade reads too.
+_VECTORS = Path(__file__).resolve().parents[2] / "facade" / "vectors"
+EXTENSIONS: dict[str, Any] = json.loads((_VECTORS / "creche-extensions.json").read_text())
+
+#: The method of a rewind. The fake answers it with `{}`, as the facade does.
+REWIND_METHOD: str = EXTENSIONS["rewind"]["method"]
 
 #: The two chunks an `ok` prompt streams before it answers `end_turn`.
 ANSWER_CHUNKS = ("The boiler was serviced ", "on 2026-03-11.")
@@ -111,6 +119,9 @@ class FakeFacade:
         if method == "session/cancel":
             held = self.held.pop(str(params.get("sessionId")), None)
             return [] if held is None else [answer(held.request_id, {"stopReason": "cancelled"})]
+
+        if method == REWIND_METHOD:
+            return [answer(request_id, {})]
 
         return []
 

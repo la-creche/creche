@@ -13,6 +13,8 @@ import { readHistory } from "./flue-history.js";
 import { Live } from "./live.js";
 import { Loader } from "./load.js";
 import type { LocalLink } from "./local-link.js";
+import { Rewinder } from "./rewind.js";
+import type { RewindOptions } from "./rewind.js";
 import { OneSession } from "./sessions.js";
 import { chosenLevel, configOptionsOf } from "./thinking.js";
 import { Turns } from "./turns.js";
@@ -34,6 +36,8 @@ export interface ServiceOptions {
   readonly now?: () => Date;
   /** The pull of the family state before each prompt. None: the state of the start stays. */
   readonly refresh?: Refresh;
+  /** The lineage of the session and where a rewind writes the next one. */
+  readonly rewind: RewindOptions;
   /** The thinking levels that the agent's render reads. None: levels that no render reads. */
   readonly thinking?: ThinkingLevels;
   /** The window and the spend of the meter. None: the facade sends no `usage_update`. */
@@ -43,14 +47,14 @@ export interface ServiceOptions {
 }
 
 /** The chunks of the session's history, or null when Flue has not started or the read fails. */
-function historyOf({ store, agentName, sessionId }: ServiceOptions): HistoryChunks {
+function historyOf(session: OneSession, { store, agentName }: ServiceOptions): HistoryChunks {
   return async () => {
     const started = store();
     if (started === null) {
       return null;
     }
 
-    const read = await readHistory(started, agentName, sessionId);
+    const read = await readHistory(started, agentName, session.instance);
     return read.ok ? read.chunks : null;
   };
 }
@@ -75,11 +79,12 @@ function setLevel(
 }
 
 export function sessionService(options: ServiceOptions): SessionService {
-  const session = new OneSession(options.agent, options.sessionId, options.now);
+  const session = new OneSession(options.agent, options.sessionId, options.now, options.rewind.lineage);
   const live = new Live();
-  const meter = new SessionMeter(options.sessionId, options.thinking ?? new ThinkingLevels(), options.meter ?? null, historyOf(options));
+  const meter = new SessionMeter(() => session.instance, options.thinking ?? new ThinkingLevels(), options.meter ?? null, historyOf(session, options));
   const turns = new Turns(session, live, options.link, meter, options.refresh, options.commands ?? null);
   const loader = new Loader(session, live, options.store, options.agentName, meter, options.commands ?? null);
+  const rewinder = new Rewinder(session, turns, meter, options.store, options.agentName, options.rewind);
 
   return {
     loadSession: (params, peer) => loader.loadSession(params, peer),
@@ -87,5 +92,6 @@ export function sessionService(options: ServiceOptions): SessionService {
     prompt: (params, peer) => turns.prompt(params, peer),
     setConfigOption: async (params) => setLevel(session, meter, params),
     cancel: (params) => turns.cancel(params),
+    rewind: (params) => rewinder.rewind(params),
   };
 }

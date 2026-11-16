@@ -12,7 +12,7 @@ import { facadeApp } from "../src/acp.js";
 import { sessionService } from "../src/service.js";
 import { infoOf, MAX_CWD_CHARS, MAX_TITLE_BYTES, OneSession, titleOf } from "../src/sessions.js";
 import { Wire } from "./acp-wire.js";
-import { faux, Probe, startFlue } from "./faux-flue.js";
+import { faux, freshRewind, Probe, startFlue } from "./faux-flue.js";
 
 /** The answer to `session/load`: the thinking option at its default. */
 const LOADED = { configOptions: vectors.new_session.configOptions };
@@ -31,7 +31,7 @@ let wire: Wire;
 beforeEach(() => {
   id = randomUUID();
   session = new OneSession(Probe, id);
-  wire = new Wire(facadeApp(sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store })));
+  wire = new Wire(facadeApp(sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store, rewind: freshRewind() })));
 });
 
 function load(sessionId: string, cwd = "/work"): ReturnType<Wire["request"]> {

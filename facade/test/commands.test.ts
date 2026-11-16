@@ -12,7 +12,7 @@ import type { AvailableCommand } from "../src/acp.js";
 import { commandsOf } from "../src/commands.js";
 import { sessionService } from "../src/service.js";
 import { Wire } from "./acp-wire.js";
-import { FAUX_MODEL, faux, startFlue } from "./faux-flue.js";
+import { FAUX_MODEL, faux, freshRewind, startFlue } from "./faux-flue.js";
 
 function Plain(): string {
   useModel(FAUX_MODEL);
@@ -40,6 +40,7 @@ beforeEach(() => {
     link: null,
     store: flue.store,
     commands: () => granted,
+    rewind: freshRewind(),
   });
   wire = new Wire(facadeApp(service));
 });

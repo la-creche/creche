@@ -12,7 +12,7 @@ import { facadeApp } from "../src/acp.js";
 import type { SessionService } from "../src/acp.js";
 import { sessionService } from "../src/service.js";
 import { Wire } from "./acp-wire.js";
-import { FAUX_MODEL, faux, startFlue } from "./faux-flue.js";
+import { FAUX_MODEL, faux, freshRewind, startFlue } from "./faux-flue.js";
 
 /** The answer to `session/load`: the thinking option at its default. */
 const LOADED = { configOptions: vectors.new_session.configOptions };
@@ -44,7 +44,7 @@ let service: SessionService;
 // Each test gets a session of its own: one VM's id, on the one Flue of the file.
 beforeEach(() => {
   id = randomUUID();
-  service = sessionService({ agent: Echoer, agentName: "Echoer", sessionId: id, link: null, store: flue.store });
+  service = sessionService({ agent: Echoer, agentName: "Echoer", sessionId: id, link: null, store: flue.store, rewind: freshRewind() });
 });
 
 function link(): Wire {
@@ -97,11 +97,10 @@ describe("session/load", () => {
       (update) => (update as Record<string, unknown>)["sessionUpdate"] !== "session_info_update",
     );
 
+    // The live echo and the replay name the user message with one id.
     expect(answer.result).toEqual(LOADED);
-    expect(joined(second.updates(id))).toEqual([
-      { sessionUpdate: "user_message_chunk", content: { type: "text", text: "Echo, please." } },
-      ...live,
-    ]);
+    expect(joined(second.updates(id))).toEqual(live);
+    expect(live[0]).toEqual({ sessionUpdate: "user_message_chunk", messageId: expect.any(String), content: { type: "text", text: "Echo, please." } });
   });
 
   it("puts the loading link on the session's live updates", async () => {
@@ -114,6 +113,7 @@ describe("session/load", () => {
     await first.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "More." }] });
 
     expect(joined(second.updates(id).slice(replayed))).toEqual([
+      { sessionUpdate: "user_message_chunk", messageId: expect.any(String), content: { type: "text", text: "More." } },
       { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Again." } },
       { sessionUpdate: "session_info_update", updatedAt: expect.any(String) },
     ]);
@@ -160,6 +160,7 @@ describe("session/resume", () => {
     await first.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "More." }] });
 
     expect(joined(second.updates(id))).toEqual([
+      { sessionUpdate: "user_message_chunk", messageId: expect.any(String), content: { type: "text", text: "More." } },
       { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Again." } },
       { sessionUpdate: "session_info_update", updatedAt: expect.any(String) },
     ]);

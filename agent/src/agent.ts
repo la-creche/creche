@@ -13,7 +13,8 @@
 //   useSandbox        local(workspace) with the granted tools, when the
 //                     grant is not empty                  src/sandbox-tools.ts
 //   useSkill          each skill of the session's last pull  src/skills.ts
-//   useInstruction    the instructions of the session's last pull
+//   useInstruction    the instructions of the session's last pull, and the
+//                     transcript that a rewind kept      src/earlier.ts
 //   useResponseStart  the thinking level of the response  src/usage.ts
 //   useResponseFinish the context tokens of its last call src/usage.ts
 //   db                sqlite(FLUE_DB)                     src/guest.ts
@@ -41,6 +42,7 @@ import { sqlite } from "@flue/runtime/node";
 import { chaperoneConnection } from "./chaperone.js";
 import { codemodeTool } from "./codemode.js";
 import type { Planes } from "./config.js";
+import { Earlier } from "./earlier.js";
 import { StateHolder } from "./family-state.js";
 import type { LiveState } from "./family-state.js";
 import { FALLBACK_LIMITS, LiveModel, specOf } from "./litellm.js";
@@ -48,6 +50,7 @@ import type { ModelLimits } from "./litellm.js";
 import { ThinkingLevels } from "./thinking.js";
 import { CONTEXT_TOKENS_KEY, ContextTokens, THINKING_LEVEL_KEY } from "./usage.js";
 
+export { Earlier } from "./earlier.js";
 export { LiveModel, readKeySpend, readModelLimits } from "./litellm.js";
 export type { KeySpend, LimitsFault, LimitsRead, ModelLimits, SpendRead } from "./litellm.js";
 export { DEFAULT_THINKING, isThinkingChoice, THINKING_CHOICES, ThinkingLevels } from "./thinking.js";
@@ -105,6 +108,8 @@ export interface ComposedAgent {
   readonly model: LiveModel;
   /** The thinking level of each session. The facade sets it. */
   readonly thinking: ThinkingLevels;
+  /** The transcript that a rewind kept, by Flue instance. The facade sets it at each rewind. */
+  readonly earlier: Earlier;
 }
 
 /** The instance id, or null on a bare render, where `props.id` throws. */
@@ -129,6 +134,7 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
   const codemode = codemodeTool(ch);
   const thinking = new ThinkingLevels();
   const context = new ContextTokens();
+  const earlier = new Earlier();
 
   function FamilyAgent(props?: AgentProps): string {
     const id = instanceOf(props);
@@ -161,6 +167,11 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
       useInstruction(instructions);
     }
 
+    const kept = earlier.instructionFor(id);
+    if (kept !== null) {
+      useInstruction(kept);
+    }
+
     return replacement ?? BASE_INSTRUCTIONS;
   }
 
@@ -175,5 +186,6 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
     state,
     model,
     thinking,
+    earlier,
   };
 }

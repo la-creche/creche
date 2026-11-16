@@ -10,7 +10,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { facadeApp } from "../src/acp.js";
 import { sessionService } from "../src/service.js";
 import { Wire } from "./acp-wire.js";
-import { FAUX_MODEL, faux } from "./faux-flue.js";
+import { FAUX_MODEL, faux, freshRewind } from "./faux-flue.js";
 import { startFlue } from "./faux-flue.js";
 
 const INVALID_PARAMS = -32602;
@@ -37,7 +37,7 @@ let wire: Wire;
 // Each test gets a session of its own: one VM's id, on the one Flue of the file.
 beforeEach(() => {
   id = randomUUID();
-  wire = new Wire(facadeApp(sessionService({ agent: Echoer, agentName: "Echoer", sessionId: id, link: null, store: flue.store })));
+  wire = new Wire(facadeApp(sessionService({ agent: Echoer, agentName: "Echoer", sessionId: id, link: null, store: flue.store, rewind: freshRewind() })));
 });
 
 function prompt(sessionId: string, text: string): ReturnType<Wire["request"]> {
@@ -74,6 +74,7 @@ describe("session/prompt", () => {
 
     expect(answer.result).toEqual({ stopReason: "end_turn" });
     expect(story(updates)).toEqual([
+      "user_message_chunk",
       "agent_thought_chunk",
       "tool_call in_progress",
       "tool_call_update completed",
@@ -81,6 +82,12 @@ describe("session/prompt", () => {
       "session_info_update",
     ]);
     expect(said).toBe("All done.");
+    // The echo of the prompt carries Flue's message id, which a rewind names.
+    expect(updates[0]).toEqual({
+      sessionUpdate: "user_message_chunk",
+      messageId: expect.any(String),
+      content: { type: "text", text: "Echo, please." },
+    });
     expect(updates.at(-1)).toEqual({ sessionUpdate: "session_info_update", title: "Echo, please.", updatedAt: expect.any(String) });
   });
 
@@ -91,7 +98,7 @@ describe("session/prompt", () => {
     await prompt(id, "Second.");
     const second = wire.updates(id).slice(before);
 
-    expect(story(second)).toEqual(["agent_message_chunk", "session_info_update"]);
+    expect(story(second)).toEqual(["user_message_chunk", "agent_message_chunk", "session_info_update"]);
     expect(second.at(-1)).toEqual({ sessionUpdate: "session_info_update", updatedAt: expect.any(String) });
   });
 
