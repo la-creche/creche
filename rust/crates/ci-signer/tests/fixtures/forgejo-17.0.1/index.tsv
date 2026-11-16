@@ -1,0 +1,15 @@
+p1-commit-pull-merge-sha.json	GET	/repos/example-owner/runner-test/commits/5791a8cdae55087207f12ab919c5eb964494d654/pull	200	admin
+p1-commit-pull-pr-head.json	GET	/repos/example-owner/runner-test/commits/bfe53d3a42c4526741e6890f997d52916fbc381d/pull	404	admin
+p1-run-push-main.json	GET	/repos/example-owner/runner-test/actions/runs/48	200	admin
+p1-run-push-branch.json	GET	/repos/example-owner/runner-test/actions/runs/56	200	admin
+p1-run-push-tag.json	GET	/repos/example-owner/runner-test/actions/runs/65	200	admin
+p1-run-pull-request.json	GET	/repos/example-owner/runner-test/actions/runs/70	200	admin
+p11-run-prt.json	GET	/repos/example-owner/runner-test/actions/runs/69	200	admin
+p2-tag-create.json	POST	/repos/example-owner/runner-test/tags	201	admin
+p2-git-tags-sha.json	GET	/repos/example-owner/runner-test/git/tags/4da7bc96263366317ed51fe24d424e1cb1770fc7	200	admin
+p2-tags-get.json	GET	/repos/example-owner/runner-test/tags/rec-ann	200	admin
+p2-tag-size-b131071.json	POST	/repos/example-owner/runner-test/tags	201	admin
+p2-tag-size-b131072.json	POST	/repos/example-owner/runner-test/tags	500	admin
+p1-run-push-tag-main.json	GET	/repos/example-owner/runner-test/actions/runs/15	200	admin
+p1-run-workflow-dispatch.json	GET	/repos/example-owner/runner-test/actions/runs/104	200	admin
+version.json	GET	/version	200	admin
