@@ -258,7 +258,10 @@ def test_the_manifest_build_runs_this_script() -> None:
     assert argv[-1] == str(SCRIPT.relative_to(REPO))
 
 
-@pytest.mark.parametrize("fail", ["agent-sandbox-python", "base", "service-browser", "browser"])
+@pytest.mark.parametrize(
+    "fail",
+    ["agent-sandbox-python", "base", "service-browser", "browser", "service-scanner", "scanner"],
+)
 def test_a_failed_step_leaves_disk_out_empty(tmp_path: Path, fail: str) -> None:
     """A failed tar or a failed disk stops the run, and DISK_OUT holds no
     file: the job uploads nothing to sign."""

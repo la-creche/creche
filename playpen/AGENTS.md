@@ -162,6 +162,7 @@ This tree has no release of its own. The `disks` row ships what it builds
 | `bin/playpen-kernel` | the pinned CH guest kernel, compressed to ship like the disks |
 | `guest/creche_git_spool.py` | `creche-git-spool` of the coding flavor, the guest end of the git platform spool |
 | `guest/creche_browser_facade.py`, `guest/creche-chrome` | the facade and the Chrome wrapper of the browser service image |
+| `guest/creche_scanner_facade.py` | the facade of the scanner service image |
 
 ## The browser service image
 
@@ -206,6 +207,49 @@ guest init, which must exit with status 17. `bin/tests/
 test_playpen_browser_facade.py` holds the line rules, the paths that guest
 init shares and the flags of the wrapper.
 
+## The scanner service image
+
+The target `service-scanner` is the root disk `scanner` of the disks row.
+It is not a family flavor. Its wire name is `ServiceImage::Scanner`. The
+vmm boots it for the scan link of attendance. The scanner checks and
+rebuilds each file of a prompt before a family VM gets it
+(`docs/design/attachments.md`, sections 4 and 5).
+
+| Program | What it is |
+|---|---|
+| `/usr/local/bin/creche-facade` | `guest/creche_scanner_facade.py`, at the facade path of guest init |
+| `/usr/sbin/clamd` | ClamAV from Debian, with the signatures of the image |
+| `/usr/bin/pdfinfo`, `pdftoppm`, `pdftotext` | poppler from Debian |
+| `/opt/scanner` | a venv with Magika, its model and Pillow, each wheel at its sha256 |
+
+1. The base is `PYTHON_IMAGE`. The VM has no network device. So
+   `freshclam` gets the signatures at build time, and a new image release
+   gives new signatures.
+2. No layer holds an installer. The venv and the Python image lose pip.
+3. Guest init starts the facade as root, as it starts the browser facade.
+   The facade opens the local link at once and sends no line on it. It
+   writes a clamd config on the guest tmpfs and starts clamd as the user
+   `clamav`. A link waits until clamd answers. A clamd that stops ends the
+   facade, and guest init starts it again.
+4. The first line of a link is `scan`, then LF, within 10 s. Any other
+   line closes the link. At most 8 links are open, and a link past the
+   cap gets `busy`. One scan runs at a time.
+5. Each link carries one request line and one reply line, then the link
+   closes. The facade runs the steps of design section 5: the kind of the
+   claimed type, Magika, clamd and the rebuild. Each rebuilt file is
+   `max_file_bytes` or less, or the reason is `too_large`.
+6. Each rebuild step runs in a child with a limit of 1 GiB of address
+   space and of 120 s. The child is the facade with a subcommand, and the
+   subcommand sets the limit with `setrlimit`.
+
+The build runs Magika on a PNG, runs `clamscan` on the EICAR test file
+and runs the facade outside guest init, which must exit with status 17.
+`bin/tests/test_playpen_scanner_facade.py` holds each limit equal to
+`rust/crates/wire/vectors/scan.json` and each path equal to `guest.json`.
+It checks each layer with small files that it makes. A test that needs
+Magika, Pillow, poppler or clamd skips when that one is absent. In the
+scanner image, every test runs.
+
 ## Known gaps
 
 1. CONTRACT-QUESTION: CH49 rule 1 places each name of a flavor's
@@ -214,3 +258,13 @@ init shares and the flags of the wrapper.
    equality check applies to the browser image, and the agent list check
    does not (`bin/playpen-env-check`, kind `service`). A rule that also
    bound service images would need an env list of the browser facade.
+2. CONTRACT-QUESTION: the attachments design note, section 4, gives a
+   `line_cap` but does not say if the LF counts. The reading taken: the
+   LF counts, so the scanner facade reads and writes a line of at most
+   `line_cap` bytes with its LF. A change costs one constant in each
+   package of the link.
+3. CONTRACT-QUESTION: the design note does not say how a claimed type is
+   matched. The reading taken: the type of a request must equal one type
+   of `kinds`, case and all, with no parameter. So `text/plain;
+   charset=utf-8` is `not_allowed`. A change costs one normalize step in
+   the scanner facade and in attendance.

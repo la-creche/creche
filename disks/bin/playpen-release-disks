@@ -45,7 +45,7 @@ die() { printf 'playpen-release-disks: %s\n' "$*" >&2; exit 1; }
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 PLAYPEN_BIN="$ROOT/playpen/bin"
 FLAVORS="base:agent-sandbox python:agent-sandbox-python coding:agent-sandbox-coding"
-SERVICES="browser:service-browser"
+SERVICES="browser:service-browser scanner:service-scanner"
 KERNEL=vmlinux-x86_64
 DIGESTS=digests.json
 SUMS=SHA256SUMS
