@@ -134,10 +134,13 @@ the agent can do.
    that is there already gets `-1`, `-2` and so on before its extension.
 2. Each image also goes to Flue as an attachment of the user message.
 3. The prompt text gets one line for each file, after the text of the
-   user: `[attached: attachments/<name> (<type>, <bytes> bytes)]`.
+   user:
+   `[attached: attachments/<name> (<type>, <bytes> bytes, sha256 <hex>)]`.
+   The hex is the SHA-256 of the bytes that the facade wrote.
 4. The replay finds these lines in a user message. It shows the user text
-   without them, then one `resource_link` for each file. An image that the
-   workspace holds also replays as an `image` block.
+   without them, then one `resource_link` for each file. An image also
+   replays as an `image` block when the workspace holds its bytes with
+   the size and the SHA-256 of its line.
 
 ## 8. The host steps
 

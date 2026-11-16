@@ -1,7 +1,7 @@
 // `session/prompt` and `session/cancel` over the facade's own wire, on Flue
 // with an in-memory store and the faux model.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -160,6 +160,10 @@ function resource(name: string, mimeType: string, bytes: Buffer): Record<string,
   return { type: "resource", resource: { uri: `attachment:${name}`, mimeType, blob: bytes.toString("base64") } };
 }
 
+function sha256(bytes: string | Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 function escaped(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -214,10 +218,10 @@ describe("the files of a prompt", () => {
             [
               "What is this?",
               "",
-              `[attached: attachments/cat.png (image/png, ${PIXEL_BYTES} bytes)]`,
-              `[attached: attachments/paper.pdf (application/pdf, ${pdf.length} bytes)]`,
-              "[attached: attachments/paper.pdf.txt (text/plain, 5 bytes)]",
-              "[attached: attachments/cat-1.png (text/markdown, 5 bytes)]",
+              `[attached: attachments/cat.png (image/png, ${PIXEL_BYTES} bytes, sha256 ${sha256(Buffer.from(PIXEL, "base64"))})]`,
+              `[attached: attachments/paper.pdf (application/pdf, ${pdf.length} bytes, sha256 ${sha256(pdf)})]`,
+              `[attached: attachments/paper.pdf.txt (text/plain, 5 bytes, sha256 ${sha256("words")})]`,
+              `[attached: attachments/cat-1.png (text/markdown, 5 bytes, sha256 ${sha256("# Cat")})]`,
             ].join("\n"),
           )}`,
         ),

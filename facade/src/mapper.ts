@@ -10,7 +10,7 @@ import type { ConversationStreamChunk } from "@flue/runtime";
 import { stringifyStrict } from "agent/strict-json";
 
 import type { SessionUpdate } from "./acp.js";
-import { splitMarkers, URI_SCHEME } from "./attachments.js";
+import { IMAGE_TYPES, splitMarkers, URI_SCHEME } from "./attachments.js";
 import type { Marker } from "./attachments.js";
 import { cutToBytes } from "./line.js";
 
@@ -63,14 +63,27 @@ export function userChunk(messageId: string, userText: string): SessionUpdate {
   };
 }
 
-/** The base64 of the image of a marker, or null: the workspace holds no such image. */
-export type ImageReader = (marker: Marker) => string | null;
+/** One image link of a replay: the replay reads its image at the end (`src/replay.ts`). */
+export interface ImageNote {
+  readonly messageId: string;
+  readonly marker: Marker;
+}
 
-/** The live echo reads no image: the client sent it. */
-const NO_IMAGE: ImageReader = () => null;
+/** Takes each image link that a user text gives. */
+export type ImageLinks = (link: SessionUpdate, note: ImageNote) => void;
 
-/** The updates of one marker: a link, and the image when `images` reads it. */
-function markerChunks(messageId: string, marker: Marker, images: ImageReader): SessionUpdate[] {
+/** The live echo replays no image: the client sent it. */
+const NO_IMAGE: ImageLinks = () => undefined;
+
+/** The image update after the link of `note`. */
+export function imageChunk({ messageId, marker }: ImageNote, data: string): SessionUpdate {
+  const uri = forward(`${URI_SCHEME}${marker.name}`, MAX_NAME_BYTES);
+
+  return { sessionUpdate: "user_message_chunk", messageId, content: { type: "image", data, mimeType: marker.mimeType, uri } };
+}
+
+/** The link of one marker. `links` takes the link of an image. */
+function markerChunk(messageId: string, marker: Marker, links: ImageLinks): SessionUpdate {
   const uri = forward(`${URI_SCHEME}${marker.name}`, MAX_NAME_BYTES);
   const id = forward(messageId, MAX_NAME_BYTES);
   const { mimeType, size } = marker;
@@ -79,12 +92,11 @@ function markerChunks(messageId: string, marker: Marker, images: ImageReader): S
     messageId: id,
     content: { type: "resource_link", uri, name: forward(marker.name, MAX_NAME_BYTES), mimeType, size },
   };
-  const data = images(marker);
-  if (data === null) {
-    return [link];
+  if (IMAGE_TYPES.includes(mimeType)) {
+    links(link, { messageId: id, marker });
   }
 
-  return [link, { sessionUpdate: "user_message_chunk", messageId: id, content: { type: "image", data, mimeType, uri } }];
+  return link;
 }
 
 /**
@@ -92,9 +104,9 @@ function markerChunks(messageId: string, marker: Marker, images: ImageReader): S
  * text without its marker lines, then a link for each file. A text of
  * files only gives no text chunk.
  */
-export function userChunks(messageId: string, body: string, images: ImageReader): SessionUpdate[] {
+export function userChunks(messageId: string, body: string, links: ImageLinks): SessionUpdate[] {
   const { text, markers } = splitMarkers(body);
-  const files = markers.flatMap((marker) => markerChunks(messageId, marker, images));
+  const files = markers.map((marker) => markerChunk(messageId, marker, links));
   if (text.length === 0 && files.length > 0) {
     return files;
   }

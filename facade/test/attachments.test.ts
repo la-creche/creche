@@ -3,6 +3,7 @@
 // change the vector file to make this test pass: change the file and each
 // package's copy together.
 
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +43,10 @@ const scan = JSON.parse(readFileSync(SCAN_FILE, "utf8")) as {
 
 function file(name: string, mimeType = "text/plain", bytes = Buffer.from("hello\n")): PromptFile {
   return { name, mimeType, kind: FileKind.Workspace, bytes };
+}
+
+function sha256(bytes: string | Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function workspace(): string {
@@ -128,6 +133,17 @@ describe("Attachments.save", () => {
     expect(second?.savedName.endsWith("-1.txt")).toBe(true);
   });
 
+  it("counts an extension that leaves no byte for the stem as stem", () => {
+    const long = `a.${"b".repeat(MAX_FILE_NAME_BYTES - 2)}`;
+    const files = new Attachments(workspace());
+    const [, second, third] = files.save([file(long), file(long), file(long)]);
+
+    expect(Buffer.byteLength(long)).toBe(MAX_FILE_NAME_BYTES);
+    expect(Buffer.byteLength(second?.savedName ?? "")).toBe(MAX_FILE_NAME_BYTES);
+    expect(second?.savedName.endsWith("b-1")).toBe(true);
+    expect(third?.savedName.endsWith("b-2")).toBe(true);
+  });
+
   it("follows no link that the agent put in place of a name", () => {
     const root = workspace();
     mkdirSync(join(root, "attachments"));
@@ -155,8 +171,8 @@ describe("the marker lines", () => {
 
       expect(split.text).toBe(text);
       expect(split.markers).toEqual([
-        { name: "a b (1).txt", mimeType: "text/plain", size: 6 },
-        { name: "cat.png", mimeType: "image/png", size: 3 },
+        { name: "a b (1).txt", mimeType: "text/plain", size: 6, sha256: sha256("hello\n") },
+        { name: "cat.png", mimeType: "image/png", size: 3, sha256: sha256(Buffer.alloc(3)) },
       ]);
     }
   });
@@ -169,7 +185,13 @@ describe("the marker lines", () => {
   it("names the file in the body", () => {
     const files = new Attachments(workspace()).save([file("cat.png", "image/png", Buffer.alloc(3))]);
 
-    expect(bodyOf("Look.", files)).toBe("Look.\n\n[attached: attachments/cat.png (image/png, 3 bytes)]");
+    expect(bodyOf("Look.", files)).toBe(`Look.\n\n[attached: attachments/cat.png (image/png, 3 bytes, sha256 ${sha256(Buffer.alloc(3))})]`);
+  });
+
+  it("keep a line with no digest as text", () => {
+    const line = "[attached: attachments/cat.png (image/png, 3 bytes)]";
+
+    expect(splitMarkers(line)).toEqual({ text: line, markers: [] });
   });
 });
 
@@ -179,11 +201,14 @@ describe("Attachments.readImage", () => {
     const files = new Attachments(root);
     files.save([file("cat.png", "image/png", Buffer.from("png")), file("notes.txt")]);
     symlinkSync(join(root, "attachments", "cat.png"), join(root, "attachments", "link.png"));
+    const png = { mimeType: "image/png", size: 3, sha256: sha256("png") };
 
-    expect(files.readImage({ name: "cat.png", mimeType: "image/png", size: 3 })).toBe(Buffer.from("png").toString("base64"));
-    expect(files.readImage({ name: "notes.txt", mimeType: "text/plain", size: 6 })).toBeNull();
-    expect(files.readImage({ name: "link.png", mimeType: "image/png", size: 3 })).toBeNull();
-    expect(files.readImage({ name: "gone.png", mimeType: "image/png", size: 1 })).toBeNull();
-    expect(files.readImage({ name: "../cat.png", mimeType: "image/png", size: 3 })).toBeNull();
+    expect(files.readImage({ name: "cat.png", ...png })).toBe(Buffer.from("png").toString("base64"));
+    expect(files.readImage({ name: "cat.png", ...png, sha256: sha256("pnG") })).toBeNull();
+    expect(files.readImage({ name: "cat.png", ...png, size: 4 })).toBeNull();
+    expect(files.readImage({ name: "notes.txt", mimeType: "text/plain", size: 6, sha256: sha256("hello\n") })).toBeNull();
+    expect(files.readImage({ name: "link.png", ...png })).toBeNull();
+    expect(files.readImage({ name: "gone.png", ...png })).toBeNull();
+    expect(files.readImage({ name: "../cat.png", ...png })).toBeNull();
   });
 });

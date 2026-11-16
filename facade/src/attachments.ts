@@ -9,13 +9,16 @@
 //                                                └─► readImage: the image again
 //
 // The marker line is the one record of a file in the history:
-// `[attached: attachments/<name> (<type>, <bytes> bytes)]`. The prompt text
-// gets one line for each file after the user text and one empty line. This
-// module writes the line and reads it back, so the two never differ.
+// `[attached: attachments/<name> (<type>, <bytes> bytes, sha256 <hex>)]`.
+// The prompt text gets one line for each file after the user text and one
+// empty line. This module writes the line and reads it back, so the two
+// never differ. The agent can write the workspace, so the replay sends an
+// image only when its bytes have the size and the SHA-256 of the line.
 //
 // Each constant is equal to `rust/crates/wire/vectors/scan.json`, and
 // `test/attachments.test.ts` holds it equal.
 
+import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 
@@ -87,7 +90,7 @@ const IMAGE_LINE_ROOM = 65_536;
 const CONTROL = /\p{Cc}/u;
 
 /** A marker line. The name holds no LF, and the type holds no space, comma or parenthesis. */
-const MARKER = /^\[attached: attachments\/([^\n]+) \(([^\s,()]+), (\d+) bytes\)\]$/u;
+const MARKER = /^\[attached: attachments\/([^\n]+) \(([^\s,()]+), (\d+) bytes, sha256 ([0-9a-f]{64})\)\]$/u;
 
 /** How a file reaches the model. */
 export enum FileKind {
@@ -110,6 +113,8 @@ export interface PromptFile {
 export interface SavedFile extends PromptFile {
   /** The unique name in `attachments/`: `name`, or `name` with `-1`, `-2` before its extension. */
   readonly savedName: string;
+  /** The SHA-256 of `bytes`, in lowercase hex. */
+  readonly sha256: string;
 }
 
 /** One marker line of a user text. */
@@ -117,6 +122,8 @@ export interface Marker {
   readonly name: string;
   readonly mimeType: string;
   readonly size: number;
+  /** The SHA-256 of the bytes that the facade wrote, in lowercase hex. */
+  readonly sha256: string;
 }
 
 function invalid<T>(detail: string): Outcome<T> {
@@ -229,22 +236,31 @@ export function checkFiles(files: readonly PromptFile[]): Outcome<readonly Promp
   return { ok: true, value: files };
 }
 
-/** `name` with `-<count>` before its extension, cut so that it stays a file name. */
+/**
+ * `name` with `-<count>` before its extension, cut so that it stays a file
+ * name. An extension that leaves no byte for the stem counts as stem.
+ */
 function numbered(name: string, count: number): string {
   if (count === 0) {
     return name;
   }
 
-  const extension = extname(name);
-  const suffix = `-${count}${extension}`;
+  const counter = `-${count}`;
+  const found = extname(name);
+  const extension = byteLength(counter) + byteLength(found) < MAX_FILE_NAME_BYTES ? found : "";
   const stem = name.slice(0, name.length - extension.length);
+  const suffix = `${counter}${extension}`;
 
   return `${cutToBytes(stem, MAX_FILE_NAME_BYTES - byteLength(suffix))}${suffix}`;
 }
 
+function sha256Of(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 /** The marker line of one saved file. */
 export function markerOf(file: SavedFile): string {
-  return `[attached: ${ATTACHMENTS_DIR}/${file.savedName} (${file.mimeType}, ${file.bytes.length} bytes)]`;
+  return `[attached: ${ATTACHMENTS_DIR}/${file.savedName} (${file.mimeType}, ${file.bytes.length} bytes, sha256 ${file.sha256})]`;
 }
 
 /** The text that goes to Flue: the user text, one empty line, then one marker line for each file. */
@@ -263,8 +279,8 @@ function markerAt(line: string): Marker | null {
     return null;
   }
 
-  const [, name = "", mimeType = "", size = ""] = found;
-  return { name, mimeType, size: Number(size) };
+  const [, name = "", mimeType = "", size = "", sha256 = ""] = found;
+  return { name, mimeType, size: Number(size), sha256 };
 }
 
 /**
@@ -308,11 +324,20 @@ export class Attachments {
     }
 
     mkdirSync(this.dir, { recursive: true });
-    if (!lstatSync(this.dir).isDirectory()) {
+    if (!this.realDir()) {
       throw new Error(`${ATTACHMENTS_DIR} in the workspace is not a directory`);
     }
 
-    return files.map((file) => ({ ...file, savedName: this.saveOne(file) }));
+    return files.map((file) => ({ ...file, savedName: this.saveOne(file), sha256: sha256Of(file.bytes) }));
+  }
+
+  /** True when `attachments/` is a directory and not a link. lstat follows no link. */
+  private realDir(): boolean {
+    try {
+      return lstatSync(this.dir).isDirectory();
+    } catch {
+      return false;
+    }
   }
 
   private saveOne(file: PromptFile): string {
@@ -331,35 +356,40 @@ export class Attachments {
 
   /**
    * The base64 of the image of `marker`, or null: the type is no image
-   * type, the workspace holds no regular file of the name, or the data is
-   * too large for one line.
+   * type, `attachments/` is not a real directory, the workspace holds no
+   * regular file of the name, the bytes are not the bytes that the facade
+   * wrote, or the data is too large for one line.
    */
   public readImage(marker: Marker): string | null {
     const name = fileName(`${URI_SCHEME}${marker.name}`);
-    if (!name.ok || !IMAGE_TYPES.includes(marker.mimeType)) {
+    if (!name.ok || !IMAGE_TYPES.includes(marker.mimeType) || !this.realDir()) {
+      return null;
+    }
+
+    if (base64Bytes(marker.size) + IMAGE_LINE_ROOM > MAX_LINE_BYTES) {
       return null;
     }
 
     try {
-      return this.readSmall(name.value);
+      const bytes = this.readExact(name.value, marker.size);
+      return bytes !== null && sha256Of(bytes) === marker.sha256 ? bytes.toString("base64") : null;
     } catch {
       return null;
     }
   }
 
-  /** The base64 of a regular file that fits one line, or null. Throws when the file does not open. */
-  private readSmall(name: string): string | null {
+  /** The bytes of a regular file of `size` bytes, or null. Throws when the file does not open. */
+  private readExact(name: string, size: number): Buffer | null {
     const fd = openSync(join(this.dir, name), constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const stat = fstatSync(fd);
-      const { size } = stat;
-      if (!stat.isFile() || base64Bytes(size) + IMAGE_LINE_ROOM > MAX_LINE_BYTES) {
+      if (!stat.isFile() || stat.size !== size) {
         return null;
       }
 
       const bytes = Buffer.alloc(size);
       const read = readSync(fd, bytes, 0, size, 0);
-      return bytes.subarray(0, read).toString("base64");
+      return read === size ? bytes : null;
     } finally {
       closeSync(fd);
     }
@@ -367,6 +397,6 @@ export class Attachments {
 }
 
 /** The length of the base64 of `size` bytes. */
-function base64Bytes(size: number): number {
+export function base64Bytes(size: number): number {
   return Math.ceil(size / 3) * 4;
 }

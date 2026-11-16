@@ -74,12 +74,14 @@ prompt comes to the facade. `src/attachments.ts` holds each rule, and
    dispatches nothing.
 6. Right before the dispatch, the facade writes each file to
    `WORKSPACE/attachments/<name>`. A name that is there already gets `-1`,
-   `-2` and so on before its extension. A write makes a new file only. It
-   follows no link and replaces no file. A fault of the write fails the
-   turn.
+   `-2` and so on before its extension. When the extension leaves no byte
+   for the stem, the whole name is the stem. The numbered name is cut to
+   255 bytes. A write makes a new file only. It follows no link and
+   replaces no file. A fault of the write fails the turn.
 7. The text for Flue is the user text, one empty line, then one marker
    line for each file:
-   `[attached: attachments/<name> (<type>, <bytes> bytes)]`.
+   `[attached: attachments/<name> (<type>, <bytes> bytes, sha256 <hex>)]`.
+   The hex is the SHA-256 of the bytes that the facade wrote, in lowercase.
 8. Each image also goes to Flue as an attachment of the user message, so
    the model gets it as image input. Flue keeps its own copy.
 9. The title and the turn end read the user text only.
@@ -88,10 +90,20 @@ prompt comes to the facade. `src/attachments.ts` holds each rule, and
 
 `session/load` finds the marker lines at the end of each user text
 (`src/replay.ts`). It sends the user text without them, then one
-`resource_link` for each file. An image that the workspace still holds as
-a regular file also replays as an `image` block, when its base64 fits the
-line cap with 64 KiB of room. The `file` parts of Flue's user message are
-not replayed, because the markers cover them. A marker line that is not
+`resource_link` for each file. The agent can write the workspace, so an
+image replays as an `image` block only when all of these are true:
+
+1. `attachments/` is a directory and not a link.
+2. The file is a regular file and not a link.
+3. The file has the size and the SHA-256 of its marker line.
+4. Its base64 fits the line cap with 64 KiB of room.
+5. The images of the load so far and this image are
+   `MAX_REPLAY_IMAGE_BYTES` (32 MiB) of base64 or less in all.
+
+Each other image replays as its link only. The replay reads an image only
+for the final list of updates. It reads no image of a message that a
+later reset replaces. The `file` parts of Flue's user message are not
+replayed, because the markers cover them. A marker line that is not
 in the last block of the text stays text. A kept message of a rewind
 replays its files in the same way. The live echo of a prompt shows the
 user text and one `resource_link` for each file, with no `image`.
