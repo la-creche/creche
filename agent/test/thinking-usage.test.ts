@@ -47,7 +47,7 @@ async function turn(id: string): Promise<Record<string, unknown>> {
 }
 
 describe("the thinking level", () => {
-  it("sends no reasoning effort and keeps the system role by default", async () => {
+  it("sends no reasoning effort and keeps the system role at the default, auto", async () => {
     const before = fake.seen.length;
     const metadata = await turn("session-default");
     const request = fake.seen[before];
@@ -55,6 +55,15 @@ describe("the thinking level", () => {
     expect(request?.reasoningEffort).toBeNull();
     expect(request?.messages[0]?.role).toBe("system");
     expect(metadata).toEqual({ [THINKING_LEVEL_KEY]: DEFAULT_THINKING, [CONTEXT_TOKENS_KEY]: FAKE_CONTEXT_TOKENS });
+  });
+
+  it("sends none for off, so the model does not reason", async () => {
+    composed.thinking.set("session-off", "off");
+    const before = fake.seen.length;
+    const metadata = await turn("session-off");
+
+    expect(fake.seen[before]?.reasoningEffort).toBe("none");
+    expect(metadata[THINKING_LEVEL_KEY]).toBe("off");
   });
 
   it("sends the level of the session as the reasoning effort", async () => {

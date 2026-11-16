@@ -197,6 +197,13 @@ export async function readKeySpend(planes: Planes, key: Secret): Promise<SpendRe
   return { ok: true, spend: { spend, budget: budget ?? null } };
 }
 
+/**
+ * pi's `minimal` sends `none`: the `off` choice of `src/thinking.ts`.
+ * LiteLLM passes `reasoning_effort: "none"` to a reasoning model, and the
+ * provider turns its reasoning off. Each other level keeps its own name.
+ */
+const THINKING_LEVEL_MAP = { minimal: "none" } as const;
+
 /** LiteLLM is the spend authority. No rate is kept here. */
 const NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
@@ -232,9 +239,10 @@ function providerOf(planes: Planes, models: ReadonlyMap<string, ModelLimits>, cr
       api: PROVIDER_API,
       provider: LITELLM_PROVIDER,
       baseUrl: planes.litellm.text,
-      // pi sends `reasoning_effort` only for a level other than `off`
-      // (src/thinking.ts), so `off` calls the model as before.
+      // pi sends no `reasoning_effort` for its `off`, the `auto` choice of
+      // src/thinking.ts, so `auto` calls the model as before.
       reasoning: true,
+      thinkingLevelMap: THINKING_LEVEL_MAP,
       // pi sends a reasoning model's instructions as the role `developer`.
       // LiteLLM fronts models that know only `system`, so keep `system`.
       compat: { supportsDeveloperRole: false },

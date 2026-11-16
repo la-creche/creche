@@ -47,7 +47,7 @@ import { StateHolder } from "./family-state.js";
 import type { LiveState } from "./family-state.js";
 import { FALLBACK_LIMITS, LiveModel, specOf } from "./litellm.js";
 import type { ModelLimits } from "./litellm.js";
-import { ThinkingLevels } from "./thinking.js";
+import { piLevelOf, ThinkingLevels } from "./thinking.js";
 import { CONTEXT_TOKENS_KEY, ContextTokens, THINKING_LEVEL_KEY } from "./usage.js";
 
 export { Earlier } from "./earlier.js";
@@ -144,7 +144,7 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
     // The `model` follow of the pull put this alias in Flue's provider.
     // Flue reads the level once, when a submission starts.
     const thinkingLevel = thinking.of(id);
-    useModel(specOf(live.modelAlias), { thinkingLevel });
+    useModel(specOf(live.modelAlias), { thinkingLevel: piLevelOf(thinkingLevel) });
     // The metadata of the response keeps both values in `flue.db`, for a
     // later `session/load` (src/usage.ts).
     useResponseStart(() => ({ [THINKING_LEVEL_KEY]: thinkingLevel }));

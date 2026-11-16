@@ -30,7 +30,8 @@ LLM_ARGS = {"reasoning_effort": "none"}
 #: `relationship_name` on 2 edges in each of 3 tries, in every sync, and
 #: that failed the whole sync. With the row, Cognee sends the schema as
 #: `response_format`, and the provider holds the model to it. Behind the
-#: alias is DeepSeek V4.1 Flash on Fireworks, which takes a JSON schema.
+#: alias is MiniMax M3.1 Flash on Fireworks (creche-release#36), which takes
+#: a JSON schema: 6 of 6 edge extractions came back valid on 2026-11-15.
 LLM_MODEL_INFO = {"litellm_provider": "openai", "mode": "chat", "supports_response_schema": True}
 
 #: The model that the embedding server serves, its size and its input limit.

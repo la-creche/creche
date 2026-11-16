@@ -22,6 +22,7 @@ import httpx
 import pytest
 import uvicorn
 from attendance.acp_door import (
+    COMMANDS_META_KEY,
     HANDSHAKE_FAILED,
     INITIALIZE_RESPONSE,
     MAX_FRAME_BYTES,
@@ -173,6 +174,47 @@ async def test_initialize_is_answered_with_no_boot(door: Door) -> None:
 
     assert answer == {"jsonrpc": "2.0", "id": 1, "result": INITIALIZE_RESPONSE}
     assert door.vmm.opened == []
+
+
+def write_skill(tmp_path: Path, name: str, description: str) -> None:
+    """One granted skill of the family, as `caregiver` writes it."""
+    skill = skills_dir(make_config(tmp_path).state_root, FAMILY) / name / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(f"---\nname: {name}\ndescription: {description}\n---\nAsk.\n")
+
+
+@pytest.mark.slow
+async def test_initialize_lists_the_skill_commands(door: Door, tmp_path: Path) -> None:
+    """A client connects with no session: the answer carries the family's
+    commands in `_meta`, so a new chat shows them with no boot."""
+    write_skill(tmp_path, "grill-me", "Ask hard questions.")
+    write_skill(tmp_path, "bad name", "Flue refuses this one.")
+
+    async with door.door_acp() as connection:
+        await connection.send(INIT)
+        answer = json.loads(await asyncio.wait_for(connection.recv(), 5))
+
+    commands = [{"name": "grill-me", "description": "Ask hard questions."}]
+    meta = {COMMANDS_META_KEY: {"availableCommands": commands}}
+    assert answer["result"] == {**INITIALIZE_RESPONSE, "_meta": meta}
+    assert door.vmm.opened == []
+
+
+@pytest.mark.slow
+async def test_initialize_leaves_out_a_list_over_the_cap(door: Door, tmp_path: Path) -> None:
+    """A list that would put the answer over the frame cap is left out, and
+    the answer still goes."""
+    description = "d" * 1024
+    count = MAX_FRAME_BYTES // len(description) + 1
+
+    for index in range(count):
+        write_skill(tmp_path, f"skill-{index}", description)
+
+    async with door.door_acp() as connection:
+        await connection.send(INIT)
+        answer = json.loads(await asyncio.wait_for(connection.recv(), 5))
+
+    assert answer["result"] == INITIALIZE_RESPONSE
 
 
 def test_initialize_lists_the_rewind_extension() -> None:

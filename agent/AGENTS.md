@@ -143,8 +143,9 @@ its own: the LiteLLM config sets it in the alias's `model_info`.
 The provider marks each alias as a reasoning model, and keeps the role
 `system` for the instructions. `ThinkingLevels` holds the level of each
 session (`src/thinking.ts`), and each render gives it to `useModel`. pi
-sends no `reasoning_effort` for `off`, the default, so a session that sets
-no level calls the model as before. `readKeySpend` reads the family key's
+sends no `reasoning_effort` for `auto`, the default, so a session that sets
+no level calls the model as before. `off` sends `reasoning_effort: "none"`,
+and LiteLLM passes it to the model, which then does not reason. `readKeySpend` reads the family key's
 spend and budget from LiteLLM's `GET /key/info` with the family key.
 
 Each alias takes text and image input (`docs/design/attachments.md`,
@@ -154,7 +155,7 @@ pi sends an image only to a model that lists image input, so a removed
 `test/litellm.test.ts` holds it.
 
 Each response keeps two values in its metadata (`src/usage.ts`):
-`thinkingLevel` at its start, and `contextTokens` at its finish.
+`thinkingChoice` at its start, and `contextTokens` at its finish.
 `contextTokens` is the size of the last agent call of the response, from
 Flue's `turn` event, counted as Flue's compaction counts it.
 
