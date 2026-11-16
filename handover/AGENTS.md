@@ -858,9 +858,9 @@ forge_provenance.py    the rules P1 to P6 and the chain
    `/etc/creche/release-signing.pub`, `--insecure-ignore-tlog`, no trust
    root and no network (FR1, FR12). Only this check makes a
    `SignedStatement`. cosign v3.1.4 ends with 0 for a pass and with 1 for
-   each measured failure, also a missing key or bundle file. 1 refuses as
-   `SIGNATURE_REFUSED`. Each other status refuses as
-   `VERIFIER_UNAVAILABLE`.
+   each measured failure, also a missing key or bundle file. As in P6, no
+   child or no end in root's time refuses as `VERIFIER_UNAVAILABLE`. Each
+   other status that is not 0 refuses as `SIGNATURE_REFUSED`.
 9. `read_statement` parses only a `SignedStatement`. It refuses a text that
    is not the canonical form byte for byte. Only it makes a
    `ReleaseStatement`, a `StatementTag` and a `StatementAsset`.

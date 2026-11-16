@@ -110,8 +110,8 @@ def test_one_child_reads_the_files_that_root_wrote(tmp_path: Path) -> None:
     ("code", "reason"),
     [
         (1, StatementReason.SIGNATURE_REFUSED),
-        (2, StatementReason.VERIFIER_UNAVAILABLE),
-        (-9, StatementReason.VERIFIER_UNAVAILABLE),
+        (2, StatementReason.SIGNATURE_REFUSED),
+        (-9, StatementReason.SIGNATURE_REFUSED),
         (NO_VERIFIER_EXIT_CODE, StatementReason.VERIFIER_UNAVAILABLE),
         (TIMEOUT_EXIT_CODE, StatementReason.VERIFIER_UNAVAILABLE),
     ],

@@ -303,12 +303,6 @@ FILE_MODE: Final = 0o644
 #: The exit status of a verifier child that passed.
 PASSED: Final = 0
 
-#: The exit status of cosign v3.1.4 for each measured failure: a changed
-#: statement, a bundle of another statement, another key, a missing key, a
-#: missing bundle, an empty or cut bundle and a key file that is no key
-#: (measured on 2026-11-16).
-REFUSED: Final = 1
-
 #: The statuses that root reads as no answer: root started no child, or the
 #: child did not end in root's time (the same set as check P6).
 NO_ANSWER: Final = frozenset({NO_VERIFIER_EXIT_CODE, TIMEOUT_EXIT_CODE})
@@ -408,14 +402,13 @@ def check_signature(
     (FR1, FR12). Root reads the exit status and no text.
 
     1. 0 (`PASSED`): the signature passed.
-    2. 1 (`REFUSED`), the status of each measured failure of cosign
-       v3.1.4: `SIGNATURE_REFUSED`. A missing key file and a missing
-       bundle file end with 1 too.
-    3. Root starts no child, or the child does not end in root's time
+    2. Root starts no child, or the child does not end in root's time
        (`NO_ANSWER`): `VERIFIER_UNAVAILABLE`.
-    4. Each other status: `VERIFIER_UNAVAILABLE`. No measurement gives
-       cosign such a status, so it says nothing of the signature. P1
-       refuses (fail closed), and the follower asks again.
+    3. Each other status: `SIGNATURE_REFUSED`, the mapping of P6
+       (`provenance.check_artifact`). cosign v3.1.4 ends with 1 for each
+       measured failure: a changed statement, a bundle of another
+       statement, another key, a missing key, a missing bundle, an empty or
+       cut bundle and a key file that is no key (measured on 2026-11-16).
 
     Through `systemd-run --wait`, a child that does not start also ends
     with 1 (the CONTRACT-QUESTION of `provenance.check_artifact`). Root
@@ -437,11 +430,8 @@ def check_signature(
     if status in NO_ANSWER:
         raise _refuse(component, StatementReason.VERIFIER_UNAVAILABLE)
 
-    if status == REFUSED:
-        raise _refuse(component, StatementReason.SIGNATURE_REFUSED)
-
     if status != PASSED:
-        raise _refuse(component, StatementReason.VERIFIER_UNAVAILABLE)
+        raise _refuse(component, StatementReason.SIGNATURE_REFUSED)
 
     return SignedStatement(_CHECKED, component, message.statement)
 
