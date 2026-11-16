@@ -643,12 +643,14 @@ jobs:
           echo "guest-init of the vmm archive is static"
 
   # The guest image of the CI runner VMs (docs/design/ci-runner.md, section
-  # 8, PR 2). ci-runner-image/bin/ci-runner-image-proof builds the image
-  # from the pinned Ubuntu 24.04 cloud image, beside the CH build of the
-  # vmm row. It then boots the image under that CH with the three disks of
-  # a job and a tap device, and reads the results of the guest from the
+  # 8, PRs 2 and 5). ci-runner-image/bin/ci-runner-image-proof builds the
+  # image from the pinned Ubuntu 24.04 cloud image, beside the CH build of
+  # the vmm row. It then boots the image under that CH with a tap device
+  # and the three disks of a job, which the crate creche-ci-runner writes
+  # for a fake registration. It reads the results of the guest from the
   # serial log: `systemctl is-system-running`, `sudo -n true` as the job
-  # user, `docker run hello-world` and `forgejo-runner --version`.
+  # user, `docker run hello-world`, `forgejo-runner --version`, and the
+  # network config and the runner config of the seed.
   # ci-runner-image/AGENTS.md has the rules.
   #
   # It runs on every code change, and on a change that touches no file of

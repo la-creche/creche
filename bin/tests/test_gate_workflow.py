@@ -89,9 +89,10 @@ the `systemd-proof` job does. The scope gives that answer.
 
 The `ci-runner-image` job is the second job of the gate alone. It runs
 `ci-runner-image/bin/ci-runner-image-proof`, which builds the guest image
-of the CI runner VMs and boots it under CH. On a code change that touches
-no file of the image build it skips its one step after the checkout. The
-scope gives that answer too.
+of the CI runner VMs and boots it under CH with the disks that the crate
+`creche-ci-runner` writes. On a code change that touches no file of the
+image build and no file of that crate it skips its one step after the
+checkout. The scope gives that answer too.
 """
 
 from __future__ import annotations
@@ -2776,7 +2777,10 @@ CI_IMAGE_SCOPES = [
     (["ci-runner-image/root/etc/forgejo-runner/config.yml"], "true"),
     (["ci-runner-image/AGENTS.md"], "true"),
     (["bin/lib/chbuild.sh"], "true"),
+    (["rust/crates/ci-runner/src/seed.rs"], "true"),
+    (["rust/crates/ci-runner/examples/job-disks.rs"], "true"),
     (["rust/crates/vmm/src/main.rs"], "false"),
+    (["rust/Cargo.lock"], "false"),
     (["bin/vm-smoke-setup.sh"], "false"),
     (["docs/design/ci-runner.md"], "false"),
     (["ci-runner-image-notes.txt"], "false"),

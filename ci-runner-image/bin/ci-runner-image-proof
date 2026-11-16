@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # CI: builds the guest image of the CI runner VMs and proves it under the
-# CH of the vmm (docs/design/ci-runner.md, section 8, PR 2):
+# CH of the vmm, with the disks of a job that the crate creche-ci-runner
+# writes (docs/design/ci-runner.md, section 8, PRs 2 and 5):
 #   CI_RUNNER_IMAGE_DIR=<dir> ci-runner-image/bin/ci-runner-image-proof
 #
 # The job `ci-runner-image` of gate.yml runs it. No hook and no unit runs
@@ -8,34 +9,48 @@
 # runner (CH36 G20), so it refuses to run outside GitHub Actions.
 #
 # The steps:
-#   1. It installs qemu-utils, cloud-guest-utils, mtools, dosfstools and
-#      musl-tools from apt,
-#      and the pinned Rust toolchain with the musl target.
+#   1. It installs qemu-utils, cloud-guest-utils, mtools, jq and
+#      musl-tools from apt, and the pinned Rust toolchain with the musl
+#      target.
 #   2. It starts the build of CH in the background: the 13 words of
 #      bin/lib/chbuild.sh, the build of the vmm row (decision CH75). The
 #      build has a limit of CH_BUILD_LIMIT.
-#   3. It runs ci-runner-image-build beside that build.
+#   3. It starts the build of the example `job-disks` of the crate
+#      creche-ci-runner in the background, and runs ci-runner-image-build
+#      beside both builds.
 #   4. It opens /dev/kvm to the runner user, and it makes the tap device
 #      TAP with NAT to the network of the runner. This is a stand-in for
 #      the bridge of design section 4.5, which root makes on the host. The
 #      addresses are in 192.0.2.0/24, a documentation range, and only the
 #      tap of the runner uses them.
-#   5. It writes the three disks of a job, as design section 4.4 names
-#      them: a whole copy of the root disk, a sparse data disk with the
-#      serial `ci-data`, and a VFAT seed with the label CIDATA. The seed
-#      holds proof/guest-proof and a network config for the MAC of the VM.
-#   6. It waits for the CH build. CH must print CH_BUILD_VERSION.
-#   7. It boots the VM by direct kernel boot, as the runner user, with at
-#      most BOOT_LIMIT seconds to the power-off. It prints the serial log.
-#   8. It reads the CI-PROOF lines of the serial log, and CH must exit 0.
+#   5. It writes a fake registration: a random runner uuid and a random
+#      token, never a real one. `job-disks` then writes the three disks of
+#      a job with the crate, as design section 4.4 names them: a whole copy
+#      of the root disk, a sparse data disk and a VFAT seed with the label
+#      CIDATA. The seed holds the network config for the MAC of the VM, the
+#      runner config and the job handle. `job-disks` holds the disks until
+#      its stdin closes.
+#   6. It adds proof/guest-proof to the seed as the `runcmd` of a
+#      cloud-init `vendor-data` file, with mcopy of the runner. The files
+#      that the crate wrote do not change.
+#   7. It waits for the CH build. CH must print CH_BUILD_VERSION.
+#   8. It boots the VM by direct kernel boot, as the runner user, with at
+#      most BOOT_LIMIT seconds to the power-off. The kernel command line
+#      masks the job unit, so the fake registration runs no job. It prints
+#      the serial log.
+#   9. It closes the stdin of `job-disks`, which removes the run folder.
+#  10. It reads the CI-PROOF lines of the serial log, and CH must exit 0.
 #      Each line of EXPECTED must be there. The other lines are facts for
 #      the log, for example the Node version. `system=degraded` fails the
 #      proof, because EXPECTED needs `system=running`. The guest prints
-#      each failed unit first.
+#      each failed unit first. No line of the serial log may hold the fake
+#      token, and the run folder must be gone.
 #
 # The files land in CI_RUNNER_IMAGE_DIR, which is absent or empty:
-#   image/  the output of ci-runner-image-build
-#   run/    the disks of the job and serial.log
+#   image/              the output of ci-runner-image-build
+#   runs/               the run folder of the job, while `job-disks` runs
+#   registration.json   the fake registration
+#   serial.log          the serial console of the VM
 #
 # `set -euo pipefail`: the first fault stops the run.
 set -euo pipefail
@@ -58,8 +73,20 @@ NET_PREFIX=24
 GUEST_MAC=52:54:00:c1:00:02
 # The command line of design section 4.3.
 CMDLINE="root=LABEL=cloudimg-rootfs ro console=ttyS0"
-DATA_DISK_SIZE=16G
+# The proof adds this to it: the fake registration must run no job.
+PROOF_CMDLINE="systemd.mask=forgejo-runner-job.service"
+DATA_DISK_GIB=16
 RUNNER_VERSION=v13.2.1
+# The fake runner of the seed. No Forgejo listens at FAKE_ORIGIN, and the
+# job unit is masked, so nothing in the VM asks it.
+RUNNER_ID=1
+RUNNER_NAME=ci-runner-image-proof
+RUNNER_LABEL=ubuntu-24.04
+FAKE_ORIGIN=http://$HOST_ADDRESS:3000
+# The build of `job-disks`, beside the CH build.
+DISKS_BUILD_LIMIT=10m
+# The root copy took 8 s on a runner in PR 2.
+DISKS_LIMIT=120
 # The lines of the guest, without their prefix, that a pass needs.
 EXPECTED=(
   "system=running"
@@ -67,7 +94,8 @@ EXPECTED=(
   "docker=ok"
   "forgejo-runner=forgejo-runner version $RUNNER_VERSION"
   "storage=data-disk"
-  "job-unit=no"
+  "job-unit=masked"
+  "job-unit-conditions=pass"
   "job-unit-verify=ok"
   "done"
 )
@@ -83,13 +111,12 @@ dir=${CI_RUNNER_IMAGE_DIR:?CI_RUNNER_IMAGE_DIR names the output directory}
 [[ "$dir" == /* ]] || die "CI_RUNNER_IMAGE_DIR is not absolute: $dir"
 [[ ! -e "$dir" ]] || [[ -z "$(ls -A "$dir")" ]] || die "$dir is not empty"
 [[ -e /dev/kvm ]] || die "no /dev/kvm on this runner"
-mkdir -p "$dir/run"
-run=$dir/run
+mkdir -p "$dir/runs"
 say "$(nproc) CPUs"
 
 say "install the tools from apt and the $MUSL target"
 (sudo apt-get update -qq && sudo apt-get install --yes --no-install-recommends -qq \
-  qemu-utils cloud-guest-utils mtools dosfstools musl-tools) &
+  qemu-utils cloud-guest-utils mtools jq musl-tools) &
 apt_pid=$!
 (
   cd "$REPO/rust"
@@ -110,7 +137,18 @@ ch_start=$SECONDS
   exec timeout --kill-after=30s "$CH_BUILD_LIMIT" "${CH_BUILD[@]}"
 ) < /dev/null > "$ch_log" 2>&1 &
 ch_pid=$!
-trap 'kill "$ch_pid" 2> /dev/null || true' EXIT
+disks_pid=""
+trap 'kill "$ch_pid" $disks_pid 2> /dev/null || true' EXIT
+
+say "start the build of job-disks, at most $DISKS_BUILD_LIMIT"
+disks_work=$(mktemp -d "$dir/disks-build.XXXXXX")
+disks_log=$disks_work/build.log
+(
+  cd "$REPO/rust"
+  CARGO_TARGET_DIR=$disks_work/target exec timeout --kill-after=30s "$DISKS_BUILD_LIMIT" \
+    cargo build --locked -p creche-ci-runner --example job-disks
+) < /dev/null > "$disks_log" 2>&1 &
+disks_build_pid=$!
 
 say "build the image"
 image_start=$SECONDS
@@ -141,41 +179,88 @@ sudo iptables -t nat -A POSTROUTING -s "$HOST_ADDRESS/$NET_PREFIX" ! -o "$TAP" -
 dns=$(awk '$1 == "nameserver" && $2 ~ /^[0-9.]+$/ { print $2; exit }' /run/systemd/resolve/resolv.conf)
 [[ -n "$dns" ]] || die "the runner names no IPv4 DNS server"
 
-say "write the disks of the job"
-seed=$(mktemp -d "$dir/seed.XXXXXX")
-printf 'instance-id: ci-runner-image-proof\nlocal-hostname: ci-runner-proof\n' > "$seed/meta-data"
-cat > "$seed/network-config" << EOF
-version: 2
-ethernets:
-  job0:
-    match:
-      macaddress: "$GUEST_MAC"
-    addresses: [$GUEST_ADDRESS/$NET_PREFIX]
-    routes:
-      - to: default
-        via: $HOST_ADDRESS
-    nameservers:
-      addresses: [$dns]
-EOF
+say "wait for the build of job-disks"
+disks_build_status=0
+wait "$disks_build_pid" || disks_build_status=$?
+if ((disks_build_status != 0)); then
+  cat "$disks_log" >&2
+  die "the build of job-disks failed with status $disks_build_status"
+fi
+disks_tool=$disks_work/target/debug/examples/job-disks
+
+say "write the disks of the job with the crate"
+# The fake registration, in the shape of the reply of Forgejo. The token
+# goes into this file and into the seed only, never onto an argv.
+token=$(od -An -tx1 -N20 /dev/urandom | tr -d ' \n')
+uuid=$(cat /proc/sys/kernel/random/uuid)
+handle=$(cat /proc/sys/kernel/random/uuid)
+registration=$dir/registration.json
+# The lines of the seed, without their prefix, that a pass needs.
+EXPECTED+=(
+  "address=$GUEST_MAC $GUEST_ADDRESS/$NET_PREFIX"
+  "gateway=$HOST_ADDRESS"
+  "instance-id=ci-job-$handle"
+  "runner-file=runner:runner 600"
+  "runner-keys=address,id,labels,name,token,uuid"
+  "runner-id=$RUNNER_ID"
+  "runner-uuid=$uuid"
+  "runner-name=$RUNNER_NAME"
+  "runner-address=$FAKE_ORIGIN"
+  "runner-labels=$RUNNER_LABEL:host"
+  "runner-token=set"
+  "job-file=root:root 644"
+  "job-env=JOB_HANDLE=$handle"
+)
+(
+  umask 077
+  printf '{"id":%s,"uuid":"%s","token":"%s"}\n' "$RUNNER_ID" "$uuid" "$token" > "$registration"
+)
+# `job-disks` reads its stdin until the end, and then removes the run
+# folder. The FIFO keeps its stdin open until the proof closes `hold`.
+mkfifo "$dir/disks.in"
+"$disks_tool" --runs "$dir/runs" --root "$dir/image/root.qcow2" \
+  --data-gib "$DATA_DISK_GIB" --registration "$registration" \
+  --name "$RUNNER_NAME" --labels "$RUNNER_LABEL" --origin "$FAKE_ORIGIN" \
+  --handle "$handle" --mac "$GUEST_MAC" --gateway "$HOST_ADDRESS" \
+  --address "$GUEST_ADDRESS" --dns "$dns" \
+  < "$dir/disks.in" > "$dir/disks.out" 2> "$dir/disks.err" &
+disks_pid=$!
+exec {hold}> "$dir/disks.in"
+disks_start=$SECONDS
+until grep -qs '^root-copy=' "$dir/disks.out"; do
+  if ! kill -0 "$disks_pid" 2> /dev/null || ((SECONDS - disks_start > DISKS_LIMIT)); then
+    cat "$dir/disks.err" >&2
+    die "job-disks wrote no disks"
+  fi
+  sleep 1
+done
+folder=$(sed -n 's/^folder=//p' "$dir/disks.out")
+[[ "$folder" == "$dir/runs/$handle" ]] || die "job-disks wrote the run folder $folder"
+say "the disks took $((SECONDS - disks_start)) s, $(grep '^root-copy=' "$dir/disks.out")"
+ls -ls -- "$folder"
+
+# The guest side of the proof, as the `runcmd` of `vendor-data`.
+# cloud-init merges it under the `user-data` of the crate, which has no
+# `runcmd`. The unit runs after the boot, so the proof can wait for it.
+vendor=$(mktemp "$dir/vendor-data.XXXXXX")
 {
-  printf '%s\n' '#cloud-config' 'write_files:' '  - path: /usr/local/sbin/guest-proof' \
-    '    permissions: "0755"' '    content: |'
-  sed 's/^/      /' "$TREE/proof/guest-proof"
-  printf '%s\n' 'runcmd:' \
-    '  - [systemd-run, --no-block, --unit=guest-proof, --property=StandardOutput=journal+console, --property=StandardError=journal+console, /usr/local/sbin/guest-proof]'
-} > "$seed/user-data"
-mkfs.vfat -n CIDATA -C "$run/seed.img" 1024 > /dev/null
-MTOOLS_SKIP_CHECK=1 mcopy -i "$run/seed.img" "$seed/meta-data" "$seed/network-config" "$seed/user-data" ::
-rm -rf -- "$seed"
-truncate -s "$DATA_DISK_SIZE" "$run/data.raw"
-copy_start=$SECONDS
-cp -- "$dir/image/root.qcow2" "$run/root.qcow2"
-say "the root copy took $((SECONDS - copy_start)) s"
+  printf '%s\n' '#cloud-config'
+  jq -n --rawfile proof "$TREE/proof/guest-proof" '{runcmd: [[
+    "systemd-run", "--no-block", "--unit=guest-proof",
+    "--description=the proof of the image",
+    "--property=SyslogIdentifier=guest-proof",
+    "--property=StandardOutput=journal+console",
+    "--property=StandardError=journal+console",
+    "/bin/bash", "-c", $proof
+  ]]}'
+} > "$vendor"
+MTOOLS_SKIP_CHECK=1 mcopy -i "$folder/seed.img" "$vendor" ::vendor-data
+rm -f -- "$vendor"
 
 say "wait for the build of CH and ch-remote"
 ch_status=0
 wait "$ch_pid" || ch_status=$?
-trap - EXIT
+trap 'kill "$disks_pid" 2> /dev/null || true' EXIT
 if ((ch_status != 0)); then
   cat "$ch_log" >&2
   die "the build of CH and ch-remote failed with status $ch_status"
@@ -192,25 +277,32 @@ boot_status=0
 timeout --kill-after=10s "$BOOT_LIMIT" "$ch" \
   --kernel "$dir/image/vmlinuz" \
   --initramfs "$dir/image/initrd.img" \
-  --cmdline "$CMDLINE" \
+  --cmdline "$CMDLINE $PROOF_CMDLINE" \
   --cpus boot=2 \
   --memory size=4G \
-  --disk "path=$run/root.qcow2,image_type=qcow2" \
-  "path=$run/seed.img,image_type=raw,readonly=on" \
-  "path=$run/data.raw,image_type=raw,serial=ci-data" \
+  --disk "path=$folder/root.qcow2,image_type=qcow2" \
+  "path=$folder/seed.img,image_type=raw,readonly=on" \
+  "path=$folder/data.raw,image_type=raw,serial=ci-data" \
   --net "tap=$TAP,mac=$GUEST_MAC" \
-  --serial "file=$run/serial.log" \
+  --serial "file=$dir/serial.log" \
   --console off || boot_status=$?
 boot_seconds=$((SECONDS - boot_start))
 echo "::group::the serial log of the VM"
-tr -d '\r' < "$run/serial.log" || true
+tr -d '\r' < "$dir/serial.log" || true
 echo "::endgroup::"
 say "CH exited with status $boot_status after $boot_seconds s"
+
+say "close the stdin of job-disks, which removes the run folder"
+exec {hold}>&-
+disks_status=0
+wait "$disks_pid" || disks_status=$?
+trap - EXIT
+cat "$dir/disks.err" >&2
 
 # The CI-PROOF lines, without their prefix. journald writes each line of
 # the unit to the console as `[<time>] guest-proof[<pid>]: CI-PROOF ...`,
 # and a line of the login prompt can come before it on the same line.
-mapfile -t got < <(tr -d '\r' < "$run/serial.log" |
+mapfile -t got < <(tr -d '\r' < "$dir/serial.log" |
   sed -E -n 's/^.*guest-proof\[[0-9]+\]: CI-PROOF //p')
 printf '  %s\n' "${got[@]}"
 fails=0
@@ -228,6 +320,14 @@ done
   say "FAIL: CH exited with status $boot_status"
   fails=$((fails + 1))
 }
+if grep -qF -- "$token" "$dir/serial.log" "$dir/disks.out" "$dir/disks.err"; then
+  say "FAIL: the serial log or the output of job-disks holds the token"
+  fails=$((fails + 1))
+fi
+if ((disks_status != 0)) || ! grep -qx removed "$dir/disks.out" || [[ -e "$folder" ]]; then
+  say "FAIL: job-disks exited with status $disks_status, and the run folder is not removed"
+  fails=$((fails + 1))
+fi
 ((fails == 0)) || die "the proof of the image failed ($fails)"
 
 df -h /

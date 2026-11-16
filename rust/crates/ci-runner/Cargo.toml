@@ -12,6 +12,7 @@ publish.workspace = true
 # Each crate is already in rust/Cargo.lock for the vmm. The client reuses the
 # HTTP/1.1 stack of the vmm (decision CH26), so it adds no crate to the lock.
 [dependencies]
+fatfs.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
@@ -20,6 +21,9 @@ serde_json.workspace = true
 # `net` for the TCP connect to Forgejo and `time` for the bound of each call.
 # The vmm turns on both, so neither adds a crate to the lock.
 tokio = { workspace = true, features = ["net", "time"] }
+# The root copy: FICLONE, and SEEK_DATA with SEEK_HOLE for the sparse copy.
+# The vmm-confine crate turns on `fs`, so it adds no crate to the lock.
+rustix.workspace = true
 
 [lints]
 workspace = true
