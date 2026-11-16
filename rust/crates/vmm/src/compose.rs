@@ -247,9 +247,9 @@ struct Vmm {
     hook: Shared,
     faults: Arc<Mutex<FaultBook>>,
     follow: Follow,
-    /// The bound socket of the browser VM and the uid of its peer, or
-    /// `None` when it is off (`browser_socket`).
-    browser: Option<(Bound, u32)>,
+    /// The path of the browser socket and its peer user. `run` binds it
+    /// after the raise of step 4 (`browser_socket`).
+    browser: (PathBuf, UserName),
 }
 
 /// The passwd file of the host, for the uid of `VMM_BROWSER_PEER_USER`.
@@ -464,7 +464,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         drops: Drops::new(rows, relays, hook.clone()),
         checks: Checks::new(config.families),
     };
-    let browser = browser_socket(&config.browser_socket, &config.browser_peer);
+    let browser = (config.browser_socket, config.browser_peer);
     Ok(Vmm {
         socket: config.run.vmm_socket(),
         handlers,
@@ -486,9 +486,17 @@ impl Vmm {
             follow,
             browser,
         } = self;
-        // The drop of `served` at the end of the run closes the socket and
-        // its links.
-        let served = browser.and_then(|(bound, peer)| {
+        // The bind comes after the raise of step 4, as every listener's
+        // does. The drop of `served` at the end of the run closes the
+        // socket and its links.
+        let (path, user) = browser;
+        let bound = spawn_blocking(move || browser_socket(&path, &user))
+            .await
+            .unwrap_or_else(|_| {
+                eprintln!("vmm: the browser socket is off: its bind panicked");
+                None
+            });
+        let served = bound.and_then(|(bound, peer)| {
             let hook = Arc::clone(&hook.0);
             match bound.serve(hook, ServiceImage::Browser, peer) {
                 Ok(served) => Some(served),

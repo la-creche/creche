@@ -1840,7 +1840,9 @@ chaperone ─stdio─ browser-relay (uid mcp-browser)
 4. The VM has no snapshot key. So admission never evicts it, the idle
    tick never puts it to sleep, and the shutdown stops it with the
    graceful stop. A family start that needs its RAM gets `host_full`.
-5. The compose step binds `VMM_BROWSER_SOCKET` before the serve. Root
+5. The compose step binds `VMM_BROWSER_SOCKET` after the raise of step
+   4 and before the bind of `vmm.sock`, so the socket gets the raised
+   limit, and a refused raise prints only its own line. Root
    makes its dir once: the vmm user owns it, the group is the group of
    `VMM_BROWSER_PEER_USER`, the mode is 2750. `bind` refuses a missing
    dir, a dir that gives others any bit and a file at the path that is
