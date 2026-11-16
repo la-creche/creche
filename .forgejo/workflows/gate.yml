@@ -81,8 +81,8 @@ concurrency:
 # Docker daemon that has 24 CPUs and 48 GB of memory for all of them. A job
 # sees every CPU of the host, so `-n auto`, cargo and vitest would each start
 # one worker per CPU of the host. Each value here is 24 / 4 = 6 CPUs for one
-# job, so the four jobs ask for 24 CPUs at most. In the rehearsal runs on
-# the Docker runner, the daemon peaked at 18 CPUs and 5.8 GB of memory,
+# job, so the four jobs ask for 24 CPUs at most. In rehearsal run 162 on
+# the Docker runner, the daemon peaked at 23.0 CPUs and 7.2 GB of memory,
 # with four jobs at once.
 env:
   # cargo: the number of rustc processes at once.
