@@ -21,7 +21,8 @@
 #
 # `ci_runner_image` is a fourth answer: `false` only when the change
 # touches no file of the guest image build of the CI runner VMs:
-# ci-runner-image/ and bin/lib/chbuild.sh, the CH that boots it. The
+# ci-runner-image/, bin/lib/chbuild.sh, the CH that boots it, and
+# rust/crates/ci-runner/, the crate that writes the disks of the job. The
 # answer starts as `true`, as `vmm` does.
 name: scope
 description: Say whether the pull request changes docs only or code
@@ -80,7 +81,8 @@ runs:
 
         ci_runner_image=true
         if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$base^{commit}" 2> /dev/null &&
-          git diff --quiet --no-renames "$base" HEAD -- ci-runner-image bin/lib/chbuild.sh; then
+          git diff --quiet --no-renames "$base" HEAD -- ci-runner-image bin/lib/chbuild.sh \
+            rust/crates/ci-runner; then
           ci_runner_image=false
         fi
         echo "ci_runner_image=$ci_runner_image" >> "$GITHUB_OUTPUT"

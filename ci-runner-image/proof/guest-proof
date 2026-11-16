@@ -1,8 +1,8 @@
 #!/bin/bash
-# The guest side of the proof of the image (ci-runner-image-proof). The
-# seed of the proof installs it as /usr/local/sbin/guest-proof, and
-# cloud-init starts it as the transient unit `guest-proof`. It is no file
-# of the image.
+# The guest side of the proof of the image (ci-runner-image-proof). It is
+# no file of the image. The proof adds it to the seed that the crate
+# creche-ci-runner wrote, as the `runcmd` of a cloud-init `vendor-data`
+# file. cloud-init then starts it as the transient unit `guest-proof`.
 #
 # Each result is one line `CI-PROOF <key>=<value>`. journald copies it to
 # the serial console with the tag of the unit. The host reads the lines
@@ -56,9 +56,60 @@ done
 say "storage=$storage"
 say "data-disk=$(findmnt -n -o SOURCE,FSTYPE /var/lib/ci-data)"
 
-# The job unit has no seed files here, so its conditions keep it stopped,
-# and the VM stays up. The verify reads the unit as systemd does.
-say "job-unit=$(systemctl show -p ConditionResult --value forgejo-runner-job.service)"
+# The network config of the seed: each global IPv4 address with the MAC
+# of its NIC, and the default route. A line of `ip -o` starts with
+# `<index>: <device> inet <address>/<prefix>`.
+while read -r _ device _ address _; do
+  say "address=$(cat "/sys/class/net/$device/address") $address"
+done < <(ip -4 -o address show scope global)
+say "gateway=$(ip -4 route show default | awk '{ print $3; exit }')"
+say "instance-id=$(cloud-init query v1.instance_id 2>&1)"
+
+# The runner config of the seed. The guest prints each field that is no
+# secret. For the token it prints only whether it has the shape of a
+# token, never the token.
+runner=/etc/forgejo-runner/runner.json
+if [[ -f "$runner" ]]; then
+  say "runner-file=$(stat -c '%U:%G %a' "$runner")"
+  python3 - "$runner" << 'EOF_PYTHON' | while read -r line; do say "$line"; done
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as file:
+    runner = json.load(file)
+print("runner-keys=" + ",".join(sorted(runner)))
+for key in ("id", "uuid", "name", "address"):
+    print(f"runner-{key}={runner.get(key)}")
+print("runner-labels=" + ",".join(runner.get("labels") or []))
+token = runner.get("token")
+shape = isinstance(token, str) and re.fullmatch(r"[0-9A-Za-z]{40}", token)
+print("runner-token=" + ("set" if shape else "bad"))
+EOF_PYTHON
+else
+  say "runner-file=absent"
+fi
+job=/etc/forgejo-runner/job.env
+if [[ -f "$job" ]]; then
+  say "job-file=$(stat -c '%U:%G %a' "$job")"
+  while read -r line; do
+    say "job-env=$line"
+  done < "$job"
+else
+  say "job-file=absent"
+fi
+
+# The proof masks the job unit on the kernel command line, so the fake
+# registration runs no job (design section 8, PR 6 runs one). The two
+# conditions of the unit must pass with the files of the seed. The verify
+# reads the unit as systemd does.
+say "job-unit=$(systemctl show -p LoadState --value forgejo-runner-job.service)"
+if systemd-analyze condition \
+  "ConditionPathExists=$runner" "ConditionPathExists=$job" > /dev/null 2>&1; then
+  say "job-unit-conditions=pass"
+else
+  say "job-unit-conditions=fail"
+fi
 if verify=$(systemd-analyze verify forgejo-runner-job.service 2>&1) && [[ -z "$verify" ]]; then
   say "job-unit-verify=ok"
 else
