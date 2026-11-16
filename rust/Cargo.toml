@@ -68,14 +68,6 @@ landlock = { version = "=0.4.7", default-features = false }
 # feature: `Sha256` and the `Digest` trait need neither `alloc` nor `oid`.
 sha2 = { version = "0.11.1", default-features = false }
 
-# The VFAT seed of each CI runner VM, written in the process of the
-# ci-runner daemon (docs/design/ci-runner.md, section 4.4). The host has
-# mkfs.vfat and no mcopy, so no host tool puts a file into the image.
-# 0.3.6 is from 2023-01-17. `=` keeps a fresh resolve on this reviewed
-# release. `std` for std::io, `alloc` for the long file names of the
-# cloud-init files. No `chrono`: each file gets the FAT epoch as its time.
-fatfs = { version = "=0.3.6", default-features = false, features = ["std", "alloc"] }
-
 # The lint gate. A crate inherits it with `[lints] workspace = true`. An
 # exception is written `#[expect(clippy::<lint>, reason = "...")]` at the one
 # item, never `#[allow]`.

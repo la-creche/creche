@@ -18,12 +18,6 @@
 # bin/build-artifacts.sh and bin/lib/artifactrows.sh.
 # The answer starts as `true`, so a base that git cannot read runs the
 # build.
-#
-# `ci_runner_image` is a fourth answer: `false` only when the change
-# touches no file of the guest image build of the CI runner VMs:
-# ci-runner-image/, bin/lib/chbuild.sh, the CH that boots it, and
-# rust/crates/ci-runner/, the crate that writes the disks of the job. The
-# answer starts as `true`, as `vmm` does.
 name: scope
 description: Say whether the pull request changes docs only or code
 
@@ -37,9 +31,6 @@ outputs:
   vmm:
     description: true when the change touches a file of the vmm build, false when it does not
     value: ${{ steps.scope.outputs.vmm }}
-  ci_runner_image:
-    description: true when the change touches a file of the CI runner image build, false when it does not
-    value: ${{ steps.scope.outputs.ci_runner_image }}
 
 runs:
   using: composite
@@ -78,12 +69,3 @@ runs:
         fi
         echo "vmm=$vmm" >> "$GITHUB_OUTPUT"
         echo "vmm: $vmm"
-
-        ci_runner_image=true
-        if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$base^{commit}" 2> /dev/null &&
-          git diff --quiet --no-renames "$base" HEAD -- ci-runner-image bin/lib/chbuild.sh \
-            rust/crates/ci-runner; then
-          ci_runner_image=false
-        fi
-        echo "ci_runner_image=$ci_runner_image" >> "$GITHUB_OUTPUT"
-        echo "ci_runner_image: $ci_runner_image"
