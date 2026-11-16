@@ -39,7 +39,7 @@ decision can replace a row.
 | [cloud-hypervisor-playpen.md](design/cloud-hypervisor-playpen.md) | The move of the playpen to Cloud Hypervisor. The rows CH1 and so on. |
 | [mcp-memory.md](design/mcp-memory.md) | The memory service. |
 | [browser-mcp.md](design/browser-mcp.md) | A browser tool for an agent. |
-| [ci-runner.md](design/ci-runner.md) | One throwaway VM per Forgejo Actions job. The rows R1 to R6. |
+| [ci-runner.md](design/ci-runner.md) | Moved. The CI runner VMs now live in the repository infra/ci-runner on the Forgejo instance. |
 | [forgejo-release-path.md](design/forgejo-release-path.md) | The release path of the five platform repositories on Forgejo: the signer, P1 to P6, the bridge release. The rows FR1 to FR15. |
 | [openshell-ideas.md](design/openshell-ideas.md) | Ideas taken from OpenShell. |
 | [family-isolation.md](design/family-isolation.md) | The fences between families. |
