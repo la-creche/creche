@@ -314,7 +314,7 @@ Each PR holds one idea. "Before" means the PR merges before the window and works
 
 The operator answered each open question of the first draft on 2026-11-15.
 
-1. **Tag protection and the Actions user.** "Your recommendation." Measured: the Actions user cannot be allowed (section 6). Taken: a Forgejo bot `ci-signer` is the only user allowed on `*-v*`, and the signer creates each release tag. This bot is a third account beside the two of answer 6. It holds write on the five repositories and nothing else. Its token lives with the signer, never in Forgejo.
+1. **Tag protection and the Actions user.** "Your recommendation." Measured: the Actions user cannot be allowed (section 6). Taken: a Forgejo bot `ci-signer` is the only user allowed on `*-v*`, and the signer creates each release tag. This bot is a third account beside the two of answer 6. It holds write on the five repositories and nothing else. Its token lives with the signer, never in Forgejo. The operator approved this third account on 2026-11-15 ("Yes, add the bot"). The bot exists as a restricted user with no token and no repository yet. It gets write on the five repositories and its token in the window.
 2. **FR10 against FR4.** "Your recommendation." Taken: FR10. The bridge reads the root-owned key file `/etc/creche/release-signing.pub`.
 3. **FR9: a statement for every kind.** "Your recommendation." Taken: FR9.
 4. **HTTPS on the Forgejo host.** The operator sets up HTTPS through a reverse proxy. Requirements:
