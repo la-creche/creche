@@ -805,6 +805,59 @@ other reader of the file.
    `creche-chaperone.service`. `bin/chaperone-install-draft.py` prints a
    draft of both files.
 
+## The Forgejo release path, reading side
+
+`docs/design/forgejo-release-path.md` section 5 gives checks P1 to P6 for a
+release from the Forgejo instance. Three modules of `executor/` hold them.
+Nothing calls them yet. A later PR connects them to step 3, with the HTTP
+client, the site keys and the key file of FR10. The GitHub path of
+`provenance.py` does not change.
+
+```text
+forge_api.py           the paths and the replies of the Forgejo API
+release_statement.py   the tag message, the cosign check, the statement
+forge_provenance.py    the rules P1 to P6 and the chain
+```
+
+1. `forge_api.py` is the one module that knows a Forgejo path or a field
+   name of a Forgejo reply. Only its builders make a `ForgePath`, from a
+   checked `ForgeRepo`, `TagName` and `ObjectId`.
+2. Each reader of a reply checks the status, the byte cap
+   `API_MAX_BYTES` and `strictjson.loads`, in that order. Then it reads
+   each field and its type. A `bool` is no integer. A reply that is not
+   strict records one notice with the surface `code_host.answer`.
+3. Each refusal of a reader or of a rule has the code of its check and one
+   fixed reason of `ForgeReason`, `StatementReason` or `ProvenanceReason`.
+   No text of a reply reaches a refusal.
+4. P2 takes only the ref that is exactly `refs/tags/<tag>`, because the
+   refs call is a prefix match (M3). The ref names an annotated tag. A
+   lightweight tag refuses.
+5. P5 reads `total_count` and the `context` and the `status` of each entry.
+   It never reads `state`. Each required context of `REQUIRED_CONTEXTS` is
+   `success`. Each other context is `success` or `skipped`.
+6. The tag message has the format of the signer crate
+   `rust/crates/ci-signer`. That crate is the authority. Its vectors, its
+   schema and its limits drive `tests/test_handover_frp_vectors.py`. Change
+   a constant or a pattern of `release_statement.py` only with the same
+   change in the crate.
+7. Root reads the message only from the git tag object of P2, which adds
+   one LF. `decode_message` does not parse the statement.
+8. `check_signature` writes the statement and the bundle into
+   `work/<id>/statement/<component>/`, with the modes of rule 12a. Then it
+   starts one verifier child: `cosign verify-blob --key` with
+   `/etc/creche/release-signing.pub`, no trust root and no network (FR1,
+   FR12). Only this check makes a `SignedStatement`.
+9. `read_statement` parses only a `SignedStatement`. It refuses a text that
+   is not the canonical form byte for byte. Only it makes a
+   `ReleaseStatement`, a `StatementTag` and a `StatementAsset`.
+10. P1 checks each tag of the statement. Each tag names a component of the
+    catalog in the same repository, with `Releases.YES`. A tag of a `venv`
+    or `units` component names no asset.
+11. Only `verify_forge_release` makes a `ForgeVerified`. P6
+    (`check_digests`) takes the signed tag entry from that value, so no
+    caller can give P6 an entry that no signature covers.
+12. A refusal of P6 has one reason of `ArtifactRefusal`, as today.
+
 ## Use
 
 ```bash
@@ -843,6 +896,9 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P6 |
 | `executor/approval.py`, `phone.py`, `notice.py`, `quiet.py` | the gate and the text of the approval push, the transport, the outcome push, the busy check of step 7 and the quiet minutes |
 | `executor/envfill.py` | the env fill: the plan of step 4 and the append of step 8 |
+| `executor/forge_api.py` | the paths and the reply readers of the Forgejo API for P1 to P5 |
+| `executor/release_statement.py` | the tag message, the cosign check of P1 and the release statement |
+| `executor/forge_provenance.py` | the rules P1 to P6 on Forgejo, and the chain `verify_forge_release` |
 | `executor/host.py`, `install.py`, `mcpbuild.py`, `self_switch.py` | the one spawn and the unit of the verifier, steps 8 to 10, a server tree, the self-release |
 | `executor/unpack.py`, `artifact.py` | the unpack of a tar archive and the member list of a component archive, root's copy of the signed assets of a binary or disk-image component and its digest |
 | `executor/ledger.py`, `steps.py`, `drain.py` | the entry, the ten steps, the unit's entry point |
@@ -863,6 +919,12 @@ machine that has no `curl` or no `openssl`.
 TLS runs on loopback. Every test file's basename starts with
 `test_handover_`. `handover_fixtures.py` builds valid manifests only. A test
 that wants a refusal changes one field.
+
+`tests/fixtures/forgejo-17.0.1/` holds sanitized replies of Forgejo 17.0.1.
+Its `README.md` lists each file, and `index.tsv` gives the status of each
+reply. Four more replies are read in place from the fixtures of the signer
+crate. `test_handover_frp_fixtures.py` refuses a fixture that names a
+deployment.
 
 ## Known gaps
 
@@ -1032,6 +1094,38 @@ that wants a refusal changes one field.
   another file of the `host` tree (`executor/install.py`).
 - A repair after a crash in the switch of a `host` tree puts the tree back
   and does not link the unit files again (`executor/steps.py`).
+- `forgejo-release-path.md` section 3 M7 does not measure the cosign v3
+  flags for `verify-blob --key` with a bundle and no log entry. Root passes
+  `--insecure-ignore-tlog=true`. A wrong flag refuses P1
+  (`executor/release_statement.py`, `VERIFY_SKIP_TLOG`).
+- FR10 says that the executor refuses P1 without the key file. No check of
+  the owner or the mode of `/etc/creche/release-signing.pub` runs yet. A
+  missing key makes cosign end with the status 1, so P1 refuses with the
+  reason of a refused signature, and the follower does not ask again
+  (`executor/release_statement.py`).
+- The page size of `git/refs/tags/<prefix>` is not measured. P2 reads one
+  page. When the page drops the exact ref, P2 refuses
+  (`executor/forge_api.py`, `read_tag_refs`).
+- Section 5 names only `object.sha` and `message` of `git/tags/<sha>`. P2
+  also requires `sha` and `tag` of the reply to be the tag object and the
+  tag (`executor/forge_api.py`, `read_tag_object`).
+- The page size of `commits/<sha>/status` is not measured. P5 refuses when
+  `total_count` is not the count of the listed entries
+  (`executor/forge_provenance.py`, `check_green`).
+- No `pull_request` context of the five repositories is measured on
+  Forgejo. `REQUIRED_CONTEXTS` holds the names of section 6. A missing
+  context refuses P5 (`executor/forge_provenance.py`).
+- Section 5 names only the statuses `success` and `skipped`. P5 refuses
+  each other status, and it refuses a word that Forgejo does not use with
+  its own reason (`executor/forge_provenance.py`, `KNOWN_STATUSES`).
+- FR9 adds mcp and creche-release to `catalog.RELEASE_WORKFLOW`. Until a
+  later PR adds them, `expected_origin` refuses a release of each one with
+  the code `catalog` (`executor/forge_provenance.py`).
+- Section 5 does not say whether P1 checks each tag of the statement. P1
+  checks each one (`executor/forge_provenance.py`, `check_statement`).
+- Section 5 names no check of `signed_at` against a clock and no check of
+  the run id. P1 checks the grammar of both and nothing more
+  (`executor/release_statement.py`).
 - Contract 06 §8.2 and PEP 610 name no size for a `direct_url.json` record.
   Root reads 64 KiB of such a record at most. A larger record is a record
   that root cannot read, and the walk reports it as a fault
