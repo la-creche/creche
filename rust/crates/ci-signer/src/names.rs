@@ -85,11 +85,10 @@ fn version_number(text: &str) -> bool {
 /// The most digits of one number of a tag version. `_TAG_RE` of
 /// `handover/executor/source.py` has no cap. So this grammar is a strict
 /// subset of `_TAG_RE`.
-// CONTRACT-QUESTION: forgejo-release-path.md section 4.5 step 4 names the
-// form `<component>-vX.Y.Z` with no digit cap. The reading here caps each
-// number at 9 digits, so it fits a u32 and the tag stays short. The signer
-// then refuses some tags that root would accept. PR 4 can tighten `_TAG_RE`
-// to the same cap. A change is this constant and one vector.
+// Decided by the operator on 2026-11-16: a version number has no leading
+// zero and at most 9 digits. So it fits a u32 and the tag stays short. The
+// wiring PR (4b) gives `_TAG_RE` the same rule. A change is this constant
+// and one vector.
 const MAX_VERSION_DIGITS: usize = 9;
 
 /// A string newtype with one check. `$pattern` is the same rule as a

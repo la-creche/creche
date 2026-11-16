@@ -50,9 +50,9 @@ pub enum Event {
 
 /// The ref of a statement. Check 3 of section 4.4 passes only
 /// `refs/heads/main`, and the statement names it `main`.
-// CONTRACT-QUESTION: forgejo-release-path.md section 4.5 (the example) and
-// section 5 (the P1 row) spell it `main`. Check 3 reads the full ref. The
-// reading here takes `main`. A change is one serde rename and the vectors.
+// Decided by the operator on 2026-11-16: the statement spells the ref
+// `main`, as the example of section 4.5 and the P1 row of section 5 do.
+// Check 3 reads the full ref. A change is one serde rename and the vectors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 pub enum Branch {
@@ -179,17 +179,15 @@ pub struct TagEntry {
 /// each component. The schema does not express the order, the uniqueness
 /// or the rule of one tag for each component. A reader must apply the
 /// canonical check (re-encode and compare) and pass the vectors.
-// CONTRACT-QUESTION: forgejo-release-path.md section 4.5 gives no order and
-// says nothing of an empty list or of two tags of one component. The reading
-// here sorts by name, refuses an empty list and refuses two tags of one
-// component (fail closed): one run releases one version of a component.
-// A change is this type and the vector files.
-// CONTRACT-QUESTION: section 4.5 step 3 says that a `venv` or `units` tag
-// has no asset. The tag name does not say the kind of its component, and
-// the signer has no catalog. So the signer does not check it, and it does
-// not check that a component belongs to the repository either. Root's P1
-// reads the catalog row and refuses both. A change gives the signer the
-// kinds of its pairs in `signing-pairs.tsv`.
+// Decided by the operator on 2026-11-16: the signer sorts the tags and the
+// assets by name. It refuses a duplicate, an empty tag list and two tags of
+// one component: one run releases one version of a component. A change is
+// this type and the vector files.
+// Decided by the operator on 2026-11-16: root checks every tag of a
+// statement against the catalog, and the signer does not know component
+// kinds. So the signer does not check the rule of section 4.5 step 3 (a
+// `venv` or `units` tag has no asset). It does not check that a component
+// belongs to the repository either. Root's P1 refuses both.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "Vec<TagEntry>")]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
