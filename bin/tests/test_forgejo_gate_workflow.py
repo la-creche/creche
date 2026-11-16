@@ -33,7 +33,17 @@ result with the Forgejo job. A difference that is not in this list fails.
    stated place. That action does nothing on a runner with rustup.
 7. **File keys.** No `permissions` key. Forgejo ignores it, and a job token
    can write its own repository, so the key would claim a limit that does
-   not hold.
+   not hold. One `env` key: the load limits of difference 9.
+8. **User.** The Docker runner runs a step as root with the umask 0000. The
+   jobs of `RUNNER_USER_STEPS` run `.forgejo/actions/runner-user`, at a
+   stated place, and name its `as-runner` as the shell of their run steps.
+   Those steps then run as a user that is not root, with the umask 0022, as
+   on the hosted GitHub runner.
+9. **Load.** The workflow `env` holds cargo, the Rust test threads, xdist
+   and vitest to 6 workers each: 24 CPUs of the Docker runner for its 4
+   jobs at once.
+10. **Time limits.** A job with no `timeout-minutes` in the GitHub file gets
+    the limit of `TIME_LIMITS`. A job with one keeps it.
 
 The protection of `main` on Forgejo requires one status:
 `gate / gate (pull_request)`. The workflow name, the name of its last job
@@ -79,10 +89,19 @@ REQUIRED_CONTEXT = "gate / gate (pull_request)"
 
 #: Each key of the Forgejo file. PyYAML reads the key `on` as the boolean.
 #: No `permissions` (difference 5).
-FORGEJO_FILE_KEYS = {"name", True, "concurrency", "jobs"}
+FORGEJO_FILE_KEYS = {"name", True, "concurrency", "env", "jobs"}
+
+#: The workflow env: 6 workers for each tool (difference 9).
+LOAD_ENV = {
+    "CARGO_BUILD_JOBS": "6",
+    "RUST_TEST_THREADS": "6",
+    "PYTEST_XDIST_AUTO_NUM_WORKERS": "6",
+    "VITEST_MAX_FORKS": "6",
+    "VITEST_MAX_THREADS": "6",
+}
 
 #: The local actions that the gate uses, by their name.
-LOCAL_ACTIONS = ["scope", "uv-sync", "verdict", "rustup"]
+LOCAL_ACTIONS = ["scope", "uv-sync", "verdict", "rustup", "runner-user"]
 GITHUB_LOCAL = "./.github/actions/"
 FORGEJO_LOCAL = "./.forgejo/actions/"
 
@@ -132,6 +151,25 @@ RUSTUP_STEPS: dict[str, tuple[int, dict[str, str]]] = {
     "proc": (2, {"uses": RUSTUP}),
     "rust": (1, {"uses": RUSTUP}),
     "vmm-archive": (2, {"uses": RUSTUP, "if": ONLY_VMM}),
+}
+
+#: The step that changes the user (difference 8), where each job has it,
+#: and the shell of the run steps of that job. The index counts the rustup
+#: step of difference 6.
+RUNNER_USER = "./.forgejo/actions/runner-user"
+RUNNER_USER_STEPS = {"tests": 2, "proc": 4, "suites": 2, "rust": 2}
+AS_RUNNER = {"run": {"shell": "as-runner {0}"}}
+
+#: The time limit of each job that has none in the GitHub file
+#: (difference 10).
+TIME_LIMITS = {
+    "scope": 5,
+    "lint": 10,
+    "tests": 20,
+    "agent": 10,
+    "facade": 10,
+    "memory": 15,
+    "gate": 5,
 }
 
 #: The job of the shards, and the shard command of each gate with its env
@@ -192,6 +230,12 @@ def _port_job(name: str, job: dict[str, Any]) -> dict[str, Any]:
     if name in RUSTUP_STEPS:
         index, step = RUSTUP_STEPS[name]
         port["steps"].insert(index, step)
+    if name in RUNNER_USER_STEPS:
+        port["steps"].insert(RUNNER_USER_STEPS[name], {"uses": RUNNER_USER})
+        port["defaults"] = AS_RUNNER
+    if name in TIME_LIMITS:
+        assert "timeout-minutes" not in port, f"{name}: the GitHub job has a limit"
+        port["timeout-minutes"] = TIME_LIMITS[name]
     if name == SHARD_JOB:
         (step,) = [one for one in port["steps"] if "run" in one]
         assert (step["run"], step["env"]) == (SHARD_RUN[0], SHARD_ENV[0])
@@ -245,6 +289,15 @@ def test_the_forgejo_file_has_no_permissions_key() -> None:
     """A `permissions` key would claim a read-only token. Forgejo ignores it."""
     assert set(FORGEJO_GATE) == FORGEJO_FILE_KEYS
     assert FORGEJO_GATE["concurrency"] == GITHUB_GATE["concurrency"]
+
+
+def test_the_load_env_holds_each_tool_to_six_workers() -> None:
+    assert FORGEJO_GATE["env"] == LOAD_ENV
+
+
+def test_each_job_has_a_time_limit() -> None:
+    """A job with no limit runs for 6 hours on a hung test."""
+    assert all("timeout-minutes" in job for job in FORGEJO_JOBS.values())
 
 
 def test_the_required_context_is_the_last_job_on_a_pull_request() -> None:

@@ -23,6 +23,18 @@
 #      nothing on a runner that has rustup.
 #   6. No `permissions` key: Forgejo ignores it, and each job token can
 #      write its own repository.
+#   7. User: the Docker runner runs a step as root with the umask 0000. The
+#      jobs tests, proc, suites and rust run .forgejo/actions/runner-user,
+#      and their run steps run as a user that is not root, with the umask
+#      0022, as on the hosted GitHub runner.
+#   8. Load: the env block below holds each job to 6 CPUs.
+#   9. Time limits: each job has a `timeout-minutes`. A job of the GitHub
+#      file with a limit keeps it.
+#
+# Where each job runs today. One Docker runner serves `ubuntu-24.04`. No
+# runner serves `vm-plain` or `vm-kvm` yet: memory, playpen-image,
+# systemd-proof and the two kvm shards wait for the runner VMs, and `gate`
+# waits for them. Until those runners exist, no run of this file ends green.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
 #           ├── agent       code   the agent module's suite and types
@@ -59,9 +71,28 @@ concurrency:
   group: gate-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
+# The load (difference 8). The Docker runner runs 4 jobs at once, in one
+# Docker daemon that has 24 CPUs and 48 GB of memory for all of them. A job
+# sees every CPU of the host, so `-n auto`, cargo and vitest would each start
+# one worker per CPU of the host. Each value here is 24 / 4 = 6 CPUs for one
+# job. The four jobs then ask for 24 CPUs at most. Memory: a pytest worker
+# of the suite stays below 1 GB, and a rustc of the workspace below 2 GB, so
+# 6 of them stay inside 12 GB, a quarter of 48 GB.
+env:
+  # cargo: the number of rustc processes at once.
+  CARGO_BUILD_JOBS: "6"
+  # cargo test: the number of test threads of one test binary.
+  RUST_TEST_THREADS: "6"
+  # pytest-xdist: the number of workers of `-n auto`.
+  PYTEST_XDIST_AUTO_NUM_WORKERS: "6"
+  # vitest: the number of workers of its pool.
+  VITEST_MAX_FORKS: "6"
+  VITEST_MAX_THREADS: "6"
+
 jobs:
   scope:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       systemd: ${{ steps.scope.outputs.systemd }}
@@ -79,6 +110,7 @@ jobs:
   # does not wait for one job before the other.
   lint:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -102,6 +134,10 @@ jobs:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: as-runner {0}
     strategy:
       # A red shard does not stop the others: one run shows every failure.
       fail-fast: false
@@ -119,6 +155,9 @@ jobs:
 
       - uses: ./.forgejo/actions/uv-sync
 
+      # Difference 7: the run steps below run as a user that is not root.
+      - uses: ./.forgejo/actions/runner-user
+
       # `worksteal`: a runner has two workers, and under xdist's default
       # one of them ends up holding the slow tests while the other idles.
       # An idle worker that takes from the busy one's queue cut the
@@ -135,6 +174,7 @@ jobs:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -162,6 +202,7 @@ jobs:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -202,6 +243,9 @@ jobs:
     if: needs.scope.outputs.scope == 'code'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: as-runner {0}
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -223,6 +267,9 @@ jobs:
         with:
           path: ~/.cache/creche-proc/chaperone-rs
           key: proc-chaperone-rs-${{ runner.os }}-${{ hashFiles('integration/proc/chaperone.pin', 'integration/proc/proc_chaperone_pin.py') }}
+
+      # Difference 7: the run steps below run as a user that is not root.
+      - uses: ./.forgejo/actions/runner-user
 
       - run: uv run pytest integration/proc -m slow -n 4
         env:
@@ -252,12 +299,18 @@ jobs:
     if: needs.scope.outputs.scope == 'code'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    defaults:
+      run:
+        shell: as-runner {0}
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - uses: ./.forgejo/actions/uv-sync
+
+      # Difference 7: the run steps below run as a user that is not root.
+      - uses: ./.forgejo/actions/runner-user
 
       # PYTEST_ADDOPTS: the report is the one addition to the command that
       # integration/AGENTS.md gives.
@@ -318,6 +371,7 @@ jobs:
     # systemd does. On the container runner five of them failed: the group
     # stayed after the exit.
     runs-on: vm-plain
+    timeout-minutes: 15
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -370,6 +424,9 @@ jobs:
     if: needs.scope.outputs.scope == 'code'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    defaults:
+      run:
+        shell: as-runner {0}
     env:
       # A CI build starts from nothing, never from the last build of the
       # same tree, so the incremental state is only weight.
@@ -381,6 +438,9 @@ jobs:
 
       # The Docker runner has no rustup (.forgejo/actions/rustup).
       - uses: ./.forgejo/actions/rustup
+
+      # Difference 7: the run steps below run as a user that is not root.
+      - uses: ./.forgejo/actions/runner-user
 
       - name: toolchain
         working-directory: rust
@@ -643,6 +703,7 @@ jobs:
     needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, kvm, vmm-archive]
     if: always()
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       # The verdict is a local action, read from the checkout. Full history
       # as in every job (bin/tests/test_gate_workflow.py).
