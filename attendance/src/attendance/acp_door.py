@@ -185,12 +185,14 @@ NEW_SESSION_CONFIG_OPTIONS: Final[list[dict[str, Any]]] = [
         "name": "Thinking",
         "description": (
             "How much the model reasons before it answers. "
+            "Auto lets the model decide. "
             "More thinking takes longer and costs more."
         ),
         "category": "mode",
         "type": "select",
-        "currentValue": "off",
+        "currentValue": "auto",
         "options": [
+            {"value": "auto", "name": "Thinking auto"},
             {"value": "off", "name": "Thinking off"},
             {"value": "low", "name": "Thinking low"},
             {"value": "medium", "name": "Thinking medium"},

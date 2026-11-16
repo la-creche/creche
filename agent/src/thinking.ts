@@ -5,20 +5,41 @@
 // It widens no tool and no grant.
 //
 //   set_config_option ──► ThinkingLevels.set(id, level)
-//   render            ──► useModel(spec, { thinkingLevel: levels.of(id) })
+//   render            ──► useModel(spec, { thinkingLevel: piLevelOf(levels.of(id)) })
 //
-// `off` is the default. pi sends no `reasoning_effort` for `off`, so a
-// session that never sets a level calls the model as before.
+// `auto` is the default: pi sends no `reasoning_effort`, so the model
+// decides, and a session that never sets a level calls the model as
+// before. `off` sends `reasoning_effort: "none"`, which turns the
+// reasoning of the model off (`src/litellm.ts`).
 
 import type { ThinkingLevel } from "@flue/runtime";
 
 /** The levels a client can choose, in the order a picker shows them. */
-export const THINKING_CHOICES = ["off", "low", "medium", "high"] as const satisfies readonly ThinkingLevel[];
+export const THINKING_CHOICES = ["auto", "off", "low", "medium", "high"] as const;
 
 export type ThinkingChoice = (typeof THINKING_CHOICES)[number];
 
 /** The level of a session that never set one. */
-export const DEFAULT_THINKING: ThinkingChoice = "off";
+export const DEFAULT_THINKING: ThinkingChoice = "auto";
+
+/**
+ * The pi level of each choice. pi sends no `reasoning_effort` for its
+ * `off`, so `auto` is pi's `off`. pi has no level that sends `none`, so
+ * `off` is pi's `minimal`, and the provider maps `minimal` to `none`
+ * (`THINKING_LEVEL_MAP` of `src/litellm.ts`). No choice sends `minimal`.
+ */
+const PI_LEVELS: Readonly<Record<ThinkingChoice, ThinkingLevel>> = {
+  auto: "off",
+  off: "minimal",
+  low: "low",
+  medium: "medium",
+  high: "high",
+};
+
+/** The pi level that `useModel` takes for `choice`. */
+export function piLevelOf(choice: ThinkingChoice): ThinkingLevel {
+  return PI_LEVELS[choice];
+}
 
 /** True when `value` is one of `THINKING_CHOICES`. */
 export function isThinkingChoice(value: unknown): value is ThinkingChoice {

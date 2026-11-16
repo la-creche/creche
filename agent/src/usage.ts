@@ -2,7 +2,7 @@
 // `session/load` reads it back from `flue.db`.
 //
 //   Flue `turn` event ──► ContextTokens.see ──► the last count of the instance
-//   response start    ──► { thinkingLevel }   the level of this response
+//   response start    ──► { thinkingChoice }  the level of this response
 //   response finish   ──► { contextTokens }   the tokens of its last model call
 //
 // The context fill is the size of the last model call of the agent: its
@@ -17,8 +17,12 @@ import type { FlueEvent, PromptUsage } from "@flue/runtime";
 /** The metadata key of the context tokens of a response. */
 export const CONTEXT_TOKENS_KEY = "contextTokens";
 
-/** The metadata key of the thinking level of a response. */
-export const THINKING_LEVEL_KEY = "thinkingLevel";
+/**
+ * The metadata key of the thinking level of a response. The first release
+ * wrote `thinkingLevel`, whose `off` meant what `auto` means now, so the
+ * facade reads only this key and an old session gets the default.
+ */
+export const THINKING_LEVEL_KEY = "thinkingChoice";
 
 /** The tokens in context after a model call, as Flue's compaction counts them. */
 export function contextTokensOf(usage: PromptUsage): number {
