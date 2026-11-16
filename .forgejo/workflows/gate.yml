@@ -11,10 +11,17 @@
 #   2. Actions: each action of another repository is a full URL, pinned by
 #      commit. The local actions live under .forgejo/actions.
 #   3. Runner labels: a job that needs Docker, systemd as process 1 and
-#      passwordless sudo runs on `vm-plain`. A job that needs /dev/kvm runs
+#      passwordless sudo runs on `vm-plain`. So does `memory`, whose tests
+#      need a process 1 that reaps orphans. A job that needs /dev/kvm runs
 #      on `vm-kvm`. Every other job runs on `ubuntu-24.04`, a container
 #      with no Docker socket, no systemd and no KVM.
-#   4. No `permissions` key: Forgejo ignores it, and each job token can
+#   4. Shard numbers: Forgejo sets no `strategy.job-index` and no
+#      `strategy.job-total`. The shard command reads K from the matrix and
+#      N from its env.
+#   5. rustup: the Docker runner image has no rustup and no cargo. The
+#      jobs that run cargo first run .forgejo/actions/rustup, which does
+#      nothing on a runner that has rustup.
+#   6. No `permissions` key: Forgejo ignores it, and each job token can
 #      write its own repository.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
@@ -23,6 +30,7 @@
 #           ├── proc        code   the process-level suite
 #           ├── suites      code   the old suite of integration/
 #           ├── memory      code   the memory package, in its own venv
+#           │                      (vm-plain)
 #           ├── playpen-image
 #           │              code   each flavor image (vm-plain)
 #           ├── rust        code   cargo fmt, clippy and test of rust/
@@ -98,8 +106,10 @@ jobs:
       # A red shard does not stop the others: one run shows every failure.
       fail-fast: false
       matrix:
-        # Labels, and their count is N. The run line reads the job's index
-        # and the job total, so no edit here can leave a shard out.
+        # The numbers 1..N. Forgejo sets no `strategy.job-index` and no
+        # `strategy.job-total`, so the run line reads K from the matrix and
+        # N from TOTAL. bin/tests/test_forgejo_gate_workflow.py holds the
+        # list to 1..N and TOTAL to N, so no edit here can leave a shard out.
         shard: [1, 2, 3, 4]
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -113,10 +123,10 @@ jobs:
       # one of them ends up holding the slow tests while the other idles.
       # An idle worker that takes from the busy one's queue cut the
       # slowest of six shards from 153 s to 121 s.
-      - run: uv run pytest -n auto --dist worksteal --shard "$((INDEX + 1))/$TOTAL"
+      - run: uv run pytest -n auto --dist worksteal --shard "$SHARD/$TOTAL"
         env:
-          INDEX: ${{ strategy.job-index }}
-          TOTAL: ${{ strategy.job-total }}
+          SHARD: ${{ matrix.shard }}
+          TOTAL: "4"
 
   # The agent module (agent/AGENTS.md). TypeScript, so the Python gate never
   # runs its suite. pnpm's version is agent/package.json's packageManager
@@ -198,6 +208,10 @@ jobs:
           fetch-depth: 0
 
       - uses: ./.forgejo/actions/uv-sync
+
+      # The suite builds the Rust chaperone with the cargo on PATH, and the
+      # Docker runner has none (.forgejo/actions/rustup).
+      - uses: ./.forgejo/actions/rustup
 
       # The Rust chaperone of the row `chaperone-rs`: the binary that the
       # suite builds from the commit of integration/proc/chaperone.pin
@@ -299,7 +313,11 @@ jobs:
   memory:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-24.04
+    # `vm-plain`: the stop tests hold that no process of the service's group
+    # is left after its exit. That needs a process 1 that reaps orphans, as
+    # systemd does. On the container runner five of them failed: the group
+    # stayed after the exit.
+    runs-on: vm-plain
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -339,8 +357,8 @@ jobs:
       - run: playpen/bin/playpen-ci
 
   # The Cargo workspace under rust/ (rust/Cargo.toml): the format check,
-  # the lint gate and the tests. The runner has rustup, so no action
-  # installs the toolchain. `rustup toolchain install` with no name installs
+  # the lint gate and the tests. The local action rustup installs rustup
+  # when the runner has none. `rustup toolchain install` with no name installs
   # what rust/rust-toolchain.toml names, with rustfmt and clippy.
   #
   # `--locked`: a build that would change rust/Cargo.lock fails.
@@ -360,6 +378,9 @@ jobs:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      # The Docker runner has no rustup (.forgejo/actions/rustup).
+      - uses: ./.forgejo/actions/rustup
 
       - name: toolchain
         working-directory: rust
@@ -574,6 +595,11 @@ jobs:
         with:
           enable-cache: false
           python-version: "3.14"
+
+      # bin/build-artifacts.sh runs rustup, and the Docker runner has none
+      # (.forgejo/actions/rustup).
+      - uses: ./.forgejo/actions/rustup
+        if: needs.scope.outputs.vmm != 'false'
 
       # musl-gcc for the C of ring under CH (plan risk 13). The `artifacts`
       # job of release.yml holds the same step.

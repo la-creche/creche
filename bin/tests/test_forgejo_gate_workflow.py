@@ -18,12 +18,20 @@ result with the Forgejo job. A difference that is not in this list fails.
    action lives under `.forgejo/actions`.
 3. **Runner labels.** The Docker runner gives a job no Docker socket, no
    systemd as process 1 and no /dev/kvm. A job that needs Docker or
-   systemd runs on `vm-plain`. The job that needs KVM runs on `vm-kvm`.
+   systemd runs on `vm-plain`. So does `memory`: its stop tests need a
+   process 1 that reaps orphans. The job that needs KVM runs on `vm-kvm`.
 4. **Artifact actions.** Upstream upload-artifact and download-artifact v4
    and later refuse a server that is not GitHub. The gate uses neither, and
    a test holds that. A port of one must name the Forgejo action and add
    its own line to this list.
-5. **File keys.** No `permissions` key. Forgejo ignores it, and a job token
+5. **Shard numbers.** Forgejo sets no `strategy.job-index` and no
+   `strategy.job-total`. Its shard command reads K from `matrix.shard` and
+   N from the step's `TOTAL`. A test holds the matrix to 1..N and `TOTAL`
+   to N, so a shard cannot fall out.
+6. **rustup.** The image of the Docker runner has no rustup and no cargo.
+   Each job that runs cargo first runs `.forgejo/actions/rustup`, at a
+   stated place. That action does nothing on a runner with rustup.
+7. **File keys.** No `permissions` key. Forgejo ignores it, and a job token
    can write its own repository, so the key would claim a limit that does
    not hold.
 
@@ -37,6 +45,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +82,7 @@ REQUIRED_CONTEXT = "gate / gate (pull_request)"
 FORGEJO_FILE_KEYS = {"name", True, "concurrency", "jobs"}
 
 #: The local actions that the gate uses, by their name.
-LOCAL_ACTIONS = ["scope", "uv-sync", "verdict"]
+LOCAL_ACTIONS = ["scope", "uv-sync", "verdict", "rustup"]
 GITHUB_LOCAL = "./.github/actions/"
 FORGEJO_LOCAL = "./.forgejo/actions/"
 
@@ -85,7 +94,12 @@ ACTION_HOST = "https://github.com/"
 DOCKER_LABEL = "ubuntu-24.04"
 VM_PLAIN = "vm-plain"
 VM_KVM = "vm-kvm"
-VM_LABELS = {"playpen-image": VM_PLAIN, "systemd-proof": VM_PLAIN, "kvm": VM_KVM}
+VM_LABELS = {
+    "memory": VM_PLAIN,
+    "playpen-image": VM_PLAIN,
+    "systemd-proof": VM_PLAIN,
+    "kvm": VM_KVM,
+}
 
 #: The GitHub actions that refuse a server that is not GitHub (difference 4).
 ARTIFACT_ACTIONS = ("actions/upload-artifact@", "actions/download-artifact@")
@@ -108,6 +122,28 @@ SCOPE_BASE = (
     'base="$GROUP_BASE"\nif [[ -z "$base" ]]; then\n'
     '  base="$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" || base=""\nfi\n',
     'base="$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" || base=""\n',
+)
+
+#: The step that installs rustup (difference 6), and where each job that
+#: runs cargo has it: the index in the steps of the job, and its `if`.
+RUSTUP = "./.forgejo/actions/rustup"
+ONLY_VMM = "needs.scope.outputs.vmm != 'false'"
+RUSTUP_STEPS: dict[str, tuple[int, dict[str, str]]] = {
+    "proc": (2, {"uses": RUSTUP}),
+    "rust": (1, {"uses": RUSTUP}),
+    "vmm-archive": (2, {"uses": RUSTUP, "if": ONLY_VMM}),
+}
+
+#: The job of the shards, and the shard command of each gate with its env
+#: (difference 5).
+SHARD_JOB = "tests"
+SHARD_RUN = (
+    'uv run pytest -n auto --dist worksteal --shard "$((INDEX + 1))/$TOTAL"',
+    'uv run pytest -n auto --dist worksteal --shard "$SHARD/$TOTAL"',
+)
+SHARD_ENV = (
+    {"INDEX": "${{ strategy.job-index }}", "TOTAL": "${{ strategy.job-total }}"},
+    {"SHARD": "${{ matrix.shard }}", "TOTAL": "<N>"},
 )
 
 #: An action of another repository in a Forgejo file: a full URL, a commit,
@@ -153,6 +189,15 @@ def _port_job(name: str, job: dict[str, Any]) -> dict[str, Any]:
         (step,) = [one for one in port["steps"] if one.get("name") == FROZEN_STEP]
         del step["env"][GROUP_BASE]
         step["run"] = _replaced(step["run"], FROZEN_BASE)
+    if name in RUSTUP_STEPS:
+        index, step = RUSTUP_STEPS[name]
+        port["steps"].insert(index, step)
+    if name == SHARD_JOB:
+        (step,) = [one for one in port["steps"] if "run" in one]
+        assert (step["run"], step["env"]) == (SHARD_RUN[0], SHARD_ENV[0])
+        total = str(len(port["strategy"]["matrix"]["shard"]))
+        step["run"] = SHARD_RUN[1]
+        step["env"] = {**SHARD_ENV[1], "TOTAL": total}
 
     return port
 
@@ -178,6 +223,17 @@ def test_each_job_equals_its_github_job_but_for_the_stated_differences(name: str
     same test commands. Only the differences of the module docstring may
     change a job."""
     assert FORGEJO_JOBS[name] == _port_job(name, GITHUB_JOBS[name])
+
+
+def test_the_shards_are_one_to_n_of_n() -> None:
+    """K comes from the matrix and N from TOTAL. A list that skips a number,
+    or a TOTAL that is not its length, would leave a share of the suite in
+    no shard."""
+    shards = FORGEJO_JOBS[SHARD_JOB]["strategy"]["matrix"]["shard"]
+    (step,) = [one for one in FORGEJO_JOBS[SHARD_JOB]["steps"] if "run" in one]
+
+    assert shards == list(range(1, len(shards) + 1))
+    assert step["env"]["TOTAL"] == str(len(shards))
 
 
 def test_the_forgejo_gate_runs_on_a_pull_request_only() -> None:
@@ -237,3 +293,34 @@ def test_the_scope_action_reads_no_merge_group() -> None:
     step["run"] = _replaced(step["run"], SCOPE_BASE)
 
     assert _action(FORGEJO_DIR, "scope") == port
+
+
+def test_the_rustup_action_installs_nothing_on_a_runner_with_rustup(tmp_path: Path) -> None:
+    """The hosted runner and the runner VMs have rustup. There the action must
+    not download a second one: a `curl` that fails proves no download ran."""
+    (step,) = _action(FORGEJO_DIR, "rustup")["runs"]["steps"]
+    for tool in ("rustup", "curl"):
+        stub = tmp_path / tool
+        stub.write_text(f"#!/bin/sh\nexit {0 if tool == 'rustup' else 1}\n", encoding="utf-8")
+        stub.chmod(0o755)
+
+    done = subprocess.run(
+        ["bash", "-c", step["run"]],
+        env={"PATH": f"{tmp_path}:/usr/bin:/bin", "RUSTUP_DIR": str(tmp_path / "dir")},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert "nothing to install" in done.stdout
+    assert not (tmp_path / "dir").exists()
+
+
+def test_the_rustup_action_pins_the_program_by_its_digest() -> None:
+    (step,) = _action(FORGEJO_DIR, "rustup")["runs"]["steps"]
+
+    assert re.fullmatch(r"\d+\.\d+\.\d+", step["env"]["RUSTUP_VERSION"])
+    assert re.fullmatch(r"[0-9a-f]{64}", step["env"]["RUSTUP_SHA256"])
+    assert 'if [[ "$found" != "$RUSTUP_SHA256" ]]; then' in step["run"]
+    assert step["run"].index("$RUSTUP_SHA256") < step["run"].index('"$init" -y')
