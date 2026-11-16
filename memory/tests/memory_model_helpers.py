@@ -195,7 +195,8 @@ def fake_model(answer: Answer) -> Generator[str]:
 #: against the model server at `sys.argv[2]`. It prints the count of failed
 #: items, or the type of the error and the cause that Cognee recorded. Then
 #: it prints the notes that the search of the service finds, and the most
-#: fragments that one table of the vector store holds.
+#: fragments that one table of the vector store holds. With a time between
+#: compactions in `sys.argv[3]`, it prints whether the sync compacted.
 _INGEST = """
 import asyncio, sys
 import lance
@@ -212,12 +213,28 @@ from tenacity import stop_after_attempt
 from cognee.infrastructure.llm.structured_output_framework.litellm_native.native_adapter import (
     NativeLiteLLMAdapter,
 )
+from cognee.infrastructure.databases.vector import compact_vector_store as compaction
+from creche_memory import sync
 from creche_memory.cognee_search import cognee_backend, cognee_paths
 from creche_memory.sync import cognee_ingest, ingest_folders
 
 # Cognee tries a failed extraction again for at least 240 s. One try is
 # enough here: the fake model gives the same answer each time.
 NativeLiteLLMAdapter.acreate_structured_output.retry.stop = stop_after_attempt(1)
+
+# With a time between compactions, count the passes of the sync. Cognee's
+# own pass after a completed run does not count: it holds its own import.
+passes = 0
+if len(sys.argv) > 3:
+    sync.COMPACT_EVERY_S = float(sys.argv[3])
+    compact = compaction.compact_vector_store
+
+    async def counted():
+        global passes
+        passes += 1
+        return await compact()
+
+    compaction.compact_vector_store = counted
 
 async def main():
     vault = root / "vault"
@@ -232,6 +249,8 @@ async def main():
     tables = (root / "store").glob("system/databases/*.lancedb/*.lance")
     fragments = [len(lance.dataset(table).get_fragments()) for table in tables]
     print("fragments:", max(fragments, default=0), flush=True)
+    if len(sys.argv) > 3:
+        print("compactions:", "some" if passes else "none", flush=True)
 
 asyncio.run(main())
 """
@@ -254,14 +273,18 @@ def cache_tokenizer(cache: Path) -> None:
     tokenizer.save(str(snapshot / "tokenizer.json"))  # pyright: ignore[reportUnknownMemberType]
 
 
-def ingest_through_cognee(root: Path, answer: Answer) -> list[str]:
+def ingest_through_cognee(
+    root: Path, answer: Answer, compact_every_s: float | None = None
+) -> list[str]:
     """The lines that `_INGEST` prints, for the vault and the store under
-    `root`, with a model that answers as `answer` says."""
+    `root`, with a model that answers as `answer` says. `compact_every_s`
+    replaces the time between compactions during the sync."""
     cache_tokenizer(root / "hf")
     env = {**os.environ, "NO_COLOR": "1", "HOME": str(root)}
     with fake_model(answer) as url:
         done = subprocess.run(
-            [sys.executable, "-c", _INGEST, str(root), url],
+            [sys.executable, "-c", _INGEST, str(root), url]
+            + ([] if compact_every_s is None else [str(compact_every_s)]),
             env=env,
             capture_output=True,
             text=True,
@@ -271,6 +294,6 @@ def ingest_through_cognee(root: Path, answer: Answer) -> list[str]:
 
     assert done.returncode == 0, done.stderr[-3000:]
 
-    marks = ("failed:", "raised:", "found:", "fragments:")
+    marks = ("failed:", "raised:", "found:", "fragments:", "compactions:")
 
     return [line for line in done.stdout.splitlines() if line.startswith(marks)]

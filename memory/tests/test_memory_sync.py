@@ -400,6 +400,21 @@ def test_a_sync_through_cognee_counts_the_note_that_fits_no_schema(tmp_path: Pat
     ]
 
 
+def test_a_sync_through_cognee_compacts_the_store_during_the_run(tmp_path: Path) -> None:
+    notes = tmp_path / "vault" / "notes"
+    notes.mkdir(parents=True)
+    for n in range(4):
+        (notes / f"{n}.md").write_text(f"# Note {n}\n\nAlpha talks to beta {n}.\n")
+
+    # A pass every 0.2 s runs beside the upserts, and the run completes.
+    assert ingest_through_cognee(tmp_path, Answer.FIT, compact_every_s=0.2) == [
+        "failed: 0",
+        "found: notes/0.md,notes/1.md,notes/2.md,notes/3.md",
+        "fragments: 1",
+        "compactions: some",
+    ]
+
+
 @pytest.mark.parametrize(
     ("answer", "cause"),
     [(Answer.AUTH, "AuthenticationError"), (Answer.BUDGET, "LLMPaymentRequiredError")],
