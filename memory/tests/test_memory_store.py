@@ -31,6 +31,9 @@ configure(StoreSettings(
 from cognee.base_config import get_base_config
 from cognee.infrastructure.databases.vector.embeddings.config import get_embedding_config
 from cognee.infrastructure.llm.config import get_llm_config
+from cognee.infrastructure.llm.structured_output_framework.litellm_native.native_adapter import (
+    _supports_native_schema,
+)
 
 base, llm, embed = get_base_config(), get_llm_config(), get_embedding_config()
 print(json.dumps({
@@ -43,6 +46,7 @@ print(json.dumps({
     "llm_args": llm.llm_args,
     "rate": [llm.llm_rate_limit_enabled, llm.llm_rate_limit_requests],
     "embedding": [embed.embedding_model, embed.embedding_endpoint, embed.embedding_dimensions],
+    "schema": _supports_native_schema(llm.llm_model),
 }))
 """
 
@@ -78,6 +82,9 @@ def test_cognee_reads_each_setting(tmp_path: Path) -> None:
     assert seen["llm_endpoint"] == "http://llm.test:4000/v1"
     assert seen["llm_key"] is True
     assert seen["llm_args"] == store.LLM_ARGS
+    # Cognee's adapter sends the schema as `response_format`, so the
+    # provider holds the model to each required field.
+    assert seen["schema"] is True
     assert seen["rate"] == [True, store.LLM_REQUESTS_PER_MINUTE]
     assert seen["embedding"] == [
         store.EMBEDDING_MODEL,

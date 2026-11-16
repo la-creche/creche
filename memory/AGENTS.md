@@ -112,6 +112,16 @@ after it reads `json`, or `null` when the type refuses `json`.
    requests per minute. The model provider limits every family on one
    account.
 5. The LiteLLM key is in no repr and on no command line.
+6. `configure` adds a row for `openai/fast` to LiteLLM's model table: the
+   model takes a JSON schema (`LLM_MODEL_INFO`). `fast` is an alias of the
+   LiteLLM proxy, and the table of the library does not hold it. Without
+   the row, Cognee asks for a plain JSON object and puts the schema in the
+   prompt only. On 2026-11-15 one chunk of
+   `docs/creche/docs/design/cloud-hypervisor-playpen.md` lost
+   `relationship_name` on 2 edges in each of 3 tries, in every sync. That
+   failed every sync, so search stayed `not_ready`. With the row, Cognee
+   sends the schema as `response_format`, and the provider holds the model
+   to it.
 
 ## The component
 

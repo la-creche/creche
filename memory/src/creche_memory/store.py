@@ -22,6 +22,17 @@ LLM_RATE_INTERVAL_S = 60
 #: extraction.
 LLM_ARGS = {"reasoning_effort": "none"}
 
+#: What LiteLLM's model table needs to know of `LLM_MODEL`. `fast` is an
+#: alias of the LiteLLM proxy, so the table of the library does not hold
+#: it. Without the row, Cognee's adapter asks for a plain JSON object and
+#: puts the schema in the prompt only, and nothing makes the model keep
+#: each required field. On 2026-11-15 one chunk of a dense note lost
+#: `relationship_name` on 2 edges in each of 3 tries, in every sync, and
+#: that failed the whole sync. With the row, Cognee sends the schema as
+#: `response_format`, and the provider holds the model to it. Behind the
+#: alias is DeepSeek V4.1 Flash on Fireworks, which takes a JSON schema.
+LLM_MODEL_INFO = {"litellm_provider": "openai", "mode": "chat", "supports_response_schema": True}
+
 #: The model that the embedding server serves, its size and its input limit.
 EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
 EMBEDDING_DIMENSIONS = 768
@@ -101,9 +112,14 @@ def cognee_env(settings: StoreSettings) -> dict[str, str]:
 
 
 def configure(settings: StoreSettings) -> None:
-    """Set the env of `settings` for Cognee. Call it before the first import
-    of Cognee: a later call would change nothing that Cognee reads."""
+    """Set the env of `settings` for Cognee, and the row of `LLM_MODEL` in
+    LiteLLM's model table. Call it before the first import of Cognee: a
+    later call would change nothing that Cognee reads."""
     if "cognee" in sys.modules:
         raise RuntimeError("cognee is imported already, so its settings are fixed")
 
     os.environ.update(cognee_env(settings))
+
+    import litellm
+
+    litellm.register_model({LLM_MODEL: LLM_MODEL_INFO})
