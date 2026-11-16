@@ -43,6 +43,37 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
+def _text(field: str | list[list[Any]] | None) -> str | None:
+    """A text of `tag-message.json`: a string, null, or a recipe of pairs
+    `[piece, count]` (the key `texts` of that file)."""
+    if field is None or isinstance(field, str):
+        return field
+
+    return "".join(str(piece) * int(count) for piece, count in field)
+
+
+#: The shared word of each refusal (`rust/crates/ci-signer/AGENTS.md`,
+#: "Vectors"). The map is closed: a new word fails the lookup.
+REASONS: dict[str, StatementReason] = {
+    "too_large": StatementReason.TOO_LARGE,
+    "suffix": StatementReason.SUFFIX,
+    "lines": StatementReason.LINES,
+    "header": StatementReason.HEADER,
+    "base64": StatementReason.BASE64,
+    "statement_size": StatementReason.STATEMENT_SIZE,
+    "bundle_size": StatementReason.BUNDLE_SIZE,
+    "not_json": StatementReason.NOT_JSON,
+    "field": StatementReason.FIELD,
+    "not_canonical": StatementReason.NOT_CANONICAL,
+}
+
+
+def _refused(refusal: Refusal, case: dict[str, Any]) -> None:
+    """A refusal has the code P1 and the reason of the vector."""
+    assert refusal.code is RefusalCode.P1, case["note"]
+    assert refusal.detail == REASONS[case["reason"]].value, case["note"]
+
+
 def test_every_tag_message_vector_has_its_verdict() -> None:
     """Each `TagMessage` vector gives the verdict of the signer crate.
 
@@ -53,21 +84,23 @@ def test_every_tag_message_vector_has_its_verdict() -> None:
     the same verdict.
     """
     cases = _cases("tag-message.json", "TagMessage")
-    assert len(cases) == 18
+    assert len(cases) == 24
 
     for case in cases:
-        message = case["message"] + ("\n" if case["source"] == "tags_api" else "")
+        text = _text(case["message"])
+        assert text is not None, case["note"]
+        message = text + ("\n" if case["source"] == "tags_api" else "")
         try:
             decoded = decode_message(COMPONENT, message)
         except Refusal as refusal:
-            assert refusal.code is RefusalCode.P1
             assert case["statement_b64"] is None, case["note"]
+            _refused(refusal, case)
             continue
 
-        assert case["statement_b64"] is not None, case["note"]
+        assert "reason" not in case, case["note"]
         assert (_b64(decoded.statement), _b64(decoded.bundle)) == (
-            case["statement_b64"],
-            case["bundle_b64"],
+            _text(case["statement_b64"]),
+            _text(case["bundle_b64"]),
         ), case["note"]
 
 
@@ -77,7 +110,7 @@ def test_every_statement_vector_has_its_verdict(tmp_path: Path) -> None:
     verifier child passes, and then through `read_statement`. A pass gives
     the canonical bytes of the vector."""
     cases = _cases("statement.json", "Statement")
-    assert len(cases) == 28
+    assert len(cases) == 34
 
     for number, case in enumerate(cases):
         message = UnverifiedMessage(statement=case["json"].encode("utf-8"), bundle=b"{}")
@@ -87,10 +120,11 @@ def test_every_statement_vector_has_its_verdict(tmp_path: Path) -> None:
         try:
             statement = read_statement(signed)
         except Refusal as refusal:
-            assert refusal.code is RefusalCode.P1
             assert case["written"] is None, case["note"]
+            _refused(refusal, case)
             continue
 
+        assert "reason" not in case, case["note"]
         assert canonical_bytes(statement).decode("ascii") == case["written"], case["note"]
 
 
@@ -193,8 +227,9 @@ def test_the_worst_message_fits_the_cap() -> None:
     ],
 )
 def test_signed_at_follows_the_signer(tmp_path: Path, signed_at: str, verdict: bool) -> None:
-    """The cases of `signed_at.rs`. The vectors hold no second 60 and no
-    year 0000, so this test holds the arithmetic of the Rust reader."""
+    """The cases of `signed_at.rs`. The vectors hold the edges of
+    `signed_at`. This test also holds the leap years, the month 13 and the
+    hour 24 of the Rust reader."""
     first = _cases("statement.json", "Statement")[0]["json"]
     text = first.replace("2026-11-15T12:00:00Z", signed_at)
     message = UnverifiedMessage(statement=text.encode("utf-8"), bundle=b"{}")

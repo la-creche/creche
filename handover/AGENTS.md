@@ -844,7 +844,10 @@ forge_provenance.py    the rules P1 to P6 and the chain
    `rust/crates/ci-signer`. That crate is the authority. Its vectors, its
    schema and its limits drive `tests/test_handover_frp_vectors.py`. Change
    a constant or a pattern of `release_statement.py` only with the same
-   change in the crate.
+   change in the crate. Each refused vector names its reason. The map
+   `REASONS` of that test gives each word its `StatementReason`. So the
+   checks of `decode_message` and `read_statement` keep the order of the
+   crate.
 7. Root reads the message only from the git tag object of P2, which adds
    one LF. `decode_message` does not parse the statement.
 8. `check_signature` writes the statement and the bundle into
