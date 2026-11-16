@@ -1,7 +1,12 @@
-//! The service VMs of the vmm (browser design 10.4 gaps 1 and 2). A
-//! service VM boots a root disk of `ServiceImage`, not a flavor. It has no
-//! family, no row and no facade of a family. The browser VM is the one
-//! service VM: Chrome and agent-browser, for the MCP upstream `browser`.
+//! The service VMs of the vmm (browser design 10.4 gaps 1 and 2, the
+//! attachments design note). A service VM boots a root disk of
+//! `ServiceImage`, not a flavor. It has no family, no row and no facade
+//! of a family. There are two service VMs:
+//!
+//! 1. The browser VM runs Chrome and agent-browser for the MCP upstream
+//!    `browser`.
+//! 2. The scanner VM checks and rebuilds each file that a door client
+//!    attaches to a prompt. It has no egress.
 //!
 //! ```text
 //! chaperone ─stdio─ browser-relay (uid mcp-browser)
@@ -10,6 +15,11 @@
 //!                      vmm ── `link` ── guest port 1201 ── browser facade
 //!                       │                                   "mcp" line
 //!                       └─ host port 1104: public names, port 443 only
+//!
+//! attendance ── VMM_SCANNER_SOCKET ──► vmm ── `link` ── guest port 1201
+//!                                       │      ── scanner facade
+//!                                       │         "scan" line
+//!                                       └─ no host port
 //! ```
 //!
 //! 1. The VM of a service image runs in the VM table of `ColdBoot`, with
@@ -19,10 +29,13 @@
 //!    it to sleep, and the shutdown stops it.
 //! 2. The create route refuses `vm_id` with `conflict`, so no row ever
 //!    names it. An Upgrade and a drop then find no row of it.
-//! 3. Each start makes a new session disk, and the guest keeps the
-//!    browser profile on its tmpfs. So nothing of one VM start reaches the
-//!    next one (decision V4).
-//! 4. `link` serves the socket of `VMM_BROWSER_SOCKET` (decision V1).
+//! 3. Each start makes a new session disk, and the guest keeps its state
+//!    on its tmpfs. So nothing of one VM start reaches the next one
+//!    (decision V4).
+//! 4. `link` serves the socket of `VMM_BROWSER_SOCKET` (decision V1) and
+//!    the socket of `VMM_SCANNER_SOCKET`.
+//! 5. `egress` gives the host listener of each image: the egress proxy
+//!    for the browser, and none for the scanner.
 
 pub mod link;
 
@@ -42,6 +55,27 @@ const BROWSER_CPUS: u64 = 2;
 
 /// The guest RAM of the browser VM, in MiB. Chrome with a few tabs fits.
 const BROWSER_MEMORY_MIB: u64 = 2048;
+
+/// The reserved session id of the scanner VM, in the scheme of
+/// `BROWSER_ID`: version digit 0, and the next number.
+const SCANNER_ID: &str = "00000000-0000-0000-0000-000000000002";
+
+/// The vCPUs of the scanner VM (attachments design note, section 5).
+const SCANNER_CPUS: u64 = 2;
+
+/// The guest RAM of the scanner VM, in MiB (attachments design note,
+/// section 5).
+const SCANNER_MEMORY_MIB: u64 = 3072;
+
+/// The host listener of a service VM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Egress {
+    /// The egress proxy on host port 1104, with the rule
+    /// `rule::decide_public` (browser design 10.2 item 4).
+    Public,
+    /// No host listener. The deny check holds the bound set empty.
+    Closed,
+}
 
 /// The owner of a VM: the family of its session, or its service image.
 /// A line of the egress log names it as `"family": <name>` or
@@ -84,6 +118,7 @@ impl std::error::Error for ServiceError {}
 pub fn vm_id(image: ServiceImage) -> Result<SessionId, ServiceError> {
     let text = match image {
         ServiceImage::Browser => BROWSER_ID,
+        ServiceImage::Scanner => SCANNER_ID,
     };
     text.parse()
         .map_err(|error| ServiceError(format!("the id of {}: {error:?}", image.name())))
@@ -92,7 +127,17 @@ pub fn vm_id(image: ServiceImage) -> Result<SessionId, ServiceError> {
 /// Whether `id` is the reserved session id of a service VM.
 #[must_use]
 pub fn is_reserved(id: &SessionId) -> bool {
-    [BROWSER_ID].contains(&id.as_str())
+    [BROWSER_ID, SCANNER_ID].contains(&id.as_str())
+}
+
+/// The host listener of the VM of `image`. The scanner VM gets none: the
+/// attachments design note gives it no network device and no egress rule.
+#[must_use]
+pub const fn egress(image: ServiceImage) -> Egress {
+    match image {
+        ServiceImage::Browser => Egress::Public,
+        ServiceImage::Scanner => Egress::Closed,
+    }
 }
 
 /// The vCPUs and the guest RAM of the VM of `image`.
@@ -104,6 +149,7 @@ pub fn is_reserved(id: &SessionId) -> bool {
 pub fn limits(image: ServiceImage) -> Result<VmLimits, ServiceError> {
     let (cpus, memory) = match image {
         ServiceImage::Browser => (BROWSER_CPUS, BROWSER_MEMORY_MIB),
+        ServiceImage::Scanner => (SCANNER_CPUS, SCANNER_MEMORY_MIB),
     };
     let size = |error| ServiceError(format!("the size of {}: {error}", image.name()));
     let cpus = FamilyCpus::try_from(cpus).map_err(|error| size(error.to_string()))?;
@@ -115,21 +161,36 @@ pub fn limits(image: ServiceImage) -> Result<VmLimits, ServiceError> {
 mod tests {
     use creche_wire::{PerService, ServiceImage};
 
-    use super::{Owner, is_reserved, limits, vm_id};
+    use super::{Egress, Owner, egress, is_reserved, limits, vm_id};
 
     /// Each service image has an id that reads, is reserved and is no id
-    /// of version 4, and sizes that fit a VM shape.
+    /// of version 4, and sizes that fit a VM shape. No two images share
+    /// an id.
     #[test]
     fn each_image_has_a_reserved_id_and_its_sizes() {
+        let mut ids = Vec::new();
         for (image, ()) in PerService::every(|_| ()).iter() {
             let id = vm_id(image).unwrap();
             assert!(is_reserved(&id));
             assert_eq!(id.as_str().as_bytes()[14], b'0');
+            assert!(!ids.contains(&id), "{}", image.name());
+            ids.push(id);
             limits(image).unwrap();
         }
         let browser = limits(ServiceImage::Browser).unwrap();
         assert_eq!(browser.vcpus(), 2);
         assert_eq!(browser.guest_ram_mib(), 2048);
+        let scanner = limits(ServiceImage::Scanner).unwrap();
+        assert_eq!(scanner.vcpus(), 2);
+        assert_eq!(scanner.guest_ram_mib(), 3072);
+    }
+
+    /// The browser VM gets the egress proxy, and the scanner VM gets no
+    /// host listener (attachments design note, section 5).
+    #[test]
+    fn only_the_browser_has_egress() {
+        assert_eq!(egress(ServiceImage::Browser), Egress::Public);
+        assert_eq!(egress(ServiceImage::Scanner), Egress::Closed);
     }
 
     #[test]
@@ -151,5 +212,7 @@ mod tests {
             serde_json::to_value(service).unwrap(),
             serde_json::json!({"service": "browser"})
         );
+        let scanner = Owner::Service(ServiceImage::Scanner);
+        assert_eq!(scanner.to_string(), "the scanner service");
     }
 }

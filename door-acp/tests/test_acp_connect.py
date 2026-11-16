@@ -9,7 +9,9 @@ import sys
 from pathlib import Path
 
 import pytest
-from agent_door_acp.connect import main
+from agent_door_acp import connect
+from agent_door_acp.connect import bridge, main
+from agent_door_acp.forward import MAX_QUEUED_FRAMES
 from websockets.asyncio.server import ServerConnection, serve
 
 KEY = "k" * 32
@@ -66,3 +68,23 @@ def test_a_group_readable_key_file_is_refused(
 
     assert main(["ws://127.0.0.1:1/acp/chat", "--key-file", str(key_file)]) == 2
     assert KEY not in capsys.readouterr().err
+
+
+async def test_the_bridge_holds_one_frame_of_the_door(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A frame of the door can be 16 MiB. The bridge holds one frame before
+    it stops its reads, not the default 16."""
+    asked: list[dict[str, object]] = []
+
+    async def refused(url: str, **kwargs: object) -> None:
+        asked.append(kwargs)
+        raise OSError("no door")
+
+    monkeypatch.setattr(connect, "connect", refused)
+    read_end, write_end = os.pipe()
+
+    with open(read_end, "rb") as stdin, open(os.devnull, "wb") as stdout:
+        code = await bridge("ws://127.0.0.1:1/acp/chat", KEY.encode("ascii"), stdin, stdout)
+
+    os.close(write_end)
+    assert code == 1
+    assert [one["max_queue"] for one in asked] == [MAX_QUEUED_FRAMES]

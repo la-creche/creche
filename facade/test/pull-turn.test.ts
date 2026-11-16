@@ -29,7 +29,7 @@ let refresh: Refresh;
 // Each test gets a session of its own: one VM's id, on the one Flue of the file.
 beforeEach(() => {
   id = randomUUID();
-  const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store, refresh: (one) => refresh(one), rewind: freshRewind() });
+  const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store, workspace: flue.workspace, refresh: (one) => refresh(one), rewind: freshRewind() });
   wire = new Wire(facadeApp(service));
 });
 
@@ -83,7 +83,7 @@ describe("the local link in a turn", () => {
     const link = new LocalLink(guest.path, FLUE_STOP_MS, () => undefined);
     link.open(NO_HANDLERS);
     await guest.peer();
-    const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link, store: flue.store, refresh: (one) => refresh(one), rewind: freshRewind() });
+    const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link, store: flue.store, workspace: flue.workspace, refresh: (one) => refresh(one), rewind: freshRewind() });
     wire = new Wire(facadeApp(service));
 
     return guest;

@@ -148,6 +148,12 @@ no level calls the model as before. `off` sends `reasoning_effort: "none"`,
 and LiteLLM passes it to the model, which then does not reason. `readKeySpend` reads the family key's
 spend and budget from LiteLLM's `GET /key/info` with the family key.
 
+Each alias takes text and image input (`docs/design/attachments.md`,
+section 2.6). The operator decided that each routed model takes images.
+pi sends an image only to a model that lists image input, so a removed
+`image` drops the images of the facade in silence.
+`test/litellm.test.ts` holds it.
+
 Each response keeps two values in its metadata (`src/usage.ts`):
 `thinkingChoice` at its start, and `contextTokens` at its finish.
 `contextTokens` is the size of the last agent call of the response, from

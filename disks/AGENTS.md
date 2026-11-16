@@ -11,7 +11,7 @@ applies here too.
 | File | What it is |
 |---|---|
 | `base.ext4.zst`, `python.ext4.zst`, `coding.ext4.zst` | The root disk of each flavor of `catalog.DISK_FLAVORS`, an ext4 file compressed with zstd. |
-| `browser.ext4.zst` | The root disk of each service image of `catalog.SERVICE_IMAGES`, in the same form. |
+| `browser.ext4.zst`, `scanner.ext4.zst` | The root disk of each service image of `catalog.SERVICE_IMAGES`, in the same form. |
 | `vmlinux-x86_64.zst` | The pinned guest kernel, compressed with zstd (CH7-3). |
 | `digests.json` | The SHA-256 of each other file after decompression (CH41 rule 1). |
 
@@ -31,7 +31,8 @@ applies here too.
    python and coding. Coding joined with the PR that added it to the enum,
    before the cut (CH76 rule 7, CH79 rule 1).
 5. The service images are the values of the wire enum `ServiceImage`:
-   browser (browser design 10.5.2). A service image is not a flavor. No
+   browser (browser design 10.5.2) and scanner (attachments design
+   note, section 5). A service image is not a flavor. No
    family file can choose one, so `SandboxFlavor` and contract 01 §3.9 do
    not change. The verify hook `vmm check-images` refuses a `digests.json`
    that has no entry for a service image. The vmm start and its follow
@@ -52,11 +53,12 @@ the job `disks` of `release.yml` runs it, from the repository root, with
 1. For each flavor of `FLAVORS`, then for each service image of
    `SERVICES`, it runs `playpen/bin/playpen-rootfs` and
    `playpen/bin/playpen-disk`. The target of the browser disk is
-   `service-browser`. Then it runs `playpen/bin/playpen-kernel`.
+   `service-browser`, and the target of the scanner disk is
+   `service-scanner`. Then it runs `playpen/bin/playpen-kernel`.
 2. It writes `digests.json` from the digest line of each of those
    scripts: `kernel`, one key for each flavor and one key for each service
    image, each `{file, sha256}`, keys sorted, one line (CH58 rule 4).
-3. It writes `SHA256SUMS`, the digest of each of the six files as it
+3. It writes `SHA256SUMS`, the digest of each of the seven files as it
    ships. The job hands it to the `sign` job.
 4. A step that fails before the last one leaves `DISK_OUT` empty.
 
@@ -95,3 +97,6 @@ no import runs while `vmm check-images` runs.
 3. The size of the browser disk, and the time that its check adds to
    `vmm check-images`. The browser design estimates about 400 MiB
    compressed. No build of the disk ran before this row named it.
+4. The size of the scanner disk, and the time that its check adds to
+   `vmm check-images`. The ClamAV signatures alone are about 300 MiB.
+   No build of the disk ran before this row named it.

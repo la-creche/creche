@@ -158,10 +158,17 @@ const INTERNAL_ERROR = -32603;
  *
  * `resume` says that the facade serves `session/resume`: the link joins the
  * session's live updates with no replay (`src/load.ts`).
+ *
+ * `promptCapabilities` says that a prompt may carry `image` and `resource`
+ * blocks: the files that attendance scanned (`src/attachments.ts`).
  */
 export const INITIALIZE_RESPONSE: InitializeResponse = {
   protocolVersion: PROTOCOL_VERSION,
-  agentCapabilities: { loadSession: true, sessionCapabilities: { list: {}, resume: {} } },
+  agentCapabilities: {
+    loadSession: true,
+    promptCapabilities: { image: true, embeddedContext: true },
+    sessionCapabilities: { list: {}, resume: {} },
+  },
   authMethods: [],
 };
 

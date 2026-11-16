@@ -14,6 +14,9 @@ import { familyConfig, FIXTURE_KEY } from "./family.js";
 const ALIAS = "chat-default";
 const REPLY = "settled";
 
+/** A 1x1 PNG, as base64. */
+const PIXEL = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==";
+
 const fake = new FakeModel([{ text: REPLY }]);
 const config = familyConfig({ litellmUrl: await fake.start() });
 const model = new LiveModel(config.planes, ALIAS, FALLBACK_LIMITS, () => config.creds);
@@ -57,5 +60,19 @@ describe("LiveModel", () => {
       authorization: `Bearer ${FIXTURE_KEY}`,
       model: ALIAS,
     });
+  });
+
+  it("sends an image attachment to the model as image input", async () => {
+    const before = fake.seen.length;
+    const handle = init(Probe, { id: "with-image" });
+    const receipt = await handle.dispatch({
+      message: { kind: "user", body: "What is this?", attachments: [{ type: "image", data: PIXEL, mimeType: "image/png", filename: "pixel.png" }] },
+    });
+    await handle.read(receipt);
+
+    const user = fake.seen[before]?.messages.find((message) => message.role === "user");
+    expect(user?.content).toEqual(
+      expect.arrayContaining([{ type: "image_url", image_url: { url: `data:image/png;base64,${PIXEL}` } }]),
+    );
   });
 });

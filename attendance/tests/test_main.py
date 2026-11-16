@@ -13,11 +13,21 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from attendance.__main__ import EXIT_BAD_CONFIG, EXIT_OK, _prepare_socket_dir, main, serve
+from attendance.__main__ import (
+    EXIT_BAD_CONFIG,
+    EXIT_OK,
+    WS_MAX_QUEUE,
+    WS_MAX_SIZE,
+    WS_PROTOCOL,
+    _prepare_socket_dir,
+    _uvicorn_configs,  # pyright: ignore[reportPrivateUsage]
+    main,
+    serve,
+)
 from attendance.auth import Principal, TokenBook
 from attendance.config import LAN_ADDRESS_ENV, from_env
 from attendance.paths import token_file
-from attendance_harness import FAMILY, wait_until, write_status, write_tokens
+from attendance_harness import FAMILY, make_config, wait_until, write_status, write_tokens
 
 
 def env_for(tmp_path: Path, **extra: str) -> dict[str, str]:
@@ -255,3 +265,17 @@ def test_prepare_socket_dir_warns_when_it_cannot_set_the_bit(
         _prepare_socket_dir(target)
 
     assert "could not set mode" in caplog.text
+
+
+def test_the_socket_listener_holds_one_websocket_message(tmp_path: Path) -> None:
+    """A door frame can be 16 MiB. The listener holds about one message in
+    each direction, not the default queue of 32."""
+    (setting,) = _uvicorn_configs(make_config(tmp_path / "root"), object(), object())
+
+    assert (setting.ws, setting.ws_max_size, setting.ws_max_queue) == (
+        WS_PROTOCOL,
+        WS_MAX_SIZE,
+        WS_MAX_QUEUE,
+    )
+    assert WS_PROTOCOL == "websockets-sansio"
+    assert WS_MAX_QUEUE == 1

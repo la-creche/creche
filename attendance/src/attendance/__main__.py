@@ -23,6 +23,7 @@ from pathlib import Path
 
 import uvicorn
 
+from .acp_door import MAX_FRAME_BYTES
 from .api import Listener, build_app
 from .auth import Principal, TokenBook, TokenError
 from .config import Config, ConfigError, from_env
@@ -42,6 +43,21 @@ _SOCKET_MODE = 0o660
 # keeps group `agents` rather than this process's own default group. Owner
 # rwx, group r-x (traverse only, no write needed to connect), no world bit.
 _SOCKET_DIR_MODE = 0o2750
+
+#: The most bytes of one WebSocket message: the door's frame cap and one
+#: CR LF, which the door strips before its own check. The door serves the
+#: Unix socket only, so only that listener gets it.
+WS_MAX_SIZE = MAX_FRAME_BYTES + len("\r\n")
+
+#: The WebSocket protocol of uvicorn. The sans-I/O protocol stops its reads
+#: after each message and waits for the transport before each send, so one
+#: connection holds about one 16 MiB frame in each direction.
+WS_PROTOCOL = "websockets-sansio"
+
+#: The most messages that the WebSocket holds before it stops its reads, for
+#: a protocol that reads this setting. The default is 32: 512 MiB of 16 MiB
+#: frames.
+WS_MAX_QUEUE = 1
 
 _LOG = logging.getLogger("attendance")
 
@@ -107,6 +123,9 @@ def _uvicorn_configs(config: Config, socket_app: object, lan_app: object) -> lis
             uds=str(config.socket_path),
             log_level="info",
             access_log=False,
+            ws=WS_PROTOCOL,
+            ws_max_size=WS_MAX_SIZE,
+            ws_max_queue=WS_MAX_QUEUE,
         )
     ]
 
@@ -227,6 +246,8 @@ def _report(config: Config) -> None:
         print("attendance: tcp           off")
 
     print(f"attendance: vmm           {config.vmm_socket}")
+    scanner = config.scanner_socket
+    print(f"attendance: scanner       {scanner if scanner is not None else 'off'}")
     print(f"attendance: tokens        {len(Principal)} files present and long enough")
 
 

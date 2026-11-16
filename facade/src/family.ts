@@ -154,6 +154,7 @@ export async function serveFamily({ sessionId, lineageFile, composed, backend, m
       sessionId,
       link,
       store: tapped.store,
+      workspace: composed.workspace,
       refresh,
       thinking: composed.thinking,
       meter,

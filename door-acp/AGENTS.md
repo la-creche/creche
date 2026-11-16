@@ -50,9 +50,11 @@ attendance's token. attendance reads its token from
 2. If attendance cannot be reached, the door closes the client with 1014
    `attendance unreachable` before any frame.
 3. Each text frame passes as it is, in both directions. Each frame gets
-   attendance's envelope check: UTF-8 at most 1 MiB, one line, strict JSON,
-   an object with `"jsonrpc": "2.0"`. A frame over the cap closes both sides
-   with 1009. Any other bad frame, or a binary frame, closes both with 1007.
+   attendance's envelope check: UTF-8 at most 16 MiB, one line, strict
+   JSON, an object with `"jsonrpc": "2.0"`. The cap is `acp_line_cap` of
+   `rust/crates/wire/vectors/scan.json`, so a prompt can carry its files.
+   A frame over the cap closes both sides with 1009. Any other bad frame,
+   or a binary frame, closes both with 1007.
    A client frame may end in one line ending, one LF or one CR LF: the
    door strips it before the check and forwards the frame without it.
    Agmente ends each frame so. Each other line break is a bad frame. A
@@ -60,6 +62,10 @@ attendance's token. attendance reads its token from
 4. When one side closes, the door closes the other side with the same code
    and reason. A close with no code becomes 1000, and a lost link 1001. A
    lost link to attendance closes the client with 1014.
+5. A frame can be 16 MiB. So each WebSocket of the door holds
+   `MAX_QUEUED_FRAMES` (1) frame before it stops its reads: the client
+   listener, the link to attendance and `creche-acp-connect`. The default
+   queue is 16 frames, which is 256 MiB of such frames.
 
 A close code from attendance reaches the client as it is: 4401 means that
 the door's token for attendance is wrong, not the client's bearer.

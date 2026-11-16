@@ -39,6 +39,9 @@ DEFAULT_STATE_ROOT = "/srv/agents/state/creche"
 
 ENV_PREFIX = "ATTENDANCE_"
 
+#: The name of the scanner socket after `ENV_PREFIX`.
+SCANNER_SOCKET_NAME = "SCANNER_SOCKET"
+
 _TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
 _FALSE_WORDS = frozenset({"0", "false", "no", "off"})
 
@@ -81,6 +84,9 @@ class Config:
     lan_port: int
     #: Decision CH20: `vmm.sock`, the one socket of the vmm host API.
     vmm_socket: Path
+    #: The scanner socket that the vmm serves (design note attachments §4).
+    #: None turns the scan off: the door refuses each prompt with a file.
+    scanner_socket: Path | None = None
 
     @property
     def binds_lan(self) -> bool:
@@ -99,6 +105,7 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
         lan_address=_lan_address(source),
         lan_port=_port(source),
         vmm_socket=_vmm_socket(source),
+        scanner_socket=_scanner_socket(source),
     )
 
 
@@ -109,6 +116,16 @@ def _vmm_socket(source: dict[str, str]) -> Path:
         raise ConfigError(f"{VMM_SOCKET_ENV} is not set (creche-attendance.service sets it)")
 
     return _path(source, "VMM_SOCKET", "")
+
+
+def _scanner_socket(source: dict[str, str]) -> Path | None:
+    """`ATTENDANCE_SCANNER_SOCKET`. No default: the operator sets it with
+    the socket of the vmm (design note attachments §8 step 2). Unset or
+    empty, the scan is off."""
+    if not _text(source, SCANNER_SOCKET_NAME, ""):
+        return None
+
+    return _path(source, SCANNER_SOCKET_NAME, "")
 
 
 def _text(source: dict[str, str], name: str, fallback: str) -> str:

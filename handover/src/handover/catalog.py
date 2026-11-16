@@ -330,7 +330,7 @@ DISK_FLAVORS: tuple[str, ...] = ("base", "python", "coding")
 #: the row, refuses a `digests.json` that lacks one (CH58 rule 4).
 #: `tests/test_handover_disk_flavors.py` holds the two equal through the
 #: shared vector of `digests.json`.
-SERVICE_IMAGES: tuple[str, ...] = ("browser",)
+SERVICE_IMAGES: tuple[str, ...] = ("browser", "scanner")
 
 #: The end of the name of the root disk of a flavor or of a service image:
 #: `<flavor><this>` or `<image><this>`. An ext4 file, compressed with zstd.

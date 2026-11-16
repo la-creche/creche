@@ -10,6 +10,10 @@
 //
 //   session/cancel ──► abort() ──► the prompt answers `cancelled`
 //
+// The files of a prompt go to `WORKSPACE/attachments/` right before the
+// dispatch, and the text names each one on a marker line
+// (`src/attachments.ts`). Each image goes to the model too.
+//
 // The turn start and the turn end each go to guest init on the local link
 // (`src/local-link.ts`, decision CH21). The end carries the title and
 // `updatedAt` of the turn record. The same end goes to each peer as
@@ -24,7 +28,7 @@
 // prompt never runs on the instance that a rewind replaces.
 
 import { AgentRunError } from "@flue/runtime";
-import type { AgentInstanceHandle, ConversationStreamChunk } from "@flue/runtime";
+import type { AgentHandleDispatchRequest, AgentInstanceHandle, ConversationStreamChunk, DeliveredAttachment } from "@flue/runtime";
 
 import type {
   CancelNotification,
@@ -35,6 +39,8 @@ import type {
   PromptResponse,
   StopReason,
 } from "./acp.js";
+import { bodyOf, checkFiles, fileOf, FileKind } from "./attachments.js";
+import type { Attachments, PromptFile } from "./attachments.js";
 import { commandsUpdate } from "./commands.js";
 import type { Commands } from "./commands.js";
 import { byteLength } from "./line.js";
@@ -84,15 +90,32 @@ function invalid<T>(detail: string): Outcome<T> {
   return { ok: false, refusal: { kind: "invalid_params", detail } };
 }
 
+/** A checked prompt: the user text and the files of its file blocks. */
+export interface Prompt {
+  /** The text of the user. The title and the turn end read it. */
+  readonly text: string;
+  readonly files: readonly PromptFile[];
+}
+
 /**
- * The prompt as one text. Text blocks are the text. A resource link is its
- * URI on a line of its own. The facade offers no image, audio or embedded
- * resource, so a client sends none.
+ * The prompt as one text and its files. Text blocks are the text. A
+ * resource link is its URI on a line of its own. An image block and a
+ * resource block are files: attendance scanned and rebuilt each one
+ * (docs/design/attachments.md). The facade offers no audio, so a client
+ * sends none.
  */
-export function promptText(blocks: readonly ContentBlock[]): Outcome<string> {
+export function promptText(blocks: readonly ContentBlock[]): Outcome<Prompt> {
   const parts: string[] = [];
+  const files: PromptFile[] = [];
   for (const block of blocks) {
-    if (block.type === "text") {
+    const file = fileOf(block);
+    if (file !== null) {
+      if (!file.ok) {
+        return file;
+      }
+
+      files.push(file.value);
+    } else if (block.type === "text") {
       parts.push(block.text);
     } else if (block.type === "resource_link") {
       parts.push(block.uri);
@@ -102,7 +125,7 @@ export function promptText(blocks: readonly ContentBlock[]): Outcome<string> {
   }
 
   const text = parts.join("\n\n");
-  if (text.trim().length === 0) {
+  if (text.trim().length === 0 && files.length === 0) {
     return invalid("the prompt has no text");
   }
 
@@ -110,7 +133,27 @@ export function promptText(blocks: readonly ContentBlock[]): Outcome<string> {
     return invalid(`the prompt is over ${MAX_PROMPT_BYTES} bytes`);
   }
 
-  return { ok: true, value: text };
+  const checked = checkFiles(files);
+  if (!checked.ok) {
+    return checked;
+  }
+
+  return { ok: true, value: { text, files: checked.value } };
+}
+
+/**
+ * The message of a prompt for Flue. It writes each file to the workspace
+ * first, so call it right before the dispatch. Each image goes to the
+ * model as an attachment too.
+ */
+function messageOf(attachments: Attachments, prompt: Prompt): AgentHandleDispatchRequest {
+  const saved = attachments.save(prompt.files);
+  const images: DeliveredAttachment[] = saved
+    .filter((file) => file.kind === FileKind.Image)
+    .map((file) => ({ type: "image", data: file.bytes.toString("base64"), mimeType: file.mimeType, filename: file.savedName }));
+  const body = bodyOf(prompt.text, saved);
+
+  return { message: images.length === 0 ? { kind: "user", body } : { kind: "user", body, attachments: images } };
 }
 
 interface Running {
@@ -138,6 +181,7 @@ export class Turns {
     private readonly live: Live,
     private readonly link: LocalLink | null,
     private readonly meter: SessionMeter,
+    private readonly attachments: Attachments,
     private readonly refresh: Refresh = NO_REFRESH,
     /** The session's commands. Null: the facade sends no `available_commands_update`. */
     private readonly commands: Commands | null = null,
@@ -159,15 +203,15 @@ export class Turns {
       return { ok: false, refusal: { kind: "busy", detail: "a rewind runs on this session" } };
     }
 
-    const text = promptText(params.prompt);
-    if (!text.ok) {
-      return text;
+    const read = promptText(params.prompt);
+    if (!read.ok) {
+      return read;
     }
 
     const running: Running = { handle, cancelled: false };
     this.running.set(sessionId, running);
     try {
-      return await this.pulledTurn(running, params, peer, text.value);
+      return await this.pulledTurn(running, params, peer, read.value);
     } finally {
       // A later prompt can hold the session by now. Free only this one.
       if (this.running.get(sessionId) === running) {
@@ -181,7 +225,7 @@ export class Turns {
     running: Running,
     params: PromptRequest,
     peer: Peer,
-    text: string,
+    prompt: Prompt,
   ): Promise<Outcome<PromptResponse>> {
     const { sessionId } = params;
     // A fault fails this prompt only (decision CH23 rule 2).
@@ -210,7 +254,7 @@ export class Turns {
     let sent = Promise.resolve();
     let lastRecordAt: string | null = null;
 
-    const settlement = await this.run(running, text, (chunk) => {
+    const settlement = await this.run(running, prompt, (chunk) => {
       lastRecordAt = ("timestamp" in chunk ? chunk.timestamp : undefined) ?? lastRecordAt;
       this.meter.see(chunk);
       const items = chunkToUpdates(chunk).map((update) => ({ position: chunk.position, update }));
@@ -218,7 +262,7 @@ export class Turns {
     });
     this.running.delete(sessionId);
 
-    const end = this.session.turnEndOf(text, lastRecordAt);
+    const end = this.session.turnEndOf(prompt.text, lastRecordAt);
     this.link?.turnEnd(end.title, end.updatedAt);
     const info: Item = { position: null, update: { sessionUpdate: "session_info_update", ...infoOf(end, first) } };
     const usage = await this.meter.usageUpdate();
@@ -255,14 +299,14 @@ export class Turns {
     await running.handle.abort();
   }
 
-  /** Dispatches the text and reads its chunks until the submission settles. */
+  /** Writes the files, dispatches the prompt and reads its chunks until the submission settles. */
   private async run(
     running: Running,
-    text: string,
+    prompt: Prompt,
     onChunk: (chunk: ConversationStreamChunk) => void,
   ): Promise<{ outcome: Settlement; detail: string }> {
     try {
-      const receipt = await running.handle.dispatch(text);
+      const receipt = await running.handle.dispatch(messageOf(this.attachments, prompt));
       // A cancel that came before the dispatch had nothing to abort.
       if (running.cancelled) {
         await running.handle.abort();

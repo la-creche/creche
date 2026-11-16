@@ -18,11 +18,12 @@ from pathlib import Path
 
 import pytest
 import uvicorn
+from agent_door_acp import forward
 from agent_door_acp.__main__ import server_config
 from agent_door_acp.app import FORWARD_AUTH_HEADER
 from agent_door_acp.config import DoorConfig
-from agent_door_acp.forward import MAX_FRAME_BYTES, Close
-from websockets.asyncio.client import ClientConnection, connect
+from agent_door_acp.forward import MAX_FRAME_BYTES, MAX_QUEUED_FRAMES, Close
+from websockets.asyncio.client import ClientConnection, connect, unix_connect
 from websockets.asyncio.server import ServerConnection, unix_serve
 from websockets.exceptions import ConnectionClosed
 
@@ -36,6 +37,12 @@ FRAME = json.dumps(
     ensure_ascii=False,
 )
 OVERSIZE = json.dumps({"jsonrpc": "2.0", "pad": "x" * MAX_FRAME_BYTES})
+
+#: A frame of exactly the cap.
+_ENVELOPE = '{"jsonrpc":"2.0","pad":""}'
+AT_CAP = _ENVELOPE.replace('""', '"' + "x" * (MAX_FRAME_BYTES - len(_ENVELOPE)) + '"')
+
+SCAN_VECTORS = Path(__file__).parents[2] / "rust" / "crates" / "wire" / "vectors" / "scan.json"
 
 
 @dataclass(slots=True)
@@ -89,16 +96,19 @@ async def attendance() -> AsyncIterator[FakeAttendance]:
     shutil.rmtree(socket_dir, ignore_errors=True)
 
 
-@pytest.fixture
-async def door(attendance: FakeAttendance) -> AsyncIterator[str]:
-    config = DoorConfig(
+def _config(attendance: FakeAttendance) -> DoorConfig:
+    return DoorConfig(
         bind_host="127.0.0.1",
         bind_port=0,
         door_key=KEY.encode("ascii"),
         attendance_socket=attendance.socket,
         attendance_token=TOKEN.encode("ascii"),
     )
-    setting = server_config(config)
+
+
+@pytest.fixture
+async def door(attendance: FakeAttendance) -> AsyncIterator[str]:
+    setting = server_config(_config(attendance))
     setting.log_level = "warning"
     server = _Server(setting)
     task = asyncio.create_task(server.serve())
@@ -155,6 +165,48 @@ async def test_a_frame_over_the_cap_closes_1009(
         if mode == "echo":
             await client.send(OVERSIZE)
         assert (await close_of(client))[0] == Close.TOO_LARGE
+
+
+def test_the_frame_cap_is_the_acp_line_cap() -> None:
+    """The cap of attendance, held equal to `scan.json` (design note
+    attachments, decision 4)."""
+    vectors = json.loads(SCAN_VECTORS.read_text(encoding="utf-8"))
+
+    assert vectors["acp_line_cap"] == MAX_FRAME_BYTES
+
+
+async def test_each_websocket_of_the_door_holds_one_frame(
+    door: str, attendance: FakeAttendance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A frame can be 16 MiB. The client listener and the link to attendance
+    each hold one frame before they stop their reads, not the default 16."""
+    opened: list[ClientConnection] = []
+
+    async def recorded(*args: object, **kwargs: object) -> ClientConnection:
+        connection = await unix_connect(*args, **kwargs)  # pyright: ignore[reportArgumentType]
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(forward, "unix_connect", recorded)
+
+    async with connect(door, additional_headers=GOOD) as client:
+        await client.send(FRAME)
+        await asyncio.wait_for(client.recv(), 5)
+
+    (link,) = opened
+    assert link.max_queue_high == MAX_QUEUED_FRAMES == 1
+    assert server_config(_config(attendance)).ws_max_queue == MAX_QUEUED_FRAMES
+
+
+async def test_a_frame_of_the_cap_and_a_line_ending_passes(
+    door: str, attendance: FakeAttendance
+) -> None:
+    """The client message may hold the cap and its one line ending."""
+    async with connect(door, additional_headers=GOOD, max_size=None) as client:
+        await client.send(AT_CAP + "\r\n")
+        echoed = await asyncio.wait_for(client.recv(decode=False), 30)
+
+    assert echoed == AT_CAP.encode("utf-8")
 
 
 @pytest.mark.parametrize("ending", ["\n", "\r\n"], ids=["lf", "crlf"])

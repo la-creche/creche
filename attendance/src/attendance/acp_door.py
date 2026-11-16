@@ -70,6 +70,16 @@ connection, for `GET /busy`. A client request of that method opens one,
 and the stream's answer with the same id closes it. A connection that ends
 closes each of its own. The count reads the lines and changes none.
 
+A `session/prompt` with an `image` or a `resource` block carries files
+(design note attachments §6, `attachments.py`). The door checks the
+blocks, then a task scans each file over the scan link (`scanner.py`).
+The lane of the session goes on meanwhile, so a `session/cancel` of that
+session reaches the door. The task puts the prompt with the rebuilt files
+back in the lane, and the lane routes it as a prompt with no file. A
+refusal answers `invalidParams`, and a `session/cancel` during the scan
+answers the stop reason `cancelled`. Such a prompt reaches no stream. A
+prompt with no file block goes to its stream as its exact bytes.
+
 The facade is JavaScript. It reads each JSON number as a double and writes
 that double in its answer, so each count keys a number id by its double:
 `1`, `1.0` and `1e0` are one id. A string id stays apart from a number id.
@@ -87,7 +97,7 @@ import math
 import re
 from collections.abc import Generator
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Any, Final, Literal
 
@@ -106,9 +116,11 @@ from creche_wire import (
 )
 from starlette.websockets import WebSocket
 
+from . import attachments
 from .acp_link import (
     JSONRPC,
     MAX_ACP_LINE_BYTES,
+    METHOD_CANCEL,
     METHOD_INITIALIZE,
     METHOD_PROMPT,
     METHOD_UPDATE,
@@ -119,11 +131,13 @@ from .acp_link import (
     loads_strict,
 )
 from .atomic import as_array, as_object
+from .attachments import AttachmentRefused
 from .channel import Channel, ChannelClosed
 from .clock import from_ms, now_ms, rfc3339_ms
 from .commands import read_commands
 from .errors import ApiError
 from .ids import is_session_cwd, is_session_id, new_session_id
+from .scanner import Reason, ScanFile, Scanner
 from .tasks import report_failure
 from .vmm import NOT_FOUND, Vmm, VmmRefused
 
@@ -163,11 +177,14 @@ _ANSWERED: Final = frozenset({METHOD_INITIALIZE, METHOD_NEW, METHOD_LIST, METHOD
 #: The `_meta` of `agentCapabilities` lists the creche extension
 #: `_creche/session/rewind` (`facade/vectors/creche-extensions.json`). The
 #: door routes it by its `sessionId` as each other session method, and the
-#: facade of the session answers it.
+#: facade of the session answers it. Its `promptCapabilities` are the
+#: facade's: a client may send `image` and `resource` blocks (design note
+#: attachments §3).
 INITIALIZE_RESPONSE: Final[dict[str, Any]] = {
     "protocolVersion": PROTOCOL_VERSION,
     "agentCapabilities": {
         "loadSession": True,
+        "promptCapabilities": {"image": True, "embeddedContext": True},
         "sessionCapabilities": {"list": {}, "delete": {}, "resume": {}},
         "_meta": {"creche/rewind": {}},
     },
@@ -229,6 +246,18 @@ HANDSHAKE_FAILED = "protocol_violation"
 #: its own lane (decision CH84 rule 5).
 LANE_DEPTH: Final = 64
 
+#: The most bytes of the frames that wait in the lanes of one connection. A
+#: frame can be 16 MiB, so `LANE_DEPTH` alone lets one lane hold 1 GiB. Past
+#: this cap the read of the next frame waits, as past `LANE_DEPTH`. A frame
+#: enters when no frame waits, so a frame of the whole cap passes.
+QUEUED_FRAME_BYTES: Final = 2 * MAX_FRAME_BYTES
+
+#: The most prompts of one connection whose files the door holds at once,
+#: from the check to the route of the rebuilt prompt. Each holds up to a
+#: 16 MiB frame and its files. Past it the prompt gets `invalidParams` with
+#: the reason `busy`.
+MAX_SCANS: Final = 2
+
 #: The lane of each frame that names no session: `initialize`,
 #: `session/new`, `session/list`, and a client answer to no facade.
 _DOOR_LANE: Final = ""
@@ -246,6 +275,43 @@ class Close(IntEnum):
     RELAY_GONE = 1001
     BAD_FRAME = 1007
     TOO_LARGE = 1009
+
+
+class _Files(Enum):
+    """Whether the file blocks of a prompt still need the door step."""
+
+    #: A client frame: a prompt with a file block gets the door step.
+    UNCHECKED = "unchecked"
+    #: A prompt whose files the scan rebuilt. It goes to its stream.
+    REBUILT = "rebuilt"
+
+
+#: The answer to a prompt that a `session/cancel` stopped in its scan.
+CANCELLED: Final[dict[str, Any]] = {"stopReason": "cancelled"}
+
+#: The text of the refusal of a prompt with a file when the scan is off.
+SCAN_OFF = "the scan is off: attendance has no scanner socket"
+
+
+@dataclass(slots=True, eq=False)
+class _Scan:
+    """One prompt whose files the door scans now."""
+
+    session: str
+    record: dict[str, Any]
+    task: asyncio.Task[None] | None = None
+
+
+#: One frame of a lane and its count of UTF-8 bytes.
+type _Queued = tuple[str | _Scanned, int]
+
+
+@dataclass(slots=True, frozen=True)
+class _Scanned:
+    """A prompt with its rebuilt files, back in the lane of its session."""
+
+    scan: _Scan
+    line: str
 
 
 class _OpenPrompts:
@@ -402,7 +468,13 @@ class _Door:
     """One door connection: its streams, its writes and its answers."""
 
     def __init__(
-        self, websocket: WebSocket, family: str, vmm: Vmm, prompts: _OpenPrompts, skills: Path
+        self,
+        websocket: WebSocket,
+        family: str,
+        vmm: Vmm,
+        prompts: _OpenPrompts,
+        skills: Path,
+        scanner: Scanner | None,
     ) -> None:
         self._websocket = websocket
         self._family = family
@@ -410,13 +482,24 @@ class _Door:
         self._skills = skills
         self._vmm = vmm
         self._prompts = prompts
+        self._scanner = scanner
+        #: The prompts of each session whose files the door scans now. A
+        #: prompt leaves when its lane routes it, its refusal is sent, or a
+        #: `session/cancel` stops it.
+        self._scans: dict[str, set[_Scan]] = {}
+        self._scan_tasks: set[asyncio.Task[None]] = set()
         self._write = asyncio.Lock()
         self._held: dict[str, _Held] = {}
         #: The stream of each session that closes now. The next open of the
         #: session waits for the event.
         self._closing: dict[str, asyncio.Event] = {}
         #: The frames of each lane, and the task that works them.
-        self._lanes: dict[str, asyncio.Queue[str]] = {}
+        self._lanes: dict[str, asyncio.Queue[_Queued]] = {}
+        #: The bytes of the frames in the lanes and in their routes, under
+        #: `QUEUED_FRAME_BYTES`. A route frees its bytes at its end.
+        self._queued_bytes = 0
+        #: Set at each free. A frame that waits for room checks again.
+        self._room = asyncio.Event()
         self._workers: list[asyncio.Task[None]] = []
         self.ended: asyncio.Future[Close] = asyncio.get_running_loop().create_future()
 
@@ -437,7 +520,7 @@ class _Door:
             if refused is not None:
                 return refused
 
-            await self._lane(self._lane_of(line)).put(line)
+            await self._enqueue(self._lane_of(line), line)
 
     def _lane_of(self, line: str) -> str:
         """The session whose frames keep their order with this one."""
@@ -452,12 +535,35 @@ class _Door:
         session = params.get("sessionId") if params is not None else None
         return session if isinstance(session, str) and session else _DOOR_LANE
 
-    def _lane(self, key: str) -> asyncio.Queue[str]:
+    async def _enqueue(self, key: str, frame: str | _Scanned) -> None:
+        """Put one frame in the lane `key`. It waits while the lanes of the
+        connection hold `QUEUED_FRAME_BYTES`, unless they hold no frame."""
+        text = frame if isinstance(frame, str) else frame.line
+        size = len(text.encode("utf-8", "surrogatepass"))
+
+        while self._queued_bytes and self._queued_bytes + size > QUEUED_FRAME_BYTES:
+            self._room.clear()
+            await self._room.wait()
+
+        self._queued_bytes += size
+
+        try:
+            await self._lane(key).put((frame, size))
+        except BaseException:
+            # A cancel of a scan can stop the put. The bytes never entered.
+            self._free(size)
+            raise
+
+    def _free(self, size: int) -> None:
+        self._queued_bytes -= size
+        self._room.set()
+
+    def _lane(self, key: str) -> asyncio.Queue[_Queued]:
         """The frames of one lane. The first frame starts its worker."""
         lane = self._lanes.get(key)
 
         if lane is None:
-            lane = asyncio.Queue[str](LANE_DEPTH)
+            lane = asyncio.Queue[_Queued](LANE_DEPTH)
             self._lanes[key] = lane
             worker = asyncio.create_task(self._work(lane), name="acp door lane")
             worker.add_done_callback(report_failure)
@@ -465,14 +571,14 @@ class _Door:
 
         return lane
 
-    async def _work(self, lane: asyncio.Queue[str]) -> None:
+    async def _work(self, lane: asyncio.Queue[_Queued]) -> None:
         """Route each frame of one lane in turn. A frame that closes the
         connection ends the lane and the connection."""
         while True:
-            line = await lane.get()
+            frame, size = await lane.get()
 
             try:
-                refused = await self._route(line)
+                refused = await self._route_frame(frame)
             except Exception:
                 # A fault of the door ends the connection, as it did when
                 # the read of the frames routed each one itself.
@@ -480,6 +586,8 @@ class _Door:
                     self.ended.set_result(Close.RELAY_GONE)
 
                 raise
+            finally:
+                self._free(size)
 
             if refused is not None:
                 if not self.ended.done():
@@ -487,7 +595,17 @@ class _Door:
 
                 return
 
-    async def _route(self, line: str) -> Close | None:
+    async def _route_frame(self, frame: str | _Scanned) -> Close | None:
+        """A client frame, or a scanned prompt that a cancel did not stop."""
+        if isinstance(frame, str):
+            return await self._route(frame, _Files.UNCHECKED)
+
+        if not self._end_scan(frame.scan):
+            return None
+
+        return await self._route(frame.line, _Files.REBUILT)
+
+    async def _route(self, line: str, files: _Files) -> Close | None:
         record = as_object(loads_strict(line)) or {}
         method = record.get("method")
 
@@ -500,7 +618,7 @@ class _Door:
         self._prompts.sent(record)
 
         try:
-            answer = await self._answer(method, record, line)
+            answer = await self._answer(method, record, line, files)
         except _Refusal as refusal:
             self._prompts.refused(record)
             await self._refuse(record, refusal)
@@ -559,7 +677,9 @@ class _Door:
 
         return answer
 
-    async def _answer(self, method: str, record: dict[str, Any], line: str) -> object:
+    async def _answer(
+        self, method: str, record: dict[str, Any], line: str, files: _Files
+    ) -> object:
         """The result attendance answers, or None for a routed line. A
         notification of a method that attendance answers does nothing."""
         params = as_object(record.get("params"))
@@ -585,6 +705,18 @@ class _Door:
         if not isinstance(session, str):
             raise _Refusal(RPC_METHOD_NOT_FOUND, f"{method} names no session")
 
+        if method == METHOD_CANCEL:
+            await self._cancel_scans(session)
+
+        if method == METHOD_PROMPT and files is _Files.UNCHECKED:
+            _check_no_audio(params)
+
+        if method == METHOD_PROMPT and files is _Files.UNCHECKED and attachments.has_files(params):
+            # `has_files` is true for params only.
+            assert params is not None
+            self._start_scan(session, record, params)
+            return None
+
         if "id" not in record and session not in self._held:
             # A notification, in practice `session/cancel`, for a session
             # with no open stream. The stream closes when no request is in
@@ -602,6 +734,82 @@ class _Door:
         await held.channel.send(line + "\n")
         await self._close_if_idle(session, held)
         return None
+
+    def _start_scan(self, session: str, record: dict[str, Any], params: dict[str, Any]) -> None:
+        """Design note attachments §6 rules 2 and 6: check the files, then
+        scan them in a task. The lane of the session goes on."""
+        _check_session_id(session)
+
+        if self._scanner is None:
+            raise _Refusal(RPC_INVALID_PARAMS, SCAN_OFF)
+
+        try:
+            files = attachments.read_files(params)
+        except AttachmentRefused as error:
+            raise _Refusal(RPC_INVALID_PARAMS, str(error)) from error
+
+        if sum(len(scans) for scans in self._scans.values()) >= MAX_SCANS:
+            raise _Refusal(RPC_INVALID_PARAMS, f"{files[0].name}: {Reason.BUSY}")
+
+        scan = _Scan(session, record)
+        self._scans.setdefault(session, set()).add(scan)
+        task = asyncio.create_task(self._scan(scan, self._scanner, files), name="acp door scan")
+        task.add_done_callback(report_failure)
+        task.add_done_callback(self._scan_tasks.discard)
+        self._scan_tasks.add(task)
+        scan.task = task
+
+    async def _scan(self, scan: _Scan, scanner: Scanner, files: list[ScanFile]) -> None:
+        """Design note attachments §6 rules 3 and 4: scan each file, then
+        put the prompt with the rebuilt files in the lane of its session. A
+        refusal answers `invalidParams`, and the prompt reaches no stream."""
+        try:
+            rebuilt = await attachments.scan_files(scanner, files)
+            line = attachments.rebuilt_line(scan.record, rebuilt, MAX_FRAME_BYTES)
+        except AttachmentRefused as error:
+            if self._end_scan(scan):
+                self._prompts.refused(scan.record)
+                await self._refuse(scan.record, _Refusal(RPC_INVALID_PARAMS, str(error)))
+
+            return
+        except Exception:
+            # A fault of the door ends the connection, as in a lane.
+            if not self.ended.done():
+                self.ended.set_result(Close.RELAY_GONE)
+
+            raise
+
+        await self._enqueue(scan.session, _Scanned(scan, line))
+
+    def _end_scan(self, scan: _Scan) -> bool:
+        """Take `scan` out of the scans. False when a cancel took it first."""
+        scans = self._scans.get(scan.session)
+
+        if scans is None or scan not in scans:
+            return False
+
+        scans.discard(scan)
+
+        if not scans:
+            del self._scans[scan.session]
+
+        return True
+
+    async def _cancel_scans(self, session: str) -> None:
+        """Design note attachments §6 rule 5: a `session/cancel` stops each
+        scan of its session, and the door answers each such prompt
+        `cancelled`. The prompt reaches no stream."""
+        scans = self._scans.pop(session, set())
+
+        for scan in scans:
+            if scan.task is not None:
+                scan.task.cancel()
+                await asyncio.gather(scan.task, return_exceptions=True)
+
+            self._prompts.refused(scan.record)
+
+            if "id" in scan.record:
+                await self._send({"jsonrpc": JSONRPC, "id": scan.record["id"], "result": CANCELLED})
 
     async def _new_session(self, params: dict[str, Any] | None) -> dict[str, Any]:
         """Contract 02 §5.3: check the `cwd`, mint an id, create the row,
@@ -853,7 +1061,7 @@ class _Door:
         held = list(self._held.values())
         self._held.clear()
         readers = [one.reader for one in held if one.reader is not None]
-        tasks: list[asyncio.Task[object]] = [*self._workers, *readers]
+        tasks: list[asyncio.Task[object]] = [*self._workers, *readers, *self._scan_tasks]
 
         for task in tasks:
             task.cancel()
@@ -868,13 +1076,18 @@ class _Door:
 
 
 async def serve(
-    websocket: WebSocket, family: str, vmm: Vmm, prompts: DoorPrompts, skills: Path
+    websocket: WebSocket,
+    family: str,
+    vmm: Vmm,
+    prompts: DoorPrompts,
+    skills: Path,
+    scanner: Scanner | None,
 ) -> None:
     """Serve one door connection until the client or a stream ends. Then
     close each stream. `skills` is the `skills/` directory of the family
-    config."""
+    config. With no scanner, the scan is off."""
     with prompts.connection() as open_prompts:
-        door = _Door(websocket, family, vmm, open_prompts, skills)
+        door = _Door(websocket, family, vmm, open_prompts, skills, scanner)
         client = asyncio.create_task(door.from_client(), name="acp door in")
         client.add_done_callback(report_failure)
 
@@ -919,6 +1132,15 @@ def _check_meta(params: dict[str, Any] | None) -> None:
 
     if meta is not None and any(key.startswith(CRECHE_META_PREFIX) for key in meta):
         raise _Refusal(RPC_INVALID_PARAMS, "a door client sets no creche key of _meta")
+
+
+def _check_no_audio(params: dict[str, Any] | None) -> None:
+    """Design note attachments decision 1: audio is not an allowed kind, so
+    a prompt with an `audio` block reaches no stream."""
+    try:
+        attachments.check_no_audio(params)
+    except AttachmentRefused as error:
+        raise _Refusal(RPC_INVALID_PARAMS, str(error)) from error
 
 
 def _check_session_id(session: str) -> None:

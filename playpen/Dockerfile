@@ -11,7 +11,7 @@
 # image installs them from the facade's lockfile, so the Flue pin is the one
 # that `facade/pnpm-lock.yaml` holds and no second copy exists.
 #
-# Four image targets and one build-only stage:
+# Five image targets and one build-only stage:
 #   agent-sandbox         every family
 #   agent-sandbox-python  the python flavor: pandas, numpy and matplotlib
 #                         for the analysis stack, plus the 3.14 test venv
@@ -23,6 +23,9 @@
 #   service-browser       not a family flavor: the root disk of the browser
 #                         service VM (ServiceImage::Browser), with Chrome,
 #                         agent-browser and creche-browser-facade
+#   service-scanner       not a family flavor: the root disk of the scanner
+#                         service VM (ServiceImage::Scanner), with ClamAV,
+#                         poppler, Magika, Pillow and creche-scanner-facade
 #   creche-test-venv      build-only: it resolves uv.lock and installs the
 #                         test venv and the 3.14 interpreter. It ships in
 #                         no image. Only the coding flavor copies its uv
@@ -429,6 +432,90 @@ RUN status=0; /usr/local/bin/creche-facade 2>/dev/null || status=$?; \
 # The image env for guest init (CH7-7, CH49). This RUN stays the last step.
 # The python 3.14 image sets no GPG_KEY: its release is checked with
 # PYTHON_SHA256 only.
+RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
+    mkdir -p /etc/creche \
+    && sh /run/creche-env-write LANG PATH PYTHON_SHA256 PYTHON_VERSION \
+       > /etc/creche/env
+
+# --- service-scanner: the root disk of the scanner service VM ---------------
+# Not a family flavor: `ServiceImage::Scanner` of the wire, `scanner` of the
+# disks row (attachments design note, section 5). The vmm boots it for the
+# scan link of attendance. Guest init starts creche-scanner-facade at the
+# facade path, and the facade runs clamd and checks each file with Magika,
+# ClamAV and a rebuild. The guest has no network device and no egress row.
+FROM ${PYTHON_IMAGE} AS service-scanner
+
+# ClamAV and poppler from Debian. freshclam downloads the signatures here,
+# at BUILD time, because the VM has no network. So a new image release
+# gives new signatures, and an old disks row keeps old ones.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      clamav clamav-daemon poppler-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && freshclam --stdout \
+    && ls /var/lib/clamav/main.c?d /var/lib/clamav/daily.c?d
+
+# Magika and Pillow in a venv of their own, each wheel at its sha256 for
+# this Python and amd64. Magika's model comes in its wheel. The venv
+# ships no pip, and the Python image loses its pip, so no layer of the
+# image holds an installer.
+RUN printf '%s\n' \
+      'click==8.5.1 --hash=sha256:8bb5376d2006950386f8c6427613334a2acadc5f559cb80e638d00b4df957e37' \
+      'flatbuffers==25.12.19 --hash=sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4' \
+      'magika==1.0.3 --hash=sha256:3e9b49134e8116ee40b431664dcbed9e199413efddcce1a173c734b4e0521529' \
+      'numpy==2.5.5 --hash=sha256:c48960d420e90cf305cb1fde0d4e6082cc90512cda87a9acf0b6e04e91cf4abe' \
+      'onnxruntime==1.32.0 --hash=sha256:48b878f9551d465aa79ee94ecaf49a1f6b5d27f2975efa775ded374db14d0af1' \
+      'packaging==26.3 --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c' \
+      'pillow==13.0.0 --hash=sha256:e91c2b1cbeae768c98752e67e717e283d68dae45717b41f2d91eaee648e37b7d' \
+      'protobuf==7.36.2 --hash=sha256:89f23aa53c24553a2416fd4fd1ec06f74fa42b14b546d8883128813f775bbfd2' \
+      > /tmp/scanner-requirements.txt \
+    && python3.14 -m venv /opt/scanner \
+    && /opt/scanner/bin/pip install --no-cache-dir --no-deps --only-binary=:all: \
+       --require-hashes -r /tmp/scanner-requirements.txt \
+    && /opt/scanner/bin/pip uninstall -y pip \
+    && rm -rf /tmp/scanner-requirements.txt \
+              /usr/local/lib/python3.14/site-packages/pip* \
+              /usr/local/lib/python3.14/ensurepip \
+              /usr/local/bin/pip* \
+    && [ ! -e /opt/scanner/bin/pip ]
+
+# The mount points of guest init, as the agent-sandbox stage makes them
+# (CH62 rules 4 and 5, CH81 rule 1). playpen-disk reads them back.
+RUN mkdir -p -m 0755 /var/lib/creche/session \
+    && for dir in /tmp /run /root /var/cache /var/tmp; do \
+         [ -d "$dir" ] || { echo "no mount point $dir" >&2; exit 1; }; \
+       done
+
+# The user of each scan child: it parses the hostile bytes, so it has no
+# home, no shell and no other group. No file of the image keeps a setuid
+# or setgid bit, so a child cannot exec one to gain root again.
+RUN useradd --system --user-group --no-create-home --home-dir /nonexistent \
+      --shell /usr/sbin/nologin scan \
+    && find / -xdev -type f -perm /6000 -exec chmod ug-s {} + \
+    && [ -z "$(find / -xdev -type f -perm /6000)" ]
+
+# The facade at the facade path of guest init. The mode is set by chmod,
+# not by a COPY flag: the bundles test of handover reads each COPY word as
+# a copied path.
+COPY playpen/guest/creche_scanner_facade.py /usr/local/bin/creche-facade
+RUN chmod 0755 /usr/local/bin/creche-facade
+
+# Fail the BUILD, not the first boot: Magika loads its model and reads a
+# PNG, Pillow loads, clamscan loads the signatures and finds the EICAR
+# test file, and the facade refuses to run outside guest init. The EICAR
+# text is built from two halves, so no file of the repository holds it.
+RUN /opt/scanner/bin/python -I -c 'import io, magika, PIL.Image; \
+      out = io.BytesIO(); PIL.Image.new("RGB", (64, 64)).save(out, "PNG"); \
+      label = str(magika.Magika().identify_bytes(out.getvalue()).output.label); \
+      print("magika", magika.__version__, label, "pillow", PIL.__version__); \
+      raise SystemExit(label != "png")' \
+    && printf '%s%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD' '-ANTIVIRUS-TEST-FILE!$H+H*' > /tmp/eicar \
+    && status=0 && clamscan --no-summary /tmp/eicar || status=$?; \
+    rm -f /tmp/eicar; \
+    [ "$status" -eq 1 ] || { echo "clamscan: exit $status, want 1" >&2; exit 1; }
+RUN status=0; /usr/local/bin/creche-facade 2>/dev/null || status=$?; \
+    [ "$status" -eq 17 ] || { echo "creche-facade: exit $status, want 17" >&2; exit 1; }
+
+# The image env for guest init (CH7-7, CH49). This RUN stays the last step.
 RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
     mkdir -p /etc/creche \
     && sh /run/creche-env-write LANG PATH PYTHON_SHA256 PYTHON_VERSION \

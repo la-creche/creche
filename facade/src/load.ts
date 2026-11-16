@@ -21,6 +21,7 @@ import type { ConversationStreamStore } from "@flue/runtime/adapter";
 import type { LoadSessionRequest, LoadSessionResponse, Outcome, Peer, ResumeSessionRequest } from "./acp.js";
 import { commandsUpdate } from "./commands.js";
 import type { Commands } from "./commands.js";
+import type { Attachments } from "./attachments.js";
 import { readHistory } from "./flue-history.js";
 import type { Live } from "./live.js";
 import { replay } from "./replay.js";
@@ -38,6 +39,7 @@ export class Loader {
     private readonly meter: SessionMeter,
     /** The session's commands. Null: the facade sends no `available_commands_update`. */
     private readonly commands: Commands | null,
+    private readonly attachments: Attachments,
   ) {}
 
   public async loadSession(params: LoadSessionRequest, peer: Peer): Promise<Outcome<LoadSessionResponse>> {
@@ -63,7 +65,7 @@ export class Loader {
       return { ok: false, refusal: { kind: "failed", detail: history.detail } };
     }
 
-    const { updates, last } = replay(history.chunks, this.session.seed);
+    const { updates, last } = replay(history.chunks, (marker) => this.attachments.readImage(marker), this.session.seed);
     for (const update of updates) {
       await peer.send(sessionId, update);
     }

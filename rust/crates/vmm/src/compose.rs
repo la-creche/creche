@@ -66,7 +66,7 @@ use creche_vmm_store::snapshot::Snapshotter;
 use creche_wire::{
     AcpError, AcpRoute, CheckError, CheckReply, CheckRequest, CheckRoute, CreateError, CreateRoute,
     CreateSession, DropError, DropRoute, DropTarget, Dropped, ListError, ListRoute, ListSessions,
-    OpenAcp, Serve, ServeUpgrade, ServiceImage, SessionId, SessionPage, SessionRow,
+    OpenAcp, PerService, Serve, ServeUpgrade, ServiceImage, SessionId, SessionPage, SessionRow,
 };
 use tokio::sync::{oneshot, watch};
 use tokio::task::{JoinHandle, spawn_blocking};
@@ -92,7 +92,7 @@ use crate::relay::{AcpLink, AcpRelay, Relays};
 use crate::restore::ChTools;
 use crate::root_owned::{ProgramError, check_program};
 use crate::server::{Stop, run_routes_ready};
-use crate::service::link::{self, Bound};
+use crate::service::link::{self, Bound, Served};
 use crate::shutdown::{self, Ended};
 use crate::start::{ColdBoot, Digests, StartConfig};
 use crate::{family_state, planes, sleep, spool};
@@ -247,22 +247,25 @@ struct Vmm {
     hook: Shared,
     faults: Arc<Mutex<FaultBook>>,
     follow: Follow,
-    /// The path of the browser socket and its peer user. `run` binds it
-    /// after the raise of step 4 (`browser_socket`).
-    browser: (PathBuf, UserName),
+    /// The path of the socket of each service VM and its peer user. `run`
+    /// binds each after the raise of step 4 (`service_sockets`).
+    services: PerService<(PathBuf, UserName)>,
 }
 
-/// The passwd file of the host, for the uid of `VMM_BROWSER_PEER_USER`.
+/// The passwd file of the host, for the uid of `VMM_BROWSER_PEER_USER`
+/// and `VMM_SCANNER_PEER_USER`.
 const PASSWD: &str = "/etc/passwd";
 
-/// Binds the socket of the browser VM at `path`, for the peer `user`. A
-/// fault turns the socket off with one stderr line, and the vmm serves
-/// every family VM as before: root makes the dir once, after the vmm
-/// release that ships this code (browser design 10.5 step 7), and the
-/// peer user exists only on the host.
-fn browser_socket(path: &Path, user: &UserName) -> Option<(Bound, u32)> {
+/// Binds the socket of the VM of `image` at `path`, for the peer `user`.
+/// A fault turns that socket off with one stderr line, and the vmm serves
+/// every family VM and each other socket as before: root makes the dir
+/// once, after the vmm release that ships this code (browser design 10.5
+/// step 7, attachments design note section 8), and the peer user exists
+/// only on the host.
+fn service_socket(image: ServiceImage, path: &Path, user: &UserName) -> Option<(Bound, u32)> {
+    let name = image.name();
     let off = |reason: String| {
-        eprintln!("vmm: the browser socket is off: {reason}");
+        eprintln!("vmm: the {name} socket is off: {reason}");
         None
     };
     let peer = match link::uid_of(user.as_str(), Path::new(PASSWD)) {
@@ -464,14 +467,18 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         drops: Drops::new(rows, relays, hook.clone()),
         checks: Checks::new(config.families),
     };
-    let browser = (config.browser_socket, config.browser_peer);
+    // The socket and the peer user of each service image.
+    let services = PerService::every(|image| match image {
+        ServiceImage::Browser => (config.browser_socket.clone(), config.browser_peer.clone()),
+        ServiceImage::Scanner => (config.scanner_socket.clone(), config.scanner_peer.clone()),
+    });
     Ok(Vmm {
         socket: config.run.vmm_socket(),
         handlers,
         hook,
         faults,
         follow,
-        browser,
+        services,
     })
 }
 
@@ -484,28 +491,12 @@ impl Vmm {
             hook,
             faults,
             follow,
-            browser,
+            services,
         } = self;
         // The bind comes after the raise of step 4, as every listener's
-        // does. The drop of `served` at the end of the run closes the
+        // does. The drop of `served` at the end of the run closes each
         // socket and its links.
-        let (path, user) = browser;
-        let bound = spawn_blocking(move || browser_socket(&path, &user))
-            .await
-            .unwrap_or_else(|_| {
-                eprintln!("vmm: the browser socket is off: its bind panicked");
-                None
-            });
-        let served = bound.and_then(|(bound, peer)| {
-            let hook = Arc::clone(&hook.0);
-            match bound.serve(hook, ServiceImage::Browser, peer) {
-                Ok(served) => Some(served),
-                Err(error) => {
-                    eprintln!("vmm: the browser socket is off: {error}");
-                    None
-                }
-            }
-        });
+        let served = service_sockets(&services, &hook).await;
         let (stop, signal) = Stop::pair();
         let mut server = tokio::spawn(async move {
             run_routes_ready(&socket, signal, handlers, readiness::notify).await
@@ -536,7 +527,7 @@ impl Vmm {
             });
         }
 
-        // No new browser link starts during the shutdown.
+        // No new link of a service VM starts during the shutdown.
         drop(served);
         let ended = shutdown::shutdown(&*hook.0, stop, async move { _ = sleep.await }).await;
         if ended == Ended::Kept {
@@ -548,6 +539,31 @@ impl Vmm {
             Ok(Ok(())) | Err(_) => Ok(()),
         }
     }
+}
+
+/// Binds and serves the socket of each service image in `services`, in
+/// the order of the enum. A fault turns only its own socket off, with one
+/// stderr line (`service_socket`).
+async fn service_sockets(services: &PerService<(PathBuf, UserName)>, hook: &Shared) -> Vec<Served> {
+    let mut served = Vec::new();
+    for (image, (path, user)) in services.iter() {
+        let name = image.name();
+        let (path, user) = (path.clone(), user.clone());
+        let bound = spawn_blocking(move || service_socket(image, &path, &user))
+            .await
+            .unwrap_or_else(|_| {
+                eprintln!("vmm: the {name} socket is off: its bind panicked");
+                None
+            });
+        let Some((bound, peer)) = bound else {
+            continue;
+        };
+        match bound.serve(Arc::clone(&hook.0), image, peer) {
+            Ok(one) => served.push(one),
+            Err(error) => eprintln!("vmm: the {name} socket is off: {error}"),
+        }
+    }
+    served
 }
 
 /// The end of `server` when it ends before `sigterm` fires, or `None` at

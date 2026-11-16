@@ -100,6 +100,12 @@ pub const BROWSER_SOCKET: &str = "VMM_BROWSER_SOCKET";
 /// The one user whose links the socket of the browser VM takes: the user
 /// that the chaperone runs `browser-relay` as.
 pub const BROWSER_PEER: &str = "VMM_BROWSER_PEER_USER";
+/// The socket of the scanner VM, which attendance dials for each attached
+/// file (attachments design note, section 4). Root makes its dir.
+pub const SCANNER_SOCKET: &str = "VMM_SCANNER_SOCKET";
+/// The one user whose links the socket of the scanner VM takes: the user
+/// of attendance.
+pub const SCANNER_PEER: &str = "VMM_SCANNER_PEER_USER";
 
 /// What the vmm reads from its env.
 #[derive(Debug)]
@@ -157,6 +163,12 @@ pub struct Config {
     /// `VMM_BROWSER_PEER_USER`. The compose step reads its uid from
     /// `/etc/passwd`.
     pub browser_peer: UserName,
+    /// `VMM_SCANNER_SOCKET`. The config checks its form only. The compose
+    /// step binds it when its dir is there (`service::link::bind`).
+    pub scanner_socket: PathBuf,
+    /// `VMM_SCANNER_PEER_USER`. The compose step reads its uid from
+    /// `/etc/passwd`.
+    pub scanner_peer: UserName,
 }
 
 /// A user name of the host: 1 to 32 bytes of `a-z`, `0-9`, `_` and `-`,
@@ -308,6 +320,8 @@ impl Config {
                 .map_err(|e| root(GIT_SPOOL_ROOT, e))?,
             browser_socket: path_of(BROWSER_SOCKET)?,
             browser_peer: user(&lookup, BROWSER_PEER)?,
+            scanner_socket: path_of(SCANNER_SOCKET)?,
+            scanner_peer: user(&lookup, SCANNER_PEER)?,
         })
     }
 }

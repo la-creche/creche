@@ -86,6 +86,8 @@ class FakeFacade:
     #: Any other number fails the host's handshake.
     protocol_version: int = 1
     methods: list[str] = field(default_factory=list[str])
+    #: Each line the host sent, as its exact text.
+    lines: list[str] = field(default_factory=list[str])
     received: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     held: dict[str, Prompt] = field(default_factory=dict[str, Prompt])
     #: `session/load` updates by session id.
@@ -95,6 +97,7 @@ class FakeFacade:
 
     def handle(self, line: str) -> list[str]:
         """The lines this fake writes for one line it read. Raises `_Drop`."""
+        self.lines.append(line)
         message: dict[str, Any] = json.loads(line)
         method = str(message.get("method", ""))
         self.methods.append(method)

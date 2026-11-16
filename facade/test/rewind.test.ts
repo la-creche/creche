@@ -57,7 +57,7 @@ let wire: Wire;
 
 /** A facade start on the lineage `options` gives. */
 function serve(options: RewindOptions): SessionService {
-  return sessionService({ agent: Rewound, agentName: "Rewound", sessionId: id, link: null, store: flue.store, rewind: options });
+  return sessionService({ agent: Rewound, agentName: "Rewound", sessionId: id, link: null, store: flue.store, workspace: flue.workspace, rewind: options });
 }
 
 /** One more link on the service, as a second door connection. */

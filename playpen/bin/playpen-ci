@@ -40,7 +40,7 @@ trap 'rm -rf -- "$work"' EXIT
 # service image of catalog.SERVICE_IMAGES with its target, as SERVICES of
 # that script lists them (browser design 10.5.2).
 FLAVORS="base:agent-sandbox python:agent-sandbox-python coding:agent-sandbox-coding"
-SERVICES="browser:service-browser"
+SERVICES="browser:service-browser scanner:service-scanner"
 
 # check_disk KIND PAIR: builds the target of PAIR, checks its env as KIND
 # (flavor or service), and makes its disk two times.

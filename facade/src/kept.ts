@@ -12,7 +12,8 @@ import { stringifyStrict } from "agent/strict-json";
 
 import type { SessionUpdate } from "./acp.js";
 import { cutToBytes } from "./line.js";
-import { forward, forwardJson, MAX_NAME_BYTES, userChunk } from "./mapper.js";
+import { forward, forwardJson, MAX_NAME_BYTES, userChunks } from "./mapper.js";
+import type { ImageLinks } from "./mapper.js";
 
 type Snapshot = Extract<ConversationStreamChunk, { type: "conversation-reset" }>["snapshot"];
 type Message = Snapshot["messages"][number];
@@ -144,10 +145,13 @@ function partUpdates(part: KeptPart): SessionUpdate[] {
   }
 }
 
-/** The ACP updates of one kept message. Each user chunk carries the message id. */
-export function keptUpdates(kept: Kept): SessionUpdate[] {
+/**
+ * The ACP updates of one kept message. Each user chunk carries the message
+ * id. A user text shows its files as links, and `links` takes each image link.
+ */
+export function keptUpdates(kept: Kept, links: ImageLinks): SessionUpdate[] {
   if (kept.role === "user") {
-    return kept.parts.flatMap((part) => (part.type === "text" ? [userChunk(kept.id, part.text)] : []));
+    return kept.parts.flatMap((part) => (part.type === "text" ? userChunks(kept.id, part.text, links) : []));
   }
 
   return kept.parts.flatMap(partUpdates);

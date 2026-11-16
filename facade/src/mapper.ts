@@ -10,6 +10,8 @@ import type { ConversationStreamChunk } from "@flue/runtime";
 import { stringifyStrict } from "agent/strict-json";
 
 import type { SessionUpdate } from "./acp.js";
+import { IMAGE_TYPES, splitMarkers, URI_SCHEME } from "./attachments.js";
+import type { Marker } from "./attachments.js";
 import { cutToBytes } from "./line.js";
 
 /** The largest forwarded text, in UTF-8 bytes: the playpen's entry cap. */
@@ -61,6 +63,57 @@ export function userChunk(messageId: string, userText: string): SessionUpdate {
   };
 }
 
+/** One image link of a replay: the replay reads its image at the end (`src/replay.ts`). */
+export interface ImageNote {
+  readonly messageId: string;
+  readonly marker: Marker;
+}
+
+/** Takes each image link that a user text gives. */
+export type ImageLinks = (link: SessionUpdate, note: ImageNote) => void;
+
+/** The live echo replays no image: the client sent it. */
+const NO_IMAGE: ImageLinks = () => undefined;
+
+/** The image update after the link of `note`. */
+export function imageChunk({ messageId, marker }: ImageNote, data: string): SessionUpdate {
+  const uri = forward(`${URI_SCHEME}${marker.name}`, MAX_NAME_BYTES);
+
+  return { sessionUpdate: "user_message_chunk", messageId, content: { type: "image", data, mimeType: marker.mimeType, uri } };
+}
+
+/** The link of one marker. `links` takes the link of an image. */
+function markerChunk(messageId: string, marker: Marker, links: ImageLinks): SessionUpdate {
+  const uri = forward(`${URI_SCHEME}${marker.name}`, MAX_NAME_BYTES);
+  const id = forward(messageId, MAX_NAME_BYTES);
+  const { mimeType, size } = marker;
+  const link: SessionUpdate = {
+    sessionUpdate: "user_message_chunk",
+    messageId: id,
+    content: { type: "resource_link", uri, name: forward(marker.name, MAX_NAME_BYTES), mimeType, size },
+  };
+  if (IMAGE_TYPES.includes(mimeType)) {
+    links(link, { messageId: id, marker });
+  }
+
+  return link;
+}
+
+/**
+ * The updates of one user text of `bodyOf` (`src/attachments.ts`): the
+ * text without its marker lines, then a link for each file. A text of
+ * files only gives no text chunk.
+ */
+export function userChunks(messageId: string, body: string, links: ImageLinks): SessionUpdate[] {
+  const { text, markers } = splitMarkers(body);
+  const files = markers.map((marker) => markerChunk(messageId, marker, links));
+  if (text.length === 0 && files.length > 0) {
+    return files;
+  }
+
+  return [userChunk(messageId, text), ...files];
+}
+
 type Appended = Extract<ConversationStreamChunk, { type: "message-appended" }>["message"];
 
 /** The visible user text of an appended message: the echo of a prompt, with its id. */
@@ -69,7 +122,7 @@ function echoOf(message: Appended): SessionUpdate[] {
     return [];
   }
 
-  return message.parts.flatMap((part) => (part.type === "text" ? [userChunk(message.id, part.text)] : []));
+  return message.parts.flatMap((part) => (part.type === "text" ? userChunks(message.id, part.text, NO_IMAGE) : []));
 }
 
 export function chunkToUpdates(chunk: ConversationStreamChunk): SessionUpdate[] {

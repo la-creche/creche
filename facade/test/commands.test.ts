@@ -39,6 +39,7 @@ beforeEach(() => {
     sessionId: id,
     link: null,
     store: flue.store,
+    workspace: flue.workspace,
     commands: () => granted,
     rewind: freshRewind(),
   });

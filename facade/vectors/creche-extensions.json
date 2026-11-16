@@ -1,7 +1,7 @@
 {
   "about": "The ACP v1 values of creche-facade: the protocol version, the line cap, the answer to initialize and the creche extensions. Each message is one JSON-RPC line as the wire carries it. The facade and its tests read this file. The door tests read the capability of each extension.",
   "protocol_version": 1,
-  "max_line_bytes": 1048576,
+  "max_line_bytes": 16777216,
   "initialize": {
     "meta_keys": [],
     "request": {
@@ -24,6 +24,7 @@
         "protocolVersion": 1,
         "agentCapabilities": {
           "loadSession": true,
+          "promptCapabilities": { "image": true, "embeddedContext": true },
           "sessionCapabilities": { "list": {}, "resume": {} }
         },
         "authMethods": []

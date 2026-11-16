@@ -150,8 +150,8 @@ def test_the_browser_target_ships_only_here() -> None:
     helper, and its build runs the facade outside guest init."""
     text = DOCKERFILE.read_text(encoding="utf-8")
     assert text.count(TARGET) == 1
-    browser = text.split(TARGET, 1)[1]
-    assert "FROM " not in browser
+    browser = text.split(TARGET, 1)[1].split("\nFROM ", 1)[0]
+    assert "creche_scanner_facade" not in browser
     assert "COPY playpen/guest/creche-chrome /usr/local/bin/creche-chrome" in browser
     assert "RUN chmod u-s /opt/google/chrome/chrome-sandbox" in browser
     assert '[ "$status" -eq 17 ]' in browser

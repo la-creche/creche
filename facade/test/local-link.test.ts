@@ -41,7 +41,7 @@ function link(path: string, said: string[], stopMs = FLUE_STOP_MS): LocalLink {
 
 /** The one session of a supervisor on `facade`. No supervisor test prompts it. */
 function sessionsOn(facade: LocalLink): SessionService {
-  return sessionService({ agent: Probe, agentName: "Probe", sessionId: randomUUID(), link: facade, store: flue.store, rewind: freshRewind() });
+  return sessionService({ agent: Probe, agentName: "Probe", sessionId: randomUUID(), link: facade, store: flue.store, workspace: flue.workspace, rewind: freshRewind() });
 }
 
 /** Handlers that count the stop lines. */
@@ -106,7 +106,7 @@ describe("a prompt", () => {
     const facade = link(guest.path, []);
     facade.open(NO_HANDLERS);
     const id = randomUUID();
-    const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: facade, store: flue.store, rewind: freshRewind() });
+    const service = sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: facade, store: flue.store, workspace: flue.workspace, rewind: freshRewind() });
     const wire = new Wire(facadeApp(service));
     // The start goes up while Flue runs the turn, not after: the vmm must
     // see a running turn (decisions CH19 rule 6, CH32 rule 6).

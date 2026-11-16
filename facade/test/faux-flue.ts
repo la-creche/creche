@@ -37,13 +37,17 @@ export interface Started {
   stop(): Promise<void>;
   /** The conversation store of this runtime. */
   store(): ConversationStreamStore | null;
+  /** A temporary workspace of this runtime, for the files of the prompts. */
+  readonly workspace: string;
 }
 
 export async function startFlue(agents: readonly Agent[] = [Probe], db: PersistenceAdapter = sqlite()): Promise<Started> {
   const tapped = tapStores(db);
   const flue = await start({ agents, db: tapped.adapter, providers: [faux.provider] });
 
-  return { stop: () => flue.stop(), store: tapped.store };
+  const workspace = mkdtempSync(join(tmpdir(), "facade-workspace-"));
+
+  return { stop: () => flue.stop(), store: tapped.store, workspace };
 }
 
 /** The rewind options of a session with no rewind yet: a lineage file in a new temp directory. */

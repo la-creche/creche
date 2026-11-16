@@ -3607,16 +3607,28 @@ fn a_pull_does_not_set_last_use() {
 impl Test {
     /// A link to the browser VM, as the browser socket asks for it.
     fn browser(&self) -> Result<(), ServiceError> {
-        self.runtime
-            .block_on(self.hook.link(ServiceImage::Browser))
-            .map(|_link| ())
+        self.service(ServiceImage::Browser)
+    }
+
+    /// A link to the VM of `image`, as its socket asks for it.
+    fn service(&self, image: ServiceImage) -> Result<(), ServiceError> {
+        self.runtime.block_on(self.hook.link(image)).map(|_link| ())
     }
 }
+
+/// The host listeners of a VM with no listener at all: the scanner VM.
+const NO_LISTENER: [bool; 6] = [false; 6];
 
 /// The reserved id of the browser VM.
 #[cfg(test)]
 fn browser_id() -> SessionId {
     service::vm_id(ServiceImage::Browser).unwrap()
+}
+
+/// The reserved id of the scanner VM.
+#[cfg(test)]
+fn scanner_id() -> SessionId {
+    service::vm_id(ServiceImage::Scanner).unwrap()
 }
 
 /// A link to the browser VM boots its service image in the VM table,
@@ -3710,6 +3722,83 @@ fn a_shutdown_stops_the_browser_vm_and_the_next_boot_is_fresh() {
     assert_ne!(head, mark);
     assert_eq!(test.shut_down(), Ended::Clean);
     assert!(test.api.snapshots.lock().unwrap().is_empty());
+    assert!(test.stopped(1));
+}
+
+/// A link to the scanner VM boots its service image with its reserved
+/// id and its sizes, and with no host listener at all (attachments design
+/// note, section 5). A second link dials the running VM and boots
+/// nothing.
+#[test]
+fn a_scanner_link_boots_the_service_vm_once() {
+    let test = Test::new("scanner", |_| {});
+    assert_eq!(test.service(ServiceImage::Scanner), Ok(()));
+    assert_eq!(test.launches(), 1);
+    let id = scanner_id();
+    assert!(test.hook.running(&id));
+    let launches = test.fake.launches.lock().unwrap();
+    assert_eq!(
+        launches[0].scope().unit(),
+        format!("creche-vm-{}", id.as_str())
+    );
+    let args = launches[0].payload().args();
+    assert!(args.contains(&"size=3072M".to_owned()));
+    assert!(args.contains(&"boot=2".to_owned()));
+    drop(launches);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [NO_LISTENER]);
+    assert!(test.fault_codes().is_empty());
+
+    assert_eq!(test.service(ServiceImage::Scanner), Ok(()));
+    assert_eq!(test.launches(), 1);
+}
+
+/// The deny check of the scanner VM holds the bound set empty. So a
+/// listener on host port 1104 fails the link, and the VM stops (decision
+/// CH54 rule 2, attachments design note, section 5).
+#[test]
+fn an_extra_1104_listener_for_the_scanner_fails() {
+    let test = Test::new("scanner-extra", |_| {});
+    *test.fake.extra.lock().unwrap() = Some(1104);
+    let error = test.service(ServiceImage::Scanner).unwrap_err();
+    assert!(error.0.contains("an unbound listener"), "{error}");
+    assert!(error.0.contains("vsock.sock_1104"), "{error}");
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&scanner_id()));
+    assert!(test.fault_codes().is_empty());
+}
+
+/// A `digests.json` with no scanner disk refuses the scanner link before
+/// any launch. The browser VM still boots (`image_root`, rule 1 of a
+/// service image).
+#[test]
+fn a_scanner_link_with_no_disk_launches_nothing() {
+    let test = Test::new("scanner-no-disk", |config| {
+        let mut digests = config.digests.borrow().clone();
+        *digests.services.get_mut(ServiceImage::Scanner) = None;
+        config.digests = watch::channel(digests).1;
+    });
+    let error = test.service(ServiceImage::Scanner).unwrap_err();
+    assert!(error.0.contains("has no scanner disk"), "{error}");
+    assert_eq!(test.launches(), 0);
+    assert!(!test.hook.running(&scanner_id()));
+    assert_eq!(test.browser(), Ok(()));
+    assert_eq!(test.launches(), 1);
+}
+
+/// The browser VM and the scanner VM run at once, each with its own id,
+/// and the shutdown stops both with no snapshot.
+#[test]
+fn the_browser_and_the_scanner_run_side_by_side() {
+    let test = Test::new("services", |_| {});
+    assert_eq!(test.browser(), Ok(()));
+    assert_eq!(test.service(ServiceImage::Scanner), Ok(()));
+    assert_eq!(test.launches(), 2);
+    assert!(test.hook.running(&browser_id()));
+    assert!(test.hook.running(&scanner_id()));
+    assert!(test.sleep_after(PAST_IDLE).is_empty());
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+    assert!(test.stopped(0));
     assert!(test.stopped(1));
 }
 

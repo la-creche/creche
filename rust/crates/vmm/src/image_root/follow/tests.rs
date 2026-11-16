@@ -425,6 +425,7 @@ fn a_service_image_that_arrives_later_imports_and_swaps() {
     let new = digests(("vmlinux", EMPTY), ("hello.ext4", HELLO));
     let line = settle(&mut follow, &new).unwrap();
     assert!(line.contains(&format!("browser {HELLO}")), "{line}");
+    assert!(line.contains(&format!("scanner {HELLO}")), "{line}");
     assert!(!line.contains("names no disk"), "{line}");
     assert_eq!(*current.borrow(), set(EMPTY, HELLO));
     root.store().check(digest(HELLO)).unwrap();
@@ -432,9 +433,10 @@ fn a_service_image_that_arrives_later_imports_and_swaps() {
     let line = settle(&mut follow, &without_services(&new)).unwrap();
     assert!(
         line.ends_with(
-            "the digests.json names no disk of the service images browser, so no VM of them starts"
+            "the digests.json names no disk of the service images browser, scanner, so no VM of them starts"
         ),
         "{line}"
     );
     assert_eq!(*current.borrow().services.get(ServiceImage::Browser), None);
+    assert_eq!(*current.borrow().services.get(ServiceImage::Scanner), None);
 }

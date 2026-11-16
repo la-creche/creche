@@ -60,6 +60,7 @@ from .models import DEFAULT_DEADLINE_S, TriggerKind
 from .paths import outcome_file, session_cwd, skills_dir
 from .queueing import MAX_QUEUED_TURNS, JobQueue
 from .requests import DelegateRequest, DispatchRequest, JobQuery, TriggerRequest
+from .scanner import Scanner
 from .tasks import report_failure
 from .vmm import Vmm, VmmRefused
 
@@ -96,6 +97,11 @@ class SessionService:
         self._dispatches = dispatch.DispatchLedger(config.state_root)
         self._triggers = dispatch.DispatchLedger(config.state_root, dispatch.LedgerDoor.TRIGGER)
         self.door_prompts = DoorPrompts()
+        #: The scan link of the files of a door prompt. None: the scan is
+        #: off, and the door refuses each prompt with a file (design note
+        #: attachments §6 rule 6).
+        socket = config.scanner_socket
+        self._scanner = Scanner(socket) if socket is not None else None
         #: The prompts of the jobs in flight, delegate and dispatched alike.
         self._job_prompts = 0
         self._cancel_wait_s = cancel_wait_s
@@ -236,7 +242,7 @@ class SessionService:
     async def serve_door(self, websocket: WebSocket, family: str) -> None:
         """One door connection, after `check_door` (`acp_door.py`)."""
         skills = skills_dir(self._config.state_root, family)
-        await acp_door.serve(websocket, family, self._vmm, self.door_prompts, skills)
+        await acp_door.serve(websocket, family, self._vmm, self.door_prompts, skills, self._scanner)
 
     # ----------------------------------------------------------------- view
 

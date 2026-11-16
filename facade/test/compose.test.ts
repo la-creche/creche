@@ -2,8 +2,10 @@
 // vmm, the agent's fake LiteLLM and fake chaperone (`test/served-family.ts`).
 // One turn calls a `ch` tool: `tool_call`, then `tool_call_update` completed.
 // A thinking level reaches the model call, and the turn ends with the meter.
+// An image of a prompt reaches the model call, and the load replays it.
 
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, describe, expect, it } from "vitest";
@@ -67,4 +69,49 @@ describe("the facade with the agent module", () => {
       _meta: { "creche/spend": { amount: 12.4, budget: 60, currency: "USD" } },
     });
   });
+
+  it("gives an image to the model, and the load replays each file", async () => {
+    const { id, wire } = served;
+    const before = model.seen.length;
+    const answer = await wire.request("session/prompt", {
+      sessionId: id,
+      prompt: [
+        { type: "text", text: "What is this?" },
+        { type: "image", mimeType: "image/png", data: PIXEL, uri: "attachment:pixel.png" },
+        { type: "resource", resource: { uri: "attachment:notes.txt", mimeType: "text/plain", blob: NOTES } },
+      ],
+    });
+    const user = model.seen[before]?.messages.filter((message) => message.role === "user").at(-1);
+
+    expect(answer.result).toEqual({ stopReason: "end_turn" });
+    expect(user?.content).toEqual(expect.arrayContaining([{ type: "image_url", image_url: { url: `data:image/png;base64,${PIXEL}` } }]));
+    expect(await replayedFiles(id)).toEqual([
+      { type: "text", text: "What is this?" },
+      { type: "resource_link", uri: "attachment:pixel.png", name: "pixel.png", mimeType: "image/png", size: 70 },
+      { type: "image", data: PIXEL, mimeType: "image/png", uri: "attachment:pixel.png" },
+      { type: "resource_link", uri: "attachment:notes.txt", name: "notes.txt", mimeType: "text/plain", size: 6 },
+    ]);
+
+    rmSync(join(served.start.workspace, "attachments", "pixel.png"));
+    expect((await replayedFiles(id)).map((content) => content["type"])).toEqual(["text", "resource_link", "resource_link"]);
+  });
 });
+
+/** A 1x1 PNG of 70 bytes, as base64. */
+const PIXEL = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==";
+
+const NOTES = Buffer.from("hello\n").toString("base64");
+
+/** The content of the user updates of a load, from the user message with files. */
+async function replayedFiles(id: string): Promise<Record<string, unknown>[]> {
+  const before = served.wire.updates(id).length;
+  await served.wire.request("session/load", { sessionId: id, cwd: "/work", mcpServers: [] });
+  const users = served.wire
+    .updates(id)
+    .slice(before)
+    .filter((update) => update["sessionUpdate"] === "user_message_chunk")
+    .map((update) => update["content"] as Record<string, unknown>);
+  const start = users.findIndex((content) => content["text"] === "What is this?");
+
+  return users.slice(start);
+}
