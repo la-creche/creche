@@ -39,7 +39,11 @@ inside the VM, which carries Node.
    `facade/AGENTS.md`). After that answer, the door sends the family's
    slash commands as one `available_commands_update` for the new id: one
    command for each valid skill in `config/skills/` (`commands.py`). A
-   family with no skill gets none. `initialize` lists `delete`, and
+   family with no skill gets none. The `initialize` answer holds the same
+   list in `_meta["creche/commands"]`, as `{"availableCommands": [...]}`.
+   A client connects with no session, so a new chat shows the commands
+   before `session/new`. The door leaves the key out when the family has no
+   skill, or when the list puts the answer over the frame cap. `initialize` lists `delete`, and
    `session/delete` calls the vmm `drop` and answers `{}`. A delete cannot
    be undone (contract 02 §5.6). `initialize` lists `resume` too, and the
    door routes `session/resume` to the facade. `initialize` lists the

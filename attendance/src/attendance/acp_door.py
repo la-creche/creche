@@ -7,6 +7,7 @@ request and notification by its `sessionId`, over one vmm ACP stream per
 session (decisions CH20, CH33 rule 7):
 
     initialize      -> INITIALIZE_RESPONSE
+                       + the family's commands, when it has a skill
     session/new     -> mint an id -> vmm create, origin door
                        -> {"sessionId", "configOptions"}
                        -> the family's commands, when it has a skill
@@ -172,6 +173,12 @@ INITIALIZE_RESPONSE: Final[dict[str, Any]] = {
     },
     "authMethods": [],
 }
+
+#: The `_meta` key of the `initialize` answer that holds the family's
+#: slash commands: `{"availableCommands": [...]}`, the list of an
+#: `available_commands_update`. A client connects with no session, so it
+#: shows the commands of a new chat before `session/new`.
+COMMANDS_META_KEY: Final = "creche/commands"
 
 #: The config options of a new session: the thinking level at its default.
 #: The door answers `session/new` with no boot, so it holds the facade's
@@ -530,6 +537,26 @@ class _Door:
         if len(text.encode("utf-8")) <= MAX_FRAME_BYTES:
             await self._send_text(text)
 
+    def _initialize(self, rpc_id: object) -> dict[str, Any]:
+        """`INITIALIZE_RESPONSE`, plus the family's commands in `_meta`.
+        A family with no skill gets the bare answer. A list that would put
+        the answer over the frame cap is left out: the facade sends it at
+        the first prompt of a session."""
+        commands = read_commands(self._skills)
+
+        if not commands:
+            return INITIALIZE_RESPONSE
+
+        listed = {"availableCommands": [command.as_json() for command in commands]}
+        answer = {**INITIALIZE_RESPONSE, "_meta": {COMMANDS_META_KEY: listed}}
+        message = {"jsonrpc": JSONRPC, "id": rpc_id, "result": answer}
+        text = json.dumps(message, separators=(",", ":"), ensure_ascii=False)
+
+        if len(text.encode("utf-8")) > MAX_FRAME_BYTES:
+            return INITIALIZE_RESPONSE
+
+        return answer
+
     async def _answer(self, method: str, record: dict[str, Any], line: str) -> object:
         """The result attendance answers, or None for a routed line. A
         notification of a method that attendance answers does nothing."""
@@ -540,7 +567,7 @@ class _Door:
             return None
 
         if method == METHOD_INITIALIZE:
-            return INITIALIZE_RESPONSE
+            return self._initialize(record["id"])
 
         if method == METHOD_NEW:
             return await self._new_session(params)
