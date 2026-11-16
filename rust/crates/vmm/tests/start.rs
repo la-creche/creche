@@ -3704,7 +3704,7 @@ fn a_shutdown_stops_the_browser_vm_and_the_next_boot_is_fresh() {
     let mut head = Vec::new();
     fs::File::open(&disk)
         .unwrap()
-        .take(mark.len() as u64)
+        .take(u64::try_from(mark.len()).unwrap())
         .read_to_end(&mut head)
         .unwrap();
     assert_ne!(head, mark);
