@@ -16,6 +16,7 @@ import type { AgentStart, ComposedAgent, LimitsRead, StateBackend } from "agent/
 import type { Wire } from "agent/wire-read";
 
 import { tapStores } from "./flue-history.js";
+import { lineagePath, readLineage } from "./lineage.js";
 import { guestLink } from "./local-link.js";
 import type { LocalLink } from "./local-link.js";
 import { sessionService } from "./service.js";
@@ -30,6 +31,8 @@ export const EXIT_SESSION_ID = 17;
 export interface Family {
   /** The host's id of the one session of the VM. */
   readonly sessionId: Wire<"SessionId">;
+  /** The lineage file of the session, beside `flue.db` (`src/lineage.ts`). */
+  readonly lineageFile: string;
   readonly composed: ComposedAgent;
   /** The model's limits from LiteLLM, or the fallback and its fault. */
   readonly limits: LimitsRead;
@@ -61,10 +64,12 @@ export async function readFamily(env: NodeJS.ProcessEnv): Promise<FamilyRead> {
     return { ok: false, exitCode: EXIT_SESSION_ID, detail: read.detail };
   }
 
-  const { composed, limits } = await composeStart(await readGuestStart(env, say));
+  const start = await readGuestStart(env, say);
+  const { composed, limits } = await composeStart(start);
   const backend = vmmBackend(FAMILY_STATE_SOCKET, composed.state.config, say);
+  const lineageFile = lineagePath(start.store);
 
-  return { ok: true, family: { sessionId: read.sessionId, composed, limits, backend, link: guestLink(say) } };
+  return { ok: true, family: { sessionId: read.sessionId, lineageFile, composed, limits, backend, link: guestLink(say) } };
 }
 
 /** The stderr line of a limits read. `alias` names the new model of a change, and is null at start. */
@@ -84,7 +89,7 @@ export function limitsLine(read: LimitsRead, alias: string | null = null): strin
  * (decision CH31 rule 1).
  */
 function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refresh {
-  return async (sessionId) => {
+  return async (instance) => {
     const pulled = await backend.pull();
     if (!pulled.ok) {
       return pulled.fault;
@@ -96,19 +101,36 @@ function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refr
       say(limitsLine(switched, modelAlias));
     }
 
-    state.apply(pulled.state, sessionId);
+    state.apply(pulled.state, instance);
     return null;
   };
 }
 
-/** Flue on the composed store, and the methods of the one session. `link` is the local link of guest init. */
-export async function serveFamily({ sessionId, composed, backend }: Family, link: LocalLink): Promise<ServingStart> {
+/**
+ * Flue on the composed store, and the methods of the one session. `link` is
+ * the local link of guest init. A lineage file that does not read refuses
+ * the start.
+ */
+export async function serveFamily({ sessionId, lineageFile, composed, backend }: Family, link: LocalLink): Promise<ServingStart> {
   try {
     mkdirSync(composed.workspace, { recursive: true });
+    const read = await readLineage(lineageFile);
+    if (!read.ok) {
+      return { ok: false, detail: read.detail };
+    }
+
     const tapped = tapStores(composed.db);
     const runtime = await start({ agents: [composed.agent], db: tapped.adapter, providers: composed.providers });
     const refresh = refreshOf(backend, composed);
-    const sessions = sessionService({ agent: composed.agent, agentName: AGENT_NAME, sessionId, link, store: tapped.store, refresh });
+    const sessions = sessionService({
+      agent: composed.agent,
+      agentName: AGENT_NAME,
+      sessionId,
+      link,
+      store: tapped.store,
+      refresh,
+      rewind: { file: lineageFile, lineage: read.lineage, earlier: composed.earlier },
+    });
 
     return { ok: true, serving: { runtime, sessions } };
   } catch (error) {

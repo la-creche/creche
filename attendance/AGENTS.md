@@ -37,9 +37,10 @@ inside the VM, which carries Node.
    boot (decisions CH21-7, CH27). `initialize` lists `delete`, and
    `session/delete` calls the vmm `drop` and answers `{}`. A delete cannot
    be undone (contract 02 §5.6). `initialize` lists `resume` too, and the
-   door routes `session/resume` to the facade. It routes each other
-   request and notification by its `sessionId`, over one vmm stream per
-   session. A
+   door routes `session/resume` to the facade. `initialize` lists the
+   creche extension `creche/rewind` in the `_meta` of `agentCapabilities`
+   (`docs/design/rewind.md`). It routes each other request and
+   notification by its `sessionId`, over one vmm stream per session. A
    notification for a session with no open stream does nothing: no request
    is in flight there (decision CH21-8). A message whose `params._meta` holds a key that starts with `creche/`
    gets `invalidParams` (-32602) and reaches no stream (contract 02 §5.1

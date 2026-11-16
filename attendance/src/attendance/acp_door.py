@@ -154,11 +154,16 @@ _ANSWERED: Final = frozenset({METHOD_INITIALIZE, METHOD_NEW, METHOD_LIST, METHOD
 #: `delete`, and the door keeps that answer: `session/delete` never reaches
 #: a facade. It lists `resume`, and the door routes each `session/resume`
 #: to the facade by its `sessionId`, so Panda reconnects with no replay.
+#: The `_meta` of `agentCapabilities` lists the creche extension
+#: `_creche/session/rewind` (`facade/vectors/creche-extensions.json`). The
+#: door routes it by its `sessionId` as each other session method, and the
+#: facade of the session answers it.
 INITIALIZE_RESPONSE: Final[dict[str, Any]] = {
     "protocolVersion": PROTOCOL_VERSION,
     "agentCapabilities": {
         "loadSession": True,
         "sessionCapabilities": {"list": {}, "delete": {}, "resume": {}},
+        "_meta": {"creche/rewind": {}},
     },
     "authMethods": [],
 }

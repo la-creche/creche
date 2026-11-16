@@ -48,6 +48,30 @@ function text(sessionUpdate: "agent_message_chunk" | "agent_thought_chunk", delt
   return { sessionUpdate, content: { type: "text", text: forward(delta) } };
 }
 
+/**
+ * One text of a user message. The `messageId` is Flue's id of the message:
+ * a client names it to rewind the session to before that message
+ * (`src/rewind.ts`).
+ */
+export function userChunk(messageId: string, userText: string): SessionUpdate {
+  return {
+    sessionUpdate: "user_message_chunk",
+    messageId: forward(messageId, MAX_NAME_BYTES),
+    content: { type: "text", text: forward(userText) },
+  };
+}
+
+type Appended = Extract<ConversationStreamChunk, { type: "message-appended" }>["message"];
+
+/** The visible user text of an appended message: the echo of a prompt, with its id. */
+function echoOf(message: Appended): SessionUpdate[] {
+  if (message.role !== "user" || message.display !== "visible") {
+    return [];
+  }
+
+  return message.parts.flatMap((part) => (part.type === "text" ? [userChunk(message.id, part.text)] : []));
+}
+
 export function chunkToUpdates(chunk: ConversationStreamChunk): SessionUpdate[] {
   switch (chunk.type) {
     case "message-delta":
@@ -81,10 +105,11 @@ export function chunkToUpdates(chunk: ConversationStreamChunk): SessionUpdate[] 
           content: [{ type: "content", content: { type: "text", text: forward(chunk.errorText) } }],
         },
       ];
-    // The client sent the user text, and a reset or a boundary carries no
-    // new content for a live turn.
-    case "conversation-reset":
+    // The echo of the prompt gives the client the id of its message.
     case "message-appended":
+      return echoOf(chunk.message);
+    // A reset or a boundary carries no new content for a live turn.
+    case "conversation-reset":
     case "message-started":
     case "message-metadata":
     case "data-part":
@@ -102,7 +127,8 @@ export function chunkToUpdates(chunk: ConversationStreamChunk): SessionUpdate[] 
  * The chunks of one submission. `handle.read()` replays the whole
  * conversation from its start, so the chunks of earlier turns pass by too.
  * A message is this submission's when its `message-started` names it, and
- * a tool call is when its `tool-input` sits on such a message.
+ * a tool call is when its `tool-input` sits on such a message. The user
+ * message of the submission is its own when Flue appends it.
  */
 export class SubmissionChunks {
   private readonly messages = new Set<string>();
@@ -132,8 +158,10 @@ export class SubmissionChunks {
         return this.toolCalls.has(chunk.toolCallId);
       case "submission-settled":
         return chunk.submissionId === this.submissionId;
-      case "conversation-reset":
+      // The prompt of this submission: its echo carries its message id.
       case "message-appended":
+        return chunk.message.role === "user" && chunk.message.submissionId === this.submissionId;
+      case "conversation-reset":
         return false;
       default: {
         const unknown: never = chunk;

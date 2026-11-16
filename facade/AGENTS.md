@@ -34,8 +34,16 @@ install here again.
 ## The wire
 
 `vectors/creche-extensions.json` holds the ACP v1 values of the facade:
-the protocol version, the line cap and the answer to `initialize`. The
-facade and its tests read it. The facade answers no creche extension.
+the protocol version, the line cap, the answer to `initialize` and the
+creche extensions. The facade and its tests read it.
+
+The facade answers one creche extension, `_creche/session/rewind`
+(`src/rewind.ts`, `docs/design/rewind.md`). A rewind starts a new Flue
+instance in the VM, with the messages before the cut. `lineage.json`
+beside `flue.db` records the generation and those messages
+(`src/lineage.ts`). A start reads it, and a file that does not read
+refuses the start. The live echo of each prompt and each replay give the
+`messageId` of each user message, which a rewind names.
 
 The facade reads no creche key of `_meta`. The host row carries the typed
 origin of each session, which replaces the keys `creche/job`,

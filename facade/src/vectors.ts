@@ -9,3 +9,6 @@ export const PROTOCOL_VERSION = vectors.protocol_version;
 
 /** The largest line in UTF-8 bytes, the LF not counted. Each side checks it. */
 export const MAX_LINE_BYTES = vectors.max_line_bytes;
+
+/** The creche extension that cuts a session back (`src/rewind.ts`). */
+export const REWIND_METHOD = vectors.rewind.method;

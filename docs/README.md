@@ -48,6 +48,7 @@ decision can replace a row.
 | [tags-on-merge.md](design/tags-on-merge.md) | How a merge allocates a tag. |
 | [phase4-repo-names.md](design/phase4-repo-names.md) | The change of the repository names. |
 | [agent-control-removal-plan.md](design/agent-control-removal-plan.md) | The removal of the old family name. |
+| [rewind.md](design/rewind.md) | The rewind of a session to before one user message. The rows RW1 to RW4. |
 
 A design note names host names, addresses and accounts as placeholders. The
 operator's private notes hold the real values. A note can cite a file of the

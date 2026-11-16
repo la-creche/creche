@@ -38,7 +38,7 @@ from attendance.ids import is_session_id, new_session_id
 from attendance.service import SessionService
 from attendance_harness import FAMILY, make_config, make_service, write_status, write_tokens
 from creche_wire import DoorOrigin
-from fake_facade import ANSWER_CHUNKS, PromptMode, chunk
+from fake_facade import ANSWER_CHUNKS, EXTENSIONS, REWIND_METHOD, PromptMode, chunk
 from fake_vmm import BUSY, FakeVmm
 from websockets.asyncio.client import ClientConnection, connect, unix_connect
 from websockets.exceptions import ConnectionClosed
@@ -168,6 +168,24 @@ async def test_initialize_is_answered_with_no_boot(door: Door) -> None:
 
     assert answer == {"jsonrpc": "2.0", "id": 1, "result": INITIALIZE_RESPONSE}
     assert door.vmm.opened == []
+
+
+def test_initialize_lists_the_rewind_extension() -> None:
+    """The capability key is the one of the facade's vector file."""
+    meta = INITIALIZE_RESPONSE["agentCapabilities"]["_meta"]
+
+    assert meta == {EXTENSIONS["rewind"]["capability"]: {}}
+
+
+@pytest.mark.slow
+async def test_a_rewind_reaches_the_facade_of_its_session(door: Door) -> None:
+    """The door routes the extension by its `sessionId`, as a prompt."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        answer = await ask(connection, 4, REWIND_METHOD, sessionId=session, messageId="msg-01")
+
+    assert answer == {"jsonrpc": "2.0", "id": 4, "result": {}}
+    assert door.vmm.facades[session].methods == ["initialize", REWIND_METHOD]
 
 
 @pytest.mark.slow

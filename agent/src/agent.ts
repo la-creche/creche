@@ -12,7 +12,8 @@
 //   useSandbox        local(workspace) with the granted tools, when the
 //                     grant is not empty                  src/sandbox-tools.ts
 //   useSkill          each skill of the session's last pull  src/skills.ts
-//   useInstruction    the instructions of the session's last pull
+//   useInstruction    the instructions of the session's last pull, and the
+//                     transcript that a rewind kept      src/earlier.ts
 //   db                sqlite(FLUE_DB)                     src/guest.ts
 //
 // The agent function reads no file and no credential. Flue renders it again
@@ -29,11 +30,13 @@ import { sqlite } from "@flue/runtime/node";
 import { chaperoneConnection } from "./chaperone.js";
 import { codemodeTool } from "./codemode.js";
 import type { Planes } from "./config.js";
+import { Earlier } from "./earlier.js";
 import { StateHolder } from "./family-state.js";
 import type { LiveState } from "./family-state.js";
 import { FALLBACK_LIMITS, LiveModel, specOf } from "./litellm.js";
 import type { ModelLimits } from "./litellm.js";
 
+export { Earlier } from "./earlier.js";
 export { LiveModel, readModelLimits } from "./litellm.js";
 export type { LimitsFault, LimitsRead, ModelLimits } from "./litellm.js";
 export { StateHolder, vmmBackend } from "./family-state.js";
@@ -84,6 +87,8 @@ export interface ComposedAgent {
   readonly state: StateHolder;
   /** The model of the latest pull. The facade gives it each pulled alias before `state`. */
   readonly model: LiveModel;
+  /** The transcript that a rewind kept, by Flue instance. The facade sets it at each rewind. */
+  readonly earlier: Earlier;
 }
 
 /** The instance id, or null on a bare render, where `props.id` throws. */
@@ -106,9 +111,11 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
   const model = new LiveModel(start.planes, start.state.config.modelAlias, limits, () => state.creds);
   const ch = chaperoneConnection({ planes: start.planes, creds: start.state.creds }, () => state.creds);
   const codemode = codemodeTool(ch);
+  const earlier = new Earlier();
 
   function FamilyAgent(props?: AgentProps): string {
-    const live = state.configFor(instanceOf(props));
+    const instance = instanceOf(props);
+    const live = state.configFor(instance);
     const { instructions, sandboxTools: grant, skills: granted, systemPrompt: mode } = live;
     const replacement = mode === "replace" ? instructions : null;
     // The `model` follow of the pull put this alias in Flue's provider.
@@ -128,6 +135,11 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
       useInstruction(instructions);
     }
 
+    const kept = earlier.instructionFor(instance);
+    if (kept !== null) {
+      useInstruction(kept);
+    }
+
     return replacement ?? BASE_INSTRUCTIONS;
   }
 
@@ -141,5 +153,6 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
     skippedSkills: start.skippedSkills,
     state,
     model,
+    earlier,
   };
 }

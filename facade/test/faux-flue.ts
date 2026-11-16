@@ -2,13 +2,21 @@
 // provider, as `agent/test/settle.test.ts` runs it. No network, no key.
 // One process holds one Flue runtime, so each test file starts its own.
 
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { fauxProvider } from "@earendil-works/pi-ai";
 import { useModel } from "@flue/runtime";
 import type { Agent } from "@flue/runtime";
 import { sqlite, start } from "@flue/runtime/node";
 import type { ConversationStreamStore, PersistenceAdapter } from "@flue/runtime/adapter";
 
+import { Earlier } from "agent/agent";
+
 import { tapStores } from "../src/flue-history.js";
+import { FIRST_LINEAGE, LINEAGE_NAME } from "../src/lineage.js";
+import type { RewindOptions } from "../src/rewind.js";
 
 export const faux = fauxProvider();
 
@@ -36,4 +44,11 @@ export async function startFlue(agents: readonly Agent[] = [Probe], db: Persiste
   const flue = await start({ agents, db: tapped.adapter, providers: [faux.provider] });
 
   return { stop: () => flue.stop(), store: tapped.store };
+}
+
+/** The rewind options of a session with no rewind yet: a lineage file in a new temp directory. */
+export function freshRewind(earlier: Earlier = new Earlier()): RewindOptions {
+  const file = join(mkdtempSync(join(tmpdir(), "facade-lineage-")), LINEAGE_NAME);
+
+  return { file, lineage: FIRST_LINEAGE, earlier };
 }
