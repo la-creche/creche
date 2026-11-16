@@ -37,6 +37,12 @@ FRAME = json.dumps(
 )
 OVERSIZE = json.dumps({"jsonrpc": "2.0", "pad": "x" * MAX_FRAME_BYTES})
 
+#: A frame of exactly the cap.
+_ENVELOPE = '{"jsonrpc":"2.0","pad":""}'
+AT_CAP = _ENVELOPE.replace('""', '"' + "x" * (MAX_FRAME_BYTES - len(_ENVELOPE)) + '"')
+
+SCAN_VECTORS = Path(__file__).parents[2] / "rust" / "crates" / "wire" / "vectors" / "scan.json"
+
 
 @dataclass(slots=True)
 class FakeAttendance:
@@ -155,6 +161,25 @@ async def test_a_frame_over_the_cap_closes_1009(
         if mode == "echo":
             await client.send(OVERSIZE)
         assert (await close_of(client))[0] == Close.TOO_LARGE
+
+
+def test_the_frame_cap_is_the_acp_line_cap() -> None:
+    """The cap of attendance, held equal to `scan.json` (design note
+    attachments, decision 4)."""
+    vectors = json.loads(SCAN_VECTORS.read_text(encoding="utf-8"))
+
+    assert vectors["acp_line_cap"] == MAX_FRAME_BYTES
+
+
+async def test_a_frame_of_the_cap_and_a_line_ending_passes(
+    door: str, attendance: FakeAttendance
+) -> None:
+    """The client message may hold the cap and its one line ending."""
+    async with connect(door, additional_headers=GOOD, max_size=None) as client:
+        await client.send(AT_CAP + "\r\n")
+        echoed = await asyncio.wait_for(client.recv(decode=False), 30)
+
+    assert echoed == AT_CAP.encode("utf-8")
 
 
 @pytest.mark.parametrize("ending", ["\n", "\r\n"], ids=["lf", "crlf"])

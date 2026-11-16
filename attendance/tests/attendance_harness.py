@@ -87,8 +87,11 @@ def write_status(
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def make_config(tmp_path: Path, sessions_root: Path | None = None) -> Config:
-    """A config rooted inside one temporary directory, or with `sessions_root` when given."""
+def make_config(
+    tmp_path: Path, sessions_root: Path | None = None, scanner_socket: Path | None = None
+) -> Config:
+    """A config rooted inside one temporary directory, or with `sessions_root` when given.
+    With no `scanner_socket` the scan is off."""
     return Config(
         sessions_root=tmp_path / "sessions" if sessions_root is None else sessions_root,
         state_root=tmp_path / "state",
@@ -97,6 +100,7 @@ def make_config(tmp_path: Path, sessions_root: Path | None = None) -> Config:
         lan_address="192.0.2.10",
         lan_port=8350,
         vmm_socket=tmp_path / "vmm" / "vmm.sock",
+        scanner_socket=scanner_socket,
     )
 
 

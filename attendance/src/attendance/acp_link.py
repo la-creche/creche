@@ -56,8 +56,9 @@ CLIENT_NAME = "attendance"
 CLIENT_VERSION = "0.1.0"
 
 #: The cap of one ACP line, in both directions. The ACP door uses it for
-#: each frame.
-MAX_ACP_LINE_BYTES = 1_048_576
+#: each frame. It is `acp_line_cap` of `rust/crates/wire/vectors/scan.json`:
+#: a prompt carries its files (design note attachments, decision 4).
+MAX_ACP_LINE_BYTES = 16_777_216
 
 #: How long the facade has to answer the handshake. The vmm answers 101
 #: after the first `ControlReady` (decision CH34 rule 7), so the facade

@@ -50,9 +50,11 @@ attendance's token. attendance reads its token from
 2. If attendance cannot be reached, the door closes the client with 1014
    `attendance unreachable` before any frame.
 3. Each text frame passes as it is, in both directions. Each frame gets
-   attendance's envelope check: UTF-8 at most 1 MiB, one line, strict JSON,
-   an object with `"jsonrpc": "2.0"`. A frame over the cap closes both sides
-   with 1009. Any other bad frame, or a binary frame, closes both with 1007.
+   attendance's envelope check: UTF-8 at most 16 MiB, one line, strict
+   JSON, an object with `"jsonrpc": "2.0"`. The cap is `acp_line_cap` of
+   `rust/crates/wire/vectors/scan.json`, so a prompt can carry its files.
+   A frame over the cap closes both sides with 1009. Any other bad frame,
+   or a binary frame, closes both with 1007.
    A client frame may end in one line ending, one LF or one CR LF: the
    door strips it before the check and forwards the frame without it.
    Agmente ends each frame so. Each other line break is a bad frame. A

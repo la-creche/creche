@@ -73,6 +73,55 @@ inside the VM, which carries Node.
     row whose origin is `delegate` or `auto` drops, and each `door` row
     stays (contract 02 §6 rule 5, decision CH83 rule 5).
 
+## The files of a prompt
+
+The design note `docs/design/attachments.md` gives the rules. Section 6 is
+the door step (`attachments.py`, `scanner.py`).
+
+1. The cap of one ACP line is 16 MiB in each direction
+   (`MAX_ACP_LINE_BYTES`). It is `acp_line_cap` of
+   `rust/crates/wire/vectors/scan.json`. The door, the jobs and the view
+   use it. The Unix socket listener takes a WebSocket message of that cap
+   plus one CR LF. A page of the view stays 1 MiB of entries.
+2. `initialize` of the door lists `promptCapabilities` `image` and
+   `embeddedContext`, as the facade does.
+3. A `session/prompt` with an `audio` block gets `invalidParams`, with or
+   without a scan. Audio is not an allowed kind (decision 1). The message
+   names the block. A `session/prompt` with no `image`, `resource` or
+   `audio` block goes to its stream as its exact bytes.
+4. When `ATTENDANCE_SCANNER_SOCKET` is not set, the scan is off. A prompt
+   with a file then gets `invalidParams` (-32602).
+5. The door checks the file blocks first: `max_files`, `max_file_bytes`
+   (decoded bytes), `max_message_bytes` and the `uri` rule. A `resource`
+   holds a `blob` (strict base64) or a `text` (its UTF-8 bytes), and not
+   both. A failed check gets `invalidParams`. The message starts with the
+   name of the rule. The prompt reaches no scan and no stream.
+6. A task scans each file in sequence over one link for each file. The
+   lane of the session goes on, so the frames of each session and each
+   request keep their flow. A refusal gets `invalidParams` with the
+   message `<name>: <reason>`.
+7. The caps hold for the rebuilt files too. Each rebuilt file is
+   `max_file_bytes` or less, and the rebuilt files of the message are
+   `max_message_bytes` or less in all. Past a cap the message is
+   `<name>: too_large`. The name is the name that the client sent.
+8. The reply of one file is one file, or a PDF and its `<name>.txt` as
+   `text/plain`. The two count as one file. Each other reply is `failed`.
+9. The task puts the prompt with the rebuilt files back in the lane of
+   its session. A rebuilt file of an image type becomes an `image` block.
+   Each other rebuilt file becomes a `resource` block with a `blob`. Each
+   other block stays in its place. A rebuilt prompt over the line cap
+   gets `invalidParams` with a message that starts with `acp_line_cap`.
+10. A `session/cancel` of the session while the door scans stops the
+    scan. The door answers the prompt with the stop reason `cancelled`,
+    and the prompt reaches no stream. The cancel goes on as before.
+11. The prompt counts in `prompts_in_flight` from its frame to its answer,
+    the scan included.
+12. A reply of the scanner is a claim. It is one line of `line_cap` bytes
+    or less, strict JSON of one shape. Each other reply, a link with no
+    reply and a reply past `wait_s` give `failed`. A link that ends before
+    it takes the whole request gives `busy`, because the vmm closes a link
+    past its cap at once.
+
 ## The trigger door
 
 Each route takes the `door-trigger` token and no other. `/trigger` takes
@@ -279,6 +328,7 @@ uv run python -m attendance           # serve
 | `ATTENDANCE_SOCKET` | the Unix socket |
 | `ATTENDANCE_BIND_LAN`, `ATTENDANCE_LAN_ADDRESS`, `ATTENDANCE_LAN_PORT` | the optional TCP listener, port 8350 |
 | `ATTENDANCE_VMM_SOCKET` | `vmm.sock`. The unit sets it to `%t/vmm/vmm.sock` (decision CH20). No default. |
+| `ATTENDANCE_SCANNER_SOCKET` | the scanner socket that the vmm serves (design note attachments §4). No default. Not set, the scan is off. |
 
 Five token files sit under `<state root>/tokens/`. Three are mode 0600. The
 delegate and dispatch tokens are mode 0640, group `agents`, because the
@@ -296,7 +346,9 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `channel.py`, `lines.py` | a record stream to a facade, the LF framing and the byte cut |
 | `acp_link.py`, `acp/schema-v1.json` | the handshake and the ACP link of one session, and the pinned ACP schema |
 | `acp_jobs.py` | one job: the row, the stream, one prompt, the deadline and its cancel, the drop |
-| `acp_door.py` | `WS /acp/{family}` on the Unix socket: the answers from the host list, the delete, one stream per session, the envelope check, the count of its prompts |
+| `acp_door.py` | `WS /acp/{family}` on the Unix socket: the answers from the host list, the delete, one stream per session, the envelope check, the count of its prompts, the scan task of a prompt with files |
+| `attachments.py` | the files of a prompt: the checks, the scan in sequence, the caps of the rebuilt files, the rebuilt blocks |
+| `scanner.py` | the client of the scanner socket: one link for each file, the reply check, the shared numbers of `scan.json` |
 | `acp_view.py` | the view: a page of the host list, or one stream and `session/load`, the transcript and its caps |
 | `jobs.py`, `dispatch.py` | thin jobs, the dispatch and trigger ledgers |
 | `family_status.py`, `faults.py` | the status document, the fault file |
@@ -312,6 +364,8 @@ uv run pytest attendance/tests
 ```
 
 `tests/fake_vmm.py` is the vmm: the rows and one `FakeFacade` per stream.
+`tests/fake_scanner.py` is the scanner socket, on a Unix socket in a
+temporary directory.
 `tests/fake_facade.py` is the far side of a stream, over a
 `tests/fake_channel.py` `FakeChannel`. Add a new misbehaviour of a facade
 there. `tests/attendance_harness.py` holds the
@@ -373,6 +427,10 @@ is marked `slow`.
   turn runs (`acp_door.py`).
 - A job whose vmm drop fails leaves its row. The log names it. The next
   start of attendance drops it (contract 02 §6 rule 5).
+- The vmm gives no sign of its link cap on the scan link. A link that the
+  vmm closes before it takes the whole request is `busy`. A link that
+  takes a short request and then closes with no reply is `failed`, also
+  at the link cap (`scanner.py`).
 - `caregiver` reads only the codes of minor 17 from the fault file of this
   service, so it drops `vmm_protocol_mismatch` until plan PR CR10 adds the
   code to its table.

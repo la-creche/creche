@@ -25,7 +25,13 @@ from websockets.exceptions import ConnectionClosed, WebSocketException
 from websockets.frames import EXTERNAL_CLOSE_CODES
 
 #: attendance's cap for one frame (`MAX_ACP_LINE_BYTES`), in UTF-8 bytes.
-MAX_FRAME_BYTES = 1_048_576
+#: It is `acp_line_cap` of `rust/crates/wire/vectors/scan.json`: a prompt
+#: carries its files (design note attachments, decision 4).
+MAX_FRAME_BYTES = 16_777_216
+
+#: The most bytes of one client WebSocket message: the frame cap and the
+#: one line ending that the door strips before its check.
+MAX_CLIENT_MESSAGE_BYTES = MAX_FRAME_BYTES + len("\r\n")
 
 #: The time to open the WebSocket to attendance.
 CONNECT_TIMEOUT_S = 10.0
