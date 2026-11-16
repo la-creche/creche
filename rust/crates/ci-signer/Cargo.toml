@@ -1,0 +1,24 @@
+# The core of the release signer ci-signer (forgejo-release-path.md,
+# section 4): the release statement, its tag message, the eligibility of a
+# run and the exchange with the job VM. The crate is a library with no I/O.
+# The program, its unit and its catalog row come in a later PR.
+[package]
+name = "creche-ci-signer"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Only for `creche_wire::strict`, the strict JSON check.
+creche-wire = { path = "../wire" }
+serde.workspace = true
+serde_json.workspace = true
+# The SHA-256 of a statement in its line of the issued-runs journal.
+sha2.workspace = true
+
+[dev-dependencies]
+schemars.workspace = true
+
+[lints]
+workspace = true

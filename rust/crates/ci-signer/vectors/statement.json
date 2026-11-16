@@ -1,0 +1,203 @@
+{
+  "Statement": [
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "note": "the example of section 4.5 with the hex filled in"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":9007199254740991,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":9007199254740991,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "note": "the largest run id, 2^53 - 1"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":9007199254740992,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "a run id of 2^53"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":0,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "run 0"
+    },
+    {
+      "json": "{\"statement\":2,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "another version"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"refs/heads/main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "ref is the word main, not the full ref"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"pull_request\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "only a push"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"extra\":true,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "an unknown key"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "a missing key"
+    },
+    {
+      "json": "{\"statement\":1,\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "not_json",
+      "note": "a key twice"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"event\":\"push\",\"workflow\":\"release.yml\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "not_canonical",
+      "note": "another key order"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\": [{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "not_canonical",
+      "note": "whitespace"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}\n",
+      "written": null,
+      "reason": "not_canonical",
+      "note": "a final LF"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]},{\"tag\":\"handover-v0.1.96\",\"assets\":[]}]}",
+      "written": null,
+      "reason": "not_canonical",
+      "note": "tags out of order"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[]}",
+      "written": null,
+      "reason": "field",
+      "note": "no tag"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "a tag twice"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791A8CDAE55087207F12AB919C5EB964494D654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "an upper-case commit"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654000000000000000000000000\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "a sha256 object id"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v1234567890.0.0\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "a version number of 10 digits: the signer is a strict subset of _TAG_RE"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v000000001.0.0\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "a leading zero is refused: root reads each number with int(), so 000000001 and 1 would be one version"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"vmm-v0.1.23\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "two tags of one component are refused"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-02-30T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "a date that does not exist"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00.5Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "a fraction of a second"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00+00:00\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "an offset other than Z"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "an asset name of 65 bytes"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\".forgejo/workflows/release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "a workflow path, not a file name"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"a\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"a\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "note": "assets sorted by name"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"zz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "not_canonical",
+      "note": "assets out of order"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"1970-01-01T00:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"1970-01-01T00:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "note": "signed_at: the first instant"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"9999-12-31T23:59:59Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"9999-12-31T23:59:59Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "note": "signed_at: the last instant"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T23:59:60Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "signed_at: second 60, no leap second"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"1969-12-31T23:59:59Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "signed_at: a year below 1970"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"0000-01-01T00:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "signed_at: the year 0000"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "reason": "field",
+      "note": "signed_at: a lower-case z"
+    }
+  ]
+}

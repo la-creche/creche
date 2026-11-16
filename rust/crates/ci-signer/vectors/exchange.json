@@ -1,0 +1,165 @@
+{
+  "requests": [
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]},{\"tag\":\"handover-v0.1.96\",\"assets\":[]}]}",
+      "refused": null,
+      "tags": "[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]",
+      "note": "two tags, written sorted by tag"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]}]}",
+      "refused": null,
+      "tags": "[{\"tag\":\"handover-v0.1.96\",\"assets\":[]}]",
+      "note": "a tag with no asset, as for venv and units"
+    },
+    {
+      "line": "{\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]}],\"v\":1}",
+      "refused": null,
+      "tags": "[{\"tag\":\"handover-v0.1.96\",\"assets\":[]}]",
+      "note": "the key order of a request is free"
+    },
+    {
+      "line": "{\"v\":2,\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]}]}",
+      "refused": "grammar",
+      "tags": null,
+      "note": "another version"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]}],\"run\":48}",
+      "refused": "grammar",
+      "tags": null,
+      "note": "the job gives no run"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]}],\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\"}",
+      "refused": "grammar",
+      "tags": null,
+      "note": "the job gives no commit"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]}],\"repository\":\"example-owner/creche\"}",
+      "refused": "grammar",
+      "tags": null,
+      "note": "the job gives no repository"
+    },
+    {
+      "line": "{\"v\":1,\"v\":1,\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]}]}",
+      "refused": "grammar",
+      "tags": null,
+      "note": "a key twice"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[]}",
+      "refused": "limits",
+      "tags": null,
+      "note": "no tag"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"handover-v0.1.96\",\"assets\":[]}]}",
+      "refused": "limits",
+      "tags": null,
+      "note": "a tag twice"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"main\",\"assets\":[]}]}",
+      "refused": "grammar",
+      "tags": null,
+      "note": "a tag not of the form component-vX.Y.Z"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"vmm-v1234567890.0.0\",\"assets\":[]}]}",
+      "refused": "grammar",
+      "tags": null,
+      "note": "a version number of 10 digits"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"vmm-v0.1.024\",\"assets\":[]}]}",
+      "refused": "grammar",
+      "tags": null,
+      "note": "a version number with a leading zero"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"vmm-v0.1.24\",\"assets\":[]},{\"tag\":\"vmm-v0.1.25\",\"assets\":[]}]}",
+      "refused": "limits",
+      "tags": null,
+      "note": "two tags of one component"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"vmm-v1.0.0\",\"assets\":[{\"name\":\"a\",\"sha256\":\"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF\"}]}]}",
+      "refused": "grammar",
+      "tags": null,
+      "note": "an upper-case digest"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"vmm-v1.0.0\",\"assets\":[{\"name\":\"a b\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "refused": "grammar",
+      "tags": null,
+      "note": "an asset name that is not plain"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"vmm-v1.0.0\",\"assets\":[{\"name\":\"a0\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a1\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a2\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a3\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a4\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a5\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a6\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a7\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a8\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a9\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a10\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a11\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a12\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a13\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a14\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a15\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"},{\"name\":\"a16\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "refused": "limits",
+      "tags": null,
+      "note": "17 assets"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"c00-v1.0.0\",\"assets\":[]},{\"tag\":\"c01-v1.0.0\",\"assets\":[]},{\"tag\":\"c02-v1.0.0\",\"assets\":[]},{\"tag\":\"c03-v1.0.0\",\"assets\":[]},{\"tag\":\"c04-v1.0.0\",\"assets\":[]},{\"tag\":\"c05-v1.0.0\",\"assets\":[]},{\"tag\":\"c06-v1.0.0\",\"assets\":[]},{\"tag\":\"c07-v1.0.0\",\"assets\":[]},{\"tag\":\"c08-v1.0.0\",\"assets\":[]},{\"tag\":\"c09-v1.0.0\",\"assets\":[]},{\"tag\":\"c10-v1.0.0\",\"assets\":[]},{\"tag\":\"c11-v1.0.0\",\"assets\":[]},{\"tag\":\"c12-v1.0.0\",\"assets\":[]},{\"tag\":\"c13-v1.0.0\",\"assets\":[]},{\"tag\":\"c14-v1.0.0\",\"assets\":[]},{\"tag\":\"c15-v1.0.0\",\"assets\":[]},{\"tag\":\"c16-v1.0.0\",\"assets\":[]},{\"tag\":\"c17-v1.0.0\",\"assets\":[]},{\"tag\":\"c18-v1.0.0\",\"assets\":[]},{\"tag\":\"c19-v1.0.0\",\"assets\":[]},{\"tag\":\"c20-v1.0.0\",\"assets\":[]},{\"tag\":\"c21-v1.0.0\",\"assets\":[]},{\"tag\":\"c22-v1.0.0\",\"assets\":[]},{\"tag\":\"c23-v1.0.0\",\"assets\":[]},{\"tag\":\"c24-v1.0.0\",\"assets\":[]},{\"tag\":\"c25-v1.0.0\",\"assets\":[]},{\"tag\":\"c26-v1.0.0\",\"assets\":[]},{\"tag\":\"c27-v1.0.0\",\"assets\":[]},{\"tag\":\"c28-v1.0.0\",\"assets\":[]},{\"tag\":\"c29-v1.0.0\",\"assets\":[]},{\"tag\":\"c30-v1.0.0\",\"assets\":[]},{\"tag\":\"c31-v1.0.0\",\"assets\":[]},{\"tag\":\"c32-v1.0.0\",\"assets\":[]}]}",
+      "refused": "limits",
+      "tags": null,
+      "note": "33 tags"
+    },
+    {
+      "line": "{\"v\":1,\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]}]",
+      "refused": "grammar",
+      "tags": null,
+      "note": "no JSON text"
+    }
+  ],
+  "answers": [
+    {
+      "answer": {
+        "refused": "grammar"
+      },
+      "line": "{\"v\":1,\"refused\":\"grammar\"}\n",
+      "note": "a grammar refusal"
+    },
+    {
+      "answer": {
+        "refused": "limits"
+      },
+      "line": "{\"v\":1,\"refused\":\"limits\"}\n",
+      "note": "a limit refusal"
+    },
+    {
+      "answer": {
+        "refused": "already_issued"
+      },
+      "line": "{\"v\":1,\"refused\":\"already_issued\"}\n",
+      "note": "the run already got its statement"
+    },
+    {
+      "answer": {
+        "refused": "not_eligible"
+      },
+      "line": "{\"v\":1,\"refused\":\"not_eligible\"}\n",
+      "note": "the run is not eligible"
+    },
+    {
+      "answer": {
+        "refused": "fault"
+      },
+      "line": "{\"v\":1,\"refused\":\"fault\"}\n",
+      "note": "the signer failed"
+    },
+    {
+      "answer": {
+        "signed": {
+          "statement": "eyJzdGF0ZW1lbnQiOjEsInJlcG9zaXRvcnkiOiJleGFtcGxlLW93bmVyL2NyZWNoZSIsIndvcmtmbG93IjoicmVsZWFzZS55bWwiLCJldmVudCI6InB1c2giLCJyZWYiOiJtYWluIiwiY29tbWl0IjoiNTc5MWE4Y2RhZTU1MDg3MjA3ZjEyYWI5MTljNWViOTY0NDk0ZDY1NCIsInJ1biI6MTIzNCwic2lnbmVkX2F0IjoiMjAyNi0xMS0xNVQxMjowMDowMFoiLCJ0YWdzIjpbeyJ0YWciOiJoYW5kb3Zlci12MC4xLjk2IiwiYXNzZXRzIjpbXX0seyJ0YWciOiJ2bW0tdjAuMS4yNCIsImFzc2V0cyI6W3sibmFtZSI6InZtbS14ODZfNjQtdW5rbm93bi1saW51eC1tdXNsLnRhci5neiIsInNoYTI1NiI6IjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYifV19XX0=",
+          "bundle": "eyJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQuZGV2LnNpZ3N0b3JlLmJ1bmRsZS52MC4zK2pzb24ifQ=="
+        }
+      },
+      "line": "{\"v\":1,\"signed\":{\"statement\":\"eyJzdGF0ZW1lbnQiOjEsInJlcG9zaXRvcnkiOiJleGFtcGxlLW93bmVyL2NyZWNoZSIsIndvcmtmbG93IjoicmVsZWFzZS55bWwiLCJldmVudCI6InB1c2giLCJyZWYiOiJtYWluIiwiY29tbWl0IjoiNTc5MWE4Y2RhZTU1MDg3MjA3ZjEyYWI5MTljNWViOTY0NDk0ZDY1NCIsInJ1biI6MTIzNCwic2lnbmVkX2F0IjoiMjAyNi0xMS0xNVQxMjowMDowMFoiLCJ0YWdzIjpbeyJ0YWciOiJoYW5kb3Zlci12MC4xLjk2IiwiYXNzZXRzIjpbXX0seyJ0YWciOiJ2bW0tdjAuMS4yNCIsImFzc2V0cyI6W3sibmFtZSI6InZtbS14ODZfNjQtdW5rbm93bi1saW51eC1tdXNsLnRhci5neiIsInNoYTI1NiI6IjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYifV19XX0=\",\"bundle\":\"eyJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQuZGV2LnNpZ3N0b3JlLmJ1bmRsZS52MC4zK2pzb24ifQ==\"}}\n",
+      "note": "a statement and its bundle"
+    }
+  ]
+}
