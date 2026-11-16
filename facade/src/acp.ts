@@ -21,6 +21,7 @@ import type {
   LoadSessionRequest,
   PromptRequest,
   PromptResponse,
+  ResumeSessionRequest,
   SessionInfoUpdate,
   SessionUpdate,
   StopReason,
@@ -39,6 +40,7 @@ export type {
   LoadSessionRequest,
   PromptRequest,
   PromptResponse,
+  ResumeSessionRequest,
   SessionInfoUpdate,
   SessionUpdate,
   StopReason,
@@ -70,6 +72,7 @@ export interface Peer {
  */
 export interface SessionService {
   loadSession(params: LoadSessionRequest, peer: Peer): Promise<Outcome<Record<string, never>>>;
+  resumeSession(params: ResumeSessionRequest, peer: Peer): Promise<Outcome<Record<string, never>>>;
   prompt(params: PromptRequest, peer: Peer): Promise<Outcome<PromptResponse>>;
   cancel(params: CancelNotification): Promise<void>;
 }
@@ -113,10 +116,13 @@ const INTERNAL_ERROR = -32603;
  * facade that does not list it (`read_agent` in
  * `attendance/src/attendance/acp_link.py`), and attendance answers
  * `session/list` itself (decision CH21-7).
+ *
+ * `resume` says that the facade serves `session/resume`: the link joins the
+ * session's live updates with no replay (`src/load.ts`).
  */
 export const INITIALIZE_RESPONSE: InitializeResponse = {
   protocolVersion: PROTOCOL_VERSION,
-  agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} } },
+  agentCapabilities: { loadSession: true, sessionCapabilities: { list: {}, resume: {} } },
   authMethods: [],
 };
 
@@ -138,6 +144,7 @@ export function facadeApp(sessions: SessionService): AgentApp {
       link = connection;
     })
     .onRequest(methods.agent.session.load, ({ params }) => answer(sessions.loadSession(params, peer)))
+    .onRequest(methods.agent.session.resume, ({ params }) => answer(sessions.resumeSession(params, peer)))
     .onRequest(methods.agent.session.prompt, ({ params }) => answer(sessions.prompt(params, peer)))
     .onNotification(methods.agent.session.cancel, ({ params }) => sessions.cancel(params));
 }

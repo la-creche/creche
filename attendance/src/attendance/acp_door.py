@@ -40,10 +40,11 @@ The door closes the stream of a session when no request is in flight on
 it, so the vmm can snapshot an idle VM (contract 02 §5.5 rule 5, decisions
 CH21-8, CH19 (6)). A request is in flight in either direction: a client
 request routed to the stream until the stream answers it, and a facade
-request until the client answers it. A `session/load` counts like a
-`session/prompt`. A notification opens no call. It reaches an open
-stream, and it opens no stream: with no stream no request is in flight, so
-it has nothing to act on, and an open would boot or restore the VM. The
+request until the client answers it. A `session/load` and a
+`session/resume` each count like a `session/prompt`. A notification opens
+no call. It reaches an open stream, and it opens no stream: with no
+stream no request is in flight, so it has nothing to act on, and an open
+would boot or restore the VM. The
 door connection stays open, and the next request of the session opens a
 new stream with a new handshake. That open waits until the old stream has
 closed, so the vmm meets one holder only (decision CH83 rule 4).
@@ -151,12 +152,13 @@ _ANSWERED: Final = frozenset({METHOD_INITIALIZE, METHOD_NEW, METHOD_LIST, METHOD
 #: lists `delete` from minor 15, so Panda shows its delete button (decision
 #: CH27). The facade's answer to the handshake of a stream lists no
 #: `delete`, and the door keeps that answer: `session/delete` never reaches
-#: a facade.
+#: a facade. It lists `resume`, and the door routes each `session/resume`
+#: to the facade by its `sessionId`, so Panda reconnects with no replay.
 INITIALIZE_RESPONSE: Final[dict[str, Any]] = {
     "protocolVersion": PROTOCOL_VERSION,
     "agentCapabilities": {
         "loadSession": True,
-        "sessionCapabilities": {"list": {}, "delete": {}},
+        "sessionCapabilities": {"list": {}, "delete": {}, "resume": {}},
     },
     "authMethods": [],
 }

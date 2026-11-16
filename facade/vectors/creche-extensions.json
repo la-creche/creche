@@ -24,7 +24,7 @@
         "protocolVersion": 1,
         "agentCapabilities": {
           "loadSession": true,
-          "sessionCapabilities": { "list": {} }
+          "sessionCapabilities": { "list": {}, "resume": {} }
         },
         "authMethods": []
       }
