@@ -77,7 +77,7 @@ async function facade(): Promise<Facade> {
       say,
       serve: async (link) => ({
         ok: true,
-        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link, store: flue.store, rewind: freshRewind() }) },
+        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link, store: flue.store, workspace: flue.workspace, rewind: freshRewind() }) },
       }),
       socketPath: socket,
     });

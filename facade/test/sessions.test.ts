@@ -31,7 +31,7 @@ let wire: Wire;
 beforeEach(() => {
   id = randomUUID();
   session = new OneSession(Probe, id);
-  wire = new Wire(facadeApp(sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store, rewind: freshRewind() })));
+  wire = new Wire(facadeApp(sessionService({ agent: Probe, agentName: "Probe", sessionId: id, link: null, store: flue.store, workspace: flue.workspace, rewind: freshRewind() })));
 });
 
 function load(sessionId: string, cwd = "/work"): ReturnType<Wire["request"]> {

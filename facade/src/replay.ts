@@ -8,6 +8,12 @@
 // sends one at creation and at each compaction), so the replay starts from
 // the last one and adds what came after. The seed comes before all of it:
 // the Flue instance of a rewind starts after the kept messages.
+//
+// A user text ends with one marker line for each file of its prompt
+// (`src/attachments.ts`). The replay shows the user text without them,
+// then a `resource_link` for each file, and an `image` for each image that
+// the workspace still holds (`userChunks` of `src/mapper.ts`). A kept
+// message of a rewind replays its files in the same way.
 
 import type { ConversationStreamChunk } from "@flue/runtime";
 
@@ -16,6 +22,7 @@ import { keptOf, keptUpdates } from "./kept.js";
 import type { Kept } from "./kept.js";
 import type { Position } from "./live.js";
 import { chunkToUpdates, MAX_TEXT_BYTES } from "./mapper.js";
+import type { ImageReader } from "./mapper.js";
 
 type Snapshot = Extract<ConversationStreamChunk, { type: "conversation-reset" }>["snapshot"];
 type Message = Snapshot["messages"][number];
@@ -88,14 +95,15 @@ function joinText(updates: readonly SessionUpdate[]): SessionUpdate[] {
 }
 
 /** The updates of one Flue message: its kept form, or none. */
-function messageUpdates(message: Message): SessionUpdate[] {
+function messageUpdates(message: Message, images: ImageReader): SessionUpdate[] {
   const kept = keptOf(message);
 
-  return kept === null ? [] : joinText(keptUpdates(kept));
+  return kept === null ? [] : joinText(keptUpdates(kept, images));
 }
 
-export function replay(chunks: readonly ConversationStreamChunk[], seed: readonly Kept[] = []): Replay {
-  const seeded = seed.flatMap((kept) => joinText(keptUpdates(kept)));
+/** `images` reads the image of a marker line from the workspace (`Attachments.readImage`). */
+export function replay(chunks: readonly ConversationStreamChunk[], images: ImageReader, seed: readonly Kept[] = []): Replay {
+  const seeded = seed.flatMap((kept) => joinText(keptUpdates(kept, images)));
   let updates: SessionUpdate[] = [...seeded];
   let last: Position | null = null;
   let pendingDeltas: SessionUpdate[] = [];
@@ -112,10 +120,10 @@ export function replay(chunks: readonly ConversationStreamChunk[], seed: readonl
     if (chunk.type === "conversation-reset") {
       pendingDeltas = [];
       pendingMessageId = null;
-      updates = [...seeded, ...chunk.snapshot.messages.flatMap(messageUpdates)];
+      updates = [...seeded, ...chunk.snapshot.messages.flatMap((message) => messageUpdates(message, images))];
     } else if (chunk.type === "message-appended") {
       flushDeltas();
-      updates.push(...messageUpdates(chunk.message));
+      updates.push(...messageUpdates(chunk.message, images));
     } else if (chunk.type === "message-delta") {
       if (pendingMessageId !== null && pendingMessageId !== chunk.messageId) {
         flushDeltas();

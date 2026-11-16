@@ -58,7 +58,7 @@ const meter: MeterSource = { window: () => WINDOW, spend: () => Promise.resolve(
 let id: string;
 
 function serve(): Wire {
-  return new Wire(facadeApp(sessionService({ agent: Metered, agentName: "Metered", sessionId: id, link: null, store: flue.store, thinking: levels, meter, rewind: freshRewind() })));
+  return new Wire(facadeApp(sessionService({ agent: Metered, agentName: "Metered", sessionId: id, link: null, store: flue.store, workspace: flue.workspace, thinking: levels, meter, rewind: freshRewind() })));
 }
 
 function setLevel(wire: Wire, params: Record<string, unknown>): ReturnType<Wire["request"]> {

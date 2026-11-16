@@ -238,7 +238,9 @@ function providerOf(planes: Planes, models: ReadonlyMap<string, ModelLimits>, cr
       // pi sends a reasoning model's instructions as the role `developer`.
       // LiteLLM fronts models that know only `system`, so keep `system`.
       compat: { supportsDeveloperRole: false },
-      input: ["text"],
+      // Each routed model takes image input (docs/design/attachments.md,
+      // section 2.6). pi sends an image only to a model that lists it.
+      input: ["text", "image"],
       cost: NO_COST,
       contextWindow: limits.contextWindow,
       maxTokens: limits.maxTokens,

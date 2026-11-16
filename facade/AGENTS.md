@@ -50,6 +50,55 @@ origin of each session, which replaces the keys `creche/job`,
 `creche/delegation`, `creche/trigger` and `creche/created_at` (decision
 CH21-4). attendance refuses each creche key from a door client.
 
+## The files of a prompt
+
+A `session/prompt` can carry files (`docs/design/attachments.md`,
+sections 3 and 7). attendance scanned and rebuilt each file before the
+prompt comes to the facade. `src/attachments.ts` holds each rule, and
+`test/attachments.test.ts` holds its constants equal to
+`rust/crates/wire/vectors/scan.json`.
+
+1. An image is an `image` block. Each other file is a `resource` block
+   with a `blob`, or with a `text` of UTF-8. The `initialize` answer gives
+   `promptCapabilities` `image: true` and `embeddedContext: true`.
+2. The `uri` of a file block is `attachment:` and the file name. The name
+   is 255 bytes or less. It has no `/`, no control character and no lone
+   surrogate, and it is not `.` or `..`.
+3. An image has a type of the `image` kind. Each other file has a type of
+   the `pdf` or `text` kind. The data is canonical base64.
+4. A prompt has 4 files or less. The scanner gives a PDF and its text as
+   `<name>` and `<name>.txt`, so the two count as one file. A file is 8
+   MiB or less, and the files of one prompt are 10 MiB or less in all.
+   attendance checks these limits first. The facade checks them again.
+5. A failed check gets `invalidParams`. The facade then writes no file and
+   dispatches nothing.
+6. Right before the dispatch, the facade writes each file to
+   `WORKSPACE/attachments/<name>`. A name that is there already gets `-1`,
+   `-2` and so on before its extension. A write makes a new file only. It
+   follows no link and replaces no file. A fault of the write fails the
+   turn.
+7. The text for Flue is the user text, one empty line, then one marker
+   line for each file:
+   `[attached: attachments/<name> (<type>, <bytes> bytes)]`.
+8. Each image also goes to Flue as an attachment of the user message, so
+   the model gets it as image input. Flue keeps its own copy.
+9. The title and the turn end read the user text only.
+   `MAX_PROMPT_BYTES` applies to the user text. A prompt of files only is
+   valid, and its turn gives no title.
+
+`session/load` finds the marker lines at the end of each user text
+(`src/replay.ts`). It sends the user text without them, then one
+`resource_link` for each file. An image that the workspace still holds as
+a regular file also replays as an `image` block, when its base64 fits the
+line cap with 64 KiB of room. The `file` parts of Flue's user message are
+not replayed, because the markers cover them. A marker line that is not
+in the last block of the text stays text. A kept message of a rewind
+replays its files in the same way. The live echo of a prompt shows the
+user text and one `resource_link` for each file, with no `image`.
+Each of these chunks carries the `messageId` of the user message.
+
+The line cap of ACP is 16 MiB, the `acp_line_cap` of the scan vectors.
+
 ## Environment
 
 `src/session-id.ts` reads `CRECHE_SESSION_ID` one time at process start,

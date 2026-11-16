@@ -9,6 +9,7 @@ import type { Wire } from "agent/wire-read";
 
 import type { Commands } from "./commands.js";
 import type { Outcome, SessionService, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse } from "./acp.js";
+import { Attachments } from "./attachments.js";
 import { readHistory } from "./flue-history.js";
 import { Live } from "./live.js";
 import { Loader } from "./load.js";
@@ -33,6 +34,8 @@ export interface ServiceOptions {
   readonly link: LocalLink | null;
   /** The conversation store of the started runtime (`tapStores`). */
   readonly store: () => ConversationStreamStore | null;
+  /** The workspace of the agent: the files of each prompt go to its `attachments/` (`src/attachments.ts`). */
+  readonly workspace: string;
   readonly now?: () => Date;
   /** The pull of the family state before each prompt. None: the state of the start stays. */
   readonly refresh?: Refresh;
@@ -82,8 +85,9 @@ export function sessionService(options: ServiceOptions): SessionService {
   const session = new OneSession(options.agent, options.sessionId, options.now, options.rewind.lineage);
   const live = new Live();
   const meter = new SessionMeter(() => session.instance, options.thinking ?? new ThinkingLevels(), options.meter ?? null, historyOf(session, options));
-  const turns = new Turns(session, live, options.link, meter, options.refresh, options.commands ?? null);
-  const loader = new Loader(session, live, options.store, options.agentName, meter, options.commands ?? null);
+  const attachments = new Attachments(options.workspace);
+  const turns = new Turns(session, live, options.link, meter, attachments, options.refresh, options.commands ?? null);
+  const loader = new Loader(session, live, options.store, options.agentName, meter, options.commands ?? null, attachments);
   const rewinder = new Rewinder(session, turns, meter, options.store, options.agentName, options.rewind);
 
   return {

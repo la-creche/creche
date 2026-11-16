@@ -10,6 +10,8 @@ import type { ConversationStreamChunk } from "@flue/runtime";
 import { stringifyStrict } from "agent/strict-json";
 
 import type { SessionUpdate } from "./acp.js";
+import { splitMarkers, URI_SCHEME } from "./attachments.js";
+import type { Marker } from "./attachments.js";
 import { cutToBytes } from "./line.js";
 
 /** The largest forwarded text, in UTF-8 bytes: the playpen's entry cap. */
@@ -61,6 +63,45 @@ export function userChunk(messageId: string, userText: string): SessionUpdate {
   };
 }
 
+/** The base64 of the image of a marker, or null: the workspace holds no such image. */
+export type ImageReader = (marker: Marker) => string | null;
+
+/** The live echo reads no image: the client sent it. */
+const NO_IMAGE: ImageReader = () => null;
+
+/** The updates of one marker: a link, and the image when `images` reads it. */
+function markerChunks(messageId: string, marker: Marker, images: ImageReader): SessionUpdate[] {
+  const uri = forward(`${URI_SCHEME}${marker.name}`, MAX_NAME_BYTES);
+  const id = forward(messageId, MAX_NAME_BYTES);
+  const { mimeType, size } = marker;
+  const link: SessionUpdate = {
+    sessionUpdate: "user_message_chunk",
+    messageId: id,
+    content: { type: "resource_link", uri, name: forward(marker.name, MAX_NAME_BYTES), mimeType, size },
+  };
+  const data = images(marker);
+  if (data === null) {
+    return [link];
+  }
+
+  return [link, { sessionUpdate: "user_message_chunk", messageId: id, content: { type: "image", data, mimeType, uri } }];
+}
+
+/**
+ * The updates of one user text of `bodyOf` (`src/attachments.ts`): the
+ * text without its marker lines, then a link for each file. A text of
+ * files only gives no text chunk.
+ */
+export function userChunks(messageId: string, body: string, images: ImageReader): SessionUpdate[] {
+  const { text, markers } = splitMarkers(body);
+  const files = markers.flatMap((marker) => markerChunks(messageId, marker, images));
+  if (text.length === 0 && files.length > 0) {
+    return files;
+  }
+
+  return [userChunk(messageId, text), ...files];
+}
+
 type Appended = Extract<ConversationStreamChunk, { type: "message-appended" }>["message"];
 
 /** The visible user text of an appended message: the echo of a prompt, with its id. */
@@ -69,7 +110,7 @@ function echoOf(message: Appended): SessionUpdate[] {
     return [];
   }
 
-  return message.parts.flatMap((part) => (part.type === "text" ? [userChunk(message.id, part.text)] : []));
+  return message.parts.flatMap((part) => (part.type === "text" ? userChunks(message.id, part.text, NO_IMAGE) : []));
 }
 
 export function chunkToUpdates(chunk: ConversationStreamChunk): SessionUpdate[] {

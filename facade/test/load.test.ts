@@ -44,7 +44,7 @@ let service: SessionService;
 // Each test gets a session of its own: one VM's id, on the one Flue of the file.
 beforeEach(() => {
   id = randomUUID();
-  service = sessionService({ agent: Echoer, agentName: "Echoer", sessionId: id, link: null, store: flue.store, rewind: freshRewind() });
+  service = sessionService({ agent: Echoer, agentName: "Echoer", sessionId: id, link: null, store: flue.store, workspace: flue.workspace, rewind: freshRewind() });
 });
 
 function link(): Wire {
