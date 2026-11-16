@@ -237,7 +237,7 @@ def test_a_checkpoint_that_stopped_early_does_not_stop_the_start(host: Path) -> 
     assert not (graph_file := _graph_file(host)).with_name(graph_file.name + ".shadow").exists()
 
 
-async def _failing_sync(folders: list[str]) -> None:
+async def _failing_sync(folders: list[str]) -> int:
     raise ConnectionError("http://secret.test/ refused")
 
 

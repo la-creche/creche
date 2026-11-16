@@ -25,7 +25,12 @@ the journal (`memory/AGENTS.md`, the journal).
 After each sync, good or failed, the loop reopens the graph database
 (`graph.reopen_graph`). The checkpoints of one open use up a budget of
 ladybug, and on 2026-11-15 one open of 2 hours used up 32 GiB of it
-(`memory/AGENTS.md`, the reopen)."""
+(`memory/AGENTS.md`, the reopen).
+
+A sync in which the model's answer for some notes never fits the
+extraction schema is a partial sync, not a failed one. It sets `ready`, and
+those notes sync again at the next change of the vault. On 2026-11-15 one
+such note kept search `not_ready` (`memory/AGENTS.md`, the partial sync)."""
 
 import asyncio
 import hashlib
@@ -38,6 +43,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 from typing import cast
+from uuid import UUID
 
 from .graph import Dead, GraphCheck, GraphReopener, LeftOpen
 from .pdf import PDF_SUFFIX, PdfTexts, pdf_source
@@ -63,7 +69,9 @@ CHUNKS_PER_BATCH = 4
 
 NOTE_SUFFIX = ".md"
 
-type Ingest = Callable[[list[str]], Awaitable[None]]
+#: A sync of the given folders. It returns the count of notes and PDFs whose
+#: graph extraction failed, and it raises for any other failure.
+type Ingest = Callable[[list[str]], Awaitable[int]]
 type Clock = Callable[[], float]
 
 
@@ -78,6 +86,7 @@ class Outcome(Enum):
     WAITING = auto()
     BACKING_OFF = auto()
     SYNCED = auto()
+    PARTIAL = auto()
     FAILED = auto()
 
 
@@ -169,21 +178,88 @@ class Debounce:
         self.synced = stamp
 
 
-async def _remember(source: object) -> None:
+def failed_extractions(runs: object) -> int:
+    """The count of data items whose graph extraction failed, from the runs
+    that `cognify(..., raise_on_error=False)` returns.
+
+    An item counts only when the model answered and no answer fitted the
+    extraction schema (Cognee's `is_structured_output_validation_error`).
+    Cognee keeps those items' chunks, so search finds their text. Any other
+    failed item raises, as `cognify` raises by default: an auth, a budget or
+    a quota error fails every item that is left. A failed run with no failed
+    item raises too."""
+    from cognee.infrastructure.llm.exceptions import is_structured_output_validation_error
+    from cognee.modules.pipelines.exceptions import AfterRunHookError, CognifyFailedError
+    from cognee.modules.pipelines.models.PipelineRunInfo import (
+        PipelineRunCompleted,
+        PipelineRunErrored,
+    )
+
+    # The runs map each dataset id to its run. The sync has one dataset.
+    found = list(cast(dict[object, object], runs).values()) if isinstance(runs, dict) else [runs]
+
+    # The step after a completed run failed. `cognify` raises this by default.
+    hooks = [one for one in found if isinstance(one, PipelineRunCompleted) and one.after_run_error]
+    if hooks:
+        failures: list[tuple[UUID, str, BaseException | str]] = [
+            (one.dataset_id, one.dataset_name, one.after_run_error or "") for one in hooks
+        ]
+        raise AfterRunHookError(failures)
+
+    run = next((one for one in found if isinstance(one, PipelineRunErrored)), None)
+    if run is None:
+        return 0
+
+    # One entry per data item: `run_info`, and for a failed item `error`.
+    # Its type is a bare `list`.
+    entries = cast(list[object], getattr(run, "data_ingestion_info", None) or [])
+    errors: list[object] = []
+    for entry in entries:
+        item = cast(dict[str, object], entry) if isinstance(entry, dict) else {}
+        if isinstance(item.get("run_info"), PipelineRunErrored):
+            errors.append(item.get("error"))
+
+    if errors and all(
+        isinstance(error, Exception) and is_structured_output_validation_error(error)
+        for error in errors
+    ):
+        return len(errors)
+
+    raise CognifyFailedError(run.dataset_name, run.error_class, run.error_message)
+
+
+async def _add(source: object) -> None:
     import cognee
 
-    # The type of `remember` leaves out the dlt resource that the Obsidian
-    # connector returns, and that the connector's own docs pass to it.
-    await cognee.remember(  # pyright: ignore[reportUnknownMemberType]
-        source,  # pyright: ignore[reportArgumentType]
+    # The dlt keywords go to the Obsidian connector's resource. Cognee's
+    # `add` takes them as `**kwargs`, and its type is partly unknown.
+    await cognee.add(  # pyright: ignore[reportUnknownMemberType]
+        source,
         dataset_name=DATASET,
-        self_improvement=False,
         primary_key="id",
         write_disposition="merge",
         max_rows_per_table=0,
         data_per_batch=DATA_PER_BATCH,
-        chunks_per_batch=CHUNKS_PER_BATCH,
     )
+
+
+async def _cognify() -> int:
+    """One graph extraction of each item of the dataset that needs one.
+
+    One call for the notes and the PDFs together: Cognee rolls back the graph
+    of a whole run with a failed item, and a second call would extract each
+    of those items again. With `raise_on_error=False`, a run that failed
+    items returns them. An error of the run itself still raises."""
+    import cognee
+
+    runs = await cognee.cognify(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        datasets=[DATASET],
+        data_per_batch=DATA_PER_BATCH,
+        chunks_per_batch=CHUNKS_PER_BATCH,
+        raise_on_error=False,
+    )
+
+    return failed_extractions(cast(object, runs))
 
 
 async def in_daemon_thread[T](work: Callable[[], T]) -> T:
@@ -229,10 +305,10 @@ def cognee_ingest(root: Path) -> Ingest:
     note or PDF replaces its old document, and a removed one is forgotten."""
     texts = PdfTexts()
 
-    async def ingest(folders: list[str]) -> None:
+    async def ingest(folders: list[str]) -> int:
         from cognee.tasks.ingestion.connectors import obsidian_source
 
-        await _remember(obsidian_source(vault_path=root, resource_name=RESOURCE, folders=folders))
+        await _add(obsidian_source(vault_path=root, resource_name=RESOURCE, folders=folders))
 
         # Each PDF is read in a child process. The reads run in a daemon
         # thread first, so the store loop keeps answering searches, and a
@@ -242,7 +318,9 @@ def cognee_ingest(root: Path) -> Ingest:
         if texts.cut > cut:
             print(f"memory: {texts.cut - cut} PDF(s) cut at the character cap", file=sys.stderr)
 
-        await _remember(pdf_source(root, folders, texts))
+        await _add(pdf_source(root, folders, texts))
+
+        return await _cognify()
 
     return ingest
 
@@ -312,19 +390,27 @@ class Syncer:
         started = self._clock()
         _say(f"sync started: {len(folders)} folders")
         try:
-            await self._ingest(folders)
+            failed = await self._ingest(folders)
         except Exception as error:
             return await self._failed(error, self._clock() - started)
 
+        # A partial sync keeps the stamp too: its failed items sync again at
+        # the next change of the vault, not at each check.
         self._debounce.done(stamp)
         first = not self.ready.is_set()
         self.ready.set()
         ready = "; search is ready" if first else ""
         after = f" after {self._failures} failed syncs" if self._failures else ""
+        partial = (
+            f"; {failed} note(s) or PDF(s) failed graph extraction and sync again "
+            "at the next change"
+            if failed
+            else ""
+        )
         self._failures = 0
-        _say(f"sync done in {self._clock() - started:.0f} s{after}{ready}")
+        _say(f"sync done in {self._clock() - started:.0f} s{after}{partial}{ready}")
 
-        return await self._reopened(Outcome.SYNCED)
+        return await self._reopened(Outcome.PARTIAL if failed else Outcome.SYNCED)
 
     async def _reopened(self, outcome: Outcome) -> Outcome | Dead:
         """Reopen the graph database after a sync, and print one line. A

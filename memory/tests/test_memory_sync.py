@@ -23,6 +23,7 @@ from creche_memory.sync import (
     vault_stamp,
 )
 from memory_graph_helpers import GRAPH_NAME, kill_graph, ladybug_check, make_graph
+from memory_model_helpers import UNFIT, Answer, ingest_through_cognee
 
 QUIET_S = 30.0
 
@@ -80,11 +81,15 @@ class Ingests:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
         self.fail = False
+        #: The items whose graph extraction fails in each sync.
+        self.unfit = 0
 
-    async def __call__(self, folders: list[str]) -> None:
+    async def __call__(self, folders: list[str]) -> int:
         self.calls.append(folders)
         if self.fail:
             raise ConnectionError("http://secret.test/ refused")
+
+        return self.unfit
 
 
 class Reopens:
@@ -310,9 +315,9 @@ class SlowIngests(Ingests):
         super().__init__()
         self.clock = clock
 
-    async def __call__(self, folders: list[str]) -> None:
+    async def __call__(self, folders: list[str]) -> int:
         self.clock.now += 125.0
-        await super().__call__(folders)
+        return await super().__call__(folders)
 
 
 def test_each_sync_logs_its_start_and_end_and_the_first_says_search_is_ready(
@@ -348,6 +353,65 @@ def test_a_failed_sync_logs_its_time_and_the_type_only(
         "The next sync waits at least 30 s.",
         "memory: The graph database reopened in 1.5 s.",
     ]
+
+
+def test_a_partial_sync_opens_search_and_waits_for_the_next_change(
+    vault: Path, capsys: pytest.CaptureFixture[str], usable: GraphCheck
+) -> None:
+    clock = Clock()
+    ingests, reopens = SlowIngests(clock), Reopens()
+    ingests.fail = True
+    syncer = Syncer(vault, ingests, usable, reopens, quiet_s=0.0, clock=clock)
+    assert _step(syncer) is Outcome.FAILED
+
+    ingests.fail, ingests.unfit = False, 2
+    clock.now += POLL_S
+    assert _step(syncer) is Outcome.PARTIAL
+    assert syncer.ready.is_set()
+    assert reopens.calls == 2
+    assert capsys.readouterr().err.splitlines()[-2] == (
+        "memory: sync done in 125 s after 1 failed syncs; 2 note(s) or PDF(s) failed graph "
+        "extraction and sync again at the next change; search is ready"
+    )
+
+    # The failed items do not sync again at each check, and no wait follows.
+    clock.now += POLL_S
+    assert _step(syncer) is Outcome.UNCHANGED
+    assert len(ingests.calls) == 2
+
+    (vault / "docs" / "new.md").write_text("new\n")
+    assert _step(syncer) is Outcome.PARTIAL
+    assert len(ingests.calls) == 3
+
+
+def test_a_sync_through_cognee_counts_the_note_that_fits_no_schema(tmp_path: Path) -> None:
+    notes = tmp_path / "vault" / "notes"
+    notes.mkdir(parents=True)
+    (notes / "a.md").write_text("# A\n\nAlpha talks to beta.\n")
+    (notes / "b.md").write_text("# B\n\nBeta builds the delta.\n")
+    (notes / "unfit.md").write_text(f"# Unfit\n\n{UNFIT}: alpha in dense table rows.\n")
+
+    # The other notes complete, and search finds the text of all three.
+    assert ingest_through_cognee(tmp_path, Answer.FIT) == [
+        "failed: 1",
+        "found: notes/a.md,notes/b.md,notes/unfit.md",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("answer", "cause"),
+    [(Answer.AUTH, "AuthenticationError"), (Answer.BUDGET, "LLMPaymentRequiredError")],
+)
+def test_an_auth_or_budget_error_of_each_item_still_fails_the_sync(
+    tmp_path: Path, answer: Answer, cause: str
+) -> None:
+    notes = tmp_path / "vault" / "notes"
+    notes.mkdir(parents=True)
+    (notes / "a.md").write_text("# A\n\nAlpha talks to beta.\n")
+
+    lines = ingest_through_cognee(tmp_path, answer)
+
+    assert lines[0] == f"raised: CognifyFailedError {cause}"
 
 
 def test_the_wait_doubles_with_each_failed_sync_up_to_the_cap() -> None:

@@ -16,7 +16,7 @@ service of the vault. The service hosts the memory store and answers the
 | `src/creche_memory/vault.py` | `Vault`: it reads one note or lists one folder, inside the vault root. |
 | `src/creche_memory/writes.py` | `Writer`: it creates inbox notes and rewrites whole files in the agent areas. |
 | `src/creche_memory/store.py` | `StoreSettings` and `configure`: the settings of the memory store, as the env that Cognee reads. |
-| `src/creche_memory/sync.py` | `Syncer`: the checks of the vault and the syncs into the store. |
+| `src/creche_memory/sync.py` | `Syncer`: the checks of the vault and the syncs into the store. `failed_extractions`: the items of a partial sync. |
 | `src/creche_memory/logs.py` | `plain_console`: one plain journal line for each Cognee record at WARNING and above. |
 | `src/creche_memory/graph.py` | The graph check: it tells a dead graph database from one that opens. The close of the stop, and the reopen after each sync. |
 | `src/creche_memory/pdf.py` | The PDFs of the vault as a second source of the store: the listing, the rows, the cache of texts. |
@@ -31,7 +31,8 @@ service of the vault. The service hosts the memory store and answers the
 | `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
 | `tests/test_memory_writes.py` | The tests of the writes: the areas, the digest check, the modes and the symlink rules. |
 | `tests/test_memory_store.py` | The tests of the settings. One test imports Cognee in a process of its own and reads its settings back. |
-| `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure, the wait after failures, a dead graph and the reopen. |
+| `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write, a failure, the wait after failures, a dead graph, the reopen and a partial sync. Three syncs through Cognee against a fake model: one note that fits no schema, an auth error and a budget error. |
+| `tests/memory_model_helpers.py` | A fake model server for the chat and embedding routes, a tokenizer in the test's cache, and a sync through Cognee in a child process. |
 | `tests/test_memory_logs.py` | The tests of the journal lines: one plain line for a Cognee record, and the file log that keeps the traceback. |
 | `tests/test_memory_graph.py` | The tests of the graph check, on real ladybug databases. The cap of one open, and the reopen that empties it. |
 | `tests/test_memory_stop.py` | The tests of the stop: a SIGTERM in a checkpoint, a sync that ignores its cancel, the close rules, the unit lines and the daemon thread. |
@@ -175,7 +176,7 @@ after it reads `json`, or `null` when the type refuses `json`.
    document, `obsidian:<path>`. A passage with no source, or with a path that
    the wire types refuse, is left out. A passage path is a `SourcePath`: a
    `.md` note or a `.pdf`. `read` and `rewrite` still take notes only.
-3. A search before the first sync ends gets `not_ready`.
+3. A search before the first good or partial sync gets `not_ready`.
 4. Every call into Cognee runs in the loop of `StoreLoop`. A search from a
    connection waits at most 15 seconds, then gets `internal`. A failed
    search names only the type of the error.
@@ -197,13 +198,61 @@ after it reads `json`, or `null` when the type refuses `json`.
    can hold a URL, and the count of failed syncs in a row. Then the loop
    checks the graph database. A dead graph ends the loop and stops the
    service with exit 78. An error of the check itself ends the loop too,
-   with exit 75. `ready` is set after the first sync that ends well.
+   with exit 75. `ready` is set after the first sync that ends well or in
+   part ("The partial sync").
 6. After any other failed sync, the loop waits before the next sync. The
    wait is 30 s after one failed sync, and it doubles with each failed
    sync in a row, up to 30 minutes. The line of the failed sync names the
    wait. A write in the wait syncs after the wait. The first sync that
    ends well names the count of failed syncs before it and resets it.
-7. The sync calls `remember` with batches of one note and four chunks.
+7. The sync adds the notes, then the PDFs, then calls `cognify` once, with
+   batches of one note and four chunks.
+
+## The partial sync
+
+On 2026-11-15, the model's answer for one dense note never fitted the
+extraction schema, in each of Cognee's 3 tries, in each sync. By default,
+Cognee 1.6.6 then stops the run and raises `CognifyFailedError`. So every
+sync failed, and search stayed `not_ready`.
+
+1. `configure` sets `RAISE_INCREMENTAL_LOADING_ERRORS=false`. A failed item
+   then does not stop the run. The other items go on, and the run records
+   each failed item with its error.
+2. The sync calls `cognify` with `raise_on_error=False`. Then a run with
+   failed items returns them. An error of the run itself still raises, for
+   example a failed connection test before the first sync of a process.
+3. `failed_extractions` reads the run. A failed item counts when its error
+   is a structured-output validation failure, by Cognee's own test
+   (`is_structured_output_validation_error`): the model answered, and no
+   answer fitted the schema. Any other failed item fails the sync with
+   `CognifyFailedError`, as before. An auth, a budget, a quota or a
+   content-policy error is one of these. A failed step after the run
+   (`AfterRunHookError`) fails the sync too.
+4. A sync whose failed items all count is a partial sync. It sets `ready`,
+   and it prints one line:
+   `memory: sync done in <s> s; <n> note(s) or PDF(s) failed graph extraction and sync again at the next change`.
+   It resets the count of failed syncs, and no wait follows it.
+5. A partial sync keeps the vault stamp. So its failed items sync again at
+   the next change of the vault, not at each check.
+6. The reopen follows a partial sync, as it follows a good one.
+
+What Cognee 1.6.6 does with a partial run, measured with a fake model on
+2026-11-15 (`test_a_sync_through_cognee_counts_the_note_that_fits_no_schema`):
+
+1. The chunks of every item stay in the store, the failed item's too. So
+   search finds the text of each note.
+2. Cognee rolls back the graph of the whole run, not only the graph of the
+   failed item. It clears the completion mark of each item of the run. So
+   the next sync extracts each of those items again, and the graph holds
+   only the items of the earlier runs that ended well.
+3. So one `cognify` takes the notes and the PDFs together. With one
+   `remember` for the notes and one for the PDFs, the second call extracted
+   each item of the first call again.
+4. A partial sync costs one extraction of each item that waits for one, at
+   each change of the vault.
+5. With rule 1, an auth or a budget error that starts in a sync fails each
+   item that is left, one at a time. Before rule 1, the first failed item
+   stopped the run. Cognee does not try an auth or a budget error again.
 
 ## The journal
 
