@@ -20,6 +20,8 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
+import pwd
 import shutil
 import socket
 import struct
@@ -59,6 +61,20 @@ CLAMD_SOCKET: Final = Path("/run/creche-scanner/clamd.sock")
 needs_pillow = pytest.mark.skipif(not HAS_PILLOW, reason="Pillow is in the scanner image only")
 needs_magika = pytest.mark.skipif(not HAS_MAGIKA, reason="magika is in the scanner image only")
 needs_poppler = pytest.mark.skipif(not HAS_POPPLER, reason="poppler-utils is not installed")
+
+
+def _is_scan_root() -> bool:
+    """True as root with the user `scan`: a child runs as that user."""
+    try:
+        pwd.getpwnam("scan")
+    except KeyError:
+        return False
+    return os.geteuid() == 0
+
+
+needs_scan_user = pytest.mark.skipif(
+    not _is_scan_root(), reason="a child runs as the user scan, so the test runs as root"
+)
 needs_clamd = pytest.mark.skipif(
     not CLAMD_SOCKET.exists(), reason="no clamd answers on the socket of the scanner image"
 )
@@ -103,6 +119,20 @@ def _refusal(line: bytes) -> str:
 def _files(line: bytes) -> list[tuple[str, str, bytes]]:
     files: list[dict[str, str]] = _reply(line)["ok"]["files"]
     return [(one["name"], one["mime_type"], base64.b64decode(one["data"])) for one in files]
+
+
+def _job(seconds: float = 240.0) -> Any:
+    """A job whose steps never reach a child: its scratch root is absent."""
+    return F.Job(Path("/nonexistent"), seconds)
+
+
+@pytest.fixture
+def job() -> Iterator[Any]:
+    """A job with a scratch root that the user `scan` can pass, as the
+    tmpfs of the facade is."""
+    with tempfile.TemporaryDirectory(dir="/tmp") as name:
+        os.chmod(name, 0o711)
+        yield F.Job(Path(name))
 
 
 def _absent_clamd(tmp_path: Path) -> Any:
@@ -184,7 +214,7 @@ def test_the_kind_line_read_leaves_the_request() -> None:
     with left, right:
         left.sendall(b'scan\n{"name":1}\n')
         assert F.read_kind_line(right) == b"scan\n"
-        assert F.read_request(right) == b'{"name":1}\n'
+        assert F.read_request(right, lambda: 5.0) == b'{"name":1}\n'
 
 
 def test_a_request_with_no_lf_is_failed() -> None:
@@ -193,7 +223,7 @@ def test_a_request_with_no_lf_is_failed() -> None:
         left.sendall(b'{"name":')
         left.shutdown(socket.SHUT_WR)
         with pytest.raises(F.Refused) as refusal:
-            F.read_request(right)
+            F.read_request(right, lambda: 5.0)
         assert refusal.value.reason == F.FAILED
 
 
@@ -204,7 +234,7 @@ def test_a_request_past_the_line_cap_is_failed() -> None:
     with left, right:
         sent.start()
         with pytest.raises(F.Refused) as refusal:
-            F.read_request(right)
+            F.read_request(right, lambda: 5.0)
         assert refusal.value.reason == F.FAILED
         right.close()
         sent.join(timeout=30)
@@ -236,7 +266,7 @@ def _send_quietly(conn: socket.socket, data: bytes) -> None:
     ],
 )
 def test_a_bad_request_is_failed(line: bytes, tmp_path: Path) -> None:
-    assert _refusal(F.scan_line(line, F.Typer(), _absent_clamd(tmp_path))) == F.FAILED
+    assert _refusal(F.scan_line(line, F.Typer(), _absent_clamd(tmp_path), _job())) == F.FAILED
 
 
 @pytest.mark.parametrize(
@@ -251,7 +281,7 @@ def test_an_oversized_file_is_too_large(tmp_path: Path) -> None:
     """A file one byte past `MAX_FILE_BYTES` stops before any layer."""
     line = _line("big.txt", "text/plain", b"a" * (F.MAX_FILE_BYTES + 1))
 
-    assert _refusal(F.scan_line(line, F.Typer(), _absent_clamd(tmp_path))) == F.TOO_LARGE
+    assert _refusal(F.scan_line(line, F.Typer(), _absent_clamd(tmp_path), _job())) == F.TOO_LARGE
 
 
 @pytest.mark.parametrize(
@@ -261,7 +291,7 @@ def test_an_oversized_file_is_too_large(tmp_path: Path) -> None:
 def test_an_unknown_type_is_not_allowed(mime_type: str, tmp_path: Path) -> None:
     line = _line("a.bin", mime_type, b"hello\n")
 
-    assert _refusal(F.scan_line(line, F.Typer(), _absent_clamd(tmp_path))) == F.NOT_ALLOWED
+    assert _refusal(F.scan_line(line, F.Typer(), _absent_clamd(tmp_path), _job())) == F.NOT_ALLOWED
 
 
 def test_a_reply_past_the_line_cap_is_too_large() -> None:
@@ -382,13 +412,13 @@ def test_the_client_streams_every_byte_in_chunks(
     client = F.Clamd(path)
 
     assert client.ping()
-    client.check(data)
+    client.check(data, 30.0)
     assert seen == [data]
 
 
 def test_a_signature_is_malware(found_clamd: Path) -> None:
     with pytest.raises(F.Refused) as refusal:
-        F.Clamd(found_clamd).check(b"bytes")
+        F.Clamd(found_clamd).check(b"bytes", 30.0)
     assert refusal.value.reason == F.MALWARE
 
 
@@ -397,7 +427,7 @@ def test_no_clamd_is_failed(tmp_path: Path) -> None:
 
     assert not client.ping()
     with pytest.raises(F.Refused) as refusal:
-        client.check(b"bytes")
+        client.check(b"bytes", 30.0)
     assert refusal.value.reason == F.FAILED
 
 
@@ -472,25 +502,27 @@ def _open(data: bytes) -> Any:
 
 
 @needs_pillow
-def test_a_png_stays_png_with_no_text_chunk() -> None:
+@needs_scan_user
+def test_a_png_stays_png_with_no_text_chunk(job: Any) -> None:
     from PIL import PngImagePlugin
 
     info = PngImagePlugin.PngInfo()
     info.add_text("Comment", "a secret")
     upload = F.File("a.png", "image/png", _image("PNG", pnginfo=info))
 
-    rebuilt = F.rebuild_image(upload)
+    rebuilt = F.rebuild_image(upload, job)
     assert (rebuilt.name, rebuilt.mime_type) == ("a.png", "image/png")
     assert _open(rebuilt.data).format == "PNG"
     assert b"a secret" not in rebuilt.data
 
 
 @needs_pillow
-def test_a_jpeg_stays_jpeg_turned_and_with_no_exif() -> None:
+@needs_scan_user
+def test_a_jpeg_stays_jpeg_turned_and_with_no_exif(job: Any) -> None:
     """Orientation 6 turns the 8x6 image to 6x8, and no EXIF stays."""
     upload = F.File("a.jpg", "image/jpeg", _exif_jpeg())
 
-    rebuilt = F.rebuild_image(upload)
+    rebuilt = F.rebuild_image(upload, job)
     picture = _open(rebuilt.data)
     assert (rebuilt.name, rebuilt.mime_type) == ("a.jpg", "image/jpeg")
     assert picture.format == "JPEG"
@@ -500,16 +532,18 @@ def test_a_jpeg_stays_jpeg_turned_and_with_no_exif() -> None:
 
 
 @needs_pillow
-def test_a_gif_becomes_png() -> None:
+@needs_scan_user
+def test_a_gif_becomes_png(job: Any) -> None:
     upload = F.File("anim.gif", "image/gif", _image("GIF"))
 
-    rebuilt = F.rebuild_image(upload)
+    rebuilt = F.rebuild_image(upload, job)
     assert (rebuilt.name, rebuilt.mime_type) == ("anim.png", "image/png")
     assert _open(rebuilt.data).format == "PNG"
 
 
 @needs_pillow
-def test_an_image_past_the_pixel_cap_is_too_large() -> None:
+@needs_scan_user
+def test_an_image_past_the_pixel_cap_is_too_large(job: Any) -> None:
     """A PNG of `MAX_IMAGE_PIXELS` + 1 pixels: one row more than the cap."""
     from PIL import Image
 
@@ -519,16 +553,17 @@ def test_an_image_past_the_pixel_cap_is_too_large() -> None:
     picture.save(out, "PNG")
 
     with pytest.raises(F.Refused) as refusal:
-        F.rebuild_image(F.File("big.png", "image/png", out.getvalue()))
+        F.rebuild_image(F.File("big.png", "image/png", out.getvalue()), job)
     assert refusal.value.reason == F.TOO_LARGE
 
 
 @needs_pillow
-def test_a_broken_image_is_unreadable() -> None:
+@needs_scan_user
+def test_a_broken_image_is_unreadable(job: Any) -> None:
     data = _image("PNG")[:40]
 
     with pytest.raises(F.Refused) as refusal:
-        F.rebuild_image(F.File("a.png", "image/png", data))
+        F.rebuild_image(F.File("a.png", "image/png", data), job)
     assert refusal.value.reason == F.UNREADABLE
 
 
@@ -546,8 +581,9 @@ def _pdf(pages: int) -> bytes:
 
 @needs_pillow
 @needs_poppler
-def test_a_pdf_is_made_again_from_pixels_with_its_text() -> None:
-    rebuilt = F.rebuild_pdf(F.File("doc.pdf", "application/pdf", _pdf(2)))
+@needs_scan_user
+def test_a_pdf_is_made_again_from_pixels_with_its_text(job: Any) -> None:
+    rebuilt = F.rebuild_pdf(F.File("doc.pdf", "application/pdf", _pdf(2)), job)
 
     assert [(one.name, one.mime_type) for one in rebuilt] == [
         ("doc.pdf", "application/pdf"),
@@ -559,11 +595,12 @@ def test_a_pdf_is_made_again_from_pixels_with_its_text() -> None:
 
 @needs_pillow
 @needs_poppler
-def test_a_pdf_past_the_page_cap_is_too_large() -> None:
+@needs_scan_user
+def test_a_pdf_past_the_page_cap_is_too_large(job: Any) -> None:
     upload = F.File("doc.pdf", "application/pdf", _pdf(F.MAX_PDF_PAGES + 1))
 
     with pytest.raises(F.Refused) as refusal:
-        F.rebuild_pdf(upload)
+        F.rebuild_pdf(upload, job)
     assert refusal.value.reason == F.TOO_LARGE
 
 
@@ -576,7 +613,7 @@ def test_a_png_claimed_as_pdf_is_mismatch(tmp_path: Path) -> None:
     """Magika reads a PNG. The scan stops before clamd."""
     line = _line("a.pdf", "application/pdf", _image("PNG", (64, 64)))
 
-    assert _refusal(F.scan_line(line, F.Typer(), _absent_clamd(tmp_path))) == F.MISMATCH
+    assert _refusal(F.scan_line(line, F.Typer(), _absent_clamd(tmp_path), _job())) == F.MISMATCH
 
 
 @needs_magika
@@ -584,21 +621,24 @@ def test_a_png_claimed_as_pdf_is_mismatch(tmp_path: Path) -> None:
 def test_a_png_claimed_as_text_is_mismatch(tmp_path: Path) -> None:
     line = _line("a.txt", "text/plain", _image("PNG", (64, 64)))
 
-    assert _refusal(F.scan_line(line, F.Typer(), _absent_clamd(tmp_path))) == F.MISMATCH
+    assert _refusal(F.scan_line(line, F.Typer(), _absent_clamd(tmp_path), _job())) == F.MISMATCH
 
 
 # --- The whole scan, with Magika, clamd and Pillow -----------------------------------------
 
 
 @pytest.fixture
-def scan() -> Callable[[str, str, bytes], bytes]:
+def scan(job: Any) -> Callable[[str, str, bytes], bytes]:
     typer = F.Typer()
     clamd = F.Clamd(CLAMD_SOCKET)
-    return lambda name, mime_type, data: F.scan_line(_line(name, mime_type, data), typer, clamd)
+    return lambda name, mime_type, data: F.scan_line(
+        _line(name, mime_type, data), typer, clamd, job
+    )
 
 
 @needs_clamd
 @needs_magika
+@needs_scan_user
 @needs_pillow
 def test_a_clean_png_comes_back_rebuilt(scan: Callable[[str, str, bytes], bytes]) -> None:
     ((name, mime_type, data),) = _files(scan("a.png", "image/png", _image("PNG", (64, 64))))
@@ -609,6 +649,7 @@ def test_a_clean_png_comes_back_rebuilt(scan: Callable[[str, str, bytes], bytes]
 
 @needs_clamd
 @needs_magika
+@needs_scan_user
 @needs_pillow
 def test_a_jpeg_comes_back_as_jpeg(scan: Callable[[str, str, bytes], bytes]) -> None:
     ((name, mime_type, _),) = _files(scan("a.jpg", "image/jpeg", _image("JPEG", (64, 64))))
@@ -618,6 +659,7 @@ def test_a_jpeg_comes_back_as_jpeg(scan: Callable[[str, str, bytes], bytes]) -> 
 
 @needs_clamd
 @needs_magika
+@needs_scan_user
 @needs_pillow
 def test_a_gif_comes_back_as_png(scan: Callable[[str, str, bytes], bytes]) -> None:
     ((name, mime_type, data),) = _files(scan("a.gif", "image/gif", _image("GIF", (64, 64))))
@@ -628,6 +670,7 @@ def test_a_gif_comes_back_as_png(scan: Callable[[str, str, bytes], bytes]) -> No
 
 @needs_clamd
 @needs_magika
+@needs_scan_user
 def test_a_text_file_comes_back_unchanged(scan: Callable[[str, str, bytes], bytes]) -> None:
     text = b"def main() -> None:\n    print('hello')\n" * 8
 
@@ -636,6 +679,7 @@ def test_a_text_file_comes_back_unchanged(scan: Callable[[str, str, bytes], byte
 
 @needs_clamd
 @needs_magika
+@needs_scan_user
 def test_a_latin1_text_file_is_not_utf8(scan: Callable[[str, str, bytes], bytes]) -> None:
     text = "Le café est très bon, merci beaucoup.\n".encode("latin-1") * 8
 
@@ -644,6 +688,7 @@ def test_a_latin1_text_file_is_not_utf8(scan: Callable[[str, str, bytes], bytes]
 
 @needs_clamd
 @needs_magika
+@needs_scan_user
 def test_the_eicar_file_is_malware(scan: Callable[[str, str, bytes], bytes]) -> None:
     assert _refusal(scan("eicar.txt", "text/plain", EICAR)) == F.MALWARE
 
@@ -672,6 +717,8 @@ def test_the_scanner_target_ships_only_here() -> None:
     assert "pip uninstall -y pip" in stage
     assert '[ "$status" -eq 17 ]' in stage
     assert "clamscan --no-summary /tmp/eicar" in stage
+    assert "--shell /usr/sbin/nologin scan" in stage
+    assert "find / -xdev -type f -perm /6000 -exec chmod ug-s {} +" in stage
     assert FACADE.read_text(encoding="utf-8").startswith("#!/opt/scanner/bin/python -I\n")
     for flavor in text.split(TARGET, 1)[0].split("\nFROM ")[1:]:
         assert "creche_scanner_facade" not in flavor
@@ -700,3 +747,162 @@ def test_the_wheel_pins_are_one_list() -> None:
     for line in pins:
         assert line.count("==") == 1
         assert len(line.split("--hash=sha256:")[1].split("'")[0]) == 64
+
+
+# --- The time of one scan ---------------------------------------------------------
+
+
+def test_the_deadline_stays_under_the_wait_of_attendance() -> None:
+    """The reply leaves before attendance stops waiting `wait_s`, with
+    room for the kind line wait and the reply write."""
+    wait_s = _vector("scan.json")["wait_s"]
+
+    assert wait_s > F.SCAN_DEADLINE_S + F.LINK_LINE_WAIT
+    assert F.CHILD_WAIT_S < F.SCAN_DEADLINE_S
+
+
+def test_a_scan_past_its_deadline_is_failed(tmp_path: Path) -> None:
+    """A good request with no time left stops before Magika: `failed`."""
+    line = _line("a.txt", "text/plain", b"hello\n")
+
+    assert _refusal(F.scan_line(line, F.Typer(), _absent_clamd(tmp_path), _job(0))) == F.FAILED
+
+
+def test_the_request_read_waits_only_the_time_left() -> None:
+    left, right = socket.socketpair()
+    with left, right, pytest.raises(F.Refused) as refusal:
+        F.read_request(right, _job(0).left)
+    assert refusal.value.reason == F.FAILED
+
+
+def _facade_ready() -> Any:
+    facade = F.Facade(Path("/nonexistent"))
+    facade.ready.set()
+    return facade
+
+
+def test_a_closed_link_gets_no_scan() -> None:
+    """A peer that closed before the slot gets no reply and no scan."""
+    left, right = socket.socketpair()
+    with right:
+        left.close()
+        assert not F.link_open(right)
+        assert _facade_ready().answer(right, _job()) is None
+
+
+def test_a_link_closed_while_it_waits_for_the_slot_gets_no_scan() -> None:
+    facade = _facade_ready()
+    left, right = socket.socketpair()
+    answers: list[bytes | None] = []
+    assert facade.slots.acquire()
+    waiter = threading.Thread(target=lambda: answers.append(facade.answer(right, _job())))
+    with right:
+        waiter.start()
+        assert F.link_open(right)
+        left.close()
+        facade.slots.release()
+        waiter.join(timeout=10)
+    assert answers == [None]
+
+
+def test_the_wait_for_the_slot_counts_in_the_deadline() -> None:
+    facade = _facade_ready()
+    left, right = socket.socketpair()
+    assert facade.slots.acquire()
+    with left, right:
+        assert _refusal(facade.answer(right, _job(0.2))) == F.FAILED
+
+
+# --- The children ---------------------------------------------------------------------
+
+
+def _limit(job: Any, *argv: str, cap: int = 1 << 20) -> bytes:
+    with job.workdir() as name:
+        return F.run_child([F.CHILD_LIMIT, *argv], job, Path(name), None, cap)
+
+
+@needs_scan_user
+def test_a_child_runs_as_scan_with_no_group(job: Any) -> None:
+    user = pwd.getpwnam("scan")
+
+    assert _limit(job, "/usr/bin/id", "-u").decode().strip() == str(user.pw_uid)
+    assert _limit(job, "/usr/bin/id", "-G").decode().split() == [str(user.pw_gid)]
+
+
+@needs_scan_user
+def test_a_child_has_its_limits(job: Any) -> None:
+    """Address space, file size, processes and core, as `/proc` shows."""
+    limits = _limit(job, "/bin/cat", "/proc/self/limits", cap=12345).decode()
+    rows = {line[:26].strip(): line[26:].split()[:2] for line in limits.splitlines()[1:]}
+
+    assert rows["Max address space"] == [str(F.CHILD_MEMORY_BYTES)] * 2
+    assert rows["Max file size"] == ["12345", "12345"]
+    assert rows["Max processes"] == [str(F.CHILD_PROCESSES)] * 2
+    assert rows["Max core file size"] == ["0", "0"]
+
+
+@needs_scan_user
+def test_a_child_cannot_fork(job: Any) -> None:
+    """`sh` needs a fork for the first of two commands."""
+    with pytest.raises(F.Refused) as refusal:
+        _limit(job, "/bin/sh", "-c", "/bin/true; /bin/true")
+    assert refusal.value.reason == F.UNREADABLE
+
+
+@needs_scan_user
+def test_an_output_at_the_file_cap_is_too_large(job: Any) -> None:
+    """The child writes past its cap. The write fails at the cap, and the
+    facade reads no byte of it."""
+    with pytest.raises(F.Refused) as refusal:
+        _limit(job, "/usr/bin/head", "-c", "5000", "/dev/zero", cap=4096)
+    assert refusal.value.reason == F.TOO_LARGE
+
+    assert _limit(job, "/usr/bin/head", "-c", "4095", "/dev/zero", cap=4096) == bytes(4095)
+
+
+@needs_scan_user
+def test_a_child_past_the_deadline_is_failed(job: Any) -> None:
+    short = F.Job(job.root, 0.5)
+
+    with pytest.raises(F.Refused) as refusal:
+        _limit(short, "/bin/sleep", "5")
+    assert refusal.value.reason == F.FAILED
+
+
+def test_the_page_cap_holds_one_page_of_the_most_pixels() -> None:
+    """An RGB PNG page is 3 bytes a pixel plus its frames. The scratch
+    tmpfs holds every page of the pixel budget and the three files."""
+    assert F.PAGE_FILE_CAP > 3 * F.MAX_IMAGE_PIXELS
+    assert F.OUT_FILE_CAP == F.MAX_FILE_BYTES + 1
+    assert F.SCRATCH_BYTES > 3 * F.PDF_PIXEL_BUDGET + 3 * F.OUT_FILE_CAP
+    assert F.PDF_PIXEL_BUDGET >= F.MAX_PDF_PAGES * 1240 * 1754
+
+
+def test_the_pages_of_a_pdf_have_one_pixel_budget() -> None:
+    """Four pages of 36 million pixels each: each page is under the page
+    cap, and all four are past the budget."""
+    page = "Page    1 size: 2880 x 2880 pts\n"
+    F.check_page_sizes(page * 3, 3)
+    with pytest.raises(F.Refused) as refusal:
+        F.check_page_sizes(page * 4, 4)
+    assert refusal.value.reason == F.TOO_LARGE
+
+
+# --- The names of a PDF and its text --------------------------------------------------
+
+
+@pytest.mark.parametrize("size", [251, 252, 253, 255])
+def test_a_long_pdf_name_and_its_text_name_agree(size: int) -> None:
+    """The PDF stem is cut so that `<pdf>.txt` fits, and attendance pairs
+    the two files of the reply."""
+    from attendance.scanner import Rebuilt, read_reply
+
+    name = "a" * (size - 4) + ".pdf"
+    pdf, text = F.pdf_names(name)
+
+    assert text == pdf + ".txt"
+    assert len(text.encode()) <= F.MAX_NAME_BYTES
+    assert pdf.endswith(".pdf")
+    assert pdf == name if size <= 251 else len(pdf.encode()) == 251
+    reply = F.ok_line([F.File(pdf, "application/pdf", b"%PDF-"), F.File(text, "text/plain", b"")])
+    assert isinstance(read_reply(reply.decode()), Rebuilt)

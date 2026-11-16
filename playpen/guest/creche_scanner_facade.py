@@ -40,6 +40,7 @@ from __future__ import annotations
 import base64
 import binascii
 import contextlib
+import errno
 import importlib
 import io
 import json
@@ -48,12 +49,15 @@ import os
 import pwd
 import re
 import resource
+import select
 import socket
+import stat
 import struct
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -169,6 +173,11 @@ LINK_CAP: Final = 8
 #: 1.3 GiB of the 3 GiB of the VM.
 SCAN_SLOTS: Final = 1
 
+#: The whole time of one link, from its accept to its reply: the wait for
+#: clamd and for a slot, and every step. It stays under `WAIT_S`, so the
+#: reply reaches attendance before it stops waiting. Past it, `failed`.
+SCAN_DEADLINE_S: Final = 240.0
+
 # --- Layer 1: Magika -----------------------------------------------------------
 
 #: The Magika labels of each kind, other than text. A text file is any
@@ -206,12 +215,47 @@ CLAMD_FOUND: Final = b" FOUND"
 
 # --- Layer 3: the rebuild ---------------------------------------------------------
 
-#: The address space of each child, and how long it may run.
+#: The user of each child: no login, no home, in no other group. The
+#: Dockerfile makes it.
+SCAN_USER: Final = "scan"
+
+#: The scratch tmpfs of the children, with its size. Each step gets a new
+#: dir in it. The size holds the page images of the largest PDF, at most
+#: 3 bytes for each pixel of `PDF_PIXEL_BUDGET` (330 MB), plus the input,
+#: the rebuilt PDF and its text, each at most `OUT_FILE_CAP`.
+SCRATCH_ROOT: Final = Path("/run/creche-scan")
+SCRATCH_BYTES: Final = 384 << 20
+
+#: The tools that mount the scratch tmpfs, from util-linux.
+MOUNT: Final = "/usr/bin/mount"
+UMOUNT: Final = "/usr/bin/umount"
+
+#: The address space of each child, and how long it may run at most.
 CHILD_MEMORY_BYTES: Final = 1 << 30
 CHILD_WAIT_S: Final = 120.0
 
+#: The processes and threads of the user `scan`: the child itself, so it
+#: cannot fork or start a thread.
+CHILD_PROCESSES: Final = 1
+
+#: The `RLIMIT_FSIZE` of a child that writes a rebuilt file or a tool
+#: output. A file that reaches it is past `MAX_FILE_BYTES`: `too_large`.
+OUT_FILE_CAP: Final = MAX_FILE_BYTES + 1
+
+#: The `RLIMIT_FSIZE` of pdftoppm: one RGB PNG page of `MAX_IMAGE_PIXELS`
+#: at 3 bytes a pixel, plus 1 MiB for the row filters and the zlib frames.
+PAGE_FILE_CAP: Final = 3 * MAX_IMAGE_PIXELS + (1 << 20)
+
+#: The pixels of all pages of one PDF at `PDF_DPI`: 50 A4 pages are
+#: 108.7 million. It bounds the page images on the scratch tmpfs.
+PDF_PIXEL_BUDGET: Final = 110_000_000
+
 #: The env of each child. No other name reaches it.
 CHILD_ENV: Final = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
+
+#: The first bytes of the two rebuilt image formats.
+JPEG_MAGIC: Final = b"\xff\xd8\xff"
+PNG_MAGIC: Final = b"\x89PNG\r\n\x1a\n"
 
 #: The exit status of a child for each refusal. Any other status, a
 #: signal and a timeout are `unreadable`.
@@ -315,15 +359,15 @@ def read_kind_line(conn: socket.socket) -> bytes:
     return line
 
 
-def read_request(conn: socket.socket) -> bytes:
+def read_request(conn: socket.socket, left: Callable[[], float]) -> bytes:
     """The request line, LF included, or `Refused(failed)`.
 
     A line with no LF before the end of the link, or one past `LINE_CAP`,
-    is `failed`. Each read waits at most `WAIT_S`.
+    is `failed`. Each read waits at most the time that `left` gives.
     """
-    conn.settimeout(WAIT_S)
     line = bytearray()
     while not line.endswith(b"\n"):
+        conn.settimeout(left())
         chunk = conn.recv(min(65536, LINE_CAP + 1 - len(line)))
         if not chunk:
             raise Refused(FAILED)
@@ -334,6 +378,26 @@ def read_request(conn: socket.socket) -> bytes:
             raise Refused(FAILED)
 
     return bytes(line)
+
+
+def link_open(conn: socket.socket) -> bool:
+    """False when the peer closed the link or shut down its writes.
+
+    Linux sets POLLRDHUP for that even with request bytes still unread.
+    A peek that reads the end of the link says the same on another system.
+    """
+    poller = select.poll()
+    closed = select.POLLHUP | select.POLLERR | getattr(select, "POLLRDHUP", 0)
+    poller.register(conn, select.POLLIN | closed)
+    if any(events & closed for _, events in poller.poll(0)):
+        return False
+
+    try:
+        return conn.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT) != b""
+    except BlockingIOError:
+        return True
+    except OSError:
+        return False
 
 
 def _unique_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -547,14 +611,14 @@ class Clamd:
     def __init__(self, path: Path) -> None:
         self.path = path
 
-    def _command(self, command: bytes, body: bytes | None) -> bytes:
+    def _command(self, command: bytes, body: bytes | None, timeout: float) -> bytes:
         """Sends one command and reads its reply up to the NUL.
 
         INSTREAM sends `body` as chunks, each with its length as 4 bytes
         big endian, then a length of zero.
         """
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-            conn.settimeout(CLAMD_WAIT_S)
+            conn.settimeout(timeout)
             conn.connect(str(self.path))
             conn.sendall(b"z" + command + b"\0")
             if body is not None:
@@ -575,14 +639,15 @@ class Clamd:
     def ping(self) -> bool:
         """True when clamd answers `PONG`."""
         try:
-            return self._command(b"PING", None) == b"PONG"
+            return self._command(b"PING", None, CLAMD_WAIT_S) == b"PONG"
         except OSError:
             return False
 
-    def check(self, data: bytes) -> None:
-        """Refuses `malware` on a signature, `failed` on any other reply."""
+    def check(self, data: bytes, left: float) -> None:
+        """Refuses `malware` on a signature, `failed` on any other reply or
+        when clamd takes more than `left` seconds."""
         try:
-            reply = self._command(b"INSTREAM", data)
+            reply = self._command(b"INSTREAM", data, min(CLAMD_WAIT_S, left))
         except OSError as error:
             raise Refused(FAILED) from error
 
@@ -629,34 +694,115 @@ def start_clamd() -> subprocess.Popen[bytes]:
 
 
 # --- Layer 3: the rebuild ---------------------------------------------------------------
+# Each step that parses the bytes runs in a child, as the user `scan`,
+# in a dir of its own on the scratch tmpfs:
+#
+#   facade (root) --subprocess, user scan, no groups--> this program <step>
+#     |  opens in.* and out-N itself, passes them as stdin and stdout  |
+#     |                                                                 v
+#     |                      setrlimit AS, FSIZE, NPROC, CORE, then the step
+#     +-- reads out-N through its own fd, at most the FSIZE cap
 
 
-def run_child(argv: Sequence[str], data: bytes) -> bytes:
-    """Runs one rebuild step in a child under `CHILD_MEMORY_BYTES`.
+class Job:
+    """The deadline and the scratch root of one scan.
 
-    The child is this program, which sets the limit and then runs the
-    step: `limit <argv>` for a tool, or a subcommand of its own. `data`
-    goes to its stdin, and its stdout comes back. A status of
-    `CHILD_TOO_LARGE` is `too_large`. Each other failure is `unreadable`.
+    Each step gets the time that is left. Past the deadline, the reply is
+    `failed`, because attendance stops waiting at `WAIT_S`.
     """
+
+    def __init__(self, root: Path, seconds: float = SCAN_DEADLINE_S) -> None:
+        self.root = root
+        self.end = time.monotonic() + seconds
+
+    def left(self) -> float:
+        """The seconds that are left, or `Refused(failed)` when none are."""
+        left = self.end - time.monotonic()
+        if left <= 0:
+            raise Refused(FAILED)
+        return left
+
+    def passed(self) -> bool:
+        return time.monotonic() >= self.end
+
+    def workdir(self) -> tempfile.TemporaryDirectory[str]:
+        """A new dir for the children of one step, owned by `scan`, 0700."""
+        work = tempfile.TemporaryDirectory(prefix="scan-", dir=self.root)
+        user = pwd.getpwnam(SCAN_USER)
+        os.chown(work.name, user.pw_uid, user.pw_gid)
+        return work
+
+
+def _write_input(work: Path, name: str, data: bytes) -> Path:
+    """Writes one input file of a child, a new file that no link names."""
+    path = work / name
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
+    return path
+
+
+def _read_capped(fd: int, cap: int) -> bytes:
+    """The bytes of an output file through the fd of the facade.
+
+    A file at `cap` hit the `RLIMIT_FSIZE` of the child, so it is
+    `too_large`. The child cannot swap the file: the fd stays the one the
+    facade opened.
+    """
+    size = os.fstat(fd).st_size
+    if size >= cap:
+        raise Refused(TOO_LARGE)
+
+    return os.pread(fd, size, 0)
+
+
+def run_child(step: Sequence[str], job: Job, work: Path, stdin: Path | None, cap: int) -> bytes:
+    """Runs one step in a child and returns its stdout, at most `cap` - 1
+    bytes.
+
+    The child runs as `SCAN_USER` with no extra group, in `work`. It sets
+    its own limits, with `cap` as its `RLIMIT_FSIZE`, before it parses one
+    byte. Its stdout is a new file in `work`. A status of
+    `CHILD_TOO_LARGE` and an output at the cap are `too_large`. A child
+    past the deadline is `failed`. Each other failure is `unreadable`.
+    """
+    timeout = min(CHILD_WAIT_S, job.left())
+    out = os.open(
+        work / f"out-{time.monotonic_ns()}",
+        os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+    )
+    source = os.open(stdin, os.O_RDONLY | os.O_NOFOLLOW) if stdin else subprocess.DEVNULL
     try:
         done = subprocess.run(
-            [sys.executable, "-I", os.path.abspath(__file__), *argv],
-            input=data,
-            capture_output=True,
+            [sys.executable, "-I", os.path.abspath(__file__), step[0], str(cap), *step[1:]],
+            stdin=source,
+            stdout=out,
+            stderr=subprocess.DEVNULL,
+            cwd=work,
             env=CHILD_ENV,
-            timeout=CHILD_WAIT_S,
+            user=SCAN_USER,
+            group=SCAN_USER,
+            extra_groups=[],
+            umask=0o077,
+            timeout=timeout,
             check=False,
         )
-    except subprocess.TimeoutExpired as error:
-        raise Refused(UNREADABLE) from error
+        if done.returncode == CHILD_TOO_LARGE:
+            raise Refused(TOO_LARGE)
 
-    if done.returncode == CHILD_TOO_LARGE:
-        raise Refused(TOO_LARGE)
+        data = _read_capped(out, cap)
+    except subprocess.TimeoutExpired as error:
+        raise Refused(FAILED if job.passed() else UNREADABLE) from error
+    finally:
+        os.close(out)
+        if stdin is not None:
+            os.close(source)
+
     if done.returncode != 0:
         raise Refused(UNREADABLE)
 
-    return done.stdout
+    return data
 
 
 def renamed(name: str, ends: Sequence[str]) -> str:
@@ -670,24 +816,42 @@ def renamed(name: str, ends: Sequence[str]) -> str:
     return with_end(stem if dot and stem else name, ends[0])
 
 
-def with_end(stem: str, end: str) -> str:
-    """`stem` + `end`, with the stem cut to fit `MAX_NAME_BYTES`."""
-    while stem and len((stem + end).encode()) > MAX_NAME_BYTES:
+def with_end(stem: str, end: str, cap: int = MAX_NAME_BYTES) -> str:
+    """`stem` + `end`, with the stem cut to fit `cap` bytes."""
+    while stem and len((stem + end).encode()) > cap:
         stem = stem[:-1]
 
     return stem + end
 
 
-def rebuild_image(upload: File) -> File:
+def pdf_names(name: str) -> tuple[str, str]:
+    """The names of a rebuilt PDF and of its text: `<pdf>` and
+    `<pdf>.txt`, so attendance can pair them.
+
+    The stem of the PDF is cut, its extension kept, so that `<pdf>.txt`
+    fits `MAX_NAME_BYTES`. Example: a name of 255 bytes keeps 251.
+    """
+    cap = MAX_NAME_BYTES - len(TEXT_END)
+    if len(name.encode()) > cap:
+        stem, dot, end = name.rpartition(".")
+        name = with_end(stem, dot + end, cap) if dot and stem else with_end(name, "", cap)
+
+    return name, name + TEXT_END
+
+
+def rebuild_image(upload: File, job: Job) -> File:
     """Decodes the first frame and encodes it again with no metadata.
 
     A JPEG stays JPEG. Each other image becomes PNG.
     """
-    out = run_child([CHILD_IMAGE], upload.data)
-    tag, _, data = out.partition(b"\n")
-    if tag == b"JPEG":
+    with job.workdir() as name:
+        work = Path(name)
+        source = _write_input(work, "in.img", upload.data)
+        data = run_child([CHILD_IMAGE], job, work, source, OUT_FILE_CAP)
+
+    if data.startswith(JPEG_MAGIC):
         return File(renamed(upload.name, JPEG_ENDS), JPEG_TYPE, data)
-    if tag == b"PNG":
+    if data.startswith(PNG_MAGIC):
         return File(renamed(upload.name, PNG_ENDS), PNG_TYPE, data)
 
     raise Refused(UNREADABLE)
@@ -710,15 +874,36 @@ def pdf_pages(info: str) -> int:
 
 def check_page_sizes(info: str, pages: int) -> None:
     """Refuses `too_large` when a page at `PDF_DPI` has more than
-    `MAX_IMAGE_PIXELS`. `info` is the output of `pdfinfo -f 1 -l <pages>`."""
+    `MAX_IMAGE_PIXELS`, or all pages more than `PDF_PIXEL_BUDGET`. `info`
+    is the output of `pdfinfo -f 1 -l <pages>`."""
     sizes = [PAGE_SIZE_RE.fullmatch(line.strip()) for line in info.splitlines()]
     found = [size for size in sizes if size]
     if len(found) != pages:
         raise Refused(UNREADABLE)
 
-    for size in found:
-        if _page_pixels(float(size.group(1)), float(size.group(2))) > MAX_IMAGE_PIXELS:
+    pixels = [_page_pixels(float(size.group(1)), float(size.group(2))) for size in found]
+    if max(pixels) > MAX_IMAGE_PIXELS or sum(pixels) > PDF_PIXEL_BUDGET:
+        raise Refused(TOO_LARGE)
+
+
+def check_page_files(work: Path, pages: int) -> list[str]:
+    """The page images of pdftoppm in `work`, in page order.
+
+    Each is a regular file under `PAGE_FILE_CAP`, or the scan is
+    `too_large`. Another count is `unreadable`.
+    """
+    images = sorted(work.glob("page-*.png"))
+    if len(images) != pages:
+        raise Refused(UNREADABLE)
+
+    for image in images:
+        info = image.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            raise Refused(UNREADABLE)
+        if info.st_size >= PAGE_FILE_CAP:
             raise Refused(TOO_LARGE)
+
+    return [image.name for image in images]
 
 
 def pdf_text(raw: bytes) -> bytes:
@@ -733,13 +918,15 @@ def pdf_text(raw: bytes) -> bytes:
     return text
 
 
-def rebuild_pdf(upload: File) -> list[File]:
+def rebuild_pdf(upload: File, job: Job) -> list[File]:
     """A new PDF from the page pixels at `PDF_DPI`, and its text as
-    `<name>.txt`."""
-    with tempfile.TemporaryDirectory(prefix="creche-scan-") as work:
-        source = Path(work) / "in.pdf"
-        source.write_bytes(upload.data)
-        info = run_child([CHILD_LIMIT, PDFINFO, "-enc", "UTF-8", str(source)], b"")
+    `<pdf name>.txt`."""
+    with job.workdir() as name:
+        work = Path(name)
+        source = _write_input(work, "in.pdf", upload.data).name
+        info = run_child(
+            [CHILD_LIMIT, PDFINFO, "-enc", "UTF-8", source], job, work, None, OUT_FILE_CAP
+        )
         pages = pdf_pages(info.decode("utf-8", errors="replace"))
         if pages > MAX_PDF_PAGES:
             raise Refused(TOO_LARGE)
@@ -747,25 +934,25 @@ def rebuild_pdf(upload: File) -> list[File]:
             raise Refused(UNREADABLE)
 
         last = str(pages)
-        sizes = run_child([CHILD_LIMIT, PDFINFO, "-f", "1", "-l", last, str(source)], b"")
+        sizes = run_child(
+            [CHILD_LIMIT, PDFINFO, "-f", "1", "-l", last, source], job, work, None, OUT_FILE_CAP
+        )
         check_page_sizes(sizes.decode("utf-8", errors="replace"), pages)
 
-        prefix = Path(work) / "page"
-        render = [PDFTOPPM, "-r", str(PDF_DPI), "-png", "-f", "1", "-l", last]
-        run_child([CHILD_LIMIT, *render, str(source), str(prefix)], b"")
-        images = sorted(str(path) for path in Path(work).glob("page-*.png"))
-        if len(images) != pages:
-            raise Refused(UNREADABLE)
-
-        rebuilt = run_child([CHILD_PAGES, *images], b"")
+        render = [PDFTOPPM, "-r", str(PDF_DPI), "-png", "-f", "1", "-l", last, source, "page"]
+        run_child([CHILD_LIMIT, *render], job, work, None, PAGE_FILE_CAP)
+        images = check_page_files(work, pages)
+        rebuilt = run_child([CHILD_PAGES, *images], job, work, None, OUT_FILE_CAP)
         text = run_child(
-            [CHILD_LIMIT, PDFTOTEXT, "-enc", "UTF-8", "-l", last, str(source), "-"], b""
+            [CHILD_LIMIT, PDFTOTEXT, "-enc", "UTF-8", "-l", last, source, "-"],
+            job,
+            work,
+            None,
+            OUT_FILE_CAP,
         )
 
-    return [
-        File(upload.name, PDF_TYPE, rebuilt),
-        File(with_end(upload.name, TEXT_END), TEXT_TYPE, pdf_text(text)),
-    ]
+    pdf_name, text_name = pdf_names(upload.name)
+    return [File(pdf_name, PDF_TYPE, rebuilt), File(text_name, TEXT_TYPE, pdf_text(text))]
 
 
 def rebuild_text(upload: File) -> File:
@@ -782,11 +969,11 @@ def rebuild_text(upload: File) -> File:
     return upload
 
 
-def rebuild(kind: str, upload: File) -> list[File]:
+def rebuild(kind: str, upload: File, job: Job) -> list[File]:
     if kind == KIND_IMAGE:
-        return check_sizes([rebuild_image(upload)])
+        return check_sizes([rebuild_image(upload, job)])
     if kind == KIND_PDF:
-        return check_sizes(rebuild_pdf(upload))
+        return check_sizes(rebuild_pdf(upload, job))
 
     return check_sizes([rebuild_text(upload)])
 
@@ -806,7 +993,7 @@ def check_sizes(files: list[File]) -> list[File]:
 # --- The scan ----------------------------------------------------------------------
 
 
-def scan_line(line: bytes, typer: Typer, clamd: Clamd) -> bytes:
+def scan_line(line: bytes, typer: Typer, clamd: Clamd, job: Job) -> bytes:
     """The reply line of one request line: the steps of design section 5.
 
     1. The request, and the kind of its claimed type.
@@ -814,13 +1001,16 @@ def scan_line(line: bytes, typer: Typer, clamd: Clamd) -> bytes:
     3. clamd scans the bytes (`malware`).
     4. The rebuild of the kind. Each rebuilt file is `MAX_FILE_BYTES` or
        less.
+
+    Each step starts only while `job` has time left.
     """
     try:
         upload = parse_request(line)
         kind = kind_of(upload.mime_type)
+        job.left()
         typer.check(kind, upload.data)
-        clamd.check(upload.data)
-        return ok_line(rebuild(kind, upload))
+        clamd.check(upload.data, job.left())
+        return ok_line(rebuild(kind, upload, job))
     except Refused as refusal:
         return refused_line(refusal.reason)
 
@@ -837,8 +1027,18 @@ def _pillow() -> ModuleType:
     return image
 
 
-def _limit_memory() -> None:
-    resource.setrlimit(resource.RLIMIT_AS, (CHILD_MEMORY_BYTES, CHILD_MEMORY_BYTES))
+def limit_child(file_cap: int) -> None:
+    """The limits of a child, set before it parses one byte: its address
+    space, the size of each file it writes, no new process or thread, and
+    no core file. Python ignores SIGXFSZ, so a write past the cap fails
+    with EFBIG, and an exec'd tool keeps that."""
+    for kind, value in (
+        (resource.RLIMIT_AS, CHILD_MEMORY_BYTES),
+        (resource.RLIMIT_FSIZE, file_cap),
+        (resource.RLIMIT_NPROC, CHILD_PROCESSES),
+        (resource.RLIMIT_CORE, 0),
+    ):
+        resource.setrlimit(kind, (value, value))
 
 
 def _fresh(picture: _Picture, mode: str, image: ModuleType) -> _Picture:
@@ -865,15 +1065,15 @@ def _alpha(picture: _Picture) -> bool:
     return picture.mode in {"RGBA", "LA", "PA"} or "transparency" in picture.info
 
 
-def child_image(data: bytes) -> bytes:
-    """The child step of an image: `PNG` or `JPEG`, LF, then the bytes.
+def child_image(source: BinaryIO, out: BinaryIO) -> None:
+    """The child step of an image: a PNG or a JPEG on `out`.
 
     It decodes only the four formats, refuses past `MAX_IMAGE_PIXELS`,
     takes the first frame and turns it by its EXIF orientation.
     """
     image = _pillow()
     ops = _library("PIL.ImageOps")
-    picture = _open_picture(image, io.BytesIO(data), IMAGE_FORMATS)
+    picture = _open_picture(image, io.BytesIO(source.read(MAX_FILE_BYTES + 1)), IMAGE_FORMATS)
     width, height = picture.size
     if width * height > MAX_IMAGE_PIXELS:
         raise Refused(TOO_LARGE)
@@ -882,18 +1082,16 @@ def child_image(data: bytes) -> bytes:
     picture.seek(0)
     picture.load()
     turned = cast("_Picture", ops.exif_transpose(picture))
-    out = io.BytesIO()
     if source_format == "JPEG":
         mode = "L" if turned.mode == "L" else "RGB"
         _fresh(turned, mode, image).save(out, "JPEG", quality=JPEG_QUALITY)
-        return b"JPEG\n" + out.getvalue()
+        return
 
     mode = "RGBA" if _alpha(turned) else "L" if turned.mode == "L" else "RGB"
     _fresh(turned, mode, image).save(out, "PNG")
-    return b"PNG\n" + out.getvalue()
 
 
-def child_pages(paths: Sequence[str]) -> bytes:
+def child_pages(paths: Sequence[str], out: BinaryIO) -> None:
     """The child step of a PDF: one PDF of the page images in `paths`."""
     image = _pillow()
     pages: list[_Picture] = []
@@ -903,39 +1101,41 @@ def child_pages(paths: Sequence[str]) -> bytes:
             picture.load()
         pages.append(_fresh(picture, "RGB", image))
 
-    out = io.BytesIO()
     first, *rest = pages
     first.save(out, "PDF", save_all=True, append_images=rest, resolution=float(PDF_DPI))
-    return out.getvalue()
 
 
 def child_main(argv: list[str]) -> int:
-    """Runs one child step under the memory limit.
+    """Runs one child step: `<step> <file cap> <args>`.
 
     `limit <argv>` runs a tool. `image` rebuilds stdin. `pages <paths>`
     makes one PDF. A refusal exits with its status, and each other error
     is `unreadable`.
     """
-    _limit_memory()
-    command, args = argv[0], argv[1:]
+    if len(argv) < 2 or not argv[1].isdigit():
+        return CHILD_UNREADABLE
+
+    limit_child(int(argv[1]))
+    command, args = argv[0], argv[2:]
     if command == CHILD_LIMIT and args:
         os.execv(args[0], args)
 
     try:
         if command == CHILD_IMAGE:
-            out = child_image(sys.stdin.buffer.read())
+            child_image(sys.stdin.buffer, sys.stdout.buffer)
         elif command == CHILD_PAGES and args:
-            out = child_pages(args)
+            child_pages(args, sys.stdout.buffer)
         else:
             return CHILD_UNREADABLE
+        sys.stdout.buffer.flush()
     except Refused as refusal:
         return CHILD_TOO_LARGE if refusal.reason == TOO_LARGE else CHILD_UNREADABLE
+    except OSError as error:
+        return CHILD_TOO_LARGE if error.errno == errno.EFBIG else CHILD_UNREADABLE
     except Exception as error:
         name = type(error).__name__
         return CHILD_TOO_LARGE if name.startswith("DecompressionBomb") else CHILD_UNREADABLE
 
-    sys.stdout.buffer.write(out)
-    sys.stdout.buffer.flush()
     return 0
 
 
@@ -945,7 +1145,8 @@ def child_main(argv: list[str]) -> int:
 class Facade:
     """The links, the engines and clamd of one start of the program."""
 
-    def __init__(self) -> None:
+    def __init__(self, scratch: Path) -> None:
+        self.scratch = scratch
         self.lock = threading.Lock()
         self.open = 0
         self.slots = threading.Semaphore(SCAN_SLOTS)
@@ -968,6 +1169,7 @@ class Facade:
 
     def serve(self, conn: socket.socket, number: int) -> None:
         """Serves one relay link: the kind line, one request, one reply."""
+        job = Job(self.scratch)
         with conn:
             try:
                 kind = link_kind(read_kind_line(conn))
@@ -986,7 +1188,10 @@ class Facade:
                 return
 
             try:
-                reply = self.answer(conn)
+                reply = self.answer(conn, job)
+                if reply is None:
+                    say(f"link {number} closed before its scan")
+                    return
                 conn.sendall(reply)
                 say(f"link {number} answered {len(reply)} bytes")
             except OSError as error:
@@ -994,18 +1199,32 @@ class Facade:
             finally:
                 self.give()
 
-    def answer(self, conn: socket.socket) -> bytes:
-        """The reply line of the request on `conn`, once clamd answers."""
-        if not self.ready.wait(CLAMD_START_WAIT_S):
-            return refused_line(FAILED)
+    def answer(self, conn: socket.socket, job: Job) -> bytes | None:
+        """The reply line of the request on `conn`, once clamd answers and
+        a slot is free, or None when the peer closed the link first.
 
-        with self.slots:
-            try:
-                line = read_request(conn)
-            except Refused as refusal:
-                return refused_line(refusal.reason)
+        The wait for clamd and for the slot counts in the deadline of
+        `job`, so a scan past it is `failed`.
+        """
+        try:
+            if not self.ready.wait(job.left()):
+                return refused_line(FAILED)
+            if not link_open(conn):
+                return None
+            if not self.slots.acquire(timeout=job.left()):
+                return refused_line(FAILED)
+        except Refused as refusal:
+            return refused_line(refusal.reason)
 
-            return scan_line(line, self.typer, self.clamd)
+        try:
+            if not link_open(conn):
+                return None
+            line = read_request(conn, job.left)
+            return scan_line(line, self.typer, self.clamd, job)
+        except Refused as refusal:
+            return refused_line(refusal.reason)
+        finally:
+            self.slots.release()
 
     def run_clamd(self, child: subprocess.Popen[bytes]) -> None:
         """Waits until clamd answers, then ends the program when it stops.
@@ -1026,6 +1245,22 @@ class Facade:
         if not self.stopping.is_set():
             say(f"clamd stopped with status {child.returncode}")
             os._exit(EXIT_NO_CLAMD)
+
+
+def mount_scratch() -> None:
+    """Mounts a new tmpfs of `SCRATCH_BYTES` at `SCRATCH_ROOT`.
+
+    The size bounds every file that a child writes. A tmpfs of an earlier
+    start goes first, with what its children left. A failed mount ends
+    the program, and guest init starts it again.
+    """
+    SCRATCH_ROOT.mkdir(mode=0o711, parents=True, exist_ok=True)
+    if os.path.ismount(SCRATCH_ROOT):
+        subprocess.run([UMOUNT, str(SCRATCH_ROOT)], check=True, env=CHILD_ENV)
+
+    options = f"size={SCRATCH_BYTES},mode=0711,nosuid,nodev,noexec"
+    command = [MOUNT, "-t", "tmpfs", "-o", options, "tmpfs", str(SCRATCH_ROOT)]
+    subprocess.run(command, check=True, env=CHILD_ENV)
 
 
 def listen_relay() -> socket.socket:
@@ -1057,7 +1292,8 @@ def main(argv: list[str]) -> int:
         say(f"no {SESSION_ID_ENV}: this program runs under guest init only")
         return EXIT_NO_SESSION
 
-    facade = Facade()
+    mount_scratch()
+    facade = Facade(SCRATCH_ROOT)
     server = listen_relay()
     local = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     local.connect(LOCAL_LINK_SOCKET)

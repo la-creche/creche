@@ -238,9 +238,26 @@ rebuilds each file of a prompt before a family VM gets it
    closes. The facade runs the steps of design section 5: the kind of the
    claimed type, Magika, clamd and the rebuild. Each rebuilt file is
    `max_file_bytes` or less, or the reason is `too_large`.
-6. Each rebuild step runs in a child with a limit of 1 GiB of address
-   space and of 120 s. The child is the facade with a subcommand, and the
-   subcommand sets the limit with `setrlimit`.
+6. Each rebuild step runs in a child, the facade with a subcommand. The
+   child runs as the user `scan`, with no other group, in a new dir of
+   its own. Before it parses one byte, it sets its limits: 1 GiB of
+   address space, no new process or thread, no core file, and a file
+   size cap. No file of the image keeps a setuid bit.
+7. The file size cap is `max_file_bytes` + 1 for a rebuilt file and a
+   tool output, so a file at the cap is `too_large`. For pdftoppm it is
+   one RGB PNG page of `max_image_pixels`, 3 bytes a pixel plus 1 MiB.
+   The facade reads each output through its own fd, at most the cap.
+8. The dirs of the children are on a tmpfs of 384 MiB at
+   `/run/creche-scan`, which the facade mounts at its start. The pages of
+   one PDF have at most 110 million pixels at 150 dpi, which is 50 A4
+   pages. So the page images are 330 MB or less, and the tmpfs holds
+   them with the input, the PDF and its text.
+9. One scan has 240 s, from the accept of its link to its reply. That is
+   less than the `wait_s` of attendance. The wait for clamd and for the
+   slot counts, and each step gets the time that is left. Past it, the
+   reply is `failed`. A link that closes before its scan gets no scan.
+10. The stem of a long PDF name is cut, so that `<pdf>.txt` fits 255
+   bytes. Attendance pairs the two files by these names.
 
 The build runs Magika on a PNG, runs `clamscan` on the EICAR test file
 and runs the facade outside guest init, which must exit with status 17.

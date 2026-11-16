@@ -485,6 +485,14 @@ RUN mkdir -p -m 0755 /var/lib/creche/session \
          [ -d "$dir" ] || { echo "no mount point $dir" >&2; exit 1; }; \
        done
 
+# The user of each scan child: it parses the hostile bytes, so it has no
+# home, no shell and no other group. No file of the image keeps a setuid
+# or setgid bit, so a child cannot exec one to gain root again.
+RUN useradd --system --user-group --no-create-home --home-dir /nonexistent \
+      --shell /usr/sbin/nologin scan \
+    && find / -xdev -type f -perm /6000 -exec chmod ug-s {} + \
+    && [ -z "$(find / -xdev -type f -perm /6000)" ]
+
 # The facade at the facade path of guest init. The mode is set by chmod,
 # not by a COPY flag: the bundles test of handover reads each COPY word as
 # a copied path.
