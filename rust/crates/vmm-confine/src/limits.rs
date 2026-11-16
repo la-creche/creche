@@ -51,6 +51,14 @@ impl From<FamilyShape> for VmLimits {
 }
 
 impl VmLimits {
+    /// The limits of `cpus` vCPUs and `memory` MiB of guest RAM. A service
+    /// VM has no family shape, so the vmm gives its sizes here (browser
+    /// design 10.4 gap 1).
+    #[must_use]
+    pub fn new(cpus: FamilyCpus, memory: FamilyMemoryMib) -> Self {
+        Self { cpus, memory }
+    }
+
     /// The vCPUs of the guest.
     #[must_use]
     pub fn vcpus(self) -> u8 {

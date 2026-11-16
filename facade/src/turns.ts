@@ -13,7 +13,8 @@
 // The turn start and the turn end each go to guest init on the local link
 // (`src/local-link.ts`, decision CH21). The end carries the title and
 // `updatedAt` of the turn record. The same end goes to each peer as
-// `session_info_update`, and only the first turn names the session.
+// `session_info_update`, and only the first turn names the session. A
+// `usage_update` follows it, when the meter has a count (`src/usage.ts`).
 //
 // One turn runs per session at a time. A second prompt is refused: Flue
 // would join it to the running response, and its reply would have no turn
@@ -33,11 +34,12 @@ import type {
   StopReason,
 } from "./acp.js";
 import { byteLength } from "./line.js";
-import type { Live } from "./live.js";
+import type { Item, Live } from "./live.js";
 import type { LocalLink } from "./local-link.js";
 import { chunkToUpdates, forward, SubmissionChunks } from "./mapper.js";
 import { infoOf } from "./sessions.js";
 import type { OneSession } from "./sessions.js";
+import type { SessionMeter } from "./usage.js";
 
 /** The largest prompt text, in UTF-8 bytes: attendance's prompt cap. */
 export const MAX_PROMPT_BYTES = 262_144;
@@ -132,6 +134,7 @@ export class Turns {
     private readonly session: OneSession,
     private readonly live: Live,
     private readonly link: LocalLink | null,
+    private readonly meter: SessionMeter,
     private readonly refresh: Refresh = NO_REFRESH,
   ) {}
 
@@ -186,6 +189,9 @@ export class Turns {
       return settle("failed", `the family state did not read (${fault})`);
     }
 
+    // After a cold start, the render reads the level of the last response.
+    await this.meter.restore();
+
     // The first send makes the Flue instance, so this turn names the session.
     const first = await this.session.fresh();
     this.live.attach(sessionId, peer);
@@ -197,6 +203,7 @@ export class Turns {
 
     const settlement = await this.run(running, text, (chunk) => {
       lastRecordAt = ("timestamp" in chunk ? chunk.timestamp : undefined) ?? lastRecordAt;
+      this.meter.see(chunk);
       const items = chunkToUpdates(chunk).map((update) => ({ position: chunk.position, update }));
       sent = this.live.publish(sessionId, items);
     });
@@ -204,7 +211,9 @@ export class Turns {
 
     const end = this.session.turnEndOf(text, lastRecordAt);
     this.link?.turnEnd(end.title, end.updatedAt);
-    sent = this.live.publish(sessionId, [{ position: null, update: { sessionUpdate: "session_info_update", ...infoOf(end, first) } }]);
+    const info: Item = { position: null, update: { sessionUpdate: "session_info_update", ...infoOf(end, first) } };
+    const usage = await this.meter.usageUpdate();
+    sent = this.live.publish(sessionId, usage === null ? [info] : [info, { position: null, update: usage }]);
     await sent;
 
     return settle(settlement.outcome, settlement.detail);

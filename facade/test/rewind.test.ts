@@ -98,7 +98,7 @@ function cut(on: Wire, messageId: unknown, sessionId: string = id): ReturnType<W
 /** The user and agent texts of a load on a new link. */
 async function loaded(on: Wire): Promise<string[]> {
   const answer = await on.request("session/load", { sessionId: id, cwd: "/work", mcpServers: [] });
-  expect(answer.result).toEqual({});
+  expect(answer.error).toBeUndefined();
 
   return on.updates(id).map((update) => `${String(update["sessionUpdate"])} ${(update["content"] as { text: string }).text}`);
 }
@@ -184,6 +184,18 @@ describe("_creche/session/rewind", () => {
 
     expect((await cut(wire, first)).result).toEqual({});
     expect(await loaded(link())).toEqual([]);
+  });
+
+  it("keeps the thinking level that the session chose", async () => {
+    await turn(wire, "First.", "One.");
+    await turn(wire, "Second.", "Two.");
+    const set = await wire.request("session/set_config_option", { sessionId: id, configId: "mode", value: "high" });
+    expect(set.error).toBeUndefined();
+    await cut(wire, messageIdOf(wire, "Second."));
+
+    const answer = await link().request("session/load", { sessionId: id, cwd: "/work", mcpServers: [] });
+    const [option] = (answer.result?.["configOptions"] ?? []) as { currentValue: string }[];
+    expect(option?.currentValue).toBe("high");
   });
 
   it("refuses a messageId of no user message, an unknown session and bad params", async () => {

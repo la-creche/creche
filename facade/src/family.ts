@@ -6,12 +6,13 @@
 // one session of `CRECHE_SESSION_ID` (decision CH21-8). Before each prompt
 // the facade pulls the family state from the vmm into the agent (decision
 // CH5a). A pulled `model_alias` that differs switches the model at that
-// prompt (decisions CH5c, CH5c-2).
+// prompt (decisions CH5c, CH5c-2). The meter reads the window of the
+// latest alias and the family key's spend from LiteLLM after each turn.
 
 import { mkdirSync } from "node:fs";
 
 import { start } from "@flue/runtime/node";
-import { AGENT_NAME, composeAgent, FAMILY_STATE_SOCKET, readGuestStart, readModelLimits, vmmBackend } from "agent/agent";
+import { AGENT_NAME, composeAgent, FAMILY_STATE_SOCKET, readGuestStart, readKeySpend, readModelLimits, vmmBackend } from "agent/agent";
 import type { AgentStart, ComposedAgent, LimitsRead, StateBackend } from "agent/agent";
 import type { Wire } from "agent/wire-read";
 
@@ -24,6 +25,7 @@ import { readSessionId } from "./session-id.js";
 import { say } from "./stdio.js";
 import type { ServingStart } from "./supervisor.js";
 import type { Refresh } from "./turns.js";
+import type { MeterSource } from "./usage.js";
 
 /** `CRECHE_SESSION_ID` is absent, or it is not a session id (`src/session-id.ts`). */
 export const EXIT_SESSION_ID = 17;
@@ -40,6 +42,8 @@ export interface Family {
   readonly backend: StateBackend;
   /** The local link of guest init: what holds the facade. */
   readonly link: LocalLink;
+  /** The window and the spend of the client's meter. */
+  readonly meter: MeterSource;
 }
 
 export type FamilyRead =
@@ -64,12 +68,33 @@ export async function readFamily(env: NodeJS.ProcessEnv): Promise<FamilyRead> {
     return { ok: false, exitCode: EXIT_SESSION_ID, detail: read.detail };
   }
 
-  const start = await readGuestStart(env, say);
-  const { composed, limits } = await composeStart(start);
+  const begun = await readGuestStart(env, say);
+  const { composed, limits } = await composeStart(begun);
   const backend = vmmBackend(FAMILY_STATE_SOCKET, composed.state.config, say);
-  const lineageFile = lineagePath(start.store);
+  const meter = meterOf(begun.planes, composed);
+  const lineageFile = lineagePath(begun.store);
 
-  return { ok: true, family: { sessionId: read.sessionId, lineageFile, composed, limits, backend, link: guestLink(say) } };
+  return { ok: true, family: { sessionId: read.sessionId, lineageFile, composed, limits, backend, link: guestLink(say), meter } };
+}
+
+/**
+ * The meter of the family: the window of the alias of the last pull, and
+ * the spend with the key of the last pull. A spend that does not read gives
+ * one stderr line, and the client keeps the spend it last showed.
+ */
+export function meterOf(planes: AgentStart["planes"], { model, state }: ComposedAgent): MeterSource {
+  return {
+    window: () => model.limits.contextWindow,
+    spend: async () => {
+      const read = await readKeySpend(planes, state.creds.litellmKey);
+      if (!read.ok) {
+        say(`family spend not read (${read.fault})`);
+        return null;
+      }
+
+      return { amount: read.spend.spend, budget: read.spend.budget };
+    },
+  };
 }
 
 /** The stderr line of a limits read. `alias` names the new model of a change, and is null at start. */
@@ -111,7 +136,7 @@ function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refr
  * the local link of guest init. A lineage file that does not read refuses
  * the start.
  */
-export async function serveFamily({ sessionId, lineageFile, composed, backend }: Family, link: LocalLink): Promise<ServingStart> {
+export async function serveFamily({ sessionId, lineageFile, composed, backend, meter }: Family, link: LocalLink): Promise<ServingStart> {
   try {
     mkdirSync(composed.workspace, { recursive: true });
     const read = await readLineage(lineageFile);
@@ -129,6 +154,8 @@ export async function serveFamily({ sessionId, lineageFile, composed, backend }:
       link,
       store: tapped.store,
       refresh,
+      thinking: composed.thinking,
+      meter,
       rewind: { file: lineageFile, lineage: read.lineage, earlier: composed.earlier },
     });
 

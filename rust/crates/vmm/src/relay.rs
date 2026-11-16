@@ -346,6 +346,12 @@ impl AcpLink {
         let (stream, pending) = link.into_parts();
         Ok(Self { stream, pending })
     }
+
+    /// The stream of the link and the bytes that guest init sent right
+    /// after `OK`, for the link of a service VM (`service::link`).
+    pub(crate) fn into_parts(self) -> (UnixStream, Vec<u8>) {
+        (self.stream, self.pending)
+    }
 }
 
 /// The relay of one admitted Upgrade. It holds the claim until the stream

@@ -234,6 +234,8 @@ A fault names the key and never the value, as in `env/AGENTS.md`.
 | `VMM_MIRROR_ROOT` | `/srv/agents/code` | `mirror::Mirror::root`, the mirror of host port 1103 (decision CH69 rule 17, fact 13) |
 | `VMM_GIT_PROGRAM` | `/usr/bin/git` | `mirror::Mirror::git`, the `upload-pack` of each clone (decisions CH67 rule 1, CH69 rule 17) |
 | `VMM_GIT_SPOOL_ROOT` | `/var/lib/creche-git-platform` | `StartConfig::spool`, the git platform spool of host port 1105, and the sweep of its `push/` at each start (decision CH3) |
+| `VMM_BROWSER_SOCKET` | `/var/lib/creche-browser/relay.sock` | `service::link::bind`, the socket of the browser VM (see "The service VMs") |
+| `VMM_BROWSER_PEER_USER` | `mcp-browser` | The one user whose links the browser socket takes. The compose step reads its uid from `/etc/passwd` |
 
 Each path is absolute with no `..` component. The run root holds no
 `:`, because systemd joins the paths of more than one
@@ -289,8 +291,8 @@ new flavor or a new service image of `creche-wire` needs no vmm change.
 A service image is the root disk of a service VM, such as the browser
 (browser design 10.5.2). It is not a flavor: no family file can choose
 one. `Digests::services` holds the store digest of each service image,
-or `None` when `digests.json` has no entry for it. No VM boots one yet.
-A later service VM start refuses `None` with its own reason. The
+or `None` when `digests.json` has no entry for it. A service VM start
+refuses `None` with its own reason (see "The service VMs"). The
 snapshot sweep keeps each digest in the store, as it keeps each root
 disk of a flavor.
 
@@ -1792,6 +1794,79 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
   then holds the facade's stop line, no signal, a clean session disk and
   `flue.db` on it. The test writes both prompt times to the job log
   (decision CH23).
+
+## The service VMs
+
+`src/service.rs` and `src/service/link.rs` hold the service VMs (browser
+design 10.4 gaps 1, 2 and 5). A service VM boots a root disk of
+`ServiceImage`, not a flavor. It has no family, no row and no fault
+file. The browser VM is the one service VM. It runs Chrome and
+agent-browser for the MCP upstream `browser`.
+
+```
+chaperone ─stdio─ browser-relay (uid mcp-browser)
+                      │ VMM_BROWSER_SOCKET
+                      ▼
+                     vmm ── guest port 1201 ── browser facade ── agent-browser mcp
+                      │      kind line "mcp"
+                      └─ host port 1104: public names, port 443 only
+```
+
+1. The VM runs in the VM table of `ColdBoot` with the reserved session
+   id `service::vm_id`. Its version digit is 0, so no random id of
+   version 4 is that id. The slots, admission, the stop path and the
+   shutdown serve it as they serve a family VM. The control hello
+   carries the id, and guest init gives it to the facade as
+   `CRECHE_SESSION_ID`.
+2. The create route refuses a reserved id with `conflict` 409. So no row
+   names the VM, and an Upgrade or a drop finds no row of it.
+3. `ServiceVm::link` of `ColdBoot` holds one async lock from its table
+   read to its commit, so two links never start the same VM. A VM in the
+   table gets a new dial of guest port 1201. With no VM, the start runs
+   the steps of a cold boot with these changes:
+   1. The sizes are `service::limits`: 2 vCPUs and 2048 MiB for the
+      browser.
+   2. The root disk is `Digests::services` of the image. `None` refuses
+      the start before any launch.
+   3. The session disk of the last start goes first, so each start gets
+      a new disk. The guest keeps the profile on its tmpfs. Nothing of
+      one start reaches the next one (decision V4).
+   4. The one host listener is the egress proxy, with the rule
+      `rule::decide_public`: any public name on port 443, and `not_listed`
+      for any other port before a lookup (decision V2). Each line of the
+      egress log names `"service": <image>` in place of `"family"`.
+   5. The deny check holds the bound set to `[1104]`.
+   6. A fault stops the VM and goes to the journal only.
+4. The VM has no snapshot key. So admission never evicts it, the idle
+   tick never puts it to sleep, and the shutdown stops it with the
+   graceful stop. A family start that needs its RAM gets `host_full`.
+5. The compose step binds `VMM_BROWSER_SOCKET` after the raise of step
+   4 and before the bind of `vmm.sock`, so the socket gets the raised
+   limit, and a refused raise prints only its own line. Root
+   makes its dir once: the vmm user owns it, the group is the group of
+   `VMM_BROWSER_PEER_USER`, the mode is 2750. `bind` refuses a missing
+   dir, a dir that gives others any bit and a file at the path that is
+   no socket. It removes the socket of an earlier vmm and sets the mode
+   0660. Each fault, and a peer user that `/etc/passwd` does not hold,
+   turns the socket off with one stderr line. The vmm then serves each
+   family VM as before, so a host without the dir keeps its families.
+6. Each link of the socket gets one `SO_PEERCRED` check. A peer with
+   another uid gets a close. Then the link starts the VM when it does not
+   run, writes the kind line `mcp` on the guest link and splices both
+   ways. So the relay sends MCP bytes from its first byte, and no relay
+   can open the `view` link of the live view. The socket holds at most
+   `LINK_CAP` (4) links. The drop of the socket at SIGTERM comes before
+   the shutdown, so no new link starts then.
+
+`src/service.rs` tests the ids and the sizes. `tests/start.rs` proves the
+boot over the fakes: the reserved id, the sizes, the one listener, a
+second link with no boot, no disk, no sleep, no eviction, the shutdown
+stop, the new disk of the next boot and a guest with no ready.
+`tests/service_link.rs` proves the socket: the bind checks, the mode,
+the peer check, the kind line, the bytes both ways and a failed start.
+`tests/egress_rule.rs` and `tests/egress_proxy.rs` prove the rule and the
+log line. `tests/create_list.rs` proves the refusal of a reserved id.
+The host proof is step 8 of browser design 10.5.
 
 ## Rules
 

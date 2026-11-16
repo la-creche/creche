@@ -23,6 +23,7 @@ import { writeLineage } from "./lineage.js";
 import type { Lineage } from "./lineage.js";
 import type { OneSession } from "./sessions.js";
 import type { Turns } from "./turns.js";
+import type { SessionMeter } from "./usage.js";
 
 /** Where the facade gives the agent the transcript of a rewind (`agent/src/earlier.ts`). */
 export interface EarlierSink {
@@ -42,6 +43,7 @@ export class Rewinder {
   public constructor(
     private readonly session: OneSession,
     private readonly turns: Turns,
+    private readonly meter: SessionMeter,
     private readonly store: () => ConversationStreamStore | null,
     private readonly agentName: string,
     private readonly options: RewindOptions,
@@ -87,7 +89,11 @@ export class Rewinder {
       return { ok: false, refusal: { kind: "failed", detail: written.detail } };
     }
 
+    // The agent reads the thinking level by the instance id, so the chosen
+    // level moves to the new instance.
+    const level = this.meter.level;
     this.session.adopt(next);
+    this.meter.choose(level);
     this.options.earlier.set(this.session.instance, transcriptOf(next.seed));
 
     return { ok: true, value: {} };

@@ -17,9 +17,10 @@ use std::time::{Duration, Instant};
 use creche_vmm::egress::log::{LOG_CAP, Line, Log, ProxyReason, Reason, Verdict};
 use creche_vmm::egress::proxy::{self, HEAD_CAP, HEAD_WAIT, LINK_CAP, Server, bind};
 use creche_vmm::handlers::check::Checks;
+use creche_vmm::service::Owner;
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_store::layout::{RunRoot, Slot, VmRunDir};
-use creche_wire::{CheckReply, CheckRequest, HostPort, Serve as _, SessionId};
+use creche_wire::{CheckReply, CheckRequest, HostPort, Serve as _, ServiceImage, SessionId};
 use serde_json::{Value, json};
 use tokio::runtime::{Builder, Runtime};
 
@@ -477,7 +478,7 @@ fn rolls_after_a_failed_open_for_the_child() {
     let log = Log::open(path.clone()).unwrap();
     let line = Line {
         time: "2026-11-07T00:00:00Z".to_owned(),
-        family: "code".parse().unwrap(),
+        owner: Owner::Family("code".parse().unwrap()),
         session: session(),
         host: None,
         port: None,
@@ -626,4 +627,35 @@ fn the_drop_cuts_each_link_and_closes_1104() {
 #[test]
 fn the_fd_need_holds_every_full_proxy() {
     assert_eq!(proxy::fd_need(), (5 * 64 + 1) * 64);
+}
+
+#[cfg(test)]
+impl Scratch {
+    /// Binds and serves the proxy of the browser VM.
+    fn serve_browser(&self) -> Server {
+        let log = Arc::new(Log::open(self.log_path()).unwrap());
+        let bound = bind(&self.run).unwrap();
+        let _runtime = self.runtime.enter();
+        bound
+            .serve_service(ServiceImage::Browser, session(), log)
+            .unwrap()
+    }
+}
+
+/// The proxy of a service VM reads no `egress.json`: a port other than
+/// 443 gets 403 `not_listed`, and a name on 443 gets the range check. Its
+/// log line names the service, not a family (browser design 10.2 item 4).
+#[test]
+fn the_service_proxy_takes_public_names_on_443_only() {
+    let scratch = Scratch::threaded("service");
+    let _server = scratch.serve_browser();
+    assert_eq!(scratch.connect("example.org:80"), 403);
+    assert_eq!(scratch.connect("localhost:443"), 403);
+    let lines = scratch.lines(2);
+    assert_eq!(lines[0]["reason"], "not_listed");
+    assert_eq!(lines[1]["reason"], "not_public");
+    for line in &lines {
+        assert_eq!(line["service"], "browser");
+        assert!(line.get("family").is_none(), "{line}");
+    }
 }

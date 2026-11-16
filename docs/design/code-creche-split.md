@@ -1,6 +1,7 @@
 # Two attended coding families: `code` and `creche`
 
 > Status as of 2026-11-14: Done. The families `code` and `creche` are live, and every pull request of the header merged.
+> Superseded in part on 2026-11-15: the attended `code` family is deleted. Its non-platform coding reach moved to the autonomous `code-worker`, which `principal` starts with `enqueue` ([registry#90](https://github.com/la-creche/registry/pull/90)). The rule of §1 still holds: no family that writes a non-platform repository can name a platform one. `creche` is unchanged.
 > Host names, addresses and accounts are placeholders. The operator's private notes hold the real values.
 
 Date: 2026-10-30. Status: in progress. Merged 2026-10-31 03:27 UTC:

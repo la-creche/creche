@@ -32,6 +32,8 @@ use creche_vmm::planes::Upstreams;
 use creche_vmm::relay::{AcpLink, Door, Relays};
 use creche_vmm::restore::ChApi;
 use creche_vmm::server::Stop;
+use creche_vmm::service::link::ServiceVm as _;
+use creche_vmm::service::{self, ServiceError};
 use creche_vmm::shutdown::{Ended, VmSet, shutdown};
 use creche_vmm::sleep::{SERIAL_CAP, Sleeper as _};
 use creche_vmm::start::{ColdBoot, Digests, Launcher, StartConfig};
@@ -41,6 +43,7 @@ use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::faults::{FaultBook, FaultDir};
 use creche_vmm_confine::landlock::{HostPath, Start};
 use creche_vmm_confine::launch::{Launch, Program};
+use creche_vmm_confine::limits::MIB;
 use creche_vmm_confine::mirror::MirrorRoot;
 use creche_vmm_confine::spawner::SpawnError;
 use creche_vmm_confine::spool::SpoolRoot;
@@ -55,7 +58,8 @@ use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
 use creche_wire::{
     DropError, DropRoute, DropSession, DropTarget, Dropped, FacadeState, FamilyName, FamilyShape,
-    OpenAcp, PerFlavor, PerService, SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
+    OpenAcp, PerFlavor, PerService, SandboxFlavor, Serve, ServeUpgrade as _, ServiceImage,
+    SessionId, SessionRow,
 };
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::watch;
@@ -3597,4 +3601,117 @@ fn a_pull_does_not_set_last_use() {
     let at = started + IDLE_TIMEOUT + Duration::from_millis(100);
     let slept = test.runtime.block_on(test.hook.sleep_idle(at));
     assert_eq!(slept, [test.rows[0].id.clone()]);
+}
+
+#[cfg(test)]
+impl Test {
+    /// A link to the browser VM, as the browser socket asks for it.
+    fn browser(&self) -> Result<(), ServiceError> {
+        self.runtime
+            .block_on(self.hook.link(ServiceImage::Browser))
+            .map(|_link| ())
+    }
+}
+
+/// The reserved id of the browser VM.
+#[cfg(test)]
+fn browser_id() -> SessionId {
+    service::vm_id(ServiceImage::Browser).unwrap()
+}
+
+/// A link to the browser VM boots its service image in the VM table,
+/// with the reserved id, the service sizes and the egress listener only
+/// (browser design 10.4 gaps 1 and 5). A second link dials the running
+/// VM and boots nothing.
+#[test]
+fn a_browser_link_boots_the_service_vm_once() {
+    let test = Test::new("browser", |_| {});
+    assert_eq!(test.browser(), Ok(()));
+    assert_eq!(test.launches(), 1);
+    let id = browser_id();
+    assert!(test.hook.running(&id));
+    let launches = test.fake.launches.lock().unwrap();
+    assert_eq!(
+        launches[0].scope().unit(),
+        format!("creche-vm-{}", id.as_str())
+    );
+    let args = launches[0].payload().args();
+    assert!(args.contains(&"size=2048M".to_owned()));
+    assert!(args.contains(&"boot=2".to_owned()));
+    drop(launches);
+    assert_eq!(
+        *test.fake.listening.lock().unwrap(),
+        [[false, false, false, false, true, false]]
+    );
+    // A service VM writes no fault file.
+    assert!(test.fault_codes().is_empty());
+
+    assert_eq!(test.browser(), Ok(()));
+    assert_eq!(test.launches(), 1);
+}
+
+/// A `digests.json` with no browser disk refuses the link before any
+/// launch (`image_root`, rule 1 of a service image).
+#[test]
+fn a_browser_link_with_no_disk_launches_nothing() {
+    let test = Test::new("browser-no-disk", |config| {
+        let mut digests = config.digests.borrow().clone();
+        digests.services = PerService::every(|_| None);
+        config.digests = watch::channel(digests).1;
+    });
+    let error = test.browser().unwrap_err();
+    assert!(error.0.contains("has no browser disk"), "{error}");
+    assert_eq!(test.launches(), 0);
+    assert!(!test.hook.running(&browser_id()));
+    assert!(test.fault_codes().is_empty());
+}
+
+/// The browser VM has no snapshot key: the idle tick never puts it to
+/// sleep, and admission never evicts it, so a family start that needs
+/// its RAM is `host_full`.
+#[test]
+fn the_browser_vm_never_sleeps_and_is_never_evicted() {
+    let test = Test::new("browser-busy", |config| {
+        config.limits.ram_cap = 2048 * MIB + 256 * MIB;
+    });
+    assert_eq!(test.browser(), Ok(()));
+    assert!(test.sleep_after(PAST_IDLE).is_empty());
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+    assert_eq!(test.start(0), Err(StartFault::HostFull));
+    assert!(test.hook.running(&browser_id()));
+    assert!(!test.stopped(0));
+}
+
+/// The shutdown stops the browser VM with the graceful stop and takes no
+/// snapshot of it. The next boot gets a new session disk, so nothing of
+/// the last start reaches it (decision V4).
+#[test]
+fn a_shutdown_stops_the_browser_vm_and_the_next_boot_is_fresh() {
+    let test = Test::new("browser-stop", |_| {});
+    assert_eq!(test.browser(), Ok(()));
+    let disk = test.state.session(&browser_id()).disk();
+    fs::write(&disk, b"a page left this").unwrap();
+    assert!(test.runtime.block_on(test.hook.stop(&browser_id())).is_ok());
+    assert_eq!(test.stop_lines(), 1);
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&browser_id()));
+
+    assert_eq!(test.browser(), Ok(()));
+    assert_eq!(test.launches(), 2);
+    assert_ne!(fs::read(&disk).unwrap(), b"a page left this");
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+    assert!(test.stopped(1));
+}
+
+/// A guest that closes the control link before `ControlReady` fails the
+/// link, and the VM stops and leaves the table.
+#[test]
+fn a_browser_vm_that_sends_no_ready_stops() {
+    let test = Test::new("browser-closes", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Closes;
+    let error = test.browser().unwrap_err();
+    assert!(error.0.contains("ControlReady"), "{error}");
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&browser_id()));
 }

@@ -45,7 +45,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::future::{Future, poll_fn};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::{Pin, pin};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::Poll;
@@ -66,14 +66,14 @@ use creche_vmm_store::snapshot::Snapshotter;
 use creche_wire::{
     AcpError, AcpRoute, CheckError, CheckReply, CheckRequest, CheckRoute, CreateError, CreateRoute,
     CreateSession, DropError, DropRoute, DropTarget, Dropped, ListError, ListRoute, ListSessions,
-    OpenAcp, Serve, ServeUpgrade, SessionId, SessionPage, SessionRow,
+    OpenAcp, Serve, ServeUpgrade, ServiceImage, SessionId, SessionPage, SessionRow,
 };
 use tokio::sync::{oneshot, watch};
 use tokio::task::{JoinHandle, spawn_blocking};
 use tokio::time::{MissedTickBehavior, interval};
 
 use crate::ServeError;
-use crate::config::{CH, CH_REMOTE, Config, EGRESS_LOG, GIT};
+use crate::config::{CH, CH_REMOTE, Config, EGRESS_LOG, GIT, UserName};
 use crate::control::ControlState;
 use crate::egress::log::Log;
 use crate::egress::proxy;
@@ -92,6 +92,7 @@ use crate::relay::{AcpLink, AcpRelay, Relays};
 use crate::restore::ChTools;
 use crate::root_owned::{ProgramError, check_program};
 use crate::server::{Stop, run_routes_ready};
+use crate::service::link::{self, Bound};
 use crate::shutdown::{self, Ended};
 use crate::start::{ColdBoot, Digests, StartConfig};
 use crate::{family_state, planes, sleep, spool};
@@ -246,6 +247,33 @@ struct Vmm {
     hook: Shared,
     faults: Arc<Mutex<FaultBook>>,
     follow: Follow,
+    /// The path of the browser socket and its peer user. `run` binds it
+    /// after the raise of step 4 (`browser_socket`).
+    browser: (PathBuf, UserName),
+}
+
+/// The passwd file of the host, for the uid of `VMM_BROWSER_PEER_USER`.
+const PASSWD: &str = "/etc/passwd";
+
+/// Binds the socket of the browser VM at `path`, for the peer `user`. A
+/// fault turns the socket off with one stderr line, and the vmm serves
+/// every family VM as before: root makes the dir once, after the vmm
+/// release that ships this code (browser design 10.5 step 7), and the
+/// peer user exists only on the host.
+fn browser_socket(path: &Path, user: &UserName) -> Option<(Bound, u32)> {
+    let off = |reason: String| {
+        eprintln!("vmm: the browser socket is off: {reason}");
+        None
+    };
+    let peer = match link::uid_of(user.as_str(), Path::new(PASSWD)) {
+        Ok(Some(uid)) => uid,
+        Ok(None) => return off(format!("{PASSWD} has no user {}", user.as_str())),
+        Err(error) => return off(format!("{PASSWD}: {error}")),
+    };
+    match link::bind(path) {
+        Ok(bound) => Some((bound, peer)),
+        Err(fault) => off(fault.to_string()),
+    }
 }
 
 /// Builds the vmm from `config`, then serves until SIGTERM and shuts
@@ -436,12 +464,14 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         drops: Drops::new(rows, relays, hook.clone()),
         checks: Checks::new(config.families),
     };
+    let browser = (config.browser_socket, config.browser_peer);
     Ok(Vmm {
         socket: config.run.vmm_socket(),
         handlers,
         hook,
         faults,
         follow,
+        browser,
     })
 }
 
@@ -454,7 +484,28 @@ impl Vmm {
             hook,
             faults,
             follow,
+            browser,
         } = self;
+        // The bind comes after the raise of step 4, as every listener's
+        // does. The drop of `served` at the end of the run closes the
+        // socket and its links.
+        let (path, user) = browser;
+        let bound = spawn_blocking(move || browser_socket(&path, &user))
+            .await
+            .unwrap_or_else(|_| {
+                eprintln!("vmm: the browser socket is off: its bind panicked");
+                None
+            });
+        let served = bound.and_then(|(bound, peer)| {
+            let hook = Arc::clone(&hook.0);
+            match bound.serve(hook, ServiceImage::Browser, peer) {
+                Ok(served) => Some(served),
+                Err(error) => {
+                    eprintln!("vmm: the browser socket is off: {error}");
+                    None
+                }
+            }
+        });
         let (stop, signal) = Stop::pair();
         let mut server = tokio::spawn(async move {
             run_routes_ready(&socket, signal, handlers, readiness::notify).await
@@ -485,6 +536,8 @@ impl Vmm {
             });
         }
 
+        // No new browser link starts during the shutdown.
+        drop(served);
         let ended = shutdown::shutdown(&*hook.0, stop, async move { _ = sleep.await }).await;
         if ended == Ended::Kept {
             eprintln!("vmm: a VM did not stop, so the ExecStopPost= step of the vmm unit kills it");
