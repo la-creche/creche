@@ -1,5 +1,5 @@
-// `session/load` over the facade's own wire: two links on one service, as
-// two door connections reach one facade.
+// `session/load` and `session/resume` over the facade's own wire: two links
+// on one service, as two door connections reach one facade.
 
 import { randomUUID } from "node:crypto";
 
@@ -17,7 +17,16 @@ import { FAUX_MODEL, faux, startFlue } from "./faux-flue.js";
 /** The answer to `session/load`: the thinking option at its default. */
 const LOADED = { configOptions: vectors.new_session.configOptions };
 
-const echo = defineTool({ name: "echo", description: "Answers echoed.", run: () => "echoed" });
+// The echo tool waits for `held`, so a test can keep a turn running.
+let held: Promise<void> = Promise.resolve();
+const echo = defineTool({
+  name: "echo",
+  description: "Answers echoed.",
+  run: async () => {
+    await held;
+    return "echoed";
+  },
+});
 
 function Echoer(): string {
   useModel(FAUX_MODEL);
@@ -63,12 +72,19 @@ function joined(updates: Record<string, unknown>[]): unknown[] {
   return out;
 }
 
-async function oneTurn(wire: Wire): Promise<void> {
+/** Resolves when the link has an update of the kind `kind`. */
+async function sawUpdate(wire: Wire, kind: string): Promise<void> {
+  while (!wire.updates(id).some((update) => update["sessionUpdate"] === kind)) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function oneTurn(wire: Wire): Promise<unknown> {
   faux.setResponses([
     fauxAssistantMessage([fauxThinking("Think first."), fauxToolCall("echo", {}, { id: "call-1" })], { stopReason: "toolUse" }),
     fauxAssistantMessage([fauxText("All done.")]),
   ]);
-  await wire.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "Echo, please." }] });
+  return wire.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "Echo, please." }] });
 }
 
 describe("session/load", () => {
@@ -116,6 +132,64 @@ describe("session/load", () => {
     expect((await load(wire, randomUUID())).error?.code).toBe(-32002);
     expect(
       (await wire.request("session/load", { sessionId: "x", cwd: "/work", mcpServers: [{ name: "x", command: "x", args: [], env: [] }] }))
+        .error?.code,
+    ).toBe(-32602);
+  });
+});
+
+describe("session/resume", () => {
+  // Panda's resume: no `mcpServers`, which is optional in a resume.
+  function resume(wire: Wire, sessionId: string): ReturnType<Wire["request"]> {
+    return wire.request("session/resume", { sessionId, cwd: "/work" });
+  }
+
+  it("answers {} and replays no history", async () => {
+    await oneTurn(link());
+    const second = link();
+
+    expect((await resume(second, id)).result).toEqual({});
+    expect(second.updates(id)).toEqual([]);
+  });
+
+  it("puts the resuming link on the session's live updates", async () => {
+    const first = link();
+    await oneTurn(first);
+    const second = link();
+    await resume(second, id);
+    faux.setResponses([fauxAssistantMessage("Again.")]);
+    await first.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "More." }] });
+
+    expect(joined(second.updates(id))).toEqual([
+      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Again." } },
+      { sessionUpdate: "session_info_update", updatedAt: expect.any(String) },
+    ]);
+  });
+
+  it("streams the rest of a turn that runs at the resume", async () => {
+    let free = (): void => undefined;
+    held = new Promise((resolve) => (free = resolve));
+    const first = link();
+    const turn = oneTurn(first);
+    await sawUpdate(first, "tool_call");
+    const second = link();
+    await resume(second, id);
+    const seen = first.updates(id).length;
+    free();
+    await turn;
+
+    expect(second.updates(id)).toEqual(first.updates(id).slice(seen));
+    expect(joined(second.updates(id))).toEqual(
+      expect.arrayContaining([{ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "All done." } }]),
+    );
+  });
+
+  it("refuses an unknown session, a relative cwd and a client MCP server", async () => {
+    const wire = link();
+
+    expect((await resume(wire, randomUUID())).error?.code).toBe(-32002);
+    expect((await wire.request("session/resume", { sessionId: id, cwd: "work" })).error?.code).toBe(-32602);
+    expect(
+      (await wire.request("session/resume", { sessionId: id, cwd: "/work", mcpServers: [{ name: "x", command: "x", args: [], env: [] }] }))
         .error?.code,
     ).toBe(-32602);
   });

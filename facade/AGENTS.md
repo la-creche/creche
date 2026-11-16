@@ -130,6 +130,12 @@ starts from the last `conversation-reset` (`src/replay.ts`). Live items
 that come during the replay wait, and only those after the last replayed
 position follow it.
 
+`session/resume` puts the link on the session's live updates and replays
+nothing (`src/load.ts`). The client keeps the transcript that it has. A
+turn that runs at the resume sends its next chunks to the resumed link
+too. A resume takes no client MCP server and no additional directory, as
+a load does. `mcpServers` is optional in a resume.
+
 ## The thinking level and the meter
 
 The client's mode picker shows one config option: `mode`, of category

@@ -314,13 +314,14 @@ def delete(request_id: object, session: str) -> str:
 
 
 @pytest.mark.slow
-async def test_initialize_lists_delete(door: Door) -> None:
-    """Decision CH27: Panda shows its delete button when the answer lists it."""
+async def test_initialize_lists_delete_and_resume(door: Door) -> None:
+    """Decision CH27: Panda shows its delete button when the answer lists it.
+    Panda reconnects with `session/resume` when the answer lists it."""
     async with door.door_acp() as connection:
         answer = await ask(connection, 1, "initialize", protocolVersion=1)
 
     sessions = answer["result"]["agentCapabilities"]["sessionCapabilities"]
-    assert sessions == {"list": {}, "delete": {}}
+    assert sessions == {"list": {}, "delete": {}, "resume": {}}
 
 
 @pytest.mark.slow
@@ -722,13 +723,15 @@ async def test_a_cancel_after_the_answer_opens_no_stream(door: Door) -> None:
 
 @pytest.mark.slow
 @pytest.mark.parametrize("door", [PromptMode.HOLD], indirect=True)
-async def test_a_stream_closes_only_after_its_last_answer(door: Door) -> None:
-    """A `session/load` counts like a `session/prompt`, and two requests in
-    flight keep the stream until both have their answers."""
+@pytest.mark.parametrize("method", ["session/load", "session/resume"])
+async def test_a_stream_closes_only_after_its_last_answer(door: Door, method: str) -> None:
+    """A `session/load` and a `session/resume` each count like a
+    `session/prompt`, and two requests in flight keep the stream until both
+    have their answers."""
     async with door.door_acp() as connection:
         session = await held_prompt(door, connection, 1)
         door.vmm.replays[session] = []
-        loaded = await ask(connection, 2, "session/load", sessionId=session, cwd=CWD)
+        loaded = await ask(connection, 2, method, sessionId=session, cwd=CWD)
         channel = door.vmm.channels[session]
 
         assert loaded["result"] == {}
@@ -737,6 +740,21 @@ async def test_a_stream_closes_only_after_its_last_answer(door: Door) -> None:
         await wait_for(lambda: channel.closed)
 
     assert door.vmm.opened == [session]
+
+
+@pytest.mark.slow
+async def test_a_resume_reaches_the_facade_then_its_stream_closes(door: Door) -> None:
+    """The door routes `session/resume` by its `sessionId`, as it is. The
+    resume is in flight until its answer, then the idle stream closes."""
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        resumed = await ask(connection, 2, "session/resume", sessionId=session, cwd=CWD)
+        channel = door.vmm.channels[session]
+        await wait_for(lambda: channel.closed)
+
+    assert resumed["result"] == {}
+    assert door.vmm.facades[session].methods == ["initialize", "session/resume"]
+    assert door.vmm.facades[session].received[1]["params"] == {"sessionId": session, "cwd": CWD}
 
 
 @pytest.mark.slow
