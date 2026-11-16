@@ -176,6 +176,36 @@ session with no response sends none.
 - LiteLLM writes spend in batches, so the spend can miss the last calls
   for some seconds.
 
+## Slash commands
+
+Each granted skill of the family is one slash command
+(`src/commands.ts`). The command's name and description are those of the
+skill's `SKILL.md`, as Flue holds them. A skill that Flue refuses is not a
+command. The list is in the order of the names.
+
+1. `session/load` sends `available_commands_update` after the replay and
+   the `usage_update`, before the answer.
+2. `session/resume` sends it before the answer.
+3. Each prompt sends it to each peer after the pull, before the turn. So a
+   skill that the family grants or removes reaches the menu at the next
+   prompt.
+4. The client replaces its whole list with each update.
+5. A client sends a command as prompt text: `/<name> <input>`. The facade
+   sends the text to Flue as it is. The agent's base instructions tell the
+   model to call `activate_skill` with that name first
+   (`agent/src/agent.ts`). The tool result keeps the skill in the history,
+   so a skill of many turns works.
+
+attendance answers `session/new` with no VM boot. So the ACP door sends
+the list of a new session after its answer, from the family config of the
+host (`attendance/src/attendance/commands.py`). It parses each `SKILL.md`
+as `agent/src/skills.ts` does and checks it as Flue's `defineSkill` does,
+so the two lists are equal. A family with no skill gets no list from the
+door.
+
+Contract 02 is not in this repository (`docs/README.md`). This section and
+item 6 of `attendance/AGENTS.md` hold the wire of the commands.
+
 ## Rules
 
 1. Pin each runtime dependency to one exact version. Do not use a range.

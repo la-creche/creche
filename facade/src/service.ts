@@ -7,6 +7,7 @@ import type { ConversationStreamStore } from "@flue/runtime/adapter";
 import { ThinkingLevels } from "agent/agent";
 import type { Wire } from "agent/wire-read";
 
+import type { Commands } from "./commands.js";
 import type { Outcome, SessionService, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse } from "./acp.js";
 import { readHistory } from "./flue-history.js";
 import { Live } from "./live.js";
@@ -37,6 +38,8 @@ export interface ServiceOptions {
   readonly thinking?: ThinkingLevels;
   /** The window and the spend of the meter. None: the facade sends no `usage_update`. */
   readonly meter?: MeterSource;
+  /** The commands of the session's last pull. None: the facade sends no `available_commands_update`. */
+  readonly commands?: Commands;
 }
 
 /** The chunks of the session's history, or null when Flue has not started or the read fails. */
@@ -75,8 +78,8 @@ export function sessionService(options: ServiceOptions): SessionService {
   const session = new OneSession(options.agent, options.sessionId, options.now);
   const live = new Live();
   const meter = new SessionMeter(options.sessionId, options.thinking ?? new ThinkingLevels(), options.meter ?? null, historyOf(options));
-  const turns = new Turns(session, live, options.link, meter, options.refresh);
-  const loader = new Loader(session, live, options.store, options.agentName, meter);
+  const turns = new Turns(session, live, options.link, meter, options.refresh, options.commands ?? null);
+  const loader = new Loader(session, live, options.store, options.agentName, meter, options.commands ?? null);
 
   return {
     loadSession: (params, peer) => loader.loadSession(params, peer),

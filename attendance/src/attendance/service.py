@@ -57,7 +57,7 @@ from .family_status import FamilyStatus, StatusReader, check_may_serve, served_k
 from .faults import FaultReporter
 from .ids import SESSION_CWD_MAX, SessionPrefix, is_session_cwd, is_session_id, new_ulid
 from .models import DEFAULT_DEADLINE_S, TriggerKind
-from .paths import outcome_file, session_cwd
+from .paths import outcome_file, session_cwd, skills_dir
 from .queueing import MAX_QUEUED_TURNS, JobQueue
 from .requests import DelegateRequest, DispatchRequest, JobQuery, TriggerRequest
 from .tasks import report_failure
@@ -235,7 +235,8 @@ class SessionService:
 
     async def serve_door(self, websocket: WebSocket, family: str) -> None:
         """One door connection, after `check_door` (`acp_door.py`)."""
-        await acp_door.serve(websocket, family, self._vmm, self.door_prompts)
+        skills = skills_dir(self._config.state_root, family)
+        await acp_door.serve(websocket, family, self._vmm, self.door_prompts, skills)
 
     # ----------------------------------------------------------------- view
 
