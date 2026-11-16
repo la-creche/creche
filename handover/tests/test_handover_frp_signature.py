@@ -2,10 +2,10 @@
 FR10, FR12 and section 5): the words of the verifier, the files that root
 writes for it, the one child, and the reading of its exit status.
 
-cosign is not on the machine of this change, and no test installs it. The
-real check of the two programs (`host.verifier_argv`) runs, and a stand-in
-of `cosign verify-blob --key` runs in the place of cosign. So no test here
-proves that cosign v3 takes these words (section 3 M7).
+The real check of the two programs (`host.verifier_argv`) runs, and a
+stand-in of `cosign verify-blob --key` runs in the place of cosign. No test
+here needs cosign. `test_handover_frp_cosign.py` runs the real cosign
+v3.1.4 with these words (section 3 M7).
 """
 
 from __future__ import annotations
@@ -110,7 +110,8 @@ def test_one_child_reads_the_files_that_root_wrote(tmp_path: Path) -> None:
     ("code", "reason"),
     [
         (1, StatementReason.SIGNATURE_REFUSED),
-        (2, StatementReason.SIGNATURE_REFUSED),
+        (2, StatementReason.VERIFIER_UNAVAILABLE),
+        (-9, StatementReason.VERIFIER_UNAVAILABLE),
         (NO_VERIFIER_EXIT_CODE, StatementReason.VERIFIER_UNAVAILABLE),
         (TIMEOUT_EXIT_CODE, StatementReason.VERIFIER_UNAVAILABLE),
     ],

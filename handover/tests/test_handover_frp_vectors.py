@@ -84,7 +84,7 @@ def test_every_tag_message_vector_has_its_verdict() -> None:
     the same verdict.
     """
     cases = _cases("tag-message.json", "TagMessage")
-    assert len(cases) == 24
+    assert len(cases) == 25
 
     for case in cases:
         text = _text(case["message"])
@@ -110,7 +110,7 @@ def test_every_statement_vector_has_its_verdict(tmp_path: Path) -> None:
     verifier child passes, and then through `read_statement`. A pass gives
     the canonical bytes of the vector."""
     cases = _cases("statement.json", "Statement")
-    assert len(cases) == 34
+    assert len(cases) == 35
 
     for number, case in enumerate(cases):
         message = UnverifiedMessage(statement=case["json"].encode("utf-8"), bundle=b"{}")

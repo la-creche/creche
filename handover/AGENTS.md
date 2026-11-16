@@ -855,8 +855,12 @@ forge_provenance.py    the rules P1 to P6 and the chain
 8. `check_signature` writes the statement and the bundle into
    `work/<id>/statement/<component>/`, with the modes of rule 12a. Then it
    starts one verifier child: `cosign verify-blob --key` with
-   `/etc/creche/release-signing.pub`, no trust root and no network (FR1,
-   FR12). Only this check makes a `SignedStatement`.
+   `/etc/creche/release-signing.pub`, `--insecure-ignore-tlog`, no trust
+   root and no network (FR1, FR12). Only this check makes a
+   `SignedStatement`. cosign v3.1.4 ends with 0 for a pass and with 1 for
+   each measured failure, also a missing key or bundle file. 1 refuses as
+   `SIGNATURE_REFUSED`. Each other status refuses as
+   `VERIFIER_UNAVAILABLE`.
 9. `read_statement` parses only a `SignedStatement`. It refuses a text that
    is not the canonical form byte for byte. Only it makes a
    `ReleaseStatement`, a `StatementTag` and a `StatementAsset`.
@@ -870,6 +874,29 @@ forge_provenance.py    the rules P1 to P6 and the chain
     (`signed_names`), so no caller can give P6 the names of another
     component.
 12. A refusal of P6 has one reason of `ArtifactRefusal`, as today.
+
+The operator decided these rules on 2026-11-16. Each was a
+`CONTRACT-QUESTION:` before.
+
+1. The caps of section 4.5: a tag name and an asset name hold at most 64
+   bytes, a bundle at most 4096 bytes, a tag message at most 120000 bytes.
+   A workflow file name holds at most 64 bytes.
+2. Root checks every tag of a statement against the catalog (rule 10). The
+   signer does not know component kinds (`forge_provenance.py`,
+   `check_statement`).
+3. A release of mcp or of creche-release refuses with the code `catalog`
+   until its row of `catalog.RELEASE_WORKFLOW` exists (FR9,
+   `forge_provenance.py`, `expected_origin`).
+4. The repository name on the forge equals the catalog name. Only the
+   owner comes from the site file (FR11, `forge_api.py`, `ForgeRepo`).
+5. No freshness check of `signed_at`. An old release stays installable
+   (`release_statement.py`).
+6. The check of the owner and the mode of the key file of FR10 comes with
+   the wiring PR (4b). Until then, a missing key file ends cosign with 1,
+   and P1 refuses as a refused signature (`release_statement.py`).
+7. A version number has no leading zero and at most 9 digits. The wiring
+   PR (4b) gives `_TAG_RE` of `executor/source.py` that rule. The reader
+   of the statement already holds it (`RELEASE_TAG_RE`).
 
 ## Use
 
@@ -926,7 +953,9 @@ uv run pytest handover/tests
 No test needs a host. A real `git`, `uv`, `cargo` or `sops` runs against
 `tmp_path`. A stand-in runs in the place of `cosign`, after the real check
 of the two programs of the verifier. The `cargo` test skips on a machine
-that has no `cargo`. A real
+that has no `cargo`. `test_handover_frp_cosign.py` runs a real `cosign`
+after the same check, and it skips on a machine that has no `cosign`. A
+real
 `curl` fetches from a loopback https server, and that test skips on a
 machine that has no `curl` or no `openssl`.
 TLS runs on loopback. Every test file's basename starts with
@@ -1107,15 +1136,6 @@ deployment.
   another file of the `host` tree (`executor/install.py`).
 - A repair after a crash in the switch of a `host` tree puts the tree back
   and does not link the unit files again (`executor/steps.py`).
-- `forgejo-release-path.md` section 3 M7 does not measure the cosign v3
-  flags for `verify-blob --key` with a bundle and no log entry. Root passes
-  `--insecure-ignore-tlog=true`. A wrong flag refuses P1
-  (`executor/release_statement.py`, `VERIFY_SKIP_TLOG`).
-- FR10 says that the executor refuses P1 without the key file. No check of
-  the owner or the mode of `/etc/creche/release-signing.pub` runs yet. A
-  missing key may make cosign end with a status that is not 0. Not
-  measured. P1 then refuses with the reason of a refused signature, and
-  the follower does not ask again (`executor/release_statement.py`).
 - The page size of `git/refs/tags/<prefix>` is not measured. P2 reads one
   page. When the page drops the exact ref, P2 refuses
   (`executor/forge_api.py`, `read_tag_refs`).
@@ -1131,17 +1151,8 @@ deployment.
 - Section 5 names only the statuses `success` and `skipped`. P5 refuses
   each other status, and it refuses a word that Forgejo does not use with
   its own reason (`executor/forge_provenance.py`, `KNOWN_STATUSES`).
-- FR9 adds mcp and creche-release to `catalog.RELEASE_WORKFLOW`. Until a
-  later PR adds them, `expected_origin` refuses a release of each one with
-  the code `catalog` (`executor/forge_provenance.py`).
-- FR11 names the site key of the owner on the forge and no key of a
-  repository name. The name on the forge is the value of the catalog
-  `Repo` (`executor/forge_api.py`, `ForgeRepo`).
-- Section 5 does not say whether P1 checks each tag of the statement. P1
-  checks each one (`executor/forge_provenance.py`, `check_statement`).
-- Section 5 names no check of `signed_at` against a clock and no check of
-  the run id. P1 checks the grammar of both and nothing more
-  (`executor/release_statement.py`).
+- Section 5 names no check of the run id. P1 checks its grammar and
+  nothing more (`executor/release_statement.py`).
 - Contract 06 §8.2 and PEP 610 name no size for a `direct_url.json` record.
   Root reads 64 KiB of such a record at most. A larger record is a record
   that root cannot read, and the walk reports it as a fault

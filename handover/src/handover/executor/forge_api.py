@@ -77,11 +77,10 @@ class ForgeRepo:
     owner: str
     repo: Repo
 
-    # CONTRACT-QUESTION: forgejo-release-path.md FR11 and section 7, window
-    # step 5, name the site key of the owner and no key of a repository
-    # name. The reading here takes the catalog value as the name on the
-    # forge. A change is one site read of the name inside `name`, keyed by
-    # `repo`, so the pair stays bound.
+    # Decided by the operator on 2026-11-16: the repository name on the
+    # forge equals the catalog name. Only the owner comes from the site
+    # file (FR11). A change is one site read of the name inside `name`,
+    # keyed by `repo`, so the pair stays bound.
     def __post_init__(self) -> None:
         # A text with the value of a `Repo` is no `Repo`: the type, not the
         # text, binds the name.

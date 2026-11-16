@@ -171,11 +171,9 @@ def expected_origin(forge: ForgeRepo, commit: ObjectId) -> ExpectedOrigin:
     """The origin of a release of `forge.repo`. The workflow comes from
     `catalog.RELEASE_WORKFLOW`. A repository that the map does not hold
     refuses with the `catalog` code, as `artifacts.signer_policy` does."""
-    # CONTRACT-QUESTION: forgejo-release-path.md FR9 puts mcp and
-    # creche-release into RELEASE_WORKFLOW. That change alters what an
-    # existing test pins, so it is not part of this change. Until it lands,
-    # a release of either repository refuses here (fail closed). A change
-    # is two rows of the map and the pinned test.
+    # Decided by the operator on 2026-11-16: a release of mcp or of
+    # creche-release refuses here until its row of RELEASE_WORKFLOW exists
+    # (FR9). A change is two rows of the map and the pinned test.
     workflow = RELEASE_WORKFLOW.get(forge.repo)
     if workflow is None:
         raise _refuse(RefusalCode.CATALOG, str(forge.repo), ProvenanceReason.NO_RELEASE_WORKFLOW)
@@ -212,10 +210,9 @@ def check_statement(
     Each tag of the statement must name a releasable component of the
     catalog in this repository, and a tag of a `venv` or `units` component
     names no asset (section 4.5 step 3)."""
-    # CONTRACT-QUESTION: forgejo-release-path.md section 5 does not say
-    # whether P1 checks each tag of the statement or only the tag of the
-    # release (guess 11 of the signer crate). The reading here checks each
-    # tag. A change relaxes the loop below.
+    # Decided by the operator on 2026-11-16: root checks every tag of a
+    # statement against the catalog. The signer does not know component
+    # kinds, so this loop is the one check of section 4.5 step 3.
     if statement.repository != origin.forge.full_name:
         raise _refuse(RefusalCode.P1, component, ProvenanceReason.OTHER_REPOSITORY)
 

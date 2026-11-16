@@ -120,7 +120,7 @@ import hashlib, json, sys
 words = sys.argv[1:]
 if len(words) != 7 or words[0:2] != ["verify-blob", "--key"] or words[3] != "--bundle":
     raise SystemExit(2)
-if words[5] != "--insecure-ignore-tlog=true":
+if words[5] != "--insecure-ignore-tlog":
     raise SystemExit(2)
 with open(words[4], "rb") as handle:
     bundle = json.load(handle)

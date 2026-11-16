@@ -70,18 +70,20 @@ MAX_TAGS: Final = 32
 #: The most assets of one tag (section 4.5 step 4).
 MAX_ASSETS_PER_TAG: Final = 16
 
-#: The most bytes of a tag name and of an asset name (proposal 1 of section
-#: 4.5, not yet accepted by the operator).
+#: The most bytes of a tag name and of an asset name (section 4.5, decided
+#: by the operator on 2026-11-16).
 MAX_NAME_BYTES: Final = 64
 
-#: The most bytes of a workflow file name (the signer's own reading).
+#: The most bytes of a workflow file name (decided by the operator on
+#: 2026-11-16).
 MAX_WORKFLOW_BYTES: Final = 64
 
-#: The most bytes of a cosign bundle (proposal 2 of section 4.5).
+#: The most bytes of a cosign bundle (section 4.5, decided by the operator
+#: on 2026-11-16). cosign v3.1.4 with a P-256 key writes 387 bytes.
 MAX_BUNDLE_BYTES: Final = 4096
 
-#: The most bytes of a tag message as the signer writes it (proposal 3 of
-#: section 4.5).
+#: The most bytes of a tag message as the signer writes it (section 4.5,
+#: decided by the operator on 2026-11-16).
 MAX_TAG_MESSAGE_BYTES: Final = 120_000
 
 #: The most bytes of an owner and of a repository name (`names.rs`).
@@ -281,13 +283,11 @@ def decode_message(component: str, message: str) -> UnverifiedMessage:
 RELEASE_SIGNING_KEY: Final = "/etc/creche/release-signing.pub"
 
 #: The words that tell cosign that the bundle holds no entry of a
-#: transparency log (FR12).
-# CONTRACT-QUESTION: forgejo-release-path.md section 3 M7 and section 5:
-# the cosign v3 flags for `verify-blob --key` with a bundle and no log entry
-# are not measured. The reading here is the one flag of cosign v2 that skips
-# the log. A wrong flag makes cosign end with a status that is not 0, so P1
-# refuses (fail closed). A change is this one tuple.
-VERIFY_SKIP_TLOG: Final = ("--insecure-ignore-tlog=true",)
+#: transparency log (FR12). Measured on cosign v3.1.4 on 2026-11-16 (section
+#: 3 M7): `verify-blob --key <key> --bundle <bundle> --insecure-ignore-tlog
+#: <statement>` passes with no network. Without this flag, cosign fetches
+#: the trusted root from TUF and fails with no network.
+VERIFY_SKIP_TLOG: Final = ("--insecure-ignore-tlog",)
 
 #: The directory of the statement files below the work tree of a request,
 #: and the names of the two files.
@@ -302,6 +302,12 @@ FILE_MODE: Final = 0o644
 
 #: The exit status of a verifier child that passed.
 PASSED: Final = 0
+
+#: The exit status of cosign v3.1.4 for each measured failure: a changed
+#: statement, a bundle of another statement, another key, a missing key, a
+#: missing bundle, an empty or cut bundle and a key file that is no key
+#: (measured on 2026-11-16).
+REFUSED: Final = 1
 
 #: The statuses that root reads as no answer: root started no child, or the
 #: child did not end in root's time (the same set as check P6).
@@ -401,20 +407,25 @@ def check_signature(
     statement with the key of FR10, with no network and no trust root
     (FR1, FR12). Root reads the exit status and no text.
 
-    1. Root starts no child, or the child does not end in root's time:
-       `VERIFIER_UNAVAILABLE`.
-    2. Each other status that is not 0: `SIGNATURE_REFUSED`.
+    1. 0 (`PASSED`): the signature passed.
+    2. 1 (`REFUSED`), the status of each measured failure of cosign
+       v3.1.4: `SIGNATURE_REFUSED`. A missing key file and a missing
+       bundle file end with 1 too.
+    3. Root starts no child, or the child does not end in root's time
+       (`NO_ANSWER`): `VERIFIER_UNAVAILABLE`.
+    4. Each other status: `VERIFIER_UNAVAILABLE`. No measurement gives
+       cosign such a status, so it says nothing of the signature. P1
+       refuses (fail closed), and the follower asks again.
 
-    The status mapping is the one of `provenance.check_artifact`, with its
-    CONTRACT-QUESTION.
+    Through `systemd-run --wait`, a child that does not start also ends
+    with 1 (the CONTRACT-QUESTION of `provenance.check_artifact`). Root
+    checks the two program files before each child, so that case refuses
+    as `VERIFIER_UNAVAILABLE` before a child starts.
     """
-    # CONTRACT-QUESTION: forgejo-release-path.md FR10 says that the executor
-    # refuses P1 without the key file. This check runs no check of the owner
-    # or the mode of the key. A missing key may make cosign end with a
-    # status that is not 0 (not measured), so P1 then refuses as a refused
-    # signature, and the follower does not ask again. A change calls
-    # `host.distrusted` on the key before the child, in the PR that installs
-    # the key.
+    # Decided by the operator on 2026-11-16: the check of the owner and the
+    # mode of the key file of FR10 comes with the wiring PR (4b). Until
+    # then, a missing key file makes cosign end with 1 (measured), and P1
+    # refuses as a refused signature.
     statement, bundle = _write_pair(component, message, work)
     check = Command(
         argv=(cosign_program(), *statement_words(bundle, statement)),
@@ -426,8 +437,11 @@ def check_signature(
     if status in NO_ANSWER:
         raise _refuse(component, StatementReason.VERIFIER_UNAVAILABLE)
 
-    if status != PASSED:
+    if status == REFUSED:
         raise _refuse(component, StatementReason.SIGNATURE_REFUSED)
+
+    if status != PASSED:
+        raise _refuse(component, StatementReason.VERIFIER_UNAVAILABLE)
 
     return SignedStatement(_CHECKED, component, message.statement)
 
@@ -612,10 +626,12 @@ def _tags(value: object) -> tuple[StatementTag, ...]:
 
 def _parse(value: object) -> ReleaseStatement:
     """Each field of a statement, by the types of `statement.rs`."""
+    # Decided by the operator on 2026-11-16: no freshness check of
+    # `signed_at`. An old release stays installable. The reader checks only
+    # its grammar.
     # CONTRACT-QUESTION: forgejo-release-path.md section 5 names no check
-    # of `signed_at` against a clock and no check of the run id. The
-    # reading here checks the grammar of both and nothing more. A change
-    # adds a clock to this reader.
+    # of the run id. The reading here checks its grammar and nothing more.
+    # A change compares it with a run of the forge.
     fields = _object(value, _STATEMENT_KEYS)
     if _whole(fields["statement"]) != STATEMENT_VERSION:
         raise _FieldError
