@@ -55,9 +55,19 @@ KillSignal=SIGTERM
 # 110 to 185 MiB and statements of 200,000 rows (a 23 MB WAL, far over the
 # 2,000 rows of one Cognee write): the close took 1.1 to 2.3 s and the whole
 # stop 1.9 to 3.1 s. The stop waits at most 10 s for the tasks of the store
-# loop to end, then for the close. 60 s covers that with a margin for a
-# slower disk and a larger WAL. The journal prints the time of each close.
-TimeoutStopSec=60
+# loop to end, then for the close or the drain. The journal prints the time
+# of each close.
+#
+# On 2026-11-16 a release stopped the unit at 8.8 GiB, over MemoryHigh, with
+# its 2 GiB of swap full. The kernel throttled it. A checkpoint of a 602 KB
+# WAL had run for 2 min 37 s when the old limit of 60 s killed it, and the
+# graph did not open again (memory/AGENTS.md, the stop).
+#
+# 480 s covers a throttled checkpoint. A stop without pressure still ends in
+# about 3 s. handover's restart waits 600 s for the stop and the start
+# together, and the start may take systemd's default 90 s for ExecStartPre
+# (handover/tests/test_handover_repo_manifests.py).
+TimeoutStopSec=480
 # THE MEMORY. The kernel OOM killer picks the largest process of the unit,
 # and that is the graph worker. A kill inside a checkpoint can leave a dead
 # graph (memory/AGENTS.md, known gap 4). So the unit must never live at its
