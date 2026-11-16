@@ -17,9 +17,11 @@ aliases and one-line blurbs, and injected frontmatter carrying provenance and
 `obsidianUIMode: preview` for the read-mode plugins.
 
 Churn matters: LiveSync re-uploads any changed file to CouchDB and every
-device, so nothing here embeds a run timestamp. Content is keyed to the repo
-commit, files are rewritten only when their bytes differ, and a run against an
-unchanged corpus writes nothing at all.
+device, and the memory service extracts each changed note again with the LLM.
+So nothing here embeds a run timestamp or the repo's HEAD. Each doc carries
+the last commit that changed it, each index and the Home note the newest
+commit that changed a mirrored doc. Files are rewritten only when their bytes
+differ, so a commit that changes no doc writes nothing at all.
 
 ALLOWLIST, not denylist: only `docs/**` and each repo's top-level
 `README.md` are mirrored. This mirror feeds an internet-facing
@@ -151,11 +153,19 @@ def say(msg: str) -> None:
     print(f"[docs-mirror] {msg}")
 
 
-def repo_commit(repo_dir: Path) -> str:
-    """The corpus clone's short sha, or 'unknown' for a tree without git."""
+def last_commit(repo_dir: Path, paths: list[Path]) -> str:
+    """The short sha of the newest commit that changed one of `paths`, or
+    'unknown' for a tree without git or paths that no commit holds.
+
+    Not HEAD: on 2026-11-15 the HEAD sha in every file rewrote 22 docs at
+    each merge to creche, and the memory service extracted each one again."""
+    if not paths:
+        # With no path, `git log` names HEAD.
+        return "unknown"
+
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo_dir), "rev-parse", "--short", "HEAD"],
+            ["git", "-C", str(repo_dir), "log", "-1", "--format=%h", "--", *map(str, paths)],
             capture_output=True,
             text=True,
             check=False,
@@ -234,8 +244,9 @@ def render_index(repo: str, files: list[Path], commit: str) -> str:
         "",
         f"# {repo}",
         "",
-        f"Mirrored from `{repo}` at `{commit}`. Files keep their repo paths so",
-        "links inside them keep working; this index is the readable layer.",
+        f"Mirrored from `{repo}`; its newest doc change is `{commit}`. Files keep",
+        "their repo paths so links inside them keep working; this index is the",
+        "readable layer.",
     ]
 
     listed: set[str] = set()
@@ -298,13 +309,13 @@ def build() -> dict[Path, str]:
         if not repo_dir.is_dir():
             say(f"! corpus has no {repo} — add it to /srv/agents/state/code-repos.txt")
             continue
-        commit = repo_commit(repo_dir)
+        files = wanted_files(repo_dir, repo)
+        commit = last_commit(repo_dir, files)
         commits[repo] = commit
 
-        files = wanted_files(repo_dir, repo)
         for rel in files:
             body = (repo_dir / rel).read_text(encoding="utf-8", errors="replace")
-            out[Path(repo) / rel] = mirrored(repo, rel, body, commit)
+            out[Path(repo) / rel] = mirrored(repo, rel, body, last_commit(repo_dir, [rel]))
         out[Path(repo) / INDEX_NOTE] = render_index(repo, files, commit)
         say(f"{repo}@{commit}: {len(files)} docs")
 
