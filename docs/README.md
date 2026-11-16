@@ -40,6 +40,7 @@ decision can replace a row.
 | [mcp-memory.md](design/mcp-memory.md) | The memory service. |
 | [browser-mcp.md](design/browser-mcp.md) | A browser tool for an agent. |
 | [ci-runner.md](design/ci-runner.md) | One throwaway VM per Forgejo Actions job. The rows R1 to R6. |
+| [forgejo-release-path.md](design/forgejo-release-path.md) | The release path of the five platform repositories on Forgejo: the signer, P1 to P6, the bridge release. The rows FR1 to FR15. |
 | [openshell-ideas.md](design/openshell-ideas.md) | Ideas taken from OpenShell. |
 | [family-isolation.md](design/family-isolation.md) | The fences between families. |
 | [code-creche-split.md](design/code-creche-split.md) | The two attended coding families. |
