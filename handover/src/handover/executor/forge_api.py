@@ -26,6 +26,7 @@ from enum import StrEnum
 from typing import Any, Final, cast
 
 from .. import notices, strictjson
+from ..catalog import Repo
 from ..errors import Refusal, RefusalCode
 from .release_statement import COMMIT_SHA_RE, OWNER_RE, RELEASE_TAG_RE, REPO_NAME_RE
 
@@ -66,16 +67,38 @@ class ForgeValueError(ValueError):
 
 @dataclass(frozen=True)
 class ForgeRepo:
-    """A repository on the Forgejo instance, as the owner and the name of
-    the signer crate (`names.rs`). The statement names it as
+    """A repository of the catalog on the Forgejo instance: the owner of
+    the site and the catalog repository. The name on the forge is the
+    value of `repo`, so no value pairs one repository of the catalog with
+    the name of another. The owner and the name have the grammar of the
+    signer crate (`names.rs`). The statement names the repository as
     `owner/name`."""
 
     owner: str
-    name: str
+    repo: Repo
 
+    # CONTRACT-QUESTION: forgejo-release-path.md FR11 and section 7, window
+    # step 5, name the site key of the owner and no key of a repository
+    # name. The reading here takes the catalog value as the name on the
+    # forge. A change is one site read of the name inside `name`, keyed by
+    # `repo`, so the pair stays bound.
     def __post_init__(self) -> None:
+        # A text with the value of a `Repo` is no `Repo`: the type, not the
+        # text, binds the name.
+        try:
+            bound = Repo(self.repo) is self.repo
+        except ValueError:
+            bound = False
+
+        if not bound:
+            raise ForgeValueError("not a repository of the catalog")
+
         if OWNER_RE.fullmatch(self.owner) is None or REPO_NAME_RE.fullmatch(self.name) is None:
             raise ForgeValueError("not an owner and a repository name")
+
+    @property
+    def name(self) -> str:
+        return self.repo.value
 
     @property
     def full_name(self) -> str:
@@ -159,7 +182,8 @@ def commit_status_path(repo: ForgeRepo, commit: ObjectId) -> ForgePath:
     return _repo_path(repo, f"commits/{commit.text}/status")
 
 
-#: One API read. The HTTP client of the wiring PR gives it.
+#: One API read. The HTTP client of the wiring PR gives it. A read that
+#: gets no reply raises `OSError`. Each other error is a fault of the step.
 ForgeGetFn = Callable[[ForgePath], ForgeReply]
 
 
@@ -298,15 +322,11 @@ class AnnotatedRef:
     tag_object: ObjectId
 
 
-def read_tag_refs(component: str, reply: ForgeReply, want_tag: str) -> AnnotatedRef:
+def read_tag_refs(component: str, reply: ForgeReply, want_tag: TagName) -> AnnotatedRef:
     """`GET /repos/{o}/{r}/git/refs/tags/{tag}`. The path is a prefix match
     and the reply is a list, also for one tag (M3). Only an entry whose
     `ref` is exactly `refs/tags/{want_tag}` counts. It must be one entry,
-    and it must name an annotated tag. A 404 is no tag.
-
-    `want_tag` is a plain text, so the recordings with their probe tag
-    names drive this reader. The path builder holds the tag grammar.
-    """
+    and it must name an annotated tag. A 404 is no tag."""
     # CONTRACT-QUESTION: forgejo-release-path.md section 3 M3 and M8 measure
     # the prefix match, not the page size of the list. A prefix such as
     # `handover-v0.1.9` also matches `handover-v0.1.90` to `-v0.1.99`. The
@@ -314,7 +334,7 @@ def read_tag_refs(component: str, reply: ForgeReply, want_tag: str) -> Annotated
     # refuses with NO_EXACT_REF (fail closed). A change costs a page loop.
     shape = _Shape(RefusalCode.P2, component)
     listed = shape.items(_value(RefusalCode.P2, component, reply, ForgeReason.NO_TAG))
-    exact = f"{TAG_REF_PREFIX}{want_tag}"
+    exact = f"{TAG_REF_PREFIX}{want_tag.text}"
     entries = [shape.obj(item) for item in listed]
     found = [one for one in entries if shape.text(one.get("ref")) == exact]
     if not found:
@@ -344,7 +364,7 @@ class TagObject:
 
 
 def read_tag_object(
-    component: str, reply: ForgeReply, want_tag: str, tag_object: ObjectId
+    component: str, reply: ForgeReply, want_tag: TagName, tag_object: ObjectId
 ) -> TagObject:
     """`GET /repos/{o}/{r}/git/tags/{sha}`. The reply must name the tag
     object of the ref and the tag, and that object must name a commit."""
@@ -357,7 +377,7 @@ def read_tag_object(
     if shape.text(body.get("sha")) != tag_object.text:
         raise _refuse(RefusalCode.P2, component, ForgeReason.OTHER_TAG_OBJECT)
 
-    if shape.text(body.get("tag")) != want_tag:
+    if shape.text(body.get("tag")) != want_tag.text:
         raise _refuse(RefusalCode.P2, component, ForgeReason.OTHER_TAG)
 
     target = shape.obj(body.get("object"))

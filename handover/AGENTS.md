@@ -821,14 +821,19 @@ forge_provenance.py    the rules P1 to P6 and the chain
 
 1. `forge_api.py` is the one module that knows a Forgejo path or a field
    name of a Forgejo reply. Only its builders make a `ForgePath`, from a
-   checked `ForgeRepo`, `TagName` and `ObjectId`.
+   checked `ForgeRepo`, `TagName` and `ObjectId`. A `ForgeRepo` holds the
+   owner and a `Repo` of the catalog, and its name on the forge is the
+   value of that `Repo`. So no value pairs one catalog repository with the
+   forge name of another. Each reader of a tag takes a `TagName`.
 2. Each reader of a reply checks the status, the byte cap
    `API_MAX_BYTES` and `strictjson.loads`, in that order. Then it reads
    each field and its type. A `bool` is no integer. A reply that is not
    strict records one notice with the surface `code_host.answer`.
 3. Each refusal of a reader or of a rule has the code of its check and one
    fixed reason of `ForgeReason`, `StatementReason` or `ProvenanceReason`.
-   No text of a reply reaches a refusal.
+   No text of a reply reaches a refusal. A read that gets no reply raises
+   `OSError` and refuses as not reached. Each other error of a read is a
+   fault of the step (executor rule 9).
 4. P2 takes only the ref that is exactly `refs/tags/<tag>`, because the
    refs call is a prefix match (M3). The ref names an annotated tag. A
    lightweight tag refuses.
@@ -855,7 +860,10 @@ forge_provenance.py    the rules P1 to P6 and the chain
     or `units` component names no asset.
 11. Only `verify_forge_release` makes a `ForgeVerified`. P6
     (`check_digests`) takes the signed tag entry from that value, so no
-    caller can give P6 an entry that no signature covers.
+    caller can give P6 an entry that no signature covers. P6 takes the
+    expected asset names from the component of that value
+    (`signed_names`), so no caller can give P6 the names of another
+    component.
 12. A refusal of P6 has one reason of `ArtifactRefusal`, as today.
 
 ## Use
@@ -1100,9 +1108,9 @@ deployment.
   (`executor/release_statement.py`, `VERIFY_SKIP_TLOG`).
 - FR10 says that the executor refuses P1 without the key file. No check of
   the owner or the mode of `/etc/creche/release-signing.pub` runs yet. A
-  missing key makes cosign end with the status 1, so P1 refuses with the
-  reason of a refused signature, and the follower does not ask again
-  (`executor/release_statement.py`).
+  missing key may make cosign end with a status that is not 0. Not
+  measured. P1 then refuses with the reason of a refused signature, and
+  the follower does not ask again (`executor/release_statement.py`).
 - The page size of `git/refs/tags/<prefix>` is not measured. P2 reads one
   page. When the page drops the exact ref, P2 refuses
   (`executor/forge_api.py`, `read_tag_refs`).
@@ -1121,6 +1129,9 @@ deployment.
 - FR9 adds mcp and creche-release to `catalog.RELEASE_WORKFLOW`. Until a
   later PR adds them, `expected_origin` refuses a release of each one with
   the code `catalog` (`executor/forge_provenance.py`).
+- FR11 names the site key of the owner on the forge and no key of a
+  repository name. The name on the forge is the value of the catalog
+  `Repo` (`executor/forge_api.py`, `ForgeRepo`).
 - Section 5 does not say whether P1 checks each tag of the statement. P1
   checks each one (`executor/forge_provenance.py`, `check_statement`).
 - Section 5 names no check of `signed_at` against a clock and no check of

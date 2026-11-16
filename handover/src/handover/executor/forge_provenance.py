@@ -37,7 +37,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
-from ..artifacts import ArtifactRefusal
+from ..artifacts import BUNDLE_SUFFIX, ArtifactRefusal, asset_limits
 from ..catalog import CATALOG_BY_NAME, RELEASE_WORKFLOW, Kind, Releases, Repo
 from ..errors import Refusal, RefusalCode
 from .forge_api import (
@@ -121,6 +121,7 @@ class ProvenanceReason(StrEnum):
     TAG_NOT_SIGNED = "the statement does not name the tag"
     FOREIGN_TAG = "the statement names a tag of no releasable component of the repository"
     ASSET_ON_SOURCE = "the statement names an asset for a venv or units component"
+    NO_RELEASE_WORKFLOW = "the catalog names no release workflow for this repository"
 
 
 def _refuse(code: RefusalCode, component: str, reason: StrEnum) -> Refusal:
@@ -147,18 +148,27 @@ def required_for(repo: Repo) -> RequiredContexts:
     return RequiredContexts(REQUIRED_CONTEXTS[repo])
 
 
+def forge_repo(component: str, repo: Repo, owner: str) -> ForgeRepo:
+    """The repository `repo` of the catalog under `owner` on the forge. An
+    owner with a wrong shape refuses with the `site` code."""
+    try:
+        return ForgeRepo(owner, repo)
+    except ForgeValueError:
+        raise _refuse(RefusalCode.SITE, component, ProvenanceReason.BAD_FORGE_NAME) from None
+
+
 @dataclass(frozen=True)
 class ExpectedOrigin:
     """What the statement of a release must name: the repository on the
     forge, its release workflow and the resolved commit (FR7)."""
 
-    repository: str
+    forge: ForgeRepo
     workflow: str
     commit: str
 
 
-def expected_origin(repo: Repo, forge: ForgeRepo, commit: ObjectId) -> ExpectedOrigin:
-    """The origin of a release of `repo`. The workflow comes from
+def expected_origin(forge: ForgeRepo, commit: ObjectId) -> ExpectedOrigin:
+    """The origin of a release of `forge.repo`. The workflow comes from
     `catalog.RELEASE_WORKFLOW`. A repository that the map does not hold
     refuses with the `catalog` code, as `artifacts.signer_policy` does."""
     # CONTRACT-QUESTION: forgejo-release-path.md FR9 puts mcp and
@@ -166,12 +176,11 @@ def expected_origin(repo: Repo, forge: ForgeRepo, commit: ObjectId) -> ExpectedO
     # existing test pins, so it is not part of this change. Until it lands,
     # a release of either repository refuses here (fail closed). A change
     # is two rows of the map and the pinned test.
-    workflow = RELEASE_WORKFLOW.get(repo)
+    workflow = RELEASE_WORKFLOW.get(forge.repo)
     if workflow is None:
-        detail = "the catalog names no release workflow for this repository"
-        raise Refusal(RefusalCode.CATALOG, str(repo), detail)
+        raise _refuse(RefusalCode.CATALOG, str(forge.repo), ProvenanceReason.NO_RELEASE_WORKFLOW)
 
-    return ExpectedOrigin(forge.full_name, workflow, commit.text)
+    return ExpectedOrigin(forge, workflow, commit.text)
 
 
 # -- the rules ----------------------------------------------------------------------
@@ -194,11 +203,7 @@ def check_tag_commit(component: str, tag_object: TagObject, commit: ObjectId) ->
 
 
 def check_statement(
-    component: str,
-    repo: Repo,
-    statement: ReleaseStatement,
-    origin: ExpectedOrigin,
-    tag: TagName,
+    component: str, statement: ReleaseStatement, origin: ExpectedOrigin, tag: TagName
 ) -> StatementTag:
     """P1b: the signed statement names the repository, its release workflow
     and the resolved commit, and it names the tag. The entry of the tag is
@@ -211,7 +216,7 @@ def check_statement(
     # whether P1 checks each tag of the statement or only the tag of the
     # release (guess 11 of the signer crate). The reading here checks each
     # tag. A change relaxes the loop below.
-    if statement.repository != origin.repository:
+    if statement.repository != origin.forge.full_name:
         raise _refuse(RefusalCode.P1, component, ProvenanceReason.OTHER_REPOSITORY)
 
     if statement.workflow != origin.workflow:
@@ -222,7 +227,7 @@ def check_statement(
 
     for entry in statement.tags:
         row = CATALOG_BY_NAME.get(entry.component)
-        if row is None or row.repo is not repo or row.releases is not Releases.YES:
+        if row is None or row.repo is not origin.forge.repo or row.releases is not Releases.YES:
             raise _refuse(RefusalCode.P1, component, ProvenanceReason.FOREIGN_TAG)
 
         if row.kind in (Kind.VENV, Kind.UNITS) and entry.assets:
@@ -304,19 +309,13 @@ class ForgeVerified:
 
 
 def _get(api: ForgeGetFn, path: ForgePath, code: RefusalCode, component: str) -> ForgeReply:
-    """One API read. Any error of the read is no answer, with the code of
-    the check: the check fails closed."""
+    """One API read. A read that gets no reply (`OSError`) refuses with the
+    code of the check: the check fails closed. Each other error is a fault
+    of the step, and the ledger gets its type (executor rule 9)."""
     try:
         return api(path)
-    except Exception:
+    except OSError:
         raise _refuse(code, component, ForgeReason.NOT_REACHED) from None
-
-
-def _forge_repo(component: str, owner: str, name: str) -> ForgeRepo:
-    try:
-        return ForgeRepo(owner, name)
-    except ForgeValueError:
-        raise _refuse(RefusalCode.SITE, component, ProvenanceReason.BAD_FORGE_NAME) from None
 
 
 def _commit(code: RefusalCode, component: str, sha: str) -> ObjectId:
@@ -338,9 +337,7 @@ def _release_tag(component: str, tag: str) -> TagName:
     return name
 
 
-def _merge_checks(
-    api: ForgeGetFn, component: str, repo: Repo, forge: ForgeRepo, commit: ObjectId
-) -> Verified:
+def _merge_checks(api: ForgeGetFn, component: str, forge: ForgeRepo, commit: ObjectId) -> Verified:
     """P3 to P5 for one commit."""
     reply = _get(api, compare_path(forge, commit), RefusalCode.P3, component)
     check_on_main(component, read_compare(component, reply))
@@ -350,7 +347,7 @@ def _merge_checks(
     check_merge(component, pull, commit)
 
     reply = _get(api, commit_status_path(forge, pull.head_sha), RefusalCode.P5, component)
-    check_green(component, read_commit_status(component, reply), required_for(repo))
+    check_green(component, read_commit_status(component, reply), required_for(forge.repo))
 
     return Verified(component=component, pr=pull.number, head_sha=pull.head_sha.text)
 
@@ -359,64 +356,72 @@ def verify_forge_release(
     api: ForgeGetFn,
     run: RunFn,
     component: str,
-    repo: Repo,
-    owner: str,
-    name: str,
+    forge: ForgeRepo,
     tag: str,
     sha: str,
     work: Path,
 ) -> ForgeVerified:
     """P1 to P5 for one component at one tag, in the order of the picture
-    at the top. It raises at the first check that does not pass. `owner`
-    and `name` are the repository on the forge, and `work` is the work tree
-    of the request. P6 is `check_digests`, after the copy of step 2."""
-    forge = _forge_repo(component, owner, name)
+    at the top. It raises at the first check that does not pass. `forge`
+    is the catalog repository on the forge (`forge_repo`), and `work` is
+    the work tree of the request. P6 is `check_digests`, after the copy of
+    step 2."""
     release_tag = _release_tag(component, tag)
     commit = _commit(RefusalCode.P2, component, sha)
-    origin = expected_origin(repo, forge, commit)
+    origin = expected_origin(forge, commit)
 
     reply = _get(api, release_path(forge, release_tag), RefusalCode.P1, component)
     check_release(component, read_release(component, reply), release_tag)
 
     reply = _get(api, tag_refs_path(forge, release_tag), RefusalCode.P2, component)
-    ref = read_tag_refs(component, reply, release_tag.text)
+    ref = read_tag_refs(component, reply, release_tag)
     reply = _get(api, tag_object_path(forge, ref.tag_object), RefusalCode.P2, component)
-    tag_object = read_tag_object(component, reply, release_tag.text, ref.tag_object)
+    tag_object = read_tag_object(component, reply, release_tag, ref.tag_object)
     check_tag_commit(component, tag_object, commit)
 
     message = decode_message(component, tag_object.message)
     statement = read_statement(check_signature(run, component, message, work))
-    entry = check_statement(component, repo, statement, origin, release_tag)
+    entry = check_statement(component, statement, origin, release_tag)
 
-    verified = _merge_checks(api, component, repo, forge, commit)
+    verified = _merge_checks(api, component, forge, commit)
 
     return ForgeVerified(_CHECKED, verified, entry)
 
 
-def verify_forge_commit(
-    api: ForgeGetFn, component: str, repo: Repo, owner: str, name: str, sha: str
-) -> Verified:
+def verify_forge_commit(api: ForgeGetFn, component: str, forge: ForgeRepo, sha: str) -> Verified:
     """P3 to P5 for a commit that has no tag: the registry commit of an
     `mcp-servers` release (note section 5, last paragraph)."""
-    forge = _forge_repo(component, owner, name)
     commit = _commit(RefusalCode.P3, component, sha)
 
-    return _merge_checks(api, component, repo, forge, commit)
+    return _merge_checks(api, component, forge, commit)
 
 
 # -- P6 -------------------------------------------------------------------------------
 
 
-def check_digests(
-    release: ForgeVerified, digests: Mapping[str, str], expected_names: frozenset[str]
-) -> None:
+def signed_names(component: str) -> frozenset[str]:
+    """The asset names that the statement signs for `component`: each asset
+    of `artifacts.asset_limits` but the bundles, which retire (FR8). The
+    kind is the kind of the catalog row. Discovery refuses a manifest of
+    another kind. A name of no catalog row has no asset."""
+    row = CATALOG_BY_NAME.get(component)
+    if row is None:
+        return frozenset()
+
+    limits = asset_limits(component, row.kind)
+
+    return frozenset(one.name for one in limits if not one.name.endswith(BUNDLE_SUFFIX))
+
+
+def check_digests(release: ForgeVerified, digests: Mapping[str, str]) -> None:
     """P6: each asset of the tag in the signed statement has a copy with the
     same SHA-256 (note section 5).
 
-    `expected_names` are the asset names of the component, and `digests`
-    maps the name of each copy of step 2 to its SHA-256 in hex. The member
-    list and the disk rules after the signature stay in
-    `provenance.check_artifact` and `check_files`.
+    The expected names are `signed_names` of the component of `release`,
+    so no caller names the assets of another component. `digests` maps the
+    name of each copy of step 2 to its SHA-256 in hex. The member list and
+    the disk rules after the signature stay in `provenance.check_artifact`
+    and `check_files`.
 
     1. The statement names another set of assets: `SIGNATURE_REFUSED`.
     2. Step 2 made no copy of an asset: `NO_ARTIFACT`.
@@ -425,7 +430,7 @@ def check_digests(
     """
     component = release.verified.component
     signed = {asset.name: asset.sha256 for asset in release.entry.assets}
-    if frozenset(signed) != expected_names:
+    if frozenset(signed) != signed_names(component):
         raise _refuse(RefusalCode.P6, component, ArtifactRefusal.SIGNATURE_REFUSED)
 
     for asset, digest in signed.items():

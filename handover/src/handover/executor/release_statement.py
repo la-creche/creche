@@ -177,9 +177,10 @@ SURFACE: Final = "release.statement"
 
 
 class StatementReason(StrEnum):
-    """The reasons of a refusal of P1 from this module, a closed list. The
-    two verifier reasons have the texts of `ArtifactRefusal`, so a later
-    change of the follower needs only a check of the code."""
+    """The reasons of a refusal from this module, a closed list. Each one
+    has the code P1, but `NOT_A_COMPONENT` has the code `catalog`. The two
+    verifier reasons have the texts of `ArtifactRefusal`, so a later change
+    of the follower needs only a check of the code."""
 
     TOO_LARGE = "the tag message is too large"
     SUFFIX = "the tag message has a wrong end"
@@ -193,6 +194,7 @@ class StatementReason(StrEnum):
     NOT_CANONICAL = "the statement is not in its canonical form"
     VERIFIER_UNAVAILABLE = ArtifactRefusal.VERIFIER_UNAVAILABLE.value
     SIGNATURE_REFUSED = ArtifactRefusal.SIGNATURE_REFUSED.value
+    NOT_A_COMPONENT = "not a catalog component"
 
 
 def _refuse(component: str, reason: StatementReason) -> Refusal:
@@ -364,7 +366,7 @@ def _write_pair(component: str, message: UnverifiedMessage, work: Path) -> tuple
     directory with the mode `DIR_MODE`. `component` is a catalog name, so
     the path comes from no field of the message."""
     if component not in CATALOG_BY_NAME:
-        raise Refusal(RefusalCode.CATALOG, "component", "not a catalog component")
+        raise Refusal(RefusalCode.CATALOG, "component", StatementReason.NOT_A_COMPONENT.value)
 
     where = work / STATEMENT_DIR / component
     for directory in (work / STATEMENT_DIR, where):
@@ -408,10 +410,11 @@ def check_signature(
     """
     # CONTRACT-QUESTION: forgejo-release-path.md FR10 says that the executor
     # refuses P1 without the key file. This check runs no check of the owner
-    # or the mode of the key. A missing key makes cosign end with the status
-    # 1, so P1 refuses as a refused signature, and the follower does not ask
-    # again. A change calls `host.distrusted` on the key before the child,
-    # in the PR that installs the key.
+    # or the mode of the key. A missing key may make cosign end with a
+    # status that is not 0 (not measured), so P1 then refuses as a refused
+    # signature, and the follower does not ask again. A change calls
+    # `host.distrusted` on the key before the child, in the PR that installs
+    # the key.
     statement, bundle = _write_pair(component, message, work)
     check = Command(
         argv=(cosign_program(), *statement_words(bundle, statement)),

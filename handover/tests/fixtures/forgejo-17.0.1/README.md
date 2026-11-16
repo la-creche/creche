@@ -8,7 +8,16 @@ make a test pass. Record the reply again instead.
 
 Each file holds the body of one reply. `index.tsv` holds one row for each
 file: the file, the method, the path, the status and the token kind. The
-tests take the status from `index.tsv`, never from a literal.
+tests take the status from `index.tsv`, never from a literal, with two
+exceptions:
+
+1. The create reply of a Release comes from a line of the job log
+   `p3-job-log-markers.txt`. The line holds the body and no status. The
+   helper `create_reply` gives it 201, the status of a create (note
+   section 3, M11). A test that reads it as a Release gives it 200.
+2. No recording holds a 404 of `releases/tags/{tag}`. The test of a
+   missing Release takes `p2-git-refs-missing.json` with its status 404.
+   The reader of a Release reads only the status of a 404.
 
 ## The files
 

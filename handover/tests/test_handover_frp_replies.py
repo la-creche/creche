@@ -18,6 +18,7 @@ from handover.executor.forge_api import (
     ForgeReason,
     ForgeReply,
     ObjectId,
+    TagName,
     read_commit_pull,
     read_commit_status,
     read_compare,
@@ -68,7 +69,8 @@ def _reason(refusal: Refusal) -> tuple[RefusalCode, str]:
 def test_p1_reads_the_release_and_no_author() -> None:
     """The read-back names the operator as author, the create reply names
     the Actions user. Both give the same facts, so P1 reads no author
-    (FR2, M2)."""
+    (FR2, M2). The job log holds the create body and no status, so the
+    test gives that body the status of a read (fixture README)."""
     read_back = read_release(COMPONENT, reply("p3-release-by-tag.json"))
     created = read_release(COMPONENT, ForgeReply(200, create_reply().body))
 
@@ -79,8 +81,11 @@ def test_p1_reads_the_release_and_no_author() -> None:
 
 
 def test_p1_refuses_a_missing_release_and_a_bad_shape() -> None:
-    """A 404 is no Release. The second case changes `draft` to a text."""
-    missing = ForgeReply(404, b'{"message":"Not Found"}')
+    """A 404 is no Release. No recording holds a 404 of a Release, so the
+    first case takes the recorded 404 of a missing ref: the reader reads
+    only its status (fixture README). The second case changes `draft` to a
+    text."""
+    missing = reply("p2-git-refs-missing.json")
     assert _reason(_refused(read_release, COMPONENT, missing)) == (
         RefusalCode.P1,
         ForgeReason.NO_RELEASE.value,
@@ -95,46 +100,81 @@ def test_p1_refuses_a_missing_release_and_a_bad_shape() -> None:
 
 # -- P2 ---------------------------------------------------------------------------
 
+#: The probe tags of the recordings, and the release tag that test code
+#: gives each one. A reader of a tag takes a `TagName`, so each test renames
+#: the recorded tags. The renames keep the prefix match of the recording:
+#: `vmm-v0.1.2` is a prefix of the two `rec-` tags, as `rec-` is.
+RELEASE_TAGS = {
+    "rec-ann": "vmm-v0.1.24",
+    "rec-tag-push": "vmm-v0.1.25",
+    "measure-git-2": "vmm-v0.2.2",
+    "measure-git-4": "vmm-v0.2.4",
+    "measure-rel-2": "vmm-v0.3.2",
+    "measure-rel-4": "vmm-v0.3.4",
+}
+
+
+def _renamed(name: str) -> ForgeReply:
+    """The recorded reply of `name` with each probe tag renamed to its
+    release tag of `RELEASE_TAGS`: the `ref` of each listed ref, or the
+    `tag` of a tag object."""
+
+    def rename(value: Any) -> None:
+        if isinstance(value, list):
+            for one in value:
+                tag = one["ref"].removeprefix("refs/tags/")
+                one["ref"] = f"refs/tags/{RELEASE_TAGS[tag]}"
+            return
+
+        value["tag"] = RELEASE_TAGS[value["tag"]]
+
+    return changed(name, rename)
+
+
+def _tag(probe: str) -> TagName:
+    return TagName(RELEASE_TAGS[probe])
+
 
 def test_p2_takes_the_one_exact_ref() -> None:
-    one = read_tag_refs(COMPONENT, reply("p2-git-refs-tag.json"), "rec-ann")
+    one = read_tag_refs(COMPONENT, _renamed("p2-git-refs-tag.json"), _tag("rec-ann"))
     assert one.tag_object == ObjectId(TAG_OBJECT)
 
-    prefix = reply("p2-git-refs-prefix.json")
-    assert read_tag_refs(COMPONENT, prefix, "rec-ann").tag_object == ObjectId(TAG_OBJECT)
-    refused = _refused(read_tag_refs, COMPONENT, prefix, "rec-")
+    prefix = _renamed("p2-git-refs-prefix.json")
+    assert read_tag_refs(COMPONENT, prefix, _tag("rec-ann")).tag_object == ObjectId(TAG_OBJECT)
+    refused = _refused(read_tag_refs, COMPONENT, prefix, TagName("vmm-v0.1.2"))
     assert _reason(refused) == (RefusalCode.P2, ForgeReason.NO_EXACT_REF.value)
 
 
 def test_p2_refuses_a_lightweight_tag() -> None:
-    measure = reply("p2-git-refs-prefix-measure.json")
-    annotated = read_tag_refs(COMPONENT, measure, "measure-git-2")
+    measure = _renamed("p2-git-refs-prefix-measure.json")
+    annotated = read_tag_refs(COMPONENT, measure, _tag("measure-git-2"))
     assert annotated.tag_object == ObjectId("67bf558bde4e906d9fad07f83665c25009f6c2ba")
 
-    light = _refused(read_tag_refs, COMPONENT, measure, "measure-rel-2")
+    light = _refused(read_tag_refs, COMPONENT, measure, _tag("measure-rel-2"))
     assert light.detail == ForgeReason.LIGHTWEIGHT_TAG.value
-    none = _refused(read_tag_refs, COMPONENT, measure, "measure")
+    none = _refused(read_tag_refs, COMPONENT, measure, TagName("vmm-v0.2.0"))
     assert none.detail == ForgeReason.NO_EXACT_REF.value
 
 
 def test_p2_refuses_a_missing_tag_and_two_exact_refs() -> None:
     """The second case is built in test code: the recorded list of one ref
     with that ref twice. No recording holds it."""
-    missing = _refused(read_tag_refs, COMPONENT, reply("p2-git-refs-missing.json"), "no-such-tag")
+    absent = TagName("vmm-v9.9.9")
+    missing = _refused(read_tag_refs, COMPONENT, reply("p2-git-refs-missing.json"), absent)
     assert _reason(missing) == (RefusalCode.P2, ForgeReason.NO_TAG.value)
 
     def twice(value: list[Any]) -> None:
+        value[0]["ref"] = f"refs/tags/{RELEASE_TAGS['rec-ann']}"
         value.append(value[0])
 
     doubled = changed("p2-git-refs-tag.json", twice)
-    two = _refused(read_tag_refs, COMPONENT, doubled, "rec-ann")
+    two = _refused(read_tag_refs, COMPONENT, doubled, _tag("rec-ann"))
     assert two.detail == ForgeReason.TWO_EXACT_REFS.value
 
 
 def test_p2_reads_the_tag_object() -> None:
-    found = read_tag_object(
-        COMPONENT, reply("p2-git-tags-sha.json"), "rec-ann", ObjectId(TAG_OBJECT)
-    )
+    tag_object = _renamed("p2-git-tags-sha.json")
+    found = read_tag_object(COMPONENT, tag_object, _tag("rec-ann"), ObjectId(TAG_OBJECT))
     assert found.commit == ObjectId(MERGE_COMMIT)
 
     # The message of the tags API has no final LF. The tag object adds one.
@@ -142,28 +182,24 @@ def test_p2_reads_the_tag_object() -> None:
     assert written_message(COMPONENT, found.message) == written
 
     other = _refused(
-        read_tag_object,
-        COMPONENT,
-        reply("p2-git-tags-sha.json"),
-        "rec-tag-push",
-        ObjectId(TAG_OBJECT),
+        read_tag_object, COMPONENT, tag_object, _tag("rec-tag-push"), ObjectId(TAG_OBJECT)
     )
     assert other.detail == ForgeReason.OTHER_TAG.value
     object_id = ObjectId("f47ab8c8187139e69d39d2906d3ac402258a2786")
-    wrong = _refused(
-        read_tag_object, COMPONENT, reply("p2-git-tags-sha.json"), "rec-ann", object_id
-    )
+    wrong = _refused(read_tag_object, COMPONENT, tag_object, _tag("rec-ann"), object_id)
     assert wrong.detail == ForgeReason.OTHER_TAG_OBJECT.value
 
 
 def test_p2_refuses_a_tag_of_a_tag() -> None:
-    """The recorded tag object with `object.type` changed to `tag`."""
+    """The recorded tag object with its release tag and with `object.type`
+    changed to `tag`."""
 
     def nested(value: dict[str, Any]) -> None:
+        value["tag"] = RELEASE_TAGS[value["tag"]]
         value["object"]["type"] = "tag"
 
     bad = changed("p2-git-tags-sha.json", nested)
-    refused = _refused(read_tag_object, COMPONENT, bad, "rec-ann", ObjectId(TAG_OBJECT))
+    refused = _refused(read_tag_object, COMPONENT, bad, _tag("rec-ann"), ObjectId(TAG_OBJECT))
     assert refused.detail == ForgeReason.NOT_A_COMMIT.value
 
 
@@ -191,6 +227,19 @@ def test_p3_passes_an_ancestor_and_main(name: str) -> None:
 @pytest.mark.parametrize("name", ["p5-compare-ahead.json", "p5-compare-diverged.json"])
 def test_p3_refuses_a_commit_off_main(name: str) -> None:
     facts = read_compare(COMPONENT, reply(name))
+    refused = _refused(check_on_main, COMPONENT, facts)
+    assert _reason(refused) == (RefusalCode.P3, ForgeReason.NOT_ON_MAIN.value)
+
+
+def test_p3_refuses_a_list_of_commits() -> None:
+    """The recorded reply of `main` with `total_commits` 0 and one entry
+    added to `commits` in test code. P3 needs both empty (M4)."""
+
+    def one_commit(body: dict[str, Any]) -> None:
+        body["commits"] = [{"sha": MERGE_COMMIT}]
+
+    facts = read_compare(COMPONENT, changed("p5-compare-main-itself.json", one_commit))
+    assert facts.total_commits == 0
     refused = _refused(check_on_main, COMPONENT, facts)
     assert _reason(refused) == (RefusalCode.P3, ForgeReason.NOT_ON_MAIN.value)
 
