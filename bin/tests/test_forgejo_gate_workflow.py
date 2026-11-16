@@ -40,7 +40,9 @@ result with the Forgejo job. A difference that is not in this list fails.
    stated place, and name its `as-runner` as the shell of their run steps.
    Those steps then run as a user that is not root, with the umask 0022,
    the open file limit 65536 and a RUNNER_TEMP that is not /tmp, as on the
-   hosted GitHub runner.
+   hosted GitHub runner. The cache step of `proc` runs as root, where `~`
+   is /root. So its path names the HOME of that user, where the suite
+   builds the chaperone.
 9. **Load.** The workflow `env` holds cargo, the Rust test threads, xdist
    and vitest to 6 workers each: 24 CPUs of the Docker runner for its 4
    jobs at once.
@@ -169,6 +171,11 @@ RUNNER_USER_STEPS: dict[str, tuple[int, dict[str, str]]] = {
 }
 AS_RUNNER = {"run": {"shell": "as-runner {0}"}}
 
+#: The job of the chaperone cache, and its path in each gate (difference 8).
+CACHE_JOB = "proc"
+CACHE_DIR = ".cache/creche-proc/chaperone-rs"
+CACHE_PATH = (f"~/{CACHE_DIR}", f"/home/ubuntu/{CACHE_DIR}")
+
 #: The time limit of each job that has none in the GitHub file
 #: (difference 10).
 TIME_LIMITS = {
@@ -243,6 +250,10 @@ def _port_job(name: str, job: dict[str, Any]) -> dict[str, Any]:
         index, step = RUNNER_USER_STEPS[name]
         port["steps"].insert(index, step)
         port["defaults"] = AS_RUNNER
+    if name == CACHE_JOB:
+        (step,) = [one for one in port["steps"] if "cache@" in one.get("uses", "")]
+        assert step["with"]["path"] == CACHE_PATH[0]
+        step["with"]["path"] = CACHE_PATH[1]
     if name in TIME_LIMITS:
         assert "timeout-minutes" not in port, f"{name}: the GitHub job has a limit"
         port["timeout-minutes"] = TIME_LIMITS[name]
@@ -277,6 +288,17 @@ def test_each_job_equals_its_github_job_but_for_the_stated_differences(name: str
     same test commands. Only the differences of the module docstring may
     change a job."""
     assert FORGEJO_JOBS[name] == _port_job(name, GITHUB_JOBS[name])
+
+
+def test_the_proc_cache_is_below_the_home_of_the_run_steps() -> None:
+    """The suite builds below the HOME that `as-runner` sets. A cache of
+    another path saves nothing, and each run builds the chaperone again."""
+    (step,) = _action(FORGEJO_DIR, "runner-user")["runs"]["steps"]
+    home = f"/home/{step['env']['RUN_USER']}"
+
+    assert "HOME=/home/$RUN_USER" in step["run"]
+    assert CACHE_PATH[1] == f"{home}/{CACHE_DIR}"
+    assert '"/home/$RUN_USER"' in step["run"]
 
 
 def test_the_shards_are_one_to_n_of_n() -> None:

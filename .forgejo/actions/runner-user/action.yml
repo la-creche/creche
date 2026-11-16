@@ -47,7 +47,9 @@ runs:
           mkdir -p -- "$UV_PYTHON_INSTALL_DIR"
         fi
 
-        owned=("$GITHUB_WORKSPACE")
+        # A cache that an action restored as root lies below this home.
+        # The run steps write their lock and build files there.
+        owned=("$GITHUB_WORKSPACE" "/home/$RUN_USER")
         for dir in "${CARGO_HOME:-}" "${RUSTUP_HOME:-}" "${UV_PYTHON_INSTALL_DIR:-}"; do
           if [[ -n "$dir" ]]; then
             owned+=("$dir")
