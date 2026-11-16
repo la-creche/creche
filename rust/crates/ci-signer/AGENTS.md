@@ -86,6 +86,12 @@ in the order of `UnverifiedTagMessage::decode` and of
 variant to its word, with no wildcard. The two bundle errors share one
 word. A new variant needs a word, and its readers change in the same PR.
 
+The word is shared for every vector, with one known exception. The integer
+`-0` and an integer past 64 bits give `field` in this crate and `not_json`
+in the Python reader. Decision CH40 rule 7 is the cause:
+`creche_wire::strict` passes both forms, and `strictjson.py` refuses them.
+Both readers refuse these texts. The vectors therefore hold no such text.
+
 A large text of `vectors/tag-message.json` is a recipe: a list of pairs
 `[piece, count]`. The key `texts` of that file says how to expand it. So the
 file holds the messages near the cap of 120000 bytes in a few lines. No
