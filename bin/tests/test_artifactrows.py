@@ -346,10 +346,10 @@ def _read_disks(tmp_path: Path, text: str, set_line: str = SET_LINES[0]) -> tupl
     return done.returncode, done.stdout
 
 
-def _files_of(row: int) -> str:
+def _files_of(row: int, component: str = "disks") -> str:
     """The `file` lines of the driver for one row of the real form: each
     signed file of `artifacts.asset_limits`, and no bundle."""
-    return "".join(f"file {one.name} {one.max_bytes} {row}\n" for one in disk_files())
+    return "".join(f"file {one.name} {one.max_bytes} {row}\n" for one in disk_files(component))
 
 
 @pytest.mark.parametrize("set_line", SET_LINES)
@@ -357,10 +357,11 @@ def test_the_disk_reader_reads_the_rows_that_handover_prints(tmp_path: Path, set
     """Two rows, no row, and a last row with no line feed. The reader keeps
     the out variable, and each signed file with its limit, and no bundle
     (CH78 rule 3)."""
-    two = _disk_row() + _disk_row("other").removesuffix("\n")
-    rows = "disk disks DISK_OUT\ndisk other DISK_OUT\n"
+    other = "ci-runner-image"
+    two = _disk_row() + _disk_row(other).removesuffix("\n")
+    rows = f"disk disks DISK_OUT\ndisk {other} DISK_OUT\n"
 
-    assert _read_disks(tmp_path, two, set_line) == (0, rows + _files_of(0) + _files_of(1))
+    assert _read_disks(tmp_path, two, set_line) == (0, rows + _files_of(0) + _files_of(1, other))
     assert _read_disks(tmp_path, "", set_line) == (0, "")
 
 
@@ -371,7 +372,7 @@ def test_the_disk_reader_keeps_the_four_files_of_the_row(tmp_path: Path) -> None
     _, said = _read_disks(tmp_path, _disk_row())
     files = [line.split() for line in said.splitlines() if line.startswith("file ")]
 
-    assert [name for _, name, _, _ in files] == [one.name for one in disk_files()]
+    assert [name for _, name, _, _ in files] == [one.name for one in disk_files("disks")]
     for _, name, limit, _ in files:
         expected = DIGESTS_MAX_BYTES if name == DIGESTS_FILE else DISK_FILE_MAX_BYTES
         assert int(limit) == expected

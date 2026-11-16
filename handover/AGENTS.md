@@ -133,7 +133,10 @@ The console script is `handover`. The verify hook and the operator's
    - Only a deploy row counts. A set with `handover` at its live version
      is not a mixed set. A redeploy is a deploy row.
    - `order.py` still puts `handover` last, but a set with `handover`
-     holds nothing else. Nothing may depend on it.
+     holds nothing else. Nothing may depend on it, with one exception: a
+     disk-image row whose verify program is a `handover` command. That row
+     never shares a set with `handover`, so its hook runs from the live
+     `handover` tree ("Disk images", rule 18).
    - The follower files `handover` alone first (`follow/` rule 10).
 4. `FIRST_VERSION` and the bump arithmetic live in one place.
 5. The site file holds everything that differs between deployments. `site.py`
@@ -617,13 +620,15 @@ CH76 rules 1 and 5). Its manifest is `disks/component.toml`, and
    `install.to`. CI builds and signs each file. Root checks each signature
    and installs each file unchanged. Root runs no build and unpacks
    nothing (contract 06 §8.4).
-2. The files are `digests.json`, `vmlinux-x86_64.zst`, one
+2. The files of `disks` are `digests.json`, `vmlinux-x86_64.zst`, one
    `<flavor>.ext4.zst` for each flavor of `catalog.DISK_FLAVORS` and one
    `<image>.ext4.zst` for each service image of `catalog.SERVICE_IMAGES`.
    Each file has its own bundle `<file>.sigstore.json`. `artifacts.asset_limits`
    holds the list and the limits: `DISK_FILE_MAX_BYTES` (2 GiB - 1) for a
    disk and the kernel, `DIGESTS_MAX_BYTES` (64 KiB, the `DIGESTS_CAP` of
    the vmm) for `digests.json`, and `BUNDLE_MAX_BYTES` for each bundle.
+   `artifacts.disk_files` gives the files of each disk-image row by its
+   name, and refuses a name of no such row with the code `catalog`.
 3. `DISK_FLAVORS` is `base`, `python` and `coding`, the values of the wire
    enum `SandboxFlavor`. `tests/test_handover_disk_flavors.py` holds the
    two equal (CH58 rule 4, CH76 rule 7). `coding` joined before the cut
@@ -696,10 +701,10 @@ CH76 rules 1 and 5). Its manifest is `disks/component.toml`, and
     the 2 GiB - 1 cap needs about 2.06 GiB.
 16. `bin/allocate-tags.sh` takes every asset of the `--assets` lines, in
     pairs of a file and its bundle. It runs the verifier once for each
-    pair, and the Release of a disk-image component holds the twelve assets
-    (CH35 (2), CH76 rule 5). `bin/build-artifacts.sh` skips a planned
-    disk-image row, and the `sign` job of `release.yml` signs each of the
-    six files.
+    pair. The Release of `disks` holds twelve assets, and the Release of
+    `ci-runner-image` holds eight (CH35 (2), CH76 rule 5).
+    `bin/build-artifacts.sh` skips a planned disk-image row, and the `sign`
+    job of `release.yml` signs each file of each row.
 17. The job `disks` of `release.yml` runs the build of the row,
     `disks/bin/playpen-release-disks`, when the plan tags `disks`. Then
     `bin/check-disk-files.sh` refuses a file past its limit of
@@ -708,6 +713,27 @@ CH76 rules 1 and 5). Its manifest is `disks/component.toml`, and
     the archives of the `artifacts` job. `tests/test_handover_repo_manifests.py` holds
     the bundles of the row: what `playpen/Dockerfile` copies, and
     `playpen`.
+18. `ci-runner-image` is the second disk-image row: the guest image of the
+    CI runner VMs (`ci-runner-image/AGENTS.md`, "The release row"). Its
+    catalog row is `CatalogRow("ci-runner-image", Repo.CRECHE,
+    "ci-runner-image", Kind.DISK_IMAGE, Releases.YES)`. The row and its
+    manifest landed in one PR, not in the two PRs of "Binary builds", rule
+    11a. So until the host installs a `handover` that holds the row, the
+    installed requester refuses each request ("Binary builds", rule 10).
+    The operator files that `handover` release from a checkout that holds
+    the row (rule 11). Its files are `digests.sha256`, `vmlinuz`, `initrd.img` and
+    `root.qcow2.zst`. No file of one row has the name of a file of the
+    other row, because the `sign` job reads the files of both from one
+    directory. `tests/test_handover_disk_assets.py` holds that rule. Its
+    verify hook is `handover check-ci-image --tree
+    /opt/components/ci-runner-image`, as the operator, and its
+    `depends_on` names `handover`. The hook decompresses the root disk with
+    `compression.zstd` of Python 3.14, and checks each file against
+    `digests.sha256` (`ciimage.py`). It starts no child and writes nothing.
+19. The job `ci-image` of `release.yml` runs the build of that row,
+    `ci-runner-image/bin/ci-runner-image-release`, when the plan tags
+    `ci-runner-image`. Then `bin/check-disk-files.sh` checks its files, as
+    for `disks`.
 
 ## The host component of creche-release
 
@@ -837,7 +863,8 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `manifest.py`, `discovery.py`, `order.py`, `contracts.py` | the manifest as hostile input, the walk, the order, rules C1 to C5 |
 | `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, the server file as hostile bytes, the uninstalled component |
 | `artifacts.py`, `treewalk.py` | the names, the limits and the signer of the archive of a binary component and of the files of a disk-image component, the walk of a tree of compiled programs |
-| `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow`, `artifacts`, `disk-assets`, `check-tree` |
+| `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow`, `artifacts`, `disk-assets`, `check-tree`, `check-ci-image` |
+| `ciimage.py` | the verify hook of the `ci-runner-image` row: the digest file, the zstd stream of the root disk, the check of each file |
 | `requester/`, `corpus/` | one request file, one `git fetch`, and the fetch of the signed assets of a binary or disk-image component into the store (`corpus/artifacts.py`) |
 | `follow/` | the set a newer tag moves, the marker, the decision |
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P6 |
@@ -866,6 +893,15 @@ that wants a refusal changes one field.
 
 ## Known gaps
 
+- Contract 06 §1.1 rule 1 puts `handover` last in each set. It does not
+  say whether a manifest may name `handover` in `depends_on`. The reading
+  taken: only a disk-image row may, for its verify hook, because
+  `handover` releases alone ("Rules the design depends on", rule 3).
+  `ci-runner-image` is that row. A move of its hook to the tree of a
+  future `ci-runner` row costs one manifest line and one test
+  (`tests/test_handover_repo_manifests.py`). With `ci-runner-image`, eleven
+  rows release: the cap of spec §9. A `ci-runner` row needs a new cap
+  first (`tests/test_handover_catalog_cap.py`).
 - A `host.toml` that breaks a rule of `follow/policy.py` fails
   `creche-follow.service` with exit 2. The follower writes no row in its
   notice file for it, so the operator learns of it only from the failed

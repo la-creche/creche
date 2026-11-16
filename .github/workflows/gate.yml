@@ -60,8 +60,8 @@
 # release.yml runs the same `tests`, `agent`, `facade`, `proc`, `suites`,
 # `rust`, `systemd-proof` and `kvm` jobs after the merge. `vmm-archive` and
 # `ci-runner-image` are the jobs of this file alone: release.yml builds the
-# vmm archive in its `artifacts` job, and no release row ships the image
-# yet.
+# vmm archive in its `artifacts` job, and the files of the image row in its
+# `ci-image` job.
 # The mcp repository carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate

@@ -141,6 +141,7 @@ ARGUMENT_SETS: tuple[tuple[str, dict[str, str]], ...] = (
     ("registry-data", {"release": "yes"}),
     ("vmm", {}),
     ("disks", {}),
+    ("ci-runner-image", {}),
 )
 
 SUBJECT = "chaperone/component.toml"

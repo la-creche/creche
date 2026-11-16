@@ -23,8 +23,11 @@
 #           │              │  the archive of each binary component that the
 #           │              │  plan tags, then the keyless signature of each
 #           │              │  archive and each disk file
-#           └── disks ─────┘
-#                           the files of the disks row, when the plan tags it
+#           ├── disks ─────┤
+#           │               the files of the disks row, when the plan tags it
+#           └── ci-image ──┘
+#                           the files of the ci-runner-image row, when the
+#                           plan tags it
 #   plan ───────┘          the components that ship assets and get a tag in
 #                          this run
 #                                 └── release   tags + Releases, only when
@@ -89,10 +92,20 @@
 # job signs each of its files beside the archives, and the tag script
 # attaches the twelve assets to its Release.
 #
+# THE DISK-IMAGE COMPONENT `ci-runner-image` SHIPS FOUR FILES AND FOUR
+# SIGNATURES (docs/design/ci-runner.md, section 8, PR 3): the root disk of
+# the CI runner VMs, its kernel, its initrd and its digests. The `ci-image`
+# job runs its build, ci-runner-image/bin/ci-runner-image-release, when
+# the plan tags `ci-runner-image`. The `sign` job signs its files, and the
+# tag script attaches the eight assets to its Release. No file name of the
+# two rows is the same, because the `sign` job and the tag step read the
+# files of both from one directory.
+#
 # EACH SIGNATURE IS PUBLIC AND PERMANENT. It writes one record to the
 # transparency log of the public Sigstore instance. The record names this
 # repository, this workflow file and the commit. A run with no archive and
-# no disk file writes no record. A run that tags `disks` writes six.
+# no disk file writes no record. A run that tags `disks` writes six, and
+# a run that tags `ci-runner-image` writes four.
 #
 # The mcp repository has a SIBLING of the `release` job, in its own
 # rework-component-tags.yml. `mcp-servers` is its component, not
@@ -641,8 +654,9 @@ jobs:
   # <component>-vX.Y.Z` for each asset of each binary or disk-image
   # component that it would tag (handover/bin/allocate-tags.sh). The job
   # output `components` names each such component, one word each. The
-  # `artifacts` job builds only those, and the `disks` job builds the disks
-  # only when it names `disks`. So CI builds and signs a component only when
+  # `artifacts` job builds only those, the `disks` job builds the disks
+  # only when it names `disks`, and the `ci-image` job builds the image only
+  # when it names `ci-runner-image`. So CI builds and signs a component only when
   # a tag of it is planned. The job holds no catalog copy: the tag script
   # asks the catalog.
   #
@@ -826,6 +840,76 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  # The files of the ci-runner-image row (docs/design/ci-runner.md, section
+  # 8, PR 3): the root disk of the CI runner VMs as qcow2 compressed with
+  # zstd, its kernel, its initrd and `digests.sha256`. No pull request runs
+  # this job, and gate.yml has no copy of it: the `ci-runner-image` job of
+  # gate.yml builds and boots the image on each PR that changes a file of
+  # its build. The step runs the build argv of
+  # ci-runner-image/component.toml, with DISK_OUT set, only when the plan
+  # names `ci-runner-image`. Before the build it installs qemu-utils,
+  # cloud-guest-utils and zstd with the sudo of the runner (CH36 G20), as
+  # ci-runner-image/bin/ci-runner-image-proof does. Else it writes an empty
+  # SHA256SUMS, as the `disks` job does, and its step output `digests` has
+  # the same form.
+  #
+  # After the build, bin/check-disk-files.sh refuses a file past its limit
+  # (artifacts.asset_limits) before the `sign` job signs it (decision CH78
+  # rule 3). The qcow2 is 2,281,504,768 bytes before the compression, and
+  # the limit of each file is 2 GiB - 1.
+  ci-image:
+    needs: [scope, plan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      digests: ${{ steps.build.outputs.digests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+          python-version: "3.14"
+
+      # DISK_REPO: the catalog's name for this repository. DISK_ROW: the
+      # disk-image row that the step builds and checks.
+      - name: build
+        id: build
+        env:
+          PLANNED: ${{ needs.plan.outputs.components }}
+          DISK_REPO: creche
+          DISK_ROW: ci-runner-image
+          DISK_OUT: ${{ runner.temp }}/ci-image
+        run: |
+          set -euo pipefail
+          if [[ " $PLANNED " == *" $DISK_ROW "* ]]; then
+            sudo apt-get update -qq
+            sudo apt-get install --yes --no-install-recommends -qq qemu-utils cloud-guest-utils zstd
+            /usr/bin/env bash ci-runner-image/bin/ci-runner-image-release
+            bin/check-disk-files.sh
+          else
+            echo "ci-image: no planned ci-runner-image row"
+            mkdir -p "$DISK_OUT"
+            : > "$DISK_OUT/SHA256SUMS"
+          fi
+          {
+            echo "digests<<END_OF_DIGESTS"
+            cat "$DISK_OUT/SHA256SUMS"
+            echo "END_OF_DIGESTS"
+          } >> "$GITHUB_OUTPUT"
+
+      # `compression-level: 0`: the root disk is a zstd file already.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-image
+          path: ${{ runner.temp }}/ci-image
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   # The keyless signature of each archive. THE JOB HOLDS THE IDENTITY TOKEN
   # AND NO CODE OF THE REPOSITORY: it has no checkout, no local action, and
   # no step starts a file of the repository. Each word that it runs is in
@@ -833,11 +917,13 @@ jobs:
   #
   # The one run step:
   #   1. Each job of a run can write a workflow artifact. So the step signs
-  #      only the archives that the job outputs `digests` of `artifacts` and
-  #      of `disks` name, and only when each one has the SHA-256 of those
-  #      outputs. A file that no output names stops the job. `dotglob`: a name that starts with a period
-  #      is such a file too. An asset is an archive `*.tar.gz` or one of the
-  #      six files of a disk-image row (decision CH76 rule 5).
+  #      only the archives that the job outputs `digests` of `artifacts`,
+  #      `disks` and `ci-image` name, and only when each one has the SHA-256
+  #      of those outputs. A file that no output names stops the job.
+  #      `dotglob`: a name that starts with a period is such a file too. An
+  #      asset is an archive `*.tar.gz` or one of the files of a disk-image
+  #      row: the six of `disks` (decision CH76 rule 5) and the four of
+  #      `ci-runner-image`.
   #   2. With no archive it prints one line, signs nothing and uploads an
   #      empty SHA256SUMS.
   #   3. It takes cosign from a release of the cosign repository, and
@@ -857,7 +943,7 @@ jobs:
   # needs it (a Sigstore service that does not answer, for example). The next
   # green run tags what this run left.
   sign:
-    needs: [artifacts, disks]
+    needs: [artifacts, disks, ci-image]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -873,23 +959,31 @@ jobs:
           name: disks
           path: ${{ runner.temp }}/assets
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-image
+          path: ${{ runner.temp }}/assets
+
       - name: sign
         env:
           DIGESTS: ${{ needs.artifacts.outputs.digests }}
           DISK_DIGESTS: ${{ needs.disks.outputs.digests }}
+          IMAGE_DIGESTS: ${{ needs.ci-image.outputs.digests }}
         run: |
           set -euo pipefail
           shopt -s dotglob
           assets="$RUNNER_TEMP/assets"
           bundles="$RUNNER_TEMP/bundles"
           mkdir -p "$bundles"
-          if [[ -n "$DISK_DIGESTS" ]]; then
-            if [[ -n "$DIGESTS" ]]; then
-              DIGESTS+=$'\n'
+          for more in "$DISK_DIGESTS" "$IMAGE_DIGESTS"; do
+            if [[ -n "$more" ]]; then
+              if [[ -n "$DIGESTS" ]]; then
+                DIGESTS+=$'\n'
+              fi
+              DIGESTS+="$more"
             fi
-            DIGESTS+="$DISK_DIGESTS"
-          fi
-          asset='([A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz|digests[.]json|vmlinux-x86_64[.]zst|base[.]ext4[.]zst|python[.]ext4[.]zst|coding[.]ext4[.]zst|browser[.]ext4[.]zst)'
+          done
+          asset='([A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz|digests[.]json|vmlinux-x86_64[.]zst|base[.]ext4[.]zst|python[.]ext4[.]zst|coding[.]ext4[.]zst|browser[.]ext4[.]zst|digests[.]sha256|vmlinuz|initrd[.]img|root[.]qcow2[.]zst)'
           line="^[0-9a-f]{64}  $asset\$"
           whole="^$asset\$"
           named=""
@@ -930,7 +1024,7 @@ jobs:
           (cd "$assets" && sha256sum --check --strict <<< "$DIGESTS")
           cosign="$RUNNER_TEMP/cosign"
           shopt -s extglob
-          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst|coding.ext4.zst|browser.ext4.zst)" > /dev/null; then
+          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst|coding.ext4.zst|browser.ext4.zst|digests.sha256|vmlinuz|initrd.img|root.qcow2.zst)" > /dev/null; then
             curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
               --output "$cosign" \
               "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
@@ -961,10 +1055,10 @@ jobs:
   # `playpen-image`, `rust`, `systemd-proof` and `kvm` are skipped. A job that needs one is
   # skipped by default. The verdict step is
   # what holds the tags back when a job failed. The `plan`, `artifacts`,
-  # `disks` and `sign` jobs run in each scope, so the verdict needs their
-  # success.
+  # `disks`, `ci-image` and `sign` jobs run in each scope, so the verdict
+  # needs their success.
   release:
-    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, kvm, plan, artifacts, disks, sign]
+    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, kvm, plan, artifacts, disks, ci-image, sign]
     if: always()
     runs-on: ubuntu-24.04
     permissions:
@@ -998,7 +1092,7 @@ jobs:
       # The archives, the disk files and the bundles, in the one directory
       # that the tag script reads as ASSET_DIR. Each workflow artifact holds
       # SHA256SUMS. The one of `bundles` comes last and replaces the others:
-      # it holds the lines of both.
+      # it holds the lines of each of them.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: artifacts
@@ -1007,6 +1101,11 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: disks
+          path: ${{ runner.temp }}/assets
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ci-image
           path: ${{ runner.temp }}/assets
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1027,7 +1126,7 @@ jobs:
           set -euo pipefail
           cosign="$RUNNER_TEMP/cosign"
           shopt -s extglob
-          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst|coding.ext4.zst|browser.ext4.zst)" > /dev/null; then
+          if compgen -G "$RUNNER_TEMP/assets/@(*.tar.gz|digests.json|vmlinux-x86_64.zst|base.ext4.zst|python.ext4.zst|coding.ext4.zst|browser.ext4.zst|digests.sha256|vmlinuz|initrd.img|root.qcow2.zst)" > /dev/null; then
             curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
               --output "$cosign" \
               "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"

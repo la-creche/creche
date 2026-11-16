@@ -40,6 +40,16 @@ DIGEST_FILE: Final = "SHA256SUMS"
 #: The build of the row, as `disks/component.toml` names it.
 BUILD: Final = ("/usr/bin/env", "bash", "disks/bin/playpen-release-disks")
 
+#: The second disk-image row, the guest image of the CI runner VMs. The job
+#: `ci-image` of release.yml runs the script for it.
+OTHER: Final = "ci-runner-image"
+
+#: The build of each row, as its manifest names it.
+BUILDS: Final = {
+    COMPONENT: BUILD,
+    OTHER: ("/usr/bin/env", "bash", "ci-runner-image/bin/ci-runner-image-release"),
+}
+
 #: The stand-in `handover`: it writes its words to STUB_LOG, prints the file
 #: STUB_ROWS and ends with STUB_STATUS.
 CLI_STUB: Final = """#!/usr/bin/env bash
@@ -49,22 +59,22 @@ exit "${STUB_STATUS:-0}"
 """
 
 #: The names of the signed files of the row, in the order of the row.
-FILES: Final = tuple(one.name for one in disk_files())
+FILES: Final = tuple(one.name for one in disk_files(COMPONENT))
 
 #: The limit of each file of the row.
-LIMIT: Final = {one.name: one.max_bytes for one in disk_files()}
+LIMIT: Final = {one.name: one.max_bytes for one in disk_files(COMPONENT)}
 
 
 def _rows(component: str = COMPONENT) -> str:
-    return "".join(f"{line}\n" for line in DiskRow(component, (BUILD,)).lines())
+    return "".join(f"{line}\n" for line in DiskRow(component, (BUILDS[component],)).lines())
 
 
-def _good_out(tmp_path: Path) -> Path:
+def _good_out(tmp_path: Path, component: str = COMPONENT) -> Path:
     """What a good build leaves: each file of the row, small, and
     SHA256SUMS."""
     out = tmp_path / "out"
     out.mkdir()
-    for name in FILES:
+    for name in (one.name for one in disk_files(component)):
         (out / name).write_bytes(f"the bytes of {name}\n".encode())
     (out / DIGEST_FILE).write_text("the sums\n", encoding="utf-8")
 
@@ -137,7 +147,19 @@ def test_the_rows_are_the_real_line_form_of_the_catalog() -> None:
         cwd=REPO,
     )
 
-    assert done.stdout == _rows()
+    assert done.stdout == _rows() + _rows(OTHER)
+
+
+def test_the_files_of_the_ci_runner_image_pass(tmp_path: Path) -> None:
+    """The job `ci-image` names the second row. The script reads its files
+    and not the files of `disks`."""
+    out = _good_out(tmp_path, OTHER)
+
+    done = _run(tmp_path, out, _rows() + _rows(OTHER), DISK_ROW=OTHER)
+
+    assert done.returncode == 0, done.stderr
+    names = [line.split(":")[1].strip() for line in done.stdout.splitlines()]
+    assert names == [one.name for one in disk_files(OTHER)]
 
 
 # ---- 2. the limits -----------------------------------------------------------
@@ -216,7 +238,7 @@ def test_an_entry_that_is_no_file_of_the_row_fails(tmp_path: Path, entry: str) -
 def test_a_component_with_no_row_fails(tmp_path: Path) -> None:
     out = _good_out(tmp_path)
 
-    _refused(_run(tmp_path, out, _rows("other")), f"{COMPONENT} has no disk-image row")
+    _refused(_run(tmp_path, out, _rows(OTHER)), f"{COMPONENT} has no disk-image row")
 
 
 def test_a_row_in_another_form_fails_with_its_reason(tmp_path: Path) -> None:
@@ -256,7 +278,7 @@ def test_the_files_of_another_row_are_not_read(tmp_path: Path) -> None:
     """Only the row of DISK_ROW counts. The other row names a file that the
     directory does not hold."""
     out = _good_out(tmp_path)
-    other = _rows("other").replace(f"asset {DIGESTS_FILE}", "asset other.json")
+    other = _rows(OTHER)
 
     done = _run(tmp_path, out, other + _rows())
 

@@ -183,7 +183,7 @@ def test_the_script_writes_one_file_per_flavor_and_the_kernel(tmp_path: Path) ->
 
     assert done.returncode == 0, done.stderr
     out = tmp_path / "out"
-    names = [one.name for one in disk_files()]
+    names = [one.name for one in disk_files("disks")]
     assert sorted(path.name for path in out.iterdir()) == sorted([*names, SUMS])
     assert (out / SUMS).read_text(encoding="utf-8") == "".join(
         f"{hashlib.sha256((out / name).read_bytes()).hexdigest()}  {name}\n" for name in names
@@ -337,7 +337,7 @@ def test_the_stand_ins_of_the_digest_check_build_the_files(tmp_path: Path) -> No
 
     assert done.returncode == 0, done.stderr
     assert sorted(path.name for path in (tmp_path / "out").iterdir()) == sorted(
-        [*(one.name for one in disk_files()), SUMS]
+        [*(one.name for one in disk_files("disks")), SUMS]
     )
 
 

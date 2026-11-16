@@ -25,6 +25,7 @@ from handover.cli import EXIT_OK
 from handover.cli import main as cli_main
 from handover.discovery import ManifestSet, discover
 from handover.executor.install import RESTART_TIMEOUT_S
+from handover.manifest import hook_holder
 from handover.resolve import resolve
 from handover.state import ReleaseState
 
@@ -103,10 +104,21 @@ def test_every_floor_is_the_providers_current_minor(found: ManifestSet) -> None:
             assert (required.major, required.min_minor) == expected, f"{name} {required.contract}"
 
 
-def test_handover_is_not_a_dependency_of_anything(found: ManifestSet) -> None:
-    """Contract 06 §1.1 rule 1: it deploys last, so nothing may wait on it."""
-    for manifest in found.manifests().values():
-        assert "handover" not in manifest.depends_on
+def test_only_a_disk_image_hook_depends_on_handover(found: ManifestSet) -> None:
+    """Contract 06 §1.1 rule 1: it deploys last, so nothing may wait on it
+    in one set. `handover` also releases alone (`resolve.check_alone`), so
+    no set holds it and another component. One case may then name it: a
+    disk-image row whose verify program is a `handover` command (§4 rule
+    6). Its hook runs from the live `handover` tree, and nothing of the
+    row waits on a deploy of `handover`."""
+    manifests = found.manifests()
+    for name, manifest in manifests.items():
+        if "handover" not in manifest.depends_on:
+            continue
+
+        holder = hook_holder(manifest, manifests)
+        assert manifest.kind is Kind.DISK_IMAGE, name
+        assert holder is not None and holder.name == "handover", name
 
 
 @pytest.mark.usefixtures("operator_is_an_account")
@@ -250,9 +262,10 @@ FROM_STAGE = "--from="
 VENV_STAGE = "creche-test-venv"
 
 
-#: The directory of the image build that makes the files of the
-#: disk-image row.
-IMAGE_DIR = "playpen"
+#: The directory of the image build that makes the files of each
+#: disk-image row whose build reads files outside its own path. The build
+#: of `ci-runner-image` reads only `ci-runner-image/`.
+IMAGE_DIR = {"disks": "playpen"}
 
 
 def _copied(dockerfile: Path) -> set[str]:
@@ -294,15 +307,18 @@ def test_each_component_bundles_what_its_build_installs(found: ManifestSet) -> N
     ships with no new tag: a merge that changed only `door-trigger/` and
     `family/` once left `attendance` and `noticeboard` on tags older than their code.
 
-    A disk-image build installs nothing this test can see: its files come
-    from the image build of `playpen` and the playpen scripts (CH76 rule
-    5). So it bundles what `playpen/Dockerfile` copies, and `playpen`."""
+    A disk-image build installs nothing this test can see. The files of
+    `disks` come from the image build of `playpen` and the playpen scripts
+    (CH76 rule 5). So it bundles what `playpen/Dockerfile` copies, and
+    `playpen`. The files of `ci-runner-image` come from its own path, so it
+    bundles nothing."""
     packages = _workspace()
     for name, item in found.found.items():
         row = CATALOG_BY_NAME[name]
         installed = _installed(item.manifest.build, packages)
-        if row.kind is Kind.DISK_IMAGE:
-            installed |= {IMAGE_DIR, *_copied(REPO_ROOT / IMAGE_DIR / "Dockerfile")}
+        image = IMAGE_DIR.get(name)
+        if row.kind is Kind.DISK_IMAGE and image is not None:
+            installed |= {image, *_copied(REPO_ROOT / image / "Dockerfile")}
 
         assert set(row.bundles) == installed - {row.path}, name
 

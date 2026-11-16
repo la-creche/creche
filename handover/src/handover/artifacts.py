@@ -45,6 +45,12 @@ from .catalog import (
     BUNDLE_MAX_BYTES,
     BUNDLE_SUFFIX,
     CATALOG_BY_NAME,
+    CI_DIGESTS_FILE,
+    CI_DIGESTS_MAX_BYTES,
+    CI_IMAGE,
+    CI_INITRD_FILE,
+    CI_KERNEL_FILE,
+    CI_ROOT_FILE,
     DIGESTS_FILE,
     DIGESTS_MAX_BYTES,
     DISK_FILE_MAX_BYTES,
@@ -160,12 +166,11 @@ class AssetLimit:
     max_bytes: int
 
 
-def disk_files() -> tuple[AssetLimit, ...]:
-    """The files of a disk-image component, each with its largest size:
-    `digests.json`, the kernel, then one root disk for each flavor of
-    `catalog.DISK_FLAVORS`, then one for each service image of
-    `catalog.SERVICE_IMAGES` (contract 06 §8.4 rule 2, CH76 rules 5 and 7,
-    browser design 10.5.2)."""
+def _disks_files() -> tuple[AssetLimit, ...]:
+    """The files of `disks`: `digests.json`, the kernel, then one root disk
+    for each flavor of `catalog.DISK_FLAVORS`, then one for each service
+    image of `catalog.SERVICE_IMAGES` (contract 06 §8.4 rule 2, CH76 rules
+    5 and 7, browser design 10.5.2)."""
     disks = (f"{name}{DISK_SUFFIX}" for name in (*DISK_FLAVORS, *SERVICE_IMAGES))
 
     return (
@@ -173,6 +178,38 @@ def disk_files() -> tuple[AssetLimit, ...]:
         AssetLimit(name=KERNEL_FILE, max_bytes=DISK_FILE_MAX_BYTES),
         *(AssetLimit(name=name, max_bytes=DISK_FILE_MAX_BYTES) for name in disks),
     )
+
+
+#: The files of `ci-runner-image`: the digests of the build, the kernel and
+#: the initrd of the image, then its root disk (docs/design/ci-runner.md,
+#: section 8, PR 3). No name is a name of a file of `disks`: the `sign` job
+#: and the tag step of `release.yml` read the files of both rows from one
+#: directory.
+_CI_IMAGE_FILES: Final = (
+    AssetLimit(name=CI_DIGESTS_FILE, max_bytes=CI_DIGESTS_MAX_BYTES),
+    AssetLimit(name=CI_KERNEL_FILE, max_bytes=DISK_FILE_MAX_BYTES),
+    AssetLimit(name=CI_INITRD_FILE, max_bytes=DISK_FILE_MAX_BYTES),
+    AssetLimit(name=CI_ROOT_FILE, max_bytes=DISK_FILE_MAX_BYTES),
+)
+
+#: The files of each disk-image row of the catalog, by its component.
+#: `tests/test_handover_disk_assets.py` holds the keys equal to those rows.
+_DISK_FILES: Final[Mapping[str, tuple[AssetLimit, ...]]] = {
+    "disks": _disks_files(),
+    CI_IMAGE: _CI_IMAGE_FILES,
+}
+
+
+def disk_files(component: str) -> tuple[AssetLimit, ...]:
+    """The files of the disk-image component `component`, each with its
+    largest size, in the order that its Release lists them. A name that is
+    no disk-image row refuses with the `catalog` code."""
+    files = _DISK_FILES.get(component)
+    if files is None:
+        detail = "the catalog names no disk-image row of this name"
+        raise Refusal(RefusalCode.CATALOG, safe_token(component), detail)
+
+    return files
 
 
 def asset_limits(component: str, kind: Kind) -> tuple[AssetLimit, ...]:
@@ -183,7 +220,7 @@ def asset_limits(component: str, kind: Kind) -> tuple[AssetLimit, ...]:
     if kind is Kind.DISK_IMAGE:
         return tuple(
             one
-            for file in disk_files()
+            for file in disk_files(component)
             for one in (file, AssetLimit(f"{file.name}{BUNDLE_SUFFIX}", BUNDLE_MAX_BYTES))
         )
 

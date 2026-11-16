@@ -81,7 +81,7 @@ VMM = DISK_HOOK_HOLDER
 #: The bytes of each file of the row: small stand-ins for the kernel, the
 #: root disks and `digests.json`.
 DISK_BYTES: dict[str, bytes] = {
-    one.name: f"the bytes of {one.name}\n".encode() for one in disk_files()
+    one.name: f"the bytes of {one.name}\n".encode() for one in disk_files(DISKS)
 }
 
 #: The bytes of each file of the previous release, in the live tree.

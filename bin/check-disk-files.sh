@@ -3,7 +3,8 @@
 # job signs it (decision CH78 rule 3).
 #   DISK_REPO=creche DISK_ROW=disks DISK_OUT=<dir> bin/check-disk-files.sh
 # The job `disks` of release.yml runs it after the build of the row, when
-# the plan tags `disks`. No hook and no unit runs it. The host never runs it.
+# the plan tags `disks`. The job `ci-image` runs it for `ci-runner-image`
+# in the same way. No hook and no unit runs it. The host never runs it.
 #
 # The row comes from `handover disk-assets --repo "$DISK_REPO"`.
 # bin/lib/artifactrows.sh is the one reader of that line form. The row
@@ -14,7 +15,7 @@
 # Variables:
 #   DISK_REPO       the catalog name of the repository.
 #   DISK_ROW        the disk-image component that the build made.
-#   DISK_OUT        for `disks`: the out variable that the row names, the
+#   DISK_OUT        for each row: the out variable that the row names, the
 #                   directory that the build wrote. It holds each file of
 #                   the row, SHA256SUMS and nothing else.
 #   RELEASE_CLI     the `handover` command. Default: `uv run` against the

@@ -37,9 +37,13 @@ The `disks` job builds the files of the disks row
 (`disks/bin/playpen-release-disks`), only when the plan names `disks`
 (decision CH76 rule 5). The tests run the text of its build step against
 a stand-in script.
+The `ci-image` job builds the files of the ci-runner-image row
+(`ci-runner-image/bin/ci-runner-image-release`), only when the plan names
+`ci-runner-image` (docs/design/ci-runner.md, section 8, PR 3). The tests
+run the text of its build step against a stand-in script.
 The `sign` job signs each archive and each disk file. It holds the
 identity token, and each word that it runs is in the workflow file. The
-`release` job takes the three workflow artifacts and cosign, and the tag
+`release` job takes the four workflow artifacts and cosign, and the tag
 step gets `ASSET_DIR` and `COSIGN`. The tests run the text of the sign
 step and of the cosign step against a stand-in `curl`.
 
@@ -293,8 +297,14 @@ PLAN_JOB = "plan"
 #: row (decision CH76 rule 5).
 DISKS_JOB = "disks"
 
+#: The job of the release that builds the files of the ci-runner-image row,
+#: and that row (docs/design/ci-runner.md, section 8, PR 3). The job has
+#: another name than the row: the gate holds a job of the row's name.
+IMAGE_JOB = "ci-image"
+IMAGE_ROW = "ci-runner-image"
+
 #: The jobs that only the release has.
-RELEASE_ONLY = {PLAN_JOB, ARTIFACTS_JOB, DISKS_JOB, SIGN_JOB}
+RELEASE_ONLY = {PLAN_JOB, ARTIFACTS_JOB, DISKS_JOB, IMAGE_JOB, SIGN_JOB}
 
 #: The jobs of each file with no rule of their own. The verdict needs a
 #: success from each of them in each scope.
@@ -423,6 +433,66 @@ DISKS_STEPS = [
         "with": {
             "name": DISKS_JOB,
             "path": DISK_DIR,
+            "if-no-files-found": "error",
+            "retention-days": RETENTION_DAYS,
+            "compression-level": 0,
+        },
+    },
+]
+
+#: Where the files of the ci-runner-image row go on a runner.
+IMAGE_DIR = "${{ runner.temp }}/ci-image"
+
+#: The build argv of `ci-runner-image/component.toml`, as one line of the
+#: step.
+IMAGE_ARGV = "/usr/bin/env bash ci-runner-image/bin/ci-runner-image-release"
+
+#: The packages that the image build needs on the runner: qemu-img,
+#: growpart and zstd. The sudo of the runner installs them (CH36 G20).
+IMAGE_PACKAGES = (
+    "sudo apt-get install --yes --no-install-recommends -qq qemu-utils cloud-guest-utils zstd"
+)
+
+#: The variables of the build step of the `ci-image` job, each one.
+IMAGE_STEP_ENV = {
+    "PLANNED": "${{ needs.plan.outputs.components }}",
+    "DISK_REPO": THIS_REPOSITORY,
+    "DISK_ROW": IMAGE_ROW,
+    "DISK_OUT": IMAGE_DIR,
+}
+
+#: The whole text of the build step of the `ci-image` job: the text of the
+#: `disks` job, with the packages before the build.
+IMAGE_RUN = f"""\
+set -euo pipefail
+if [[ " $PLANNED " == *" $DISK_ROW "* ]]; then
+  sudo apt-get update -qq
+  {IMAGE_PACKAGES}
+  {IMAGE_ARGV}
+  {DISKS_CHECK}
+else
+  echo "ci-image: no planned ci-runner-image row"
+  mkdir -p "$DISK_OUT"
+  : > "$DISK_OUT/SHA256SUMS"
+fi
+{{
+  echo "digests<<END_OF_DIGESTS"
+  cat "$DISK_OUT/SHA256SUMS"
+  echo "END_OF_DIGESTS"
+}} >> "$GITHUB_OUTPUT"
+"""
+
+#: The steps of the `ci-image` job, as a whole, in the form of the steps of
+#: the `disks` job.
+IMAGE_STEPS = [
+    {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
+    {"uses": SETUP_UV, "with": {"enable-cache": False, "python-version": HOST_PYTHON}},
+    {"name": "build", "id": "build", "env": IMAGE_STEP_ENV, "run": IMAGE_RUN},
+    {
+        "uses": UPLOAD_ACTION,
+        "with": {
+            "name": IMAGE_JOB,
+            "path": IMAGE_DIR,
             "if-no-files-found": "error",
             "retention-days": RETENTION_DAYS,
             "compression-level": 0,
@@ -576,9 +646,9 @@ PLAN_STEPS = [
     {"name": PLAN_JOB, "id": PLAN_JOB, "env": {"TAG_REPO": THIS_REPOSITORY}, "run": PLAN_RUN},
 ]
 
-#: The names of the files of a disk-image row, in the order of
-#: `artifacts.disk_files` (decision CH76 rules 5 and 7).
-DISK_NAMES = tuple(one.name for one in disk_files())
+#: The names of the files of each disk-image row, in catalog order and in
+#: the order of `artifacts.disk_files` (decision CH76 rules 5 and 7).
+DISK_NAMES = tuple(one.name for row in disk_components(Repo.CRECHE) for one in disk_files(row))
 
 #: The names that the `sign` job signs, as the alternatives of one regex
 #: group: an archive of a binary row, then each file of a disk-image row.
@@ -640,12 +710,14 @@ bundles="$RUNNER_TEMP/bundles"
 mkdir -p "$bundles"
 """
     + """\
-if [[ -n "$DISK_DIGESTS" ]]; then
-  if [[ -n "$DIGESTS" ]]; then
-    DIGESTS+=$'\\n'
+for more in "$DISK_DIGESTS" "$IMAGE_DIGESTS"; do
+  if [[ -n "$more" ]]; then
+    if [[ -n "$DIGESTS" ]]; then
+      DIGESTS+=$'\\n'
+    fi
+    DIGESTS+="$more"
   fi
-  DIGESTS+="$DISK_DIGESTS"
-fi
+done
 """
     + f"asset='({SIGNED_REGEX})'\n"
     + """\
@@ -711,11 +783,13 @@ SIGN_PERMISSIONS = {"id-token": "write"}
 SIGN_STEPS = [
     {"uses": DOWNLOAD_ACTION, "with": {"name": ARTIFACTS_JOB, "path": ASSET_DIR}},
     {"uses": DOWNLOAD_ACTION, "with": {"name": DISKS_JOB, "path": ASSET_DIR}},
+    {"uses": DOWNLOAD_ACTION, "with": {"name": IMAGE_JOB, "path": ASSET_DIR}},
     {
         "name": SIGN_JOB,
         "env": {
             "DIGESTS": "${{ needs.artifacts.outputs.digests }}",
             "DISK_DIGESTS": "${{ needs.disks.outputs.digests }}",
+            "IMAGE_DIGESTS": "${{ needs.ci-image.outputs.digests }}",
         },
         "run": SIGN_RUN,
     },
@@ -740,12 +814,13 @@ COSIGN_STEP_MINUTES = 10
 COSIGN_STEP = {"name": "cosign", "timeout-minutes": COSIGN_STEP_MINUTES, "run": COSIGN_RUN}
 
 #: The steps of the `release` job between the verdict and the step that
-#: takes uv: the three workflow artifacts into one directory, then cosign.
+#: takes uv: the four workflow artifacts into one directory, then cosign.
 #: The `bundles` artifact comes last: its SHA256SUMS holds the lines of
-#: both build jobs.
+#: each build job.
 RELEASE_ASSET_STEPS = [
     {"uses": DOWNLOAD_ACTION, "with": {"name": ARTIFACTS_JOB, "path": ASSET_DIR}},
     {"uses": DOWNLOAD_ACTION, "with": {"name": DISKS_JOB, "path": ASSET_DIR}},
+    {"uses": DOWNLOAD_ACTION, "with": {"name": IMAGE_JOB, "path": ASSET_DIR}},
     {"uses": DOWNLOAD_ACTION, "with": {"name": "bundles", "path": ASSET_DIR}},
     COSIGN_STEP,
 ]
@@ -1153,10 +1228,11 @@ def test_the_disks_job_is_pinned_as_a_whole() -> None:
 
 def test_the_disks_job_runs_the_build_of_the_disks_manifest() -> None:
     """One source for the build: the argv of `disks/component.toml`. The
-    job builds the one disk-image row of this repository."""
+    job builds the first disk-image row of this repository, and the
+    `ci-image` job the second."""
     manifest = read_one(REPO, DISKS_JOB).manifest
 
-    assert disk_components(Repo.CRECHE) == (DISKS_JOB,)
+    assert disk_components(Repo.CRECHE) == (DISKS_JOB, IMAGE_ROW)
     assert manifest.build == (tuple(DISKS_ARGV.split()),)
     assert f"\n  {DISKS_ARGV}\n  {DISKS_CHECK}\n" in DISKS_RUN
     assert (REPO / manifest.build[0][-1]).is_file()
@@ -1244,6 +1320,111 @@ def test_a_failed_check_of_the_disk_files_fails_the_step(tmp_path: Path) -> None
     """CH78 rule 3: a file past its limit fails the job before the `sign`
     job, which needs it. The step then writes no step output."""
     done, _log, _out, output = _run_disks_step(tmp_path, DISKS_JOB, check_status=1)
+
+    assert done.returncode == 1
+    assert not output.exists()
+
+
+def test_the_image_job_is_pinned_as_a_whole() -> None:
+    """Each key of the `ci-image` job and each step, in their order. The job
+    has no rule and no `permissions` key, so the verdict needs its success
+    in each scope."""
+    job = RELEASE_JOBS[IMAGE_JOB]
+
+    assert set(job) == DISKS_KEYS
+    assert job["needs"] == ["scope", PLAN_JOB]
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert 0 < job["timeout-minutes"] <= 30
+    assert job["outputs"] == DISKS_OUTPUTS
+    assert job["steps"] == IMAGE_STEPS
+    assert IMAGE_JOB in RELEASE_JOBS[RELEASE_NAME]["needs"]
+    assert IMAGE_JOB not in JOBS
+
+
+def test_the_image_job_runs_the_build_of_the_image_manifest() -> None:
+    """One source for the build: the argv of
+    `ci-runner-image/component.toml`."""
+    manifest = read_one(REPO, IMAGE_ROW).manifest
+
+    assert manifest.build == (tuple(IMAGE_ARGV.split()),)
+    assert f"\n  {IMAGE_ARGV}\n  {DISKS_CHECK}\n" in IMAGE_RUN
+    assert (REPO / manifest.build[0][-1]).is_file()
+
+
+#: (the plan, whether the build runs, the output `digests`).
+IMAGE_PLANS = {
+    "no-plan": ("", False, ""),
+    "a-disks-tag": ("vmm disks", False, ""),
+    "an-image-tag": ("disks ci-runner-image", True, "a line"),
+    "a-name-that-holds-the-row": ("ci-runner-image-old", False, ""),
+}
+
+
+def _run_image_step(
+    tmp_path: Path, planned: str, check_status: int = 0
+) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
+    """The build step of the `ci-image` job, beside a stand-in `sudo`, a
+    stand-in build and a stand-in check. The answer is the run, the log,
+    the output directory and the step output file."""
+    script = tmp_path / IMAGE_ARGV.split()[-1]
+    script.parent.mkdir(parents=True)
+    script.write_text(DISK_BUILD_STUB, encoding="utf-8")
+    check = tmp_path / DISKS_CHECK
+    check.parent.mkdir(parents=True)
+    check.write_text(DISK_CHECK_STUB, encoding="utf-8")
+    check.chmod(0o755)
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    sudo = stubs / "sudo"
+    sudo.write_text('#!/usr/bin/env bash\necho "sudo $*" >> "$STUB_LOG"\n', encoding="utf-8")
+    sudo.chmod(0o755)
+    output = tmp_path / "output"
+    log = tmp_path / "log"
+    out = tmp_path / "temp" / IMAGE_JOB
+    variables = {**IMAGE_STEP_ENV, "PLANNED": planned, "DISK_OUT": str(out)}
+    done = subprocess.run(
+        ["bash", "-c", IMAGE_RUN],
+        cwd=tmp_path,
+        env={
+            "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
+            **variables,
+            "GITHUB_OUTPUT": str(output),
+            "STUB_SUMS": "a line",
+            "STUB_LOG": str(log),
+            "STUB_CHECK_STATUS": str(check_status),
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    return done, log, out, output
+
+
+@pytest.mark.parametrize(("planned", "built", "digests"), IMAGE_PLANS.values(), ids=IMAGE_PLANS)
+def test_the_image_step_builds_only_a_planned_image_row(
+    tmp_path: Path, planned: str, built: bool, digests: str
+) -> None:
+    """The step installs the packages, runs the build and then the check
+    only when the plan names `ci-runner-image` as one word. Else it writes
+    an empty SHA256SUMS."""
+    done, log, out, output = _run_image_step(tmp_path, planned)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    packages = IMAGE_PACKAGES.removeprefix("sudo ")
+    ran = (
+        f"sudo apt-get update -qq\nsudo {packages}\n"
+        f"build \ncheck {THIS_REPOSITORY} {IMAGE_ROW} {out}\n"
+    )
+    assert (log.read_text(encoding="utf-8") if log.exists() else "") == (ran if built else "")
+    assert (out / "SHA256SUMS").read_text(encoding="utf-8") == (f"{digests}\n" if built else "")
+    body = f"{digests}\n" if digests else ""
+    assert output.read_text(encoding="utf-8") == f"digests<<END_OF_DIGESTS\n{body}END_OF_DIGESTS\n"
+
+
+def test_a_failed_check_of_the_image_files_fails_the_step(tmp_path: Path) -> None:
+    """CH78 rule 3, as for the `disks` job: the step writes no output."""
+    done, _log, _out, output = _run_image_step(tmp_path, IMAGE_ROW, check_status=1)
 
     assert done.returncode == 1
     assert not output.exists()
@@ -1395,7 +1576,7 @@ def test_the_sign_job_is_pinned_as_a_whole() -> None:
     (step,) = [one for one in job["steps"] if "run" in one]
 
     assert set(job) == SIGN_KEYS
-    assert job["needs"] == [ARTIFACTS_JOB, DISKS_JOB]
+    assert job["needs"] == [ARTIFACTS_JOB, DISKS_JOB, IMAGE_JOB]
     assert 0 < job["timeout-minutes"] <= 15
     assert job["steps"] == SIGN_STEPS
     assert "bin/" not in step["run"]
@@ -1581,6 +1762,7 @@ class Fetch:
         digests: str = "",
         sha256: str | None = None,
         disk_digests: str = "",
+        image_digests: str = "",
     ) -> None:
         stubs = tmp_path / "stubs"
         stubs.mkdir()
@@ -1607,6 +1789,7 @@ class Fetch:
                 "RUNNER_TEMP": str(self.temp),
                 "DIGESTS": digests,
                 "DISK_DIGESTS": disk_digests,
+                "IMAGE_DIGESTS": image_digests,
                 "COSIGN_VERSION": COSIGN_ENV["COSIGN_VERSION"],
                 "COSIGN_SHA256": sha256 or hashlib.sha256(FETCHED.encode()).hexdigest(),
                 "STUB_LOG": str(self.log),
@@ -1741,6 +1924,37 @@ def test_the_sign_step_signs_the_files_that_both_job_outputs_name(tmp_path: Path
 
     assert run.done.returncode == 0, run.done.stdout + run.done.stderr
     assert run.fetches == 1
+    assert run.used.read_text(encoding="utf-8").splitlines() == [
+        "version",
+        *(
+            f"sign-blob --yes --bundle {run.bundles}/{name}{BUNDLE_SUFFIX} {run.assets}/{name}"
+            for name in (ONE, *DISK_NAMES)
+        ),
+    ]
+    assert (run.bundles / "SHA256SUMS").read_text(encoding="utf-8") == (
+        f"{LINES[ONE]}\n{DISK_LINES}\n"
+    )
+
+
+@needs_sha256sum_check
+def test_the_sign_step_signs_the_files_that_each_job_output_names(tmp_path: Path) -> None:
+    """The `disks` job names the files of `disks`, and the `ci-image` job
+    the files of `ci-runner-image`. The step signs each one, in the order
+    of the outputs, and the SHA256SUMS of the bundles holds each line."""
+    split = len(disk_files(DISKS_JOB))
+    disks = "\n".join(DISK_LINES.split("\n")[:split])
+    image = "\n".join(DISK_LINES.split("\n")[split:])
+    run = Fetch(
+        tmp_path,
+        SIGN_RUN,
+        {ONE: BYTES[ONE], **DISK_BYTES, "SHA256SUMS": b""},
+        LINES[ONE],
+        disk_digests=disks,
+        image_digests=image,
+    )
+
+    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
+    assert image
     assert run.used.read_text(encoding="utf-8").splitlines() == [
         "version",
         *(

@@ -4,7 +4,7 @@
 (`handover/component.yaml`, `name: handover`), and nothing else declares
 it.
 
-Eight subcommands. Only `request` and `follow` write anything.
+Nine subcommands. Only `request` and `follow` write anything.
 
 1. `check` validates what is on disk: every manifest parses, every name
    matches contract 06 §1, `depends_on` is acyclic, and rules C1 to C3 hold
@@ -49,6 +49,9 @@ Eight subcommands. Only `request` and `follow` write anything.
    component, in the same line form (`artifacts.DiskRow`). `artifacts`
    prints binary rows only, so a reader of its form never meets a disk
    line (contract 06 §8.4 rule 1, CH76 rule 5).
+9. `check-ci-image --tree <dir>` is the verify hook of the
+   `ci-runner-image` row (`ciimage.py`). It prints one JSON object with
+   one check for each file of the tree, and exits 1 when a check fails.
 
 Each other subcommand has no notice file. It writes only the log line of
 such a text, and its caller reads that line.
@@ -82,6 +85,7 @@ from .artifacts import (
     verify_words,
 )
 from .catalog import Action, Kind, Repo, releasable_names
+from .ciimage import check_image
 from .contracts import ContractRow
 from .corpus import (
     BEHIND_NOTE,
@@ -621,6 +625,27 @@ def _run_check_tree(args: argparse.Namespace) -> int:
     _print_lines(found)
 
     return EXIT_REFUSED if found else EXIT_OK
+
+
+def _run_check_ci_image(args: argparse.Namespace) -> int:
+    """The verify hook of the `ci-runner-image` row: one JSON object, with
+    `ok` and one check for each file of the tree. Exit 1 when a check
+    fails."""
+    checks = check_image(Path(args.tree))
+    ok = all(one.ok for one in checks)
+    print(json.dumps({"ok": ok, "checks": [one.as_dict() for one in checks]}, indent=2))
+
+    return EXIT_OK if ok else EXIT_REFUSED
+
+
+def _absolute_tree(text: str) -> str:
+    """`--tree PATH` of `check-ci-image`: an absolute path. The hook
+    inherits the working directory of the executor, so a relative path has
+    no fixed reading. Each other text is argparse's usage error, exit 2."""
+    if not text.startswith("/"):
+        raise argparse.ArgumentTypeError(f"expected an absolute path, read {safe_token(text)}")
+
+    return text
 
 
 def _wanted(items: list[str]) -> dict[str, str]:
@@ -1405,6 +1430,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="an absolute path that no file of the tree may hold (repeatable)",
     )
     walk.set_defaults(handler=_run_check_tree, json=False)
+
+    image = sub.add_parser(
+        "check-ci-image", help="the verify hook of the ci-runner-image row (CI runner VMs)"
+    )
+    image.add_argument(
+        "--tree", required=True, type=_absolute_tree, help="the installed tree of the row"
+    )
+    image.set_defaults(handler=_run_check_ci_image, json=True)
 
     _add_request(sub.add_parser("request", help="file one release request (§2.3)"))
     _add_follow(sub.add_parser("follow", help="file a request for every newer tag, once"))

@@ -28,6 +28,7 @@ CONTROL_NAMES = (
     "memory",
     "vmm",
     "disks",
+    "ci-runner-image",
 )
 
 
@@ -292,13 +293,14 @@ def test_releasable_drops_the_data_component(tmp_path: Path) -> None:
     assert set(releasable(discover([tmp_path]))) == {"noticeboard"}
 
 
-@pytest.mark.parametrize("name", ["vmm", "disks"])
+@pytest.mark.parametrize("name", ["vmm", "disks", "ci-runner-image"])
 def test_a_creche_checkout_without_the_manifest_of_an_arrived_row_misses_it(
     tmp_path: Path, name: str
 ) -> None:
     """`vmm` arrived with `rust/component.toml` and `disks` with
     `disks/component.toml` (CH7-5, CH76 rule 1), so each left
-    `catalog.ARRIVING`. A checkout with no manifest at the row's path now
+    `catalog.ARRIVING`. `ci-runner-image` arrived with its row and its
+    manifest in one PR. A checkout with no manifest at the row's path now
     misses it, and the requester refuses to plan over it."""
     kept = tuple(one for one in CONTROL_NAMES if one != name)
     roots = _all_five(tmp_path, kept)

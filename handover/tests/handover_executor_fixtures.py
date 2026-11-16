@@ -46,6 +46,7 @@ SHA_OF = {
     "memory": "9a4e2c71d08b5f36e1a7c94b20d5e8f3a61c07b2",
     "vmm": "5a016147fcc625f3de7806a9d39454a073540be9",
     "disks": "b928ce896e12da989524e5bf6c4d329b4ab11e5a",
+    "ci-runner-image": "c1a7e2b9d40f63e85a1c07b4f29d6e3815ab7c40",
 }
 
 DIGEST = "sha256:" + "ab" * 32

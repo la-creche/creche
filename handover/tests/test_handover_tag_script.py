@@ -55,6 +55,11 @@ DISK_COMPONENT = "disks"
 #: each file before its bundle.
 DISK_ASSETS = tuple(one.name for one in asset_limits(DISK_COMPONENT, Kind.DISK_IMAGE))
 
+#: The second disk-image row, the guest image of the CI runner VMs. A
+#: first run tags it too, so the `assets` fixture holds its eight assets.
+IMAGE_COMPONENT = "ci-runner-image"
+IMAGE_ASSETS = tuple(one.name for one in asset_limits(IMAGE_COMPONENT, Kind.DISK_IMAGE))
+
 #: Every one of them at its first version, sorted as `_tags` returns them.
 FIRST_TAGS = sorted(f"{name}-v0.1.0" for name in COMPONENTS)
 
@@ -1078,16 +1083,16 @@ def binary_cli(tmp_path: Path) -> str:
 
 @pytest.fixture
 def assets(tmp_path: Path) -> Assets:
-    """The two assets of the binary copy and of `vmm`, the eight assets of
-    `disks`, each within its limit, and a verifier that passes each
-    signature."""
+    """The two assets of the binary copy and of `vmm`, the twelve assets of
+    `disks`, the eight of `ci-runner-image`, each within its limit, and a
+    verifier that passes each signature."""
     directory = tmp_path / "assets"
     directory.mkdir()
     for component in (BINARY_COMPONENT, VMM):
         names = asset_names(component)
         (directory / names.archive).write_bytes(b"an archive\n")
         (directory / names.bundle).write_bytes(b"{}\n")
-    for name in DISK_ASSETS:
+    for name in (*DISK_ASSETS, *IMAGE_ASSETS):
         (directory / name).write_bytes(b"a file\n")
     verifier = tmp_path / "verifier" / "cosign"
     verifier.parent.mkdir()

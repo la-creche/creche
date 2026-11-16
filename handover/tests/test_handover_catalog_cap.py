@@ -1,8 +1,9 @@
 """spec §9's cap against the catalog: one request may name every releasing row.
 
 The cap is a constant (`catalog.MAX_REQUEST_COMPONENTS`) and the catalog is
-a list, so a new row can pass the cap without a test that reads both. Ten
-rows release since `playpen` left, one under the cap of eleven (CH35 (1)).
+a list, so a new row can pass the cap without a test that reads both.
+Eleven rows release since `ci-runner-image` joined: the cap of eleven
+exactly (CH35 (1)).
 """
 
 from __future__ import annotations
@@ -20,10 +21,10 @@ def test_the_cap_holds_every_releasable_row() -> None:
     assert len(releasable_names()) <= MAX_REQUEST_COMPONENTS
 
 
-def test_the_cap_is_eleven_and_ten_rows_release() -> None:
-    """spec §9 and CH35 (1): eleven, and ten releasing rows under it."""
+def test_the_cap_is_eleven_and_eleven_rows_release() -> None:
+    """spec §9 and CH35 (1): eleven, and eleven releasing rows at it."""
     assert MAX_REQUEST_COMPONENTS == 11
-    assert len(releasable_names()) == 10
+    assert len(releasable_names()) == 11
 
 
 def test_a_request_of_every_row_parses() -> None:
@@ -32,7 +33,7 @@ def test_a_request_of_every_row_parses() -> None:
 
     wanted = parse_request([f"{name}=latest" for name in names])
 
-    assert {"vmm", "disks"} <= set(wanted)
+    assert {"vmm", "disks", "ci-runner-image"} <= set(wanted)
     assert set(wanted) == set(names)
 
 

@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# CI: builds the files of the ci-runner-image row (docs/design/ci-runner.md,
+# section 8, PR 3):
+#   DISK_OUT=<dir> ci-runner-image/bin/ci-runner-image-release
+#
+# The `build` of ci-runner-image/component.toml names this script. The job
+# `ci-image` of release.yml runs it from the repository root when the plan
+# tags `ci-runner-image`. Root never runs it: the host installs the signed
+# files unchanged (contract 06 §8.4).
+#
+# The script runs ci-runner-image/bin/ci-runner-image-build, which needs
+# the sudo of a GitHub runner, qemu-img and growpart. The job installs
+# qemu-utils, cloud-guest-utils and zstd first.
+#
+# DISK_OUT names a directory that is absent or empty. The script writes
+# these files into it:
+#   1. `root.qcow2.zst`: root.qcow2 of the build, compressed with zstd. The
+#      qcow2 is past the 2 GiB of a release asset. The host copies the
+#      whole qcow2 for each job, and it has no qemu-img to make a qcow2
+#      from a raw file, so the row ships the qcow2 (design section 4.4).
+#   2. `vmlinuz` and `initrd.img`: the kernel and the initrd of the build,
+#      unchanged. Both are compressed already.
+#   3. `digests.sha256`: SHA256SUMS of the build, unchanged: the SHA-256 of
+#      root.qcow2, vmlinuz and initrd.img, before the compression. The
+#      verify hook `handover check-ci-image` checks the tree against it.
+#   4. `SHA256SUMS`: the SHA-256 of each file above, as it ships. The job
+#      hands it to the `sign` job, which signs each file as its own asset.
+#
+# bin/tests/test_ci_runner_image_release.py holds the files equal to the
+# files of `handover disk-assets`.
+#
+# Exit 0 with each file written. Exit 1 when a step fails. A step that
+# fails leaves DISK_OUT empty.
+set -euo pipefail
+export LC_ALL=C
+
+die() { printf 'ci-runner-image-release: %s\n' "$*" >&2; exit 1; }
+
+TREE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DISK=root.qcow2
+KERNEL=vmlinuz
+INITRD=initrd.img
+DIGESTS=digests.sha256
+SUMS=SHA256SUMS
+# The level of the disks row (playpen/bin/playpen-disk).
+ZSTD_LEVEL=-10
+
+[[ -n "${DISK_OUT:-}" ]] || die "the variable DISK_OUT is not set"
+# The image build takes an absolute output directory only.
+[[ "$DISK_OUT" == /* ]] || die "DISK_OUT is not absolute: $DISK_OUT"
+if [[ -e "$DISK_OUT" ]]; then
+  [[ -d "$DISK_OUT" && ! -L "$DISK_OUT" ]] || die "DISK_OUT names no directory"
+  [[ -z "$(ls -A -- "$DISK_OUT")" ]] || die "DISK_OUT is not empty"
+fi
+mkdir -p -- "$DISK_OUT" || die "cannot make DISK_OUT"
+
+# Each step writes into one work directory, and only the last step moves the
+# files into DISK_OUT. So a failed step leaves DISK_OUT empty.
+work="$(mktemp -d "$DISK_OUT/.ci-runner-image-release.XXXXXX")" || die "cannot make a work directory"
+trap 'rm -rf -- "$work"' EXIT
+mkdir -- "$work/files"
+
+CI_IMAGE_OUT="$work/image" "$TREE/bin/ci-runner-image-build" || die "the image build failed"
+(cd -- "$work/image" && sha256sum --check --strict --quiet -- "$SUMS") ||
+  die "the files of the build do not match its $SUMS"
+
+# The root disk, compressed. The check of the stream is the check of the
+# verify hook on the host: the bytes that zstd gives back have the SHA-256
+# of the build.
+zstd -q -T0 "$ZSTD_LEVEL" -o "$work/files/$ROOT_DISK.zst" -- "$work/image/$ROOT_DISK" ||
+  die "the compression of $ROOT_DISK failed"
+sha="$(zstd -q -d -c -- "$work/files/$ROOT_DISK.zst" | sha256sum)" || die "cannot read $ROOT_DISK.zst"
+[[ "${sha%% *}  $ROOT_DISK" == "$(grep -F "  $ROOT_DISK" -- "$work/image/$SUMS")" ]] ||
+  die "$ROOT_DISK.zst does not give the bytes of $ROOT_DISK"
+
+mv -f -- "$work/image/$KERNEL" "$work/files/$KERNEL"
+mv -f -- "$work/image/$INITRD" "$work/files/$INITRD"
+mv -f -- "$work/image/$SUMS" "$work/files/$DIGESTS"
+
+names=("$DIGESTS" "$KERNEL" "$INITRD" "$ROOT_DISK.zst")
+(cd -- "$work/files" && sha256sum -- "${names[@]}") > "$work/files/$SUMS" ||
+  die "cannot read the SHA-256 of the files"
+
+for name in "${names[@]}" "$SUMS"; do
+  mv -f -- "$work/files/$name" "$DISK_OUT/$name"
+done
+printf 'ci-runner-image-release: %s is %s bytes\n' "$ROOT_DISK.zst" \
+  "$(wc -c < "$DISK_OUT/$ROOT_DISK.zst" | tr -d ' ')" >&2
+printf 'ci-runner-image-release: %s files in %s\n' "${#names[@]}" "$DISK_OUT" >&2

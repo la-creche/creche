@@ -631,13 +631,43 @@ DISK_LINES = [
     "end",
 ]
 
+#: The second disk-image row: the guest image of the CI runner VMs.
+IMAGE = "ci-runner-image"
+
+#: The one build argv of that row.
+IMAGE_ARGV = ("/usr/bin/env", "bash", "ci-runner-image/bin/ci-runner-image-release")
+
+#: The line form of that row, after the row of `disks`: catalog order.
+IMAGE_LINES = [
+    "component ci-runner-image",
+    "out-env DISK_OUT",
+    "asset digests.sha256 4096",
+    "asset digests.sha256.sigstore.json 1048576",
+    "asset vmlinuz 2147483647",
+    "asset vmlinuz.sigstore.json 1048576",
+    "asset initrd.img 2147483647",
+    "asset initrd.img.sigstore.json 1048576",
+    "asset root.qcow2.zst 2147483647",
+    "asset root.qcow2.zst.sigstore.json 1048576",
+    "argv 3",
+    *IMAGE_ARGV,
+    "end",
+]
+
+
+def _built(name: str, argv: tuple[str, ...], *, build: bool) -> str:
+    """A disk-image fixture manifest, with `argv` as its build or none."""
+    words = ", ".join(f'"{word}"' for word in argv)
+
+    return manifest_toml(name) + (f"build = [[{words}]]\n" if build else "")
+
 
 def _disks_root(tmp_path: Path, *, build: bool = True) -> Path:
-    """A root that holds a disks manifest and the real vmm manifest."""
-    words = ", ".join(f'"{word}"' for word in DISK_ARGV)
-    text = manifest_toml(DISKS) + (f"build = [[{words}]]\n" if build else "")
+    """A root that holds a manifest of each disk-image row and the real vmm
+    manifest. `build` drops the build of the disks row only."""
     root = tmp_path / "root"
-    write_manifest(root, DISKS, text, Markup.TOML)
+    write_manifest(root, DISKS, _built(DISKS, DISK_ARGV, build=build), Markup.TOML)
+    write_manifest(root, IMAGE, _built(IMAGE, IMAGE_ARGV, build=True), Markup.TOML)
     write_manifest(root, VMM, VMM_MANIFEST_TEXT, Markup.TOML)
 
     return root
@@ -650,7 +680,7 @@ def test_disk_assets_prints_the_disk_rows(
 
     assert _out(capsys, "disk-assets", "--repo", "creche", "--root", str(root)) == (
         EXIT_OK,
-        DISK_LINES,
+        [*DISK_LINES, *IMAGE_LINES],
     )
 
 
@@ -667,12 +697,14 @@ def test_artifacts_prints_no_disk_row(tmp_path: Path, capsys: pytest.CaptureFixt
 def test_disk_assets_prints_the_disks_row_of_this_checkout(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The real `disks/component.toml`, in the line form that
-    `bin/build-artifacts.sh` reads to skip the row (CH76 rule 5)."""
+    """The real `disks/component.toml` and
+    `ci-runner-image/component.toml`, in the line form that
+    `bin/build-artifacts.sh` reads to skip each row (CH76 rule 5)."""
     assert DISKS not in artifacts.ARRIVING
+    assert IMAGE not in artifacts.ARRIVING
     assert _out(capsys, "disk-assets", "--repo", "creche", "--root", str(REPO_ROOT)) == (
         EXIT_OK,
-        DISK_LINES,
+        [*DISK_LINES, *IMAGE_LINES],
     )
 
 

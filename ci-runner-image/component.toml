@@ -1,0 +1,53 @@
+# The guest image of the CI runner VMs: the signed files that the
+# ci-runner daemon boots, at `ci-runner-image/` (docs/design/ci-runner.md,
+# sections 4.3, 4.4 and 8, PR 3). One row holds four files: the root disk
+# `root.qcow2.zst`, the kernel `vmlinuz`, its initrd `initrd.img` and
+# `digests.sha256`. Root installs each file unchanged into a root-owned
+# tree (contract 06 §8.4). The ci-runner daemon will decompress the root
+# disk (design PR 5 and PR 6).
+#
+# `kind = "disk-image"`: no unit and runs_as none. Nothing runs the tree
+# (contract 06 §8.4 rule 5).
+#
+# `build`: only CI runs it. The job `ci-image` of release.yml starts it
+# from the repository root with DISK_OUT set, when the plan tags
+# `ci-runner-image`. Root never runs it, and the host builds nothing. It
+# reads only files under `ci-runner-image/`, so the catalog row bundles
+# nothing.
+#
+# `depends_on = ["handover"]` and `verify`: the tree holds no program, so
+# the hook is a command of the `handover` tree (contract 06 §4 rule 6).
+# CONTRACT-QUESTION: contract 06 §1.1 rule 1 puts `handover` last in each
+# set, and the tests read it as "no manifest names `handover` in
+# `depends_on`". The reading taken: a disk-image row may name it for its
+# hook, because `handover` releases alone and so never shares a set with
+# the row. The other holders cost more. The vmm is out of scope (design
+# section 1, non-goal 2). The `ci-runner` row does not exist yet, and a
+# twelfth releasing row passes the cap of spec §9. A change of holder costs
+# one manifest line and one test (handover/AGENTS.md, Known gaps).
+# `handover check-ci-image` decompresses the root disk and checks each file
+# against `digests.sha256` (handover/src/handover/ciimage.py). It runs as
+# the operator, with no `--env-file`: the hook of `handover` names none.
+# `handover` releases alone, so no set holds this row and `handover`, and
+# the hook runs from the live `handover` tree. Timeout 120 s: the hook
+# decompresses the root disk, 2.3 GB, and hashes it. Nobody measured the
+# time on the host.
+#
+# `restore.keep = 1`: the root disk is the largest file, under 2 GiB as it
+# ships, so the host keeps one previous tree, as for `disks`.
+manifest_version = "0.27"
+name = "ci-runner-image"
+repo = "creche"
+path = "ci-runner-image"
+kind = "disk-image"
+runs_as = "none"
+build = [["/usr/bin/env", "bash", "ci-runner-image/bin/ci-runner-image-release"]]
+install.to = "/opt/components/ci-runner-image"
+install.prev = "/opt/components/ci-runner-image.prev"
+depends_on = ["handover"]
+verify.command = ["/opt/components/handover/bin/handover", "check-ci-image", "--tree", "/opt/components/ci-runner-image"]
+verify.user = "operator"
+verify.timeout_s = 120
+restore.mode = "automatic"
+restore.keep = 1
+release = true

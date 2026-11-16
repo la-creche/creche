@@ -39,9 +39,10 @@ class Kind(StrEnum):
     #: It has no `build` and names no `unit`. Root copies the fetched tree,
     #: and step 9 links each unit file of the live tree into place.
     UNITS = "units"
-    #: A set of signed files at the root of `install.to`: the guest kernel,
-    #: one root disk for each flavor and each service image, and
-    #: `digests.json` (contract 06 §8.4).
+    #: A set of signed files at the root of `install.to` (contract 06
+    #: §8.4). `artifacts.disk_files` lists the files of each row: for
+    #: `disks` the guest kernel, one root disk for each flavor and each
+    #: service image, and `digests.json`.
     #: CI builds and signs each file. Root checks each signature, installs
     #: each file unchanged and runs no build (CH7-2, CH35 (4), CH76 rule 5).
     #: It names no unit, and nothing runs it.
@@ -154,8 +155,13 @@ class CatalogRow:
 #: `agent/` and `facade/`, and its test venv resolves the workspace from
 #: `pyproject.toml` and `uv.lock`, so the row bundles those four too: the
 #: pins of the venv are the pins of the lock, and no member's code is in the
-#: venv (contract 06 §1 rule 15). Its manifest is `disks/component.toml`. It
-#: is the last row.
+#: venv (contract 06 §1 rule 15). Its manifest is `disks/component.toml`.
+#:
+#: `ci-runner-image` is the second disk-image row: the guest image of the CI
+#: runner VMs, at `ci-runner-image/` (docs/design/ci-runner.md, section 8,
+#: PR 3). Its build reads only files under its own path, so it bundles
+#: nothing. Its manifest is `ci-runner-image/component.toml`. It is the
+#: last row.
 CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("chaperone", Repo.CHAPERONE, ".", Kind.BINARY, Releases.YES),
     CatalogRow(
@@ -182,6 +188,7 @@ CATALOG: tuple[CatalogRow, ...] = (
         Releases.YES,
         ("playpen", "agent", "facade", "pyproject.toml", "uv.lock"),
     ),
+    CatalogRow("ci-runner-image", Repo.CRECHE, "ci-runner-image", Kind.DISK_IMAGE, Releases.YES),
 )
 
 CATALOG_BY_NAME: dict[str, CatalogRow] = {row.name: row for row in CATALOG}
@@ -298,8 +305,9 @@ RELEASES_ALONE = "handover"
 LAST_IN_ORDER = RELEASES_ALONE
 
 #: spec §9: at most eleven entries (CH35 (1)). The catalog minus
-#: `registry-data`, which never releases, is ten rows, one under the cap,
-#: since `playpen` left. `tests/test_handover_catalog_cap.py` fails when a
+#: `registry-data`, which never releases, is eleven rows since
+#: `ci-runner-image` joined: the cap exactly. A twelfth releasing row needs
+#: a new cap first. `tests/test_handover_catalog_cap.py` fails when a
 #: releasing row passes it.
 MAX_REQUEST_COMPONENTS = 11
 
@@ -356,6 +364,37 @@ DIGESTS_MAX_BYTES = 64 * 1024
 #: The variable that tells the build of a disk-image row where to write
 #: its files. Only CI runs that build (contract 06 §8).
 DISK_OUT_ENV = "DISK_OUT"
+
+#: The disk-image row of the guest image of the CI runner VMs
+#: (docs/design/ci-runner.md, sections 4.3 and 8, PR 3).
+CI_IMAGE = "ci-runner-image"
+
+#: The root disk of that image after decompression. It is qcow2, not raw:
+#: each job gets a whole copy of it (design section 4.4). A qcow2 copy holds
+#: only the clusters that the image uses, and the host has no `qemu-img` to
+#: make a qcow2 from a raw file.
+CI_ROOT_DISK = "root.qcow2"
+
+#: The file that ships the root disk: `CI_ROOT_DISK` compressed with zstd.
+#: The qcow2 is past the 2 GiB of a release asset: 2,281,504,768 bytes in
+#: gate run 43772263209 of creche#601.
+CI_ROOT_FILE = f"{CI_ROOT_DISK}.zst"
+
+#: The kernel of the image and its initrd. Each ships as the build wrote it:
+#: the kernel is a compressed bzImage, and the initrd is compressed too.
+CI_KERNEL_FILE = "vmlinuz"
+CI_INITRD_FILE = "initrd.img"
+
+#: The SHA-256 of `CI_ROOT_DISK`, `CI_KERNEL_FILE` and `CI_INITRD_FILE`, as
+#: `sha256sum` printed it in the build. The verify hook checks the tree
+#: against it (`ciimage.py`). Three lines of about 80 bytes.
+CI_DIGESTS_FILE = "digests.sha256"
+CI_DIGESTS_MAX_BYTES = 4 * 1024
+
+#: The largest root disk after decompression. The image is 5.5 GB and the
+#: qcow2 holds no cluster that the image does not use, so a stream past this
+#: size is no root disk of the build.
+CI_ROOT_MAX_BYTES = 8 * 1024 * 1024 * 1024
 
 
 def releasable_names() -> tuple[str, ...]:
