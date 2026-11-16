@@ -16,6 +16,7 @@ import { AGENT_NAME, composeAgent, FAMILY_STATE_SOCKET, readGuestStart, readKeyS
 import type { AgentStart, ComposedAgent, LimitsRead, StateBackend } from "agent/agent";
 import type { Wire } from "agent/wire-read";
 
+import { commandsOf } from "./commands.js";
 import { tapStores } from "./flue-history.js";
 import { guestLink } from "./local-link.js";
 import type { LocalLink } from "./local-link.js";
@@ -143,6 +144,7 @@ export async function serveFamily({ sessionId, composed, backend, meter }: Famil
       refresh,
       thinking: composed.thinking,
       meter,
+      commands: () => commandsOf(composed.state.configFor(sessionId).skills.map((skill) => skill.definition)),
     });
 
     return { ok: true, serving: { runtime, sessions } };

@@ -15,6 +15,8 @@
 // `updatedAt` of the turn record. The same end goes to each peer as
 // `session_info_update`, and only the first turn names the session. A
 // `usage_update` follows it, when the meter has a count (`src/usage.ts`).
+// After the pull, each peer gets the commands of the pulled skills
+// (`src/commands.ts`), so a granted or removed skill reaches the menu.
 //
 // One turn runs per session at a time. A second prompt is refused: Flue
 // would join it to the running response, and its reply would have no turn
@@ -32,6 +34,8 @@ import type {
   PromptResponse,
   StopReason,
 } from "./acp.js";
+import { commandsUpdate } from "./commands.js";
+import type { Commands } from "./commands.js";
 import { byteLength } from "./line.js";
 import type { Item, Live } from "./live.js";
 import type { LocalLink } from "./local-link.js";
@@ -132,6 +136,8 @@ export class Turns {
     private readonly link: LocalLink | null,
     private readonly meter: SessionMeter,
     private readonly refresh: Refresh = NO_REFRESH,
+    /** The session's commands. Null: the facade sends no `available_commands_update`. */
+    private readonly commands: Commands | null = null,
   ) {}
 
   /** The updates go to every peer on the session, the prompting one too. */
@@ -187,6 +193,10 @@ export class Turns {
     // The first send makes the Flue instance, so this turn names the session.
     const first = await this.session.fresh();
     this.live.attach(sessionId, peer);
+    if (this.commands !== null) {
+      await this.live.publish(sessionId, [{ position: null, update: commandsUpdate(this.commands) }]);
+    }
+
     // Each start gets an end, so guest init sees each running turn
     // (decisions CH21, CH32 rule 6).
     this.link?.turnStart();
