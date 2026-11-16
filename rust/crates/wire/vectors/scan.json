@@ -1,0 +1,58 @@
+{
+  "about": "The scan link of the scanner service VM (attachments design note). attendance, the scanner facade (playpen/guest/creche_scanner_facade.py), the vmm and creche-facade hold their constants equal to this file.",
+  "kind_line": "scan",
+  "line_cap": 16777216,
+  "acp_line_cap": 16777216,
+  "wait_s": 300,
+  "max_files": 4,
+  "max_file_bytes": 8388608,
+  "max_message_bytes": 10485760,
+  "max_pdf_pages": 50,
+  "max_image_pixels": 40000000,
+  "uri_scheme": "attachment:",
+  "max_name_bytes": 255,
+  "kinds": {
+    "image": ["image/png", "image/jpeg", "image/gif", "image/webp"],
+    "pdf": ["application/pdf"],
+    "text": [
+      "text/plain",
+      "text/markdown",
+      "text/csv",
+      "text/html",
+      "text/css",
+      "text/javascript",
+      "text/x-python",
+      "text/x-rust",
+      "text/x-go",
+      "text/x-c",
+      "text/x-c++",
+      "text/x-java",
+      "text/x-typescript",
+      "text/x-shellscript",
+      "application/json",
+      "application/xml",
+      "application/yaml",
+      "application/toml",
+      "application/javascript",
+      "application/typescript",
+      "application/x-sh",
+      "application/sql"
+    ]
+  },
+  "reasons": ["not_allowed", "mismatch", "malware", "too_large", "unreadable", "not_utf8", "busy", "failed"],
+  "request": {
+    "name": "notes.txt",
+    "mime_type": "text/plain",
+    "data": "aGVsbG8K"
+  },
+  "reply_ok": {
+    "ok": {
+      "files": [
+        { "name": "notes.txt", "mime_type": "text/plain", "data": "aGVsbG8K" }
+      ]
+    }
+  },
+  "reply_refused": {
+    "refused": { "reason": "mismatch" }
+  }
+}
