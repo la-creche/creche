@@ -1,9 +1,9 @@
 # The release path on Forgejo: design
 
-> Status as of 2026-11-16: The operator decided FR1 to FR4 on 2026-11-15, all as recommended, and FR16 on 2026-11-16. This note proposes FR5 to FR15. Nothing is built. After FR16, the revision of 2026-11-16 proposes a signer that attaches to the generic runner from outside (FR5, FR6). Next: the open questions of section 10, then PR 2 of section 8.
+> Status as of 2026-11-16: The operator decided FR1 to FR4 on 2026-11-15, all as recommended, and FR16 on 2026-11-16. This note proposes FR5 to FR15. Nothing is built. After FR16, the revision of 2026-11-16 proposes a signer that attaches to the generic runner from outside (FR5, FR6). Next: the open questions of section 10, then PR 2 of section 8. On 2026-11-16 most Forgejo replies that this note marked "not measured" were measured on a scratch repository. Five of them change the design: the secrets guards (M18), check 2 of the signer (section 4.4), the label read of the allocator (M11), the push filter of the release workflows (M15) and the size of the tag message (section 4.5, a proposal). A line dated 2026-11-16 marks each change.
 > Host names, addresses and accounts are placeholders. The operator's private notes hold the real values.
 
-Source: the operator's private migration plan (section 0c, the Actions facts measured on Forgejo 17.0.1 with runner v13.2.1, and the verification appendix), its raw inventory of GitHub dependencies, and the code of the five repositories. File evidence was checked at `origin/main` on 2026-11-15: creche `96fab11c`, chaperone `a3dd242`, mcp `dadfa2b`, registry `7673e0f`, creche-release `9f0ac54`. A "measured" fact comes from section 0c of the plan. Any other fact about Forgejo is marked "not measured".
+Source: the operator's private migration plan (section 0c, the Actions facts measured on Forgejo 17.0.1 with runner v13.2.1, and the verification appendix), its raw inventory of GitHub dependencies, and the code of the five repositories. File evidence was checked at `origin/main` on 2026-11-15: creche `96fab11c`, chaperone `a3dd242`, mcp `dadfa2b`, registry `7673e0f`, creche-release `9f0ac54`. A "measured" fact comes from section 0c of the plan. A fact "measured on a scratch repository" on 2026-11-16 comes from the recorded replies of Forgejo 17.0.1 in the operator's private notes. Any other fact about Forgejo is marked "not measured".
 
 "The runner design" in this note is `docs/design.md` of the repository `ci-runner` in the organization `infra` on the Forgejo instance, read at commit `7cdaa18` of its branch `import/standalone` on 2026-11-16. This note cites it by section title, not by section number.
 
@@ -61,27 +61,27 @@ This note proposes these rows. The operator answered the open questions of the f
 | # | Mechanism | Today (file:line) | On Forgejo | Rests on |
 | - | --------- | ----------------- | ---------- | -------- |
 | M1 | Signing | creche `release.yml:859-964` (job `sign`, `id-token: write` at `:863-864`, `sign-blob` at `:949`). chaperone `release.yml:261-296` (`sign-blob` at `:289`) | The job `sign` retires. The `release` job sends a statement request to `ci-signer` over vsock (section 4) | Measured: a branch run and a PR run read every secret, so no key may be a secret. Not measured: CH vsock on the host |
-| M2 | P1 | `provenance.py:218-233`, `BOT_LOGIN` at `:101-103` | `GET /repos/{o}/{r}/releases/tags/{tag}`. No author check. Plus the statement of the tag (section 5) | Measured: the read-back author is the user who started the run. Reply shape: not measured |
-| M3 | P2 | `provenance.py:236-270` (`git/ref/tags/{tag}`, `git/tags/{sha}`) | `GET /repos/{o}/{r}/git/refs/tags/{tag}` and `GET /repos/{o}/{r}/git/tags/{sha}` | Not measured. The plan's inventory says that the refs call answers a list |
-| M4 | P3 | `provenance.py:273-280`, `ON_MAIN` at `:105` | `GET /repos/{o}/{r}/compare/main...{sha}`. Pass when `total_commits` is 0 | Measured: the reply has `commits`, `files` and `total_commits`, and no `status`. The reading for an ancestor: not measured |
-| M5 | P4 | `provenance.py:294-314` (`commits/{sha}/pulls`, a list) | `GET /repos/{o}/{r}/commits/{sha}/pull`, one object | Measured: 404 for a commit that is no PR merge. The 200 shape: not measured |
-| M6 | P5 | `provenance.py:317-341` (`actions/runs?head_sha=`) | `GET /repos/{o}/{r}/commits/{head}/status` | Measured: the context form `<workflow> / <job> (<event>)`, and a skipped job posts `skipped`. The reply shape: not measured |
+| M2 | P1 | `provenance.py:218-233`, `BOT_LOGIN` at `:101-103` | `GET /repos/{o}/{r}/releases/tags/{tag}`. No author check. Plus the statement of the tag (section 5) | Measured on a scratch repository on 2026-11-16: the reply has `tag_name`, `draft`, `prerelease` and `assets`. For a Release that a job token creates, the create reply names the Actions user `forgejo-actions` (id -2) as author, and a later read names the user who started the run. P1 reads no author (FR2) |
+| M3 | P2 | `provenance.py:236-270` (`git/ref/tags/{tag}`, `git/tags/{sha}`) | `GET /repos/{o}/{r}/git/refs/tags/{tag}` and `GET /repos/{o}/{r}/git/tags/{sha}` | Measured on a scratch repository on 2026-11-16: the refs call is a prefix match and answers a list, also for one tag. A missing tag answers 404. So P2 takes only the entry whose `ref` is exactly `refs/tags/{tag}`. `git/tags/{sha}` gives the commit in `object.sha` and the message with one newline added at its end |
+| M4 | P3 | `provenance.py:273-280`, `ON_MAIN` at `:105` | `GET /repos/{o}/{r}/compare/main...{sha}`. Pass when `total_commits` is 0 | Measured: the reply has `commits`, `files` and `total_commits`, and no `status`. Measured on a scratch repository on 2026-11-16: `total_commits` is 0 for an ancestor of `main` and for `main` itself, and 1 for a commit one ahead and for a diverged commit. A missing commit answers 404 |
+| M5 | P4 | `provenance.py:294-314` (`commits/{sha}/pulls`, a list) | `GET /repos/{o}/{r}/commits/{sha}/pull`, one object | Measured: 404 for a commit that is no PR merge. Measured on a scratch repository on 2026-11-16: a merge commit answers 200 with one PR object, `merged` true, `base.ref` `main` and `merge_commit_sha` equal to the commit. The PR head commit answers 404 |
+| M6 | P5 | `provenance.py:317-341` (`actions/runs?head_sha=`) | `GET /repos/{o}/{r}/commits/{head}/status` | Measured: the context form `<workflow> / <job> (<event>)`, and a skipped job posts `skipped`. Measured on a scratch repository on 2026-11-16: the reply has `state`, `total_count` and `statuses`, with the latest entry of each context. Each entry names its state in `status`, not in `state` |
 | M7 | P6 | `artifacts.py:71` (`TOKEN_ISSUER`), `:76` (`CODE_HOST`), `:82` (`WORKFLOW_DIR`), `:317-348` (`verify_words`), `provenance.py:369` (trust root), `:476` (2.5 GiB child) | `cosign verify-blob --key` on the statement. Root hashes each copy itself and compares | FR1. The exact cosign v3 flags for a key bundle with no log entry: not measured |
-| M8 | Newest tag | `provenance.py:606-628` (`git/matching-refs/tags/{prefix}`) | `GET /repos/{o}/{r}/git/refs/tags/{prefix}`, then an exact match on each `ref` | Not measured |
+| M8 | Newest tag | `provenance.py:606-628` (`git/matching-refs/tags/{prefix}`) | `GET /repos/{o}/{r}/git/refs/tags/{prefix}`, then an exact match on each `ref` | Measured on a scratch repository on 2026-11-16: the path is a prefix match and answers a list. So the exact match on each `ref` is required |
 | M9 | The API client | `provenance.py:90-94` (`api.github.com`, the API version header), `:146-176` (`Bearer`) | `https://<forgejo-host>/api/v1`, the header `Authorization: token <t>` | The API base is measured. HTTPS on the Forgejo host: not available today |
 | M10 | The release token | `drain.py:76` (`RELEASE_GITHUB_TOKEN`), `:386`. `steps.py:981` | `RELEASE_FORGE_TOKEN`: a token of the bot `release-reader`, read-only collaborator on the five repositories | The plan's inventory: a Forgejo token has scopes and no list of repositories |
-| M11 | The allocator | `allocate-tags.sh:183-187` (the PR read), `:200-210` (the bump labels), `:442-448` (the signature check), `:501-507` (tag push, `gh release create`) | curl to `/api/v1`: `commits/{sha}/pull`, the merged PRs with a `bump:` label, `POST releases` and one asset upload each. The signer creates the annotated tag with the statement (section 4.5) | Measured: the job token creates a Release (201). It pushes an unprotected tag, and tag protection refuses it on a protected name (422). Basic auth with `x-access-token` works. Asset upload and the label filter: not measured |
+| M11 | The allocator | `allocate-tags.sh:183-187` (the PR read), `:200-210` (the bump labels), `:442-448` (the signature check), `:501-507` (tag push, `gh release create`) | curl to `/api/v1`: `commits/{sha}/pull`, the merged PRs with a `bump:` label from `issues?type=pulls&labels=<name>`, `POST releases` and one asset upload each. The signer creates the annotated tag with the statement (section 4.5) | Measured: the job token creates a Release (201). It pushes an unprotected tag, and tag protection refuses it on a protected name (422). Basic auth with `x-access-token` works. Measured on a scratch repository on 2026-11-16: `POST releases/{id}/assets?name=<n>` with the multipart field `attachment` answers 201 for each asset, and the name stays unchanged. `pulls?labels=` takes only numeric label ids and answers 500 for a name or a comma list. `issues?type=pulls&labels=` takes the name, and each item has `pull_request.merged`. Changed on 2026-11-16: the allocator reads the bump labels through the issues path, not through `pulls?labels=` |
 | M12 | Artifact upload and download | creche `release.yml:752`, `:821`, `:953`, `:866`, `:871`, `:1002-1012`. chaperone `release.yml:254-327` | The forks of `data.forgejo.org/forgejo`, by full URL, pinned by SHA | Verification appendix: v4 and later of the upstream actions refuse Forgejo. The artifact limit for the disks (about 1 GB): not measured |
 | M13 | Merge queue | creche `gate.yml:63-66` (`merge_group`), `:409` and `release.yml:486` (`GROUP_BASE`), `test_gate_workflow.py:154`, `:910-927` | FR13 | Verification appendix |
 | M14 | `!retest` | `retest.yml:27` (`issue_comment`), `:40` (`author_association`), `:62-96` (`gh`). `bin/tests/test_retest_workflow.py` | FR14 | Measured: the rerun API |
-| M15 | The scope read | creche `release.yml:156-168` (`gh run list` of the previous commit) | `GET /repos/{o}/{r}/commits/{before}/status`. Pass when each context `release / * (push)` is `success`. A failed read stays `code` | Not measured |
+| M15 | The scope read | creche `release.yml:156-168` (`gh run list` of the previous commit) | `GET /repos/{o}/{r}/commits/{before}/status`. Pass when each context `release / * (push)` is `success`. A failed read stays `code` | Measured on a scratch repository on 2026-11-16: the reply has the latest entry of each context, with its state in `status`. A tag that `POST /tags` creates starts push runs on the tagged commit, as a pushed tag does. Changed on 2026-11-16: each release workflow limits `on: push` to `branches: [main]`. So a release tag starts no run whose status replaces a context of the run on `main` |
 | M16 | Token scope and order | `permissions:` in each workflow. `concurrency: release-allocate` in creche `release.yml:977-979`, registry `tag.yml:38-40`, mcp `rework-component-tags.yml:47-49`, creche-release `tags.yml:41-43`. chaperone `release.yml:37-39` (group `release`) | `permissions:` is ignored, so each job has a write token. `concurrency:` stays. A race still moves no tag: the push of an existing tag fails | Measured: `permissions:` is ignored. The plan's research: `concurrency.group` is best-effort |
-| M17 | The tag guard of creche-release | `.github/require-pr-merge.sh` (`gh api .../commits/$SHA/pulls`) | curl to `commits/{sha}/pull`. Check `merged`, `base.ref` is `main`, `merge_commit_sha` is the SHA | Measured: the 404 of a commit that is no merge |
-| M18 | The secrets guards of creche-release | `secrets-guard.yml:40-43` (`gh api --paginate .../files`, `previous_filename`, the operator's GitHub login). `gate.yml:29-35` (the same login) | curl to `pulls/{n}/files` with `page` and `limit` until an empty page. The operator's Forgejo login | Not measured: `previous_filename`, `pull_request_target` on 17.0.1 |
+| M17 | The tag guard of creche-release | `.github/require-pr-merge.sh` (`gh api .../commits/$SHA/pulls`) | curl to `commits/{sha}/pull`. Check `merged`, `base.ref` is `main`, `merge_commit_sha` is the SHA | Measured: the 404 of a commit that is no merge. Measured on a scratch repository on 2026-11-16: the 200 reply of a merge commit has these three fields |
+| M18 | The secrets guards of creche-release | `secrets-guard.yml:40-43` (`gh api --paginate .../files`, `previous_filename`, the operator's GitHub login). `gate.yml:29-35` (the same login) | curl to `GET /repos/{o}/{r}/pulls/{n}.diff`. The guard takes each path of each `diff --git`, `rename from` and `rename to` line. The operator's Forgejo login | Measured on a scratch repository on 2026-11-16: `pulls/{n}/files` reports a rename as `added` under the new name, with no `previous_filename` and no entry for the old path. That holds for a pure rename and for a rename with an edit. The diff names `rename from` and `rename to`. `on: pull_request_target` runs on 17.0.1, and it runs the copy of the workflow on the base branch. Changed on 2026-11-16: the guards read the diff, not the file list, because the file list hides the source of a rename. Proposal for the operator: the protection of `main` also names the guarded paths in its protected file patterns, which Forgejo enforces on the server. Not measured: that enforcement on 17.0.1, and whether the operator can still merge a PR that changes those paths |
 | M19 | The checkout of creche at `CRECHE_REF` | chaperone `release.yml:48`, `:88-89`, `:314-315`. registry `tag.yml:54`, `:68-69` (`CRECHE_FAMILY_REF`), `:90-91`. mcp `rework-component-tags.yml:65`, `:98-99`. creche-release `tags.yml:56`, `:94-95` | `repository: <owner>/creche` resolves on the same Forgejo. A public creche needs no token | Measured: `github.api_url` names Forgejo. The visibility of creche on Forgejo: not checked |
 | M20 | The git dependencies of creche-release | `pyproject.toml:41-44`: four packages from `https://github.com/<owner>/creche` | The Forgejo clone URL, then `uv lock` | The runner fence allows the Forgejo HTTP port (the runner design, section "The network fence") |
-| M21 | The asset download | `artifacts.py:213-228`, `corpus/artifacts.py:89` (HTTPS only), `:293` | The same path shape on `<forgejo-host>` | The plan: Forgejo uses the same path shape. HTTPS: see FR11 |
-| M22 | The asset size | `catalog.py:350` (`DISK_FILE_MAX_BYTES`) | `[repository.release] FILE_MAX_SIZE` and `ALLOWED_TYPES` of Forgejo | Not measured |
+| M21 | The asset download | `artifacts.py:213-228`, `corpus/artifacts.py:89` (HTTPS only), `:293` | The same path shape on `<forgejo-host>` | The plan: Forgejo uses the same path shape. Measured on a scratch repository on 2026-11-16: `releases/tags/{tag}` gives each `browser_download_url` as `/<o>/<r>/releases/download/<tag>/<name>`. On a private repository that URL answers 200 with a token and 404 with none. The upload reply gives `/attachments/<uuid>` instead. So root takes the URL from the read of the tag, with the token of `release-reader`. HTTPS: see FR11 |
+| M22 | The asset size | `catalog.py:350` (`DISK_FILE_MAX_BYTES`) | `[repository.release] FILE_MAX_SIZE` and `ALLOWED_TYPES` of Forgejo | Measured on a scratch repository on 2026-11-16: a `.zst` asset uploads, but `GET /settings/attachment` does not list `.zst`. So that list does not bind release assets. Not measured: the size limit of a release asset |
 
 ## 4. Key management and the signer
 
@@ -177,22 +177,36 @@ The runner cannot match:
 
 So the release job asks for the label `creche-release`, and the policy holds a kind `creche-release` with that one label (question 10). The runner serves every owner of the instance, and a label belongs to one kind only. So the label names its consumer, and no other user of the instance takes the name by chance. The kind lists the four repositories of section 4.3 in its `repositories`. A job of any other repository with that label stays waiting. The other jobs of a release workflow run on the plain kind and get no vsock device.
 
-The runner reads its facts with its own token. The signer does not trust them. The runner design does not yet record the facts of a push run on 17.0.1 (its open question "The event and the ref of a run"). Not measured: the event and the full ref that the runner reads for a push run.
+The runner reads its facts with its own token. The signer does not trust them. The runner design does not yet record the facts of a push run on 17.0.1 (its open question "The event and the ref of a run"). Measured on a scratch repository on 2026-11-16: for a merge push to `main`, the run reply gives `event` `push`, `trigger_event` `push` and `event_payload.ref` `refs/heads/main`. Which of these facts the runner reads for its row is a gap of the runner design (section 10, question 12).
 
 **The checks of the signer.** The daemon sends one `open` line to the signer before the VM starts. The signer takes only the repository and the run id from that line, as the key of its own read. It reads the run with its own token: `GET /repos/{o}/{r}/actions/runs/{id}`. Measured on 2026-11-15: the run reply has `workflow_id`, `event`, `trigger_event`, `prettyref`, `commit_sha` and `repository.full_name`. A run is eligible only when each check passes:
 
 1. The repository and the workflow file are a pair of the list of section 4.3. The run reply names the file in `workflow_id`, for example `test.yml` (measured 2026-11-15).
-2. `event` is `push`.
+2. `event` is `push`, and `trigger_event` is `push`.
 3. The run reply has `event_payload`, a JSON text. Its `ref` is exactly `refs/heads/main`.
+
+Changed on 2026-11-16: check 2 also reads `trigger_event`. Measured on a scratch repository: `event` is `pull_request` for a `pull_request` run and for a `pull_request_target` run, and `event` is empty for a `workflow_dispatch` run. Only `trigger_event` names each of them.
 4. `GET /repos/{o}/{r}/commits/{commit_sha}/pull` answers one PR with `merged` true, `base.ref` `main` and `merge_commit_sha` equal to `commit_sha`.
 5. The run is not finished.
 
-Check 3 reads the full ref, not `prettyref`. `prettyref` is a short ref name. A tag named `main` gives a run with `event` `push` and `prettyref` `main`, the same as a push to the branch `main` (measured 2026-11-15 on a scratch repository: run 15, from a tag `main` made through the API). The runner design records `event_payload.ref` as a full ref, for example `refs/heads/vm-spike`, on a `workflow_dispatch` run (section "Job facts"). Not measured: the `event` and the `event_payload.ref` of a push run on 17.0.1, for the branch `main` and for a tag `main`. The rehearsal of section 7 records both.
+Check 3 reads the full ref, not `prettyref`. `prettyref` is a short ref name. A tag named `main` gives a run with `event` `push` and `prettyref` `main`, the same as a push to the branch `main` (measured 2026-11-15 on a scratch repository: run 15, from a tag `main` made through the API). The runner design records `event_payload.ref` as a full ref, for example `refs/heads/vm-spike`, on a `workflow_dispatch` run (section "Job facts"). Measured on a scratch repository on 2026-11-16, from the run reply:
+
+| Run | `event` | `trigger_event` | `prettyref` | `event_payload.ref` |
+|---|---|---|---|---|
+| merge push to `main` | `push` | `push` | `main` | `refs/heads/main` |
+| push to another branch | `push` | `push` | the branch name | `refs/heads/<branch>` |
+| pushed tag, or a tag that `POST /tags` creates | `push` | `push` | the tag name | `refs/tags/<tag>` |
+| tag named `main` | `push` | `push` | `main` | `refs/tags/main` |
+| `pull_request` | `pull_request` | `pull_request` | `#<n>` | absent |
+| `pull_request_target` | `pull_request` | `pull_request_target` | `#<n>` | absent |
+| `workflow_dispatch` | empty | `workflow_dispatch` | the branch name | `refs/heads/<branch>` |
+
+So only `trigger_event` and `event_payload.ref` together tell these runs apart. Checks 2 and 3 read both. The rehearsal of section 7 records the same facts for the tests.
 
 What each check refuses:
 
 1. Check 1 refuses another repository and another workflow file.
-2. Check 2 refuses a PR, a `workflow_dispatch` and each other event.
+2. Check 2 refuses a PR, a `pull_request_target`, a `workflow_dispatch` and each other event.
 3. Check 3 refuses a branch other than `main`, and each tag. A tag `main` at an old merge commit of `main` passes checks 1, 2, 4 and 5. Only check 3 refuses it in the signer.
 4. Check 4 refuses a commit that is no merge of a PR into `main`, for example a direct push past the protection of section 6.
 5. Check 5 refuses a run that is already over.
@@ -206,10 +220,10 @@ The signer answers `accept` only when each of the five checks passes. Only then 
 1. The allocator in the `release` job plans its tags. It knows each tag and each asset before any tag exists.
 2. It connects to the vsock port of the row. The daemon relays the connection to the signer with a `relay` line that names the session. The signer refuses a session that it did not accept, and it forgets a session at its `close` line. The `relay` line names only the session. So the signer cannot tell whether the bytes come from the VM of that run (section 4.10).
 3. It sends one request over vsock: a list of tags, each with its assets as a name and a SHA-256. A `venv` or `units` tag has no asset.
-4. The signer refuses a request that breaks a limit: at most 32 tags, at most 16 assets for each tag, a tag of the form `<component>-vX.Y.Z`, a plain asset name, 64 lower-case hex digits.
+4. The signer refuses a request that breaks a limit: at most 32 tags, at most 16 assets for each tag, a tag of the form `<component>-vX.Y.Z`, a plain asset name, 64 lower-case hex digits. Proposal of 2026-11-16, for the operator: also at most 64 bytes for each tag and each asset name (see the message size below).
 5. The signer builds the statement. It writes its own fields from section 4.4 and the tags of the request. It signs the bytes with `cosign sign-blob --key`, with no log entry.
 6. The signer answers the statement and its bundle. It serves one statement for each run id. A second request of the same run is refused.
-7. The signer creates each annotated tag of the request at the run's commit, through `POST /repos/{o}/{r}/tags` with the token of the Forgejo bot `ci-signer`. Tag protection refuses that call to every other user, the job token included (measured, section 6).
+7. The signer creates each annotated tag of the request at the run's commit, through `POST /repos/{o}/{r}/tags` with the token of the Forgejo bot `ci-signer`. Tag protection refuses that call to every other user, the job token included (measured, section 6). Measured on a scratch repository on 2026-11-16: `POST /tags` with a `message` makes an annotated tag (201), and that tag starts push runs with `event_payload.ref` `refs/tags/<tag>`. Check 3 refuses each of them.
 8. The allocator reads the tags back and checks the bundle with `handover/release-signing.pub`. It then creates each Release and uploads its assets with the job token. A check that fails releases nothing.
 
 The guest side of step 2. The allocator `allocate-tags.sh` is bash and curl, and curl has no vsock support. So a small Python 3 helper in creche makes the connection. The allocator runs it, and it connects to CID 2 (the host) at port 5000, the `vsock_port` of the row. The Ubuntu cloud image ships Python 3, and Python 3 on Linux has `socket.AF_VSOCK`. If both hold for the runner image, the helper needs nothing added to that image. Not checked: Python 3 in the runner image, and its `AF_VSOCK`. The runner design says that CH forwards a guest connection to host port `P`. It names no guest address. CID 2 is this note's reading (question 12). CH vsock is not measured on the host.
@@ -235,9 +249,19 @@ The statement, in its strict JSON form:
 
 The signer writes each tag of the run as an annotated tag. Its message has three lines: the word `release-statement-1`, the statement in base64, and the bundle in base64. Base64 has no character that `git tag --cleanup=verbatim` changes.
 
+Measured on a scratch repository on 2026-11-16: `POST /tags` takes a message of at most 131071 bytes. A message of 131072 bytes or more answers 500 with `argument list too long`, the Linux limit for one argument. The limits of step 4 are 32 tags with 16 assets each, and each tag message holds the whole statement. They set no length for a tag or an asset name. So a message may not fit. With 64 bytes for each tag and each asset name, and a bundle of at most 4096 bytes, the largest message is about 113500 bytes. Not measured: the size of a cosign bundle with a key and no log entry.
+
+Proposal of 2026-11-16, for the operator:
+
+1. Step 4 caps each tag and each asset name at 64 bytes.
+2. The signer refuses a bundle above 4096 bytes.
+3. The signer refuses a request whose tag message would pass 120000 bytes, before it signs. A larger release then fails closed, with no tag.
+
+The other choice is a bundle and a statement that travel as an asset of each Release. That choice adds a download to P1 and is not taken.
+
 ### 4.6 What a branch run gets
 
-1. A run of a branch push, of a PR or of `workflow_dispatch` matches no policy row of section 4.4, and it fails check 2 or check 3 of the signer. Its VM gets no vsock device, also when the job asks for the label `creche-release`.
+1. A run of a branch push, of a tag, of a PR or of `workflow_dispatch` matches no policy row of section 4.4, and it fails check 2 or check 3 of the signer. Its VM gets no vsock device, also when the job asks for the label `creche-release`.
 2. Its allocator gets no statement and no tag. It releases no component of `Releases.YES`, and the run ends red.
 3. Its job token cannot create or delete a release tag, because tag protection refuses it (measured, section 6). It can still create a Release on another tag name. Root refuses that release at P1, because no statement names the tag at its commit.
 
@@ -282,12 +306,12 @@ Each call goes to `https://<forgejo-host>/api/v1`, with `Authorization: token <r
 
 | Check | Call | Fields read | Rule | Measured |
 |---|---|---|---|---|
-| P1 | `GET /repos/{o}/{r}/releases/tags/{tag}` | `tag_name`, `draft`, `prerelease` | The Release exists, names the tag, is no draft and no prerelease. No author check (FR2) | The author read-back only |
-| P1 | the tag object of P2 | `message` | The message holds a statement and a bundle. The key of FR10 passes the bundle. The statement names the repository of the catalog row, its workflow of `RELEASE_WORKFLOW`, `event` `push`, `ref` `main`, the resolved SHA, and the tag | No |
-| P2 | `GET /repos/{o}/{r}/git/refs/tags/{tag}`, then `GET /repos/{o}/{r}/git/tags/{sha}` | each `ref`, `object.type`, `object.sha` | One entry has `ref` equal to `refs/tags/{tag}`. Its object is an annotated tag. That tag names a commit equal to the resolved SHA. A lightweight tag is refused | No |
-| P3 | `GET /repos/{o}/{r}/compare/main...{sha}` | `total_commits`, `commits` | `total_commits` is 0 and `commits` is empty | The shape. Not the reading for an ancestor |
-| P4 | `GET /repos/{o}/{r}/commits/{sha}/pull` | `number`, `merged`, `base.ref`, `merge_commit_sha`, `head.sha` | A 404 refuses. The PR is merged into `main` with `merge_commit_sha` equal to the SHA | The 404 only |
-| P5 | `GET /repos/{o}/{r}/commits/{head.sha}/status` | `total_count`, each `context` and its state | Each required context of section 6 for the repository is `success`. Each other context is `success` or `skipped`. A count above one page refuses | The context form, and `skipped` |
+| P1 | `GET /repos/{o}/{r}/releases/tags/{tag}` | `tag_name`, `draft`, `prerelease` | The Release exists, names the tag, is no draft and no prerelease. No author check (FR2) | The fields, on a scratch repository on 2026-11-16 |
+| P1 | the tag object of P2 | `message` | The message holds a statement and a bundle. The key of FR10 passes the bundle. The statement names the repository of the catalog row, its workflow of `RELEASE_WORKFLOW`, `event` `push`, `ref` `main`, the resolved SHA, and the tag | No. Measured on a scratch repository on 2026-11-16: `git/tags/{sha}` adds one newline at the end of the message |
+| P2 | `GET /repos/{o}/{r}/git/refs/tags/{tag}`, then `GET /repos/{o}/{r}/git/tags/{sha}` | each `ref`, `object.type`, `object.sha` | One entry has `ref` equal to `refs/tags/{tag}`. Its object is an annotated tag. That tag names a commit equal to the resolved SHA. A lightweight tag is refused | Yes, on a scratch repository on 2026-11-16. The refs call is a prefix match and answers a list |
+| P3 | `GET /repos/{o}/{r}/compare/main...{sha}` | `total_commits`, `commits` | `total_commits` is 0 and `commits` is empty | Yes, on a scratch repository on 2026-11-16: 0 for an ancestor and for `main`, 1 for a diverged commit |
+| P4 | `GET /repos/{o}/{r}/commits/{sha}/pull` | `number`, `merged`, `base.ref`, `merge_commit_sha`, `head.sha` | A 404 refuses. The PR is merged into `main` with `merge_commit_sha` equal to the SHA | Yes, on a scratch repository on 2026-11-16 |
+| P5 | `GET /repos/{o}/{r}/commits/{head.sha}/status` | `total_count`, each `context` and its `status` | Each required context of section 6 for the repository is `success`. Each other context is `success` or `skipped`. A count above one page refuses | Yes, on a scratch repository on 2026-11-16: the latest entry of each context, its state in `status` |
 | P6 | none: root's copy and the statement of P1 | the SHA-256 of each copy | Each asset of the tag in the statement has a copy with the same SHA-256. The binary and disk-image rules after the signature stay (`provenance.py:483-549`) | No API |
 
 P1 runs its statement check through child 2 of today, with no network (`provenance.py:560-583`). The words are `verify-blob --key /etc/creche/release-signing.pub --bundle <bundle> <statement>`, plus the flags that skip the log, which are not measured. Root writes the statement and its bundle into its own work tree from the tag message. Root parses the statement only after the child passes. The statement has a closed key set and a byte cap. `ReleaseStatement` is the one type that holds a parsed statement, and only the check makes one, as `VerifiedArtifact` today.
@@ -311,7 +335,7 @@ Each rule also sets:
 2. "Block merge if pull request is outdated" on. The PR head that P5 reads then holds the tree that merges.
 3. The merge allowlist on, with the operator's account only. No bot user merges.
 4. No force push and no deletion.
-5. The rule also binds admins. The name of that field in the API of 17.0.1 is not measured.
+5. The rule also binds admins: `apply_to_admins` is true. Measured on a scratch repository on 2026-11-16: `GET /branch_protections/main` has that field, and it makes a rule bind admins.
 
 | Repository | Required contexts |
 |---|---|
@@ -333,6 +357,8 @@ Measured on Forgejo 17.0.1 on 2026-11-15, on a scratch repository:
 - An empty allowlist is refused with 400 ("both whitelist_usernames and whitelist_teams are empty").
 - An allowlist that names a user with no write on the repository is accepted and stored as empty.
 - The job token of a branch run is refused (422) on a protected tag name, and creates an unprotected tag (201).
+
+Not measured: that the bot `ci-signer` creates a tag on `*-v*` when the allowlist names it, and that the same rule refuses an admin token and a job token on that name. The rehearsal of section 7 records them.
 
 So tag protection does what the signature cannot do alone: a branch run can neither make nor delete a release tag. The signature stays the guard of what root installs (section 4.6).
 
@@ -407,5 +433,5 @@ FR16 and the review of its revision open these questions. Each has a default. On
 12. **Gaps of the runner design that this note depends on.** This note does not change the runner repository. It names each gap here, for a change of the runner design:
     1. The guest address of a relayed port. Section "Attachments of outside services" says that CH forwards a guest connection to host port `P`. It names no CID. This note reads CID 2 (section 4.5).
     2. The source of a relayed connection. A `relay` line names only the session. Nothing tells the service that the bytes come from the VM of that session (section 4.10, item 1).
-    3. The facts of a push run on 17.0.1. The runner design's open question "The event and the ref of a run" holds it. Check 3 of section 4.4 needs `event_payload.ref` of a push run.
+    3. The facts of a push run on 17.0.1. The runner design's open question "The event and the ref of a run" holds it. Check 3 of section 4.4 needs `event_payload.ref` of a push run. The run reply was measured on a scratch repository on 2026-11-16 (section 4.4). The runner design still says which facts the runner reads.
     Default: an agent opens one PR to the runner design for the three gaps, after the operator merges this note.
