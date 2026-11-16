@@ -1,4 +1,5 @@
 {
+  "texts": "Each of message, statement_b64 and bundle_b64 is a string, null or a recipe. A recipe is a list of pairs [piece, count]. Its text is each piece written count times, in the order of the list: [[\"ab\", 2], [\"c\", 1]] is the text ababc. A recipe keeps a large message small in this file.",
   "TagMessage": [
     {
       "message": "release-statement-1\neyJzdGF0ZW1lbnQiOjEsInJlcG9zaXRvcnkiOiJleGFtcGxlLW93bmVyL2NyZWNoZSIsIndvcmtmbG93IjoicmVsZWFzZS55bWwiLCJldmVudCI6InB1c2giLCJyZWYiOiJtYWluIiwiY29tbWl0IjoiNTc5MWE4Y2RhZTU1MDg3MjA3ZjEyYWI5MTljNWViOTY0NDk0ZDY1NCIsInJ1biI6MTIzNCwic2lnbmVkX2F0IjoiMjAyNi0xMS0xNVQxMjowMDowMFoiLCJ0YWdzIjpbeyJ0YWciOiJoYW5kb3Zlci12MC4xLjk2IiwiYXNzZXRzIjpbXX0seyJ0YWciOiJ2bW0tdjAuMS4yNCIsImFzc2V0cyI6W3sibmFtZSI6InZtbS14ODZfNjQtdW5rbm93bi1saW51eC1tdXNsLnRhci5neiIsInNoYTI1NiI6IjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYifV19XX0=\neyJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQuZGV2LnNpZ3N0b3JlLmJ1bmRsZS52MC4zK2pzb24ifQ==",
@@ -19,6 +20,7 @@
       "source": "git_tag_object",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "suffix",
       "note": "git/tags/{sha} with no LF"
     },
     {
@@ -26,6 +28,7 @@
       "source": "git_tag_object",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "suffix",
       "note": "git/tags/{sha} with two LF"
     },
     {
@@ -33,6 +36,7 @@
       "source": "tags_api",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "suffix",
       "note": "the tags API with a LF"
     },
     {
@@ -40,6 +44,7 @@
       "source": "tags_api",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "header",
       "note": "another header"
     },
     {
@@ -47,6 +52,7 @@
       "source": "tags_api",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "lines",
       "note": "two lines"
     },
     {
@@ -54,6 +60,7 @@
       "source": "tags_api",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "lines",
       "note": "four lines"
     },
     {
@@ -61,13 +68,15 @@
       "source": "tags_api",
       "statement_b64": null,
       "bundle_b64": null,
-      "note": "an empty bundle line ends with a LF"
+      "reason": "suffix",
+      "note": "a bundle of 0 bytes: the empty bundle line ends the message with a LF, so the end check refuses it first"
     },
     {
       "message": "release-statement-1\n\neyJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQuZGV2LnNpZ3N0b3JlLmJ1bmRsZS52MC4zK2pzb24ifQ==",
       "source": "tags_api",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "statement_size",
       "note": "an empty statement"
     },
     {
@@ -75,6 +84,7 @@
       "source": "tags_api",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "bundle_size",
       "note": "a bundle of 4097 bytes"
     },
     {
@@ -89,6 +99,7 @@
       "source": "tags_api",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "base64",
       "note": "the base64url alphabet: __4= is //4= in base64"
     },
     {
@@ -103,6 +114,7 @@
       "source": "tags_api",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "base64",
       "note": "a space in a line"
     },
     {
@@ -110,6 +122,7 @@
       "source": "tags_api",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "base64",
       "note": "pad bits that are not zero"
     },
     {
@@ -117,6 +130,7 @@
       "source": "tags_api",
       "statement_b64": null,
       "bundle_b64": null,
+      "reason": "base64",
       "note": "a missing pad"
     },
     {
@@ -124,7 +138,146 @@
       "source": "tags_api",
       "statement_b64": "eyJ9",
       "bundle_b64": "Yg==",
-      "note": "decode does not parse the statement"
+      "note": "decode does not parse the statement, and a bundle of 1 byte is accepted"
+    },
+    {
+      "message": [
+        [
+          "release-statement-1\n",
+          1
+        ],
+        [
+          "YWFh",
+          26990
+        ],
+        [
+          "YWE=",
+          1
+        ],
+        [
+          "\n",
+          1
+        ],
+        [
+          "YmJi",
+          1365
+        ],
+        [
+          "Yg==",
+          1
+        ]
+      ],
+      "source": "tags_api",
+      "statement_b64": [
+        [
+          "YWFh",
+          26990
+        ],
+        [
+          "YWE=",
+          1
+        ]
+      ],
+      "bundle_b64": [
+        [
+          "YmJi",
+          1365
+        ],
+        [
+          "Yg==",
+          1
+        ]
+      ],
+      "note": "the largest message that decode accepts, 113449 bytes: a statement of 80972 bytes (WORST_STATEMENT_BYTES) and a bundle of 4096 bytes. No accepted message reaches the cap of 120000 bytes"
+    },
+    {
+      "message": [
+        [
+          "release-statement-1\n",
+          1
+        ],
+        [
+          "YWFh",
+          26991
+        ],
+        [
+          "\n",
+          1
+        ],
+        [
+          "YmJi",
+          1365
+        ],
+        [
+          "Yg==",
+          1
+        ]
+      ],
+      "source": "tags_api",
+      "statement_b64": null,
+      "bundle_b64": null,
+      "reason": "statement_size",
+      "note": "a statement of 80973 bytes, one byte above WORST_STATEMENT_BYTES"
+    },
+    {
+      "message": [
+        [
+          "A",
+          120000
+        ]
+      ],
+      "source": "tags_api",
+      "statement_b64": null,
+      "bundle_b64": null,
+      "reason": "lines",
+      "note": "a message of exactly 120000 bytes passes the size check and fails on its lines"
+    },
+    {
+      "message": [
+        [
+          "A",
+          120001
+        ]
+      ],
+      "source": "tags_api",
+      "statement_b64": null,
+      "bundle_b64": null,
+      "reason": "too_large",
+      "note": "a message of 120001 bytes, one byte above the cap"
+    },
+    {
+      "message": [
+        [
+          "A",
+          120000
+        ],
+        [
+          "\n",
+          1
+        ]
+      ],
+      "source": "git_tag_object",
+      "statement_b64": null,
+      "bundle_b64": null,
+      "reason": "lines",
+      "note": "git/tags/{sha}: 120000 bytes and the added LF pass the size check"
+    },
+    {
+      "message": [
+        [
+          "A",
+          120001
+        ],
+        [
+          "\n",
+          1
+        ]
+      ],
+      "source": "git_tag_object",
+      "statement_b64": null,
+      "bundle_b64": null,
+      "reason": "too_large",
+      "note": "git/tags/{sha}: 120001 bytes and the added LF are above the cap"
     }
   ]
 }

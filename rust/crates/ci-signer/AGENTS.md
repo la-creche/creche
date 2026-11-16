@@ -45,10 +45,10 @@ calls it yet.
 2. The statement takes the repository, the workflow, the commit and the run
    from `Eligible`. The request gives only the tags and the digests (FR7).
 3. `IssuedRuns` has no empty constructor and is not `Clone`, and `Eligible`
-   is not `Clone`. The program holds one `IssuedRuns` and reads its journal
-   with `IssuedRuns::from_journal` once at each start. So the rule of one
-   statement for each run and for each commit holds across a restart
-   (section 4.7 step 1).
+   is not `Clone`. The program of the next PR must hold exactly one
+   `IssuedRuns`. It must read its journal with `IssuedRuns::from_journal`
+   once at each start. Only then does the rule of one statement for each
+   run and for each commit hold across a restart (section 4.7 step 1).
 4. `UnverifiedTagMessage::decode` does not parse the statement. Root gives
    the bytes to cosign first, then to its parser (section 5). Root's
    verifier is the Python reader of PR 4. The Rust reader
@@ -76,6 +76,22 @@ calls it yet.
 `vectors/exchange.json` hold texts and what this crate does with each one.
 This crate is the authority. Root's Python reader (PR 4 of section 8) and
 the guest helper (PR 5) must run the same files.
+
+Each refused case names its reason in the field `reason`, one word of a
+closed list: `too_large`, `suffix`, `lines`, `header`, `base64`,
+`statement_size`, `bundle_size`, `not_json`, `field` and `not_canonical`.
+The word names the first check that fails. So a reader must run its checks
+in the order of `UnverifiedTagMessage::decode` and of
+`Statement::from_canonical`. `tests/signer/vectors.rs` maps each error
+variant to its word, with no wildcard. The two bundle errors share one
+word. A new variant needs a word, and its readers change in the same PR.
+
+A large text of `vectors/tag-message.json` is a recipe: a list of pairs
+`[piece, count]`. The key `texts` of that file says how to expand it. So the
+file holds the messages near the cap of 120000 bytes in a few lines. No
+message that decode accepts reaches the cap. The caps of the statement and
+of the bundle hold the largest one at 113449 bytes, and a vector holds that
+message.
 
 Do not change a vector to pass a test. A changed vector is a changed
 format. Change the format on purpose, then change the vector and its
