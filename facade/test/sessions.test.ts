@@ -7,11 +7,15 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { validator } from "agent/wire-read";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
+import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { facadeApp } from "../src/acp.js";
 import { sessionService } from "../src/service.js";
 import { infoOf, MAX_CWD_CHARS, MAX_TITLE_BYTES, OneSession, titleOf } from "../src/sessions.js";
 import { Wire } from "./acp-wire.js";
 import { faux, Probe, startFlue } from "./faux-flue.js";
+
+/** The answer to `session/load`: the thinking option at its default. */
+const LOADED = { configOptions: vectors.new_session.configOptions };
 
 const INVALID_PARAMS = -32602;
 const METHOD_NOT_FOUND = -32601;
@@ -36,7 +40,7 @@ function load(sessionId: string, cwd = "/work"): ReturnType<Wire["request"]> {
 
 describe("the one session", () => {
   it("opens the host's id at start, with no session/new (decision CH21-8)", async () => {
-    expect((await load(id)).result).toEqual({});
+    expect((await load(id)).result).toEqual(LOADED);
     expect(wire.updates(id)).toEqual([]);
     expect(session.handle(id)?.id).toBe(id);
   });
@@ -87,7 +91,7 @@ describe("the one session", () => {
 
     expect(isCwd(longest)).toBe(true);
     expect(refused.map(isCwd)).toEqual([false, false, false]);
-    expect((await load(id, longest)).result).toEqual({});
+    expect((await load(id, longest)).result).toEqual(LOADED);
     for (const cwd of refused) {
       expect((await load(id, cwd)).error?.code).toBe(INVALID_PARAMS);
     }

@@ -21,6 +21,9 @@ import { faux, Probe, startFlue } from "./faux-flue.js";
 import { closeGuestInits, guestInit, until } from "./guest-init.js";
 import type { GuestInit } from "./guest-init.js";
 
+/** The answer to `session/load`: the thinking option at its default. */
+const LOADED = { configOptions: vectors.new_session.configOptions };
+
 const STOP = '{"stop":{}}\n';
 
 const flue = await startFlue([Probe]);
@@ -130,7 +133,7 @@ describe("the relay socket", () => {
     const on = await facade();
     const [first, second] = [client(on), client(on)];
     const sessionId = on.id;
-    expect((await request(second, 1, "session/load", { sessionId, cwd: "/work", mcpServers: [] }))["result"]).toEqual({});
+    expect((await request(second, 1, "session/load", { sessionId, cwd: "/work", mcpServers: [] }))["result"]).toEqual(LOADED);
 
     faux.setResponses([fauxAssistantMessage("Hello, both.")]);
     expect((await request(first, 2, "session/prompt", { sessionId, prompt: [{ type: "text", text: "Hi" }] }))["result"]).toEqual({

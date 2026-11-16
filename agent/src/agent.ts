@@ -5,14 +5,17 @@
 // also returns the live state, which the facade pulls before each prompt
 // (`src/family-state.ts`, decision CH5a).
 //
-//   useModel          litellm/<model_alias> of the session's last pull
-//                                                      src/litellm.ts
+//   useModel          litellm/<model_alias> of the session's last pull,
+//                     with the session's thinking level  src/litellm.ts,
+//                                                      src/thinking.ts
 //   useMcpConnection  ch, <pep>/mcp, family bearer        src/chaperone.ts
 //   useTool           codemode                            src/codemode.ts
 //   useSandbox        local(workspace) with the granted tools, when the
 //                     grant is not empty                  src/sandbox-tools.ts
 //   useSkill          each skill of the session's last pull  src/skills.ts
 //   useInstruction    the instructions of the session's last pull
+//   useResponseStart  the thinking level of the response  src/usage.ts
+//   useResponseFinish the context tokens of its last call src/usage.ts
 //   db                sqlite(FLUE_DB)                     src/guest.ts
 //
 // The agent function reads no file and no credential. Flue renders it again
@@ -22,7 +25,16 @@
 // a Flue instance is the facade's session id.
 
 import type { Provider } from "@earendil-works/pi-ai";
-import { useInstruction, useMcpConnection, useModel, useSandbox, useSkill, useTool } from "@flue/runtime";
+import {
+  useInstruction,
+  useMcpConnection,
+  useModel,
+  useResponseFinish,
+  useResponseStart,
+  useSandbox,
+  useSkill,
+  useTool,
+} from "@flue/runtime";
 import type { Agent, AgentProps } from "@flue/runtime";
 import { sqlite } from "@flue/runtime/node";
 
@@ -33,9 +45,14 @@ import { StateHolder } from "./family-state.js";
 import type { LiveState } from "./family-state.js";
 import { FALLBACK_LIMITS, LiveModel, specOf } from "./litellm.js";
 import type { ModelLimits } from "./litellm.js";
+import { ThinkingLevels } from "./thinking.js";
+import { CONTEXT_TOKENS_KEY, ContextTokens, THINKING_LEVEL_KEY } from "./usage.js";
 
-export { LiveModel, readModelLimits } from "./litellm.js";
-export type { LimitsFault, LimitsRead, ModelLimits } from "./litellm.js";
+export { LiveModel, readKeySpend, readModelLimits } from "./litellm.js";
+export type { KeySpend, LimitsFault, LimitsRead, ModelLimits, SpendRead } from "./litellm.js";
+export { DEFAULT_THINKING, isThinkingChoice, THINKING_CHOICES, ThinkingLevels } from "./thinking.js";
+export type { ThinkingChoice } from "./thinking.js";
+export { CONTEXT_TOKENS_KEY, THINKING_LEVEL_KEY } from "./usage.js";
 export { StateHolder, vmmBackend } from "./family-state.js";
 export type { PullFault, Say, StateBackend, StatePull } from "./family-state.js";
 export { FAMILY_STATE_SOCKET } from "./guest.js";
@@ -84,6 +101,8 @@ export interface ComposedAgent {
   readonly state: StateHolder;
   /** The model of the latest pull. The facade gives it each pulled alias before `state`. */
   readonly model: LiveModel;
+  /** The thinking level of each session. The facade sets it. */
+  readonly thinking: ThinkingLevels;
 }
 
 /** The instance id, or null on a bare render, where `props.id` throws. */
@@ -106,13 +125,25 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
   const model = new LiveModel(start.planes, start.state.config.modelAlias, limits, () => state.creds);
   const ch = chaperoneConnection({ planes: start.planes, creds: start.state.creds }, () => state.creds);
   const codemode = codemodeTool(ch);
+  const thinking = new ThinkingLevels();
+  const context = new ContextTokens();
 
   function FamilyAgent(props?: AgentProps): string {
-    const live = state.configFor(instanceOf(props));
+    const id = instanceOf(props);
+    const live = state.configFor(id);
     const { instructions, sandboxTools: grant, skills: granted, systemPrompt: mode } = live;
     const replacement = mode === "replace" ? instructions : null;
     // The `model` follow of the pull put this alias in Flue's provider.
-    useModel(specOf(live.modelAlias));
+    // Flue reads the level once, when a submission starts.
+    const thinkingLevel = thinking.of(id);
+    useModel(specOf(live.modelAlias), { thinkingLevel });
+    // The metadata of the response keeps both values in `flue.db`, for a
+    // later `session/load` (src/usage.ts).
+    useResponseStart(() => ({ [THINKING_LEVEL_KEY]: thinkingLevel }));
+    useResponseFinish(() => {
+      const used = context.of(id);
+      return used === null ? undefined : { [CONTEXT_TOKENS_KEY]: used };
+    });
     useMcpConnection(ch);
     useTool(codemode);
 
@@ -141,5 +172,6 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
     skippedSkills: start.skippedSkills,
     state,
     model,
+    thinking,
   };
 }

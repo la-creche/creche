@@ -29,5 +29,29 @@
         "authMethods": []
       }
     }
+  },
+  "new_session": {
+    "about": "The configOptions of a session that never set a level. The ACP door answers session/new with them, and its test holds its copy equal to this list. The facade answers session/load and session/set_config_option with the same list and the current level.",
+    "configOptions": [
+      {
+        "id": "mode",
+        "name": "Thinking",
+        "description": "How much the model reasons before it answers. More thinking takes longer and costs more.",
+        "category": "mode",
+        "type": "select",
+        "currentValue": "off",
+        "options": [
+          { "value": "off", "name": "Thinking off" },
+          { "value": "low", "name": "Thinking low" },
+          { "value": "medium", "name": "Thinking medium" },
+          { "value": "high", "name": "Thinking high" }
+        ]
+      }
+    ]
+  },
+  "usage": {
+    "about": "The usage_update of a turn end and of a session/load. used and size are the context fill of the last model call. The meta key holds the family key spend of its budget day and model.budget_usd_per_day, in USD.",
+    "spend_meta_key": "creche/spend",
+    "currency": "USD"
   }
 }

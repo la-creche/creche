@@ -25,6 +25,7 @@ from attendance.acp_door import (
     HANDSHAKE_FAILED,
     INITIALIZE_RESPONSE,
     MAX_FRAME_BYTES,
+    NEW_SESSION_CONFIG_OPTIONS,
     RELAY_ENDED,
     RPC_INTERNAL_ERROR,
     RPC_INVALID_PARAMS,
@@ -42,6 +43,9 @@ from fake_facade import ANSWER_CHUNKS, PromptMode, chunk
 from fake_vmm import BUSY, FakeVmm
 from websockets.asyncio.client import ClientConnection, connect, unix_connect
 from websockets.exceptions import ConnectionClosed
+
+#: The facade's ACP values, which the door's config options copy.
+FACADE_VECTORS = Path(__file__).parents[2] / "facade" / "vectors" / "creche-extensions.json"
 
 DOOR_PATH = f"ws://attendance/acp/{FAMILY}"
 SHORT_TOKEN = "x" * 32
@@ -183,6 +187,25 @@ async def test_session_new_makes_a_door_row_and_boots_nothing(door: Door) -> Non
     assert create.cwd.root == CWD
     assert isinstance(create.origin.root, DoorOrigin)
     assert door.vmm.opened == []
+
+
+@pytest.mark.slow
+async def test_session_new_answers_the_thinking_option(door: Door) -> None:
+    """The facade's option list at its default level, with no boot."""
+    async with door.door_acp() as connection:
+        answer = await ask(connection, "new", "session/new", cwd=CWD, mcpServers=[])
+
+    assert answer["result"]["configOptions"] == NEW_SESSION_CONFIG_OPTIONS
+    assert door.vmm.opened == []
+
+
+def test_the_door_options_are_the_facade_vector() -> None:
+    """The door answers `session/new` with no VM, so it holds a copy of the
+    facade's list. The copy must equal `new_session.configOptions` of
+    `facade/vectors/creche-extensions.json`."""
+    vectors = json.loads(FACADE_VECTORS.read_text(encoding="utf-8"))
+
+    assert vectors["new_session"]["configOptions"] == NEW_SESSION_CONFIG_OPTIONS
 
 
 @pytest.mark.slow

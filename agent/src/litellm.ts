@@ -11,6 +11,8 @@
 //                              session's last pull (decisions CH5c, CH5c-2)
 //   GET <plane>/v1/model/info ──► the alias's context window and output
 //                                  limit, read at start and at each change
+//   GET <plane>/key/info ──► the family key's spend and its daily budget,
+//                            read after each turn for the client's meter
 //
 // Listing an alias grants nothing. The family key carries exactly one alias
 // (contract 01 §3.2), so LiteLLM refuses any other. The perimeter stays
@@ -41,6 +43,15 @@ const MODEL_INFO_PATH = "/v1/model/info";
 
 /** The longest wait for the model list, at start and at a model change. */
 const MODEL_INFO_TIMEOUT_MS = 3000;
+
+/** LiteLLM's info of the key that calls it: its spend and its budget. */
+const KEY_INFO_PATH = "/key/info";
+
+/**
+ * The longest wait for the key info. The facade reads it before a prompt
+ * answers, so a slow LiteLLM delays that answer by at most this.
+ */
+const KEY_INFO_TIMEOUT_MS = 1000;
 
 /** The context window and the output limit that pi and Flue's compaction use. */
 export interface ModelLimits {
@@ -140,6 +151,52 @@ export async function readModelLimits(planes: Planes, modelAlias: string, key: S
   return limitsOf(alias, body);
 }
 
+/** The spend of the family key since its budget renewed, in USD. */
+export interface KeySpend {
+  readonly spend: number;
+  /** `max_budget` of the key: `model.budget_usd_per_day`. Null when the key has none. */
+  readonly budget: number | null;
+}
+
+export type SpendRead = { readonly ok: true; readonly spend: KeySpend } | { readonly ok: false; readonly fault: "unreachable" | "not_valid" };
+
+const DOLLARS = v.pipe(v.number(), v.finite(), v.minValue(0));
+
+const KEY_INFO = v.looseObject({
+  info: v.looseObject({ spend: DOLLARS, max_budget: v.optional(v.nullable(DOLLARS)) }),
+});
+
+/**
+ * One GET of LiteLLM's info of the family key, with that key. The key
+ * renews its budget each day (contract 01 §3.2), so `spend` is the spend
+ * of the current budget day. LiteLLM is the spend authority, and it writes
+ * spend in batches, so the last call can be missing for some seconds.
+ */
+export async function readKeySpend(planes: Planes, key: Secret): Promise<SpendRead> {
+  let body: unknown;
+  try {
+    const response = await fetch(`${planes.litellm.text}${KEY_INFO_PATH}`, {
+      headers: { authorization: `Bearer ${revealSecret(key)}` },
+      signal: AbortSignal.timeout(KEY_INFO_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      return { ok: false, fault: "unreachable" };
+    }
+
+    body = await response.json();
+  } catch {
+    return { ok: false, fault: "unreachable" };
+  }
+
+  const read = v.safeParse(KEY_INFO, body);
+  if (!read.success) {
+    return { ok: false, fault: "not_valid" };
+  }
+
+  const { spend, max_budget: budget } = read.output.info;
+  return { ok: true, spend: { spend, budget: budget ?? null } };
+}
+
 /** LiteLLM is the spend authority. No rate is kept here. */
 const NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
@@ -175,7 +232,12 @@ function providerOf(planes: Planes, models: ReadonlyMap<string, ModelLimits>, cr
       api: PROVIDER_API,
       provider: LITELLM_PROVIDER,
       baseUrl: planes.litellm.text,
-      reasoning: false,
+      // pi sends `reasoning_effort` only for a level other than `off`
+      // (src/thinking.ts), so `off` calls the model as before.
+      reasoning: true,
+      // pi sends a reasoning model's instructions as the role `developer`.
+      // LiteLLM fronts models that know only `system`, so keep `system`.
+      compat: { supportsDeveloperRole: false },
       input: ["text"],
       cost: NO_COST,
       contextWindow: limits.contextWindow,
@@ -215,6 +277,11 @@ export class LiveModel {
     this.current = alias;
     this.served.set(alias, limits);
     this.latest = providerOf(planes, this.served, creds);
+  }
+
+  /** The limits of the alias of the last change. */
+  public get limits(): ModelLimits {
+    return this.served.get(this.current) ?? FALLBACK_LIMITS;
   }
 
   /** The provider of every alias served so far, for `start()`. */

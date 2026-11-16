@@ -20,7 +20,7 @@ import { vi } from "vitest";
 
 import { BARE_CONFIG, closeFakeVmms, fakeVmm, stateLine } from "../../agent/test/fake-vmm.js";
 import { facadeApp } from "../src/acp.js";
-import { serveFamily } from "../src/family.js";
+import { meterOf, serveFamily } from "../src/family.js";
 import { guestLink } from "../src/local-link.js";
 import { say } from "../src/stdio.js";
 import { Wire } from "./acp-wire.js";
@@ -70,7 +70,8 @@ export async function servedFamily(fixture: FamilyFixture): Promise<ServedFamily
   const backend = vmmBackend(vmm.path, composed.state.config, say);
   const link = guestLink(say);
   const id = randomUUID();
-  const served = await serveFamily({ sessionId: id, composed, limits, backend, link }, link);
+  const meter = meterOf(start.planes, composed);
+  const served = await serveFamily({ sessionId: id, composed, limits, backend, link, meter }, link);
   if (!served.ok) {
     throw new Error(`the family did not serve: ${served.detail}`);
   }
