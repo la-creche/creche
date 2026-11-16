@@ -175,8 +175,10 @@ pub struct TagEntry {
     pub assets: Assets,
 }
 
-/// The tags of a statement: 1 to `MAX_TAGS`, sorted by tag, each component
-/// once.
+/// The tags of a statement: 1 to `MAX_TAGS`, sorted by tag, one tag for
+/// each component. The schema does not express the order, the uniqueness
+/// or the rule of one tag for each component. A reader must apply the
+/// canonical check (re-encode and compare) and pass the vectors.
 // CONTRACT-QUESTION: forgejo-release-path.md section 4.5 gives no order and
 // says nothing of an empty list or of two tags of one component. The reading
 // here sorts by name, refuses an empty list and refuses two tags of one

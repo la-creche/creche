@@ -85,7 +85,9 @@ The schema `schema/release-statement.json` comes from the types. To write
 it after a change of a statement type, run
 `CRECHE_CI_SIGNER_SCHEMA=write cargo test -p creche-ci-signer` in `rust/`.
 The schema cannot say the canonical byte rules or the sort order. The
-vectors say them.
+vectors say them. The schema of `Tags` does not express the order, the
+uniqueness or the rule of one tag for each component, so a reader must
+apply the canonical check (re-encode and compare) and pass the vectors.
 
 ## Not measured
 

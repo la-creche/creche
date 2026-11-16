@@ -85,6 +85,18 @@
 //! }
 //! ```
 //!
+//! A caller cannot build or alter an `IssuedLine`. So a journal line always
+//! names the run and the commit of its statement:
+//!
+//! ```compile_fail
+//! use creche_ci_signer::issue::Issued;
+//! use creche_ci_signer::names::RunId;
+//!
+//! fn alter(issued: &mut Issued, run: RunId) {
+//!     issued.line.run = run;
+//! }
+//! ```
+//!
 //! One decision feeds one issue:
 //!
 //! ```compile_fail

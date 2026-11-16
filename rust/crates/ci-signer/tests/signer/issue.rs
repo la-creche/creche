@@ -48,9 +48,7 @@ fn statement_takes_its_facts_from_eligible() {
     assert_eq!(statement.signed_at(), now());
     assert_eq!(statement.tags(), request().tags());
 
-    assert_eq!(issued.line.run.get(), 48);
-    assert_eq!(issued.line.commit.as_str(), MERGE_COMMIT);
-    let line = issued.line.to_string();
+    let line = issued.line.text();
     assert!(
         line.starts_with(&format!("48\t{MERGE_COMMIT}\t")) && line.ends_with('\n'),
         "{line}"
@@ -99,7 +97,7 @@ fn second_issue_is_refused() {
     );
 
     // A restart reads the journal, and the rule still holds.
-    let restarted = IssuedRuns::from_journal(&first.line.to_string()).unwrap();
+    let restarted = IssuedRuns::from_journal(&first.line.text()).unwrap();
     assert_eq!(
         restarted.admit(&eligible()).unwrap_err(),
         AlreadyIssued::Run(run)

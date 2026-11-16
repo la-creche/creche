@@ -152,7 +152,7 @@
       ]
     },
     "Tags": {
-      "description": "The tags of a statement: 1 to `MAX_TAGS`, sorted by tag, each component\nonce.",
+      "description": "The tags of a statement: 1 to `MAX_TAGS`, sorted by tag, one tag for\neach component. The schema does not express the order, the uniqueness\nor the rule of one tag for each component. A reader must apply the\ncanonical check (re-encode and compare) and pass the vectors.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/TagEntry"

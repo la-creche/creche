@@ -64,14 +64,23 @@ impl std::error::Error for AlreadyIssued {}
 
 /// One line of the journal of issued runs:
 /// `<run id> TAB <commit> TAB <SHA-256 of the statement> LF`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The fields are private. Only `IssuedRuns::issue` makes a line, so the
+/// run and the commit of a line are always those of its statement. The
+/// program appends `text`.
+#[derive(Debug, PartialEq, Eq)]
 pub struct IssuedLine {
-    /// The run id.
-    pub run: RunId,
-    /// The commit of the run.
-    pub commit: CommitSha,
-    /// The SHA-256 of the canonical statement bytes.
-    pub statement: Sha256Hex,
+    run: RunId,
+    commit: CommitSha,
+    statement: Sha256Hex,
+}
+
+impl IssuedLine {
+    /// The text of the line to append to the journal, with its final LF.
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.to_string()
+    }
 }
 
 impl fmt::Display for IssuedLine {
