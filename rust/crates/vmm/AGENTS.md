@@ -236,6 +236,8 @@ A fault names the key and never the value, as in `env/AGENTS.md`.
 | `VMM_GIT_SPOOL_ROOT` | `/var/lib/creche-git-platform` | `StartConfig::spool`, the git platform spool of host port 1105, and the sweep of its `push/` at each start (decision CH3) |
 | `VMM_BROWSER_SOCKET` | `/var/lib/creche-browser/relay.sock` | `service::link::bind`, the socket of the browser VM (see "The service VMs") |
 | `VMM_BROWSER_PEER_USER` | `mcp-browser` | The one user whose links the browser socket takes. The compose step reads its uid from `/etc/passwd` |
+| `VMM_SCANNER_SOCKET` | `/var/lib/creche-scanner/relay.sock` | `service::link::bind`, the socket of the scanner VM (see "The service VMs") |
+| `VMM_SCANNER_PEER_USER` | `${AGENT_OPERATOR_USER}` | The one user whose links the scanner socket takes: the user of attendance. The compose step reads its uid from `/etc/passwd` |
 
 Each path is absolute with no `..` component. The run root holds no
 `:`, because systemd joins the paths of more than one
@@ -289,7 +291,7 @@ The vmm holds no list of the flavors and no list of the service images.
 new flavor or a new service image of `creche-wire` needs no vmm change.
 
 A service image is the root disk of a service VM, such as the browser
-(browser design 10.5.2). It is not a flavor: no family file can choose
+(browser design 10.5.2) or the scanner (the attachments design note). It is not a flavor: no family file can choose
 one. `Digests::services` holds the store digest of each service image,
 or `None` when `digests.json` has no entry for it. A service VM start
 refuses `None` with its own reason (see "The service VMs"). The
@@ -1798,10 +1800,14 @@ the steps of the phase 3 proof with the real facade (decisions CH62 rule
 ## The service VMs
 
 `src/service.rs` and `src/service/link.rs` hold the service VMs (browser
-design 10.4 gaps 1, 2 and 5). A service VM boots a root disk of
-`ServiceImage`, not a flavor. It has no family, no row and no fault
-file. The browser VM is the one service VM. It runs Chrome and
-agent-browser for the MCP upstream `browser`.
+design 10.4 gaps 1, 2 and 5, the attachments design note). A service VM
+boots a root disk of `ServiceImage`, not a flavor. It has no family, no
+row and no fault file. There are two service VMs:
+
+1. The browser VM runs Chrome and agent-browser for the MCP upstream
+   `browser`.
+2. The scanner VM checks and rebuilds each file that a door client
+   attaches to a prompt (`docs/design/attachments.md`).
 
 ```
 chaperone ─stdio─ browser-relay (uid mcp-browser)
@@ -1810,14 +1816,18 @@ chaperone ─stdio─ browser-relay (uid mcp-browser)
                      vmm ── guest port 1201 ── browser facade ── agent-browser mcp
                       │      kind line "mcp"
                       └─ host port 1104: public names, port 443 only
+
+attendance ── VMM_SCANNER_SOCKET ──► vmm ── guest port 1201 ── scanner facade
+                                      │      kind line "scan"
+                                      └─ no host port
 ```
 
 1. The VM runs in the VM table of `ColdBoot` with the reserved session
-   id `service::vm_id`. Its version digit is 0, so no random id of
-   version 4 is that id. The slots, admission, the stop path and the
-   shutdown serve it as they serve a family VM. The control hello
-   carries the id, and guest init gives it to the facade as
-   `CRECHE_SESSION_ID`.
+   id `service::vm_id`. Each image has its own id. Its version digit is
+   0, so no random id of version 4 is that id. The slots, admission, the
+   stop path and the shutdown serve it as they serve a family VM. The
+   control hello carries the id, and guest init gives it to the facade
+   as `CRECHE_SESSION_ID`.
 2. The create route refuses a reserved id with `conflict` 409. So no row
    names the VM, and an Upgrade or a drop finds no row of it.
 3. `ServiceVm::link` of `ColdBoot` holds one async lock from its table
@@ -1825,48 +1835,64 @@ chaperone ─stdio─ browser-relay (uid mcp-browser)
    table gets a new dial of guest port 1201. With no VM, the start runs
    the steps of a cold boot with these changes:
    1. The sizes are `service::limits`: 2 vCPUs and 2048 MiB for the
-      browser.
+      browser, and 2 vCPUs and 3072 MiB for the scanner.
    2. The root disk is `Digests::services` of the image. `None` refuses
       the start before any launch.
    3. The session disk of the last start goes first, so each start gets
-      a new disk. The guest keeps the profile on its tmpfs. Nothing of
+      a new disk. The guest keeps its state on its tmpfs. Nothing of
       one start reaches the next one (decision V4).
-   4. The one host listener is the egress proxy, with the rule
-      `rule::decide_public`: any public name on port 443, and `not_listed`
-      for any other port before a lookup (decision V2). Each line of the
-      egress log names `"service": <image>` in place of `"family"`.
-   5. The deny check holds the bound set to `[1104]`.
+   4. `service::egress` gives the host listener of the image. The browser
+      gets the egress proxy, with the rule `rule::decide_public`: any
+      public name on port 443, and `not_listed` for any other port before
+      a lookup (decision V2). Each line of the egress log names
+      `"service": <image>` in place of `"family"`. The scanner gets no
+      host listener.
+   5. The deny check holds the bound set to `[1104]` for the browser. It
+      holds the bound set empty for the scanner, so a listener on any
+      host port fails the start.
    6. A fault stops the VM and goes to the journal only.
 4. The VM has no snapshot key. So admission never evicts it, the idle
    tick never puts it to sleep, and the shutdown stops it with the
    graceful stop. A family start that needs its RAM gets `host_full`.
-5. The compose step binds `VMM_BROWSER_SOCKET` after the raise of step
-   4 and before the bind of `vmm.sock`, so the socket gets the raised
-   limit, and a refused raise prints only its own line. Root
-   makes its dir once: the vmm user owns it, the group is the group of
-   `VMM_BROWSER_PEER_USER`, the mode is 2750. `bind` refuses a missing
-   dir, a dir that gives others any bit and a file at the path that is
-   no socket. It removes the socket of an earlier vmm and sets the mode
-   0660. Each fault, and a peer user that `/etc/passwd` does not hold,
-   turns the socket off with one stderr line. The vmm then serves each
-   family VM as before, so a host without the dir keeps its families.
-6. Each link of the socket gets one `SO_PEERCRED` check. A peer with
+5. The compose step binds `VMM_BROWSER_SOCKET` and `VMM_SCANNER_SOCKET`
+   after the raise of step 4 and before the bind of `vmm.sock`, so each
+   socket gets the raised limit, and a refused raise prints only its own
+   line. Root makes the dir of each socket once: the vmm user owns it,
+   the group is the group of the peer user of the socket, the mode is
+   2750. `bind` refuses a missing dir, a dir that gives others any bit
+   and a file at the path that is no socket. It removes the socket of an
+   earlier vmm and sets the mode 0660. Each fault, and a peer user that
+   `/etc/passwd` does not hold, turns only that socket off with one
+   stderr line. The vmm then serves each family VM and the other socket
+   as before, so a host without the dir keeps its families.
+6. Each link of a socket gets one `SO_PEERCRED` check. A peer with
    another uid gets a close. Then the link starts the VM when it does not
-   run, writes the kind line `mcp` on the guest link and splices both
-   ways. So the relay sends MCP bytes from its first byte, and no relay
-   can open the `view` link of the live view. The socket holds at most
-   `LINK_CAP` (4) links. The drop of the socket at SIGTERM comes before
-   the shutdown, so no new link starts then.
+   run, writes the kind line of the image on the guest link
+   (`link::kind_line`) and splices both ways. The browser line is `mcp`,
+   so the relay sends MCP bytes from its first byte, and no relay can
+   open the `view` link of the live view. The scanner line is `scan`, the
+   `kind_line` of `rust/crates/wire/vectors/scan.json`. The socket holds
+   at most `link::link_cap` links: `LINK_CAP` (4) for the browser and
+   `SCAN_LINK_CAP` (8) for the scanner. A browser link past the cap gets
+   a plain close. A scanner link past the cap first gets the one line
+   `{"refused":{"reason":"busy"}}` (`link::busy_line`), so attendance can
+   tell a full socket from a fault. The drop of each socket at
+   SIGTERM comes before the shutdown, so no new link starts then.
 
-`src/service.rs` tests the ids and the sizes. `tests/start.rs` proves the
-boot over the fakes: the reserved id, the sizes, the one listener, a
-second link with no boot, no disk, no sleep, no eviction, the shutdown
-stop, the new disk of the next boot and a guest with no ready.
-`tests/service_link.rs` proves the socket: the bind checks, the mode,
-the peer check, the kind line, the bytes both ways and a failed start.
+`src/service.rs` tests the ids, the sizes and the egress of each image.
+`tests/start.rs` proves the boot over the fakes: the reserved id, the
+sizes, the one listener of the browser, no listener of the scanner, the
+empty bound set of the scanner, a second link with no boot, no disk, no
+sleep, no eviction, the shutdown stop, the new disk of the next boot,
+both VMs at once and a guest with no ready. `tests/service_link.rs`
+proves the socket for each image: the bind checks, the mode, the peer
+check, the kind line, the link cap, the busy line, the bytes both ways
+and a failed start. It also holds `SCAN_LINE` and `SCAN_BUSY_LINE` equal
+to the shared scan vector.
 `tests/egress_rule.rs` and `tests/egress_proxy.rs` prove the rule and the
-log line. `tests/create_list.rs` proves the refusal of a reserved id.
-The host proof is step 8 of browser design 10.5.
+log line. `tests/create_list.rs` proves the refusal of each reserved id.
+`src/compose/tests.rs` proves that a fault turns off only its own socket.
+The host proof of the browser is step 8 of browser design 10.5.
 
 ## Rules
 

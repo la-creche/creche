@@ -253,19 +253,24 @@ fn a_different_create_of_the_id_gets_conflict() {
 }
 
 /// A create of the reserved id of a service VM gets `conflict` 409 and
-/// makes no row, so no Upgrade reaches the browser VM (browser design
-/// 10.4 gap 1).
+/// makes no row, so no Upgrade reaches the browser VM or the scanner VM
+/// (browser design 10.4 gap 1).
 #[test]
 fn the_id_of_a_service_vm_gets_conflict() {
     let server = Server::start("create-reserved");
-    let mut create: Value =
-        serde_json::from_str(&vector("CreateSession", "a door session")).unwrap();
-    let id = creche_vmm::service::vm_id(creche_wire::ServiceImage::Browser).unwrap();
-    create["id"] = Value::from(id.as_str());
-    assert_eq!(
-        server.ask("create", &create.to_string()),
-        (409, r#"{"code":"conflict"}"#.to_owned())
-    );
+    let images = creche_wire::PerService::every(|_| ());
+    for (image, ()) in images.iter() {
+        let mut create: Value =
+            serde_json::from_str(&vector("CreateSession", "a door session")).unwrap();
+        let id = creche_vmm::service::vm_id(image).unwrap();
+        create["id"] = Value::from(id.as_str());
+        assert_eq!(
+            server.ask("create", &create.to_string()),
+            (409, r#"{"code":"conflict"}"#.to_owned()),
+            "{}",
+            image.name()
+        );
+    }
     assert!(server.page("chat", None).rows.is_empty());
     server.end();
 }

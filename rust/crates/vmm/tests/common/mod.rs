@@ -177,7 +177,7 @@ fn image_root(work: &Path, disk: impl FnOnce(&Path, &Path) -> RootDisk) -> PathB
     let disk = entry(&placed.file, &placed.sha256);
     let digests = root.join("digests.json");
     let text = format!(
-        r#"{{"kernel":{},"base":{disk},"python":{disk},"coding":{disk},"browser":{disk}}}"#,
+        r#"{{"kernel":{},"base":{disk},"python":{disk},"coding":{disk},"browser":{disk},"scanner":{disk}}}"#,
         entry("vmlinux", &sha256(&root.join("vmlinux")))
     );
     fs::write(&digests, text).unwrap();
@@ -406,6 +406,8 @@ pub fn boot_with<V>(
         (config::GIT_SPOOL_ROOT, work.join("spool")),
         // No dir is there, so the browser socket is off.
         (config::BROWSER_SOCKET, work.join("browser/relay.sock")),
+        // No dir is there, so the scanner socket is off.
+        (config::SCANNER_SOCKET, work.join("scanner/relay.sock")),
     ];
     let mut env: Vec<(&str, &OsStr)> = paths
         .iter()
@@ -424,6 +426,7 @@ pub fn boot_with<V>(
             (config::LITELLM, litellm.as_str()),
             (config::CHAPERONE, chaperone.as_str()),
             (config::BROWSER_PEER, "mcp-browser"),
+            (config::SCANNER_PEER, "operator"),
         ]
         .map(|(key, value)| (key, OsStr::new(value))),
     );

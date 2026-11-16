@@ -18,6 +18,15 @@ use tokio::task::{JoinHandle, JoinSet};
 pub(crate) struct Links(Arc<Mutex<JoinSet<()>>>);
 
 impl Links {
+    /// Whether `cap` links are open, after the reap of each link that
+    /// ended. Only the accept task of the listener spawns a link, so a
+    /// false answer holds until its next `admit`.
+    pub(crate) fn full(&self, cap: usize) -> bool {
+        let mut links = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        while links.try_join_next().is_some() {}
+        links.len() >= cap
+    }
+
     /// Spawns `link` when fewer than `cap` links are open, after the reap
     /// of each link that ended. Else it drops `link`, which closes its
     /// stream, and gives false.

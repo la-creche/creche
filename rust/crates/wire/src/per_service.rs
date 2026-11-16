@@ -15,6 +15,7 @@ use crate::ServiceImage;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PerService<T> {
     browser: T,
+    scanner: T,
 }
 
 impl<T> PerService<T> {
@@ -34,6 +35,7 @@ impl<T> PerService<T> {
     pub fn try_every<E>(mut value: impl FnMut(ServiceImage) -> Result<T, E>) -> Result<Self, E> {
         Ok(Self {
             browser: value(ServiceImage::Browser)?,
+            scanner: value(ServiceImage::Scanner)?,
         })
     }
 
@@ -42,6 +44,7 @@ impl<T> PerService<T> {
     pub const fn get(&self, image: ServiceImage) -> &T {
         match image {
             ServiceImage::Browser => &self.browser,
+            ServiceImage::Scanner => &self.scanner,
         }
     }
 
@@ -49,13 +52,18 @@ impl<T> PerService<T> {
     pub const fn get_mut(&mut self, image: ServiceImage) -> &mut T {
         match image {
             ServiceImage::Browser => &mut self.browser,
+            ServiceImage::Scanner => &mut self.scanner,
         }
     }
 
     /// Each service image with its value, in the order of the enum.
     pub fn iter(&self) -> impl Iterator<Item = (ServiceImage, &T)> {
-        let Self { browser } = self;
-        [(ServiceImage::Browser, browser)].into_iter()
+        let Self { browser, scanner } = self;
+        [
+            (ServiceImage::Browser, browser),
+            (ServiceImage::Scanner, scanner),
+        ]
+        .into_iter()
     }
 
     /// The set with `map` applied to each value, in the order of the enum.
@@ -82,7 +90,13 @@ mod tests {
     fn every_get_and_iter_agree() {
         let every = PerService::every(|image| image);
         let listed: Vec<_> = every.iter().collect();
-        assert_eq!(listed, [(ServiceImage::Browser, &ServiceImage::Browser)]);
+        assert_eq!(
+            listed,
+            [
+                (ServiceImage::Browser, &ServiceImage::Browser),
+                (ServiceImage::Scanner, &ServiceImage::Scanner),
+            ]
+        );
         for (image, value) in every.iter() {
             assert_eq!(every.get(image), value);
         }
@@ -91,8 +105,9 @@ mod tests {
     #[test]
     fn get_mut_changes_its_image() {
         let mut values = PerService::every(|_| 0_u8);
-        *values.get_mut(ServiceImage::Browser) = 1;
-        assert_eq!(*values.get(ServiceImage::Browser), 1);
+        *values.get_mut(ServiceImage::Scanner) = 1;
+        assert_eq!(*values.get(ServiceImage::Scanner), 1);
+        assert_eq!(*values.get(ServiceImage::Browser), 0);
     }
 
     #[test]

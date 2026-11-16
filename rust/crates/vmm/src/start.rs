@@ -133,7 +133,7 @@ use crate::planes::{self, Bound, Planes, Upstreams, bind};
 use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
 use crate::service::link::ServiceVm;
-use crate::service::{self, Owner, ServiceError};
+use crate::service::{self, Egress, Owner, ServiceError};
 use crate::shutdown::{Taken, VmSet};
 use crate::sleep::SERIAL_CAP;
 use crate::spool;
@@ -313,8 +313,9 @@ enum Listeners {
         _reach: Watch,
     },
     /// A service VM: the egress proxy of its rule, and no other host port
-    /// (browser design 10.2 item 4).
-    Service { _egress: proxy::Server },
+    /// (browser design 10.2 item 4). A service VM with no egress
+    /// (`Egress::Closed`) holds no listener.
+    Service { _egress: Option<proxy::Server> },
 }
 
 /// What the table holds for a session. Each entry holds its pool slot
@@ -2070,8 +2071,9 @@ struct ServiceBooted<P> {
     process: P,
     /// The start that the ruleset and the deny check name.
     start: Start,
-    /// The egress proxy listener, bound before CH started.
-    egress: proxy::Bound,
+    /// The egress proxy listener, bound before CH started, or `None` for
+    /// an image with no egress.
+    egress: Option<proxy::Bound>,
 }
 
 /// Step 3 of a service VM: the link of `vm/<id>` to `slot`, the egress
@@ -2091,10 +2093,16 @@ fn launch_service<L: Launcher>(
         .link_vm(id, slot)
         .map_err(|error| format!("{error}: {}", error.source))?;
     remove_stale(&run).map_err(|error| format!("{error}: {}", error.source))?;
-    // The one host listener of a service VM. The guest dials of 1100 to
-    // 1103 and 1105 find no listener and fail closed (decision CH46 rule
-    // 1).
-    let egress = proxy::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
+    // The one host listener of a service VM, for an image with egress.
+    // The guest dials of 1100 to 1103 and 1105, and of 1104 for an image
+    // with no egress, find no listener and fail closed (decision CH46
+    // rule 1).
+    let egress = match service::egress(image) {
+        Egress::Public => {
+            Some(proxy::bind(&run).map_err(|error| format!("{error}: {}", error.source))?)
+        }
+        Egress::Closed => None,
+    };
     let checked = |digest| {
         config
             .images
@@ -2190,7 +2198,8 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// 1. The shape is `service::limits`, not a family file.
     /// 2. The one host listener is the egress proxy, with the rule of a
     ///    service VM (`rule::decide_public`). The deny check holds the
-    ///    bound set to it.
+    ///    bound set to it. An image with no egress (`service::egress`)
+    ///    gets no listener, and the deny check holds the bound set empty.
     /// 3. No row, no snapshot and no fault file. The VM has no snapshot
     ///    key, so admission never evicts it and it never sleeps.
     /// 4. Each start is a cold boot on a new session disk (decision V4).
@@ -2242,9 +2251,10 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         let vsock = pending.run.vsock_socket();
         let link = self.control().replace(id);
         let log = Arc::clone(&self.config.egress_log);
-        let egress = match egress.serve_service(image, id.clone(), log) {
-            Ok(egress) => egress,
-            Err(error) => {
+        let egress = match egress.map(|bound| bound.serve_service(image, id.clone(), log)) {
+            None => None,
+            Some(Ok(egress)) => Some(egress),
+            Some(Err(error)) => {
                 let message = format!("serving the egress listener: {error}");
                 return Err(self.abort_service(pending, link, None, message).await);
             }
@@ -2264,14 +2274,14 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
 
         // Decision CH54 rule 2: the deny check runs after `ControlReady`
         // and before the dial of 1201. The bound set is the egress port
-        // only.
-        let (ch, run, bound) = (
-            self.config.ch.clone(),
-            pending.run.clone(),
-            [HostPort::Egress],
-        );
+        // only, or empty for an image with no egress.
+        let bound: &'static [HostPort] = match service::egress(image) {
+            Egress::Public => &[HostPort::Egress],
+            Egress::Closed => &[],
+        };
+        let (ch, run) = (self.config.ch.clone(), pending.run.clone());
         let denied = blocking(move || {
-            deny::check(&cmdline, &ch, &start, &run, &bound).map_err(|error| error.to_string())
+            deny::check(&cmdline, &ch, &start, &run, bound).map_err(|error| error.to_string())
         })
         .await;
         if let Err(message) = denied {

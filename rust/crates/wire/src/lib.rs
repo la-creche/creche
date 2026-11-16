@@ -1819,6 +1819,9 @@ impl SandboxFlavor {
 pub enum ServiceImage {
     /// The root disk of the browser VM: Chrome and agent-browser.
     Browser,
+    /// The root disk of the scanner VM: Magika, ClamAV and the rebuild of
+    /// each attached file (attachments design note).
+    Scanner,
 }
 
 impl ServiceImage {
@@ -1830,6 +1833,7 @@ impl ServiceImage {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Browser => "browser",
+            Self::Scanner => "scanner",
         }
     }
 }

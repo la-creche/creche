@@ -1,8 +1,10 @@
-//! The socket of a service VM (browser design 10.2 items 1 and 2). The
-//! chaperone runs `browser-relay` as the user of `VMM_BROWSER_PEER_USER`,
-//! and the relay joins its stdio to this socket. The chaperone unit blocks
-//! `/dev/kvm` and `AF_VSOCK`, so the vmm brokers the link and the unit is
-//! not loosened.
+//! The socket of a service VM (browser design 10.2 items 1 and 2, the
+//! attachments design note). The chaperone runs `browser-relay` as the
+//! user of `VMM_BROWSER_PEER_USER`, and the relay joins its stdio to the
+//! browser socket. The chaperone unit blocks `/dev/kvm` and `AF_VSOCK`, so
+//! the vmm brokers the link and the unit is not loosened. attendance runs
+//! as the user of `VMM_SCANNER_PEER_USER` and opens one link of the
+//! scanner socket for each attached file.
 //!
 //! 1. Root makes the dir of the socket once: the vmm user owns it, the
 //!    peer group is its group, the mode is 2750. `bind` refuses a dir that
@@ -14,14 +16,18 @@
 //!    gets a close and one stderr line. Then `ServiceVm::link` starts the
 //!    VM when it does not run and dials guest port 1201. A failed start
 //!    closes the link with one stderr line.
-//! 3. The vmm writes the kind line `mcp` on the guest link. The browser
-//!    facade then joins the link to `agent-browser mcp`. So the relay
-//!    sends MCP bytes from its first byte, and no relay can open the
-//!    `view` link of the live view.
+//! 3. The vmm writes the kind line of the image on the guest link
+//!    (`kind_line`). For the browser it is `mcp`: the browser facade then
+//!    joins the link to `agent-browser mcp`. So the relay sends MCP bytes
+//!    from its first byte, and no relay can open the `view` link of the
+//!    live view. For the scanner it is `scan`: the scanner facade then
+//!    reads one request line.
 //! 4. `Splice` carries the bytes both ways with the half-close of
 //!    decision CH67 rule 9. It parses none of them.
-//! 5. The listener holds at most `LINK_CAP` links. A link past the cap
-//!    closes at once. A failed accept is logged by kind, and the loop
+//! 5. The listener holds at most `link_cap` links of its image. A link
+//!    past the cap closes at once. On the scanner socket it first gets
+//!    the one line `SCAN_BUSY_LINE` (`busy_line`), so attendance can tell
+//!    a full socket from a fault. The browser link gets a plain close. A failed accept is logged by kind, and the loop
 //!    pauses `ACCEPT_PAUSE` and accepts again (decision CH40 rule 1).
 //! 6. The drop of `Served` closes the listener and every link. The VM
 //!    runs on: the shutdown stops it.
@@ -45,13 +51,57 @@ use crate::relay::{AcpLink, Splice};
 use crate::server::ACCEPT_PAUSE;
 use crate::service::ServiceError;
 
-/// The most open links of the socket. The chaperone runs one relay, and
-/// the relay opens one link at a time.
+/// The most open links of the browser socket. The chaperone runs one
+/// relay, and the relay opens one link at a time.
 pub const LINK_CAP: usize = 4;
 
-/// The kind line that the vmm writes first on each guest link. The
-/// browser facade reads it (`playpen/guest/creche_browser_facade.py`).
+/// The most open links of the scanner socket. attendance opens one link
+/// for each file, and a message has at most 4 files (`max_files` of
+/// `rust/crates/wire/vectors/scan.json`). So two messages scan at once.
+pub const SCAN_LINK_CAP: usize = 8;
+
+/// The kind line that the vmm writes first on each guest link of the
+/// browser. The browser facade reads it
+/// (`playpen/guest/creche_browser_facade.py`).
 pub const MCP_LINE: &[u8] = b"mcp\n";
+
+/// The kind line that the vmm writes first on each guest link of the
+/// scanner: `kind_line` of `rust/crates/wire/vectors/scan.json`. The
+/// scanner facade reads it (`playpen/guest/creche_scanner_facade.py`).
+pub const SCAN_LINE: &[u8] = b"scan\n";
+
+/// The line that a scanner link past `SCAN_LINK_CAP` gets before its
+/// close: `reply_refused` of `rust/crates/wire/vectors/scan.json` with the
+/// reason `busy`.
+pub const SCAN_BUSY_LINE: &[u8] = b"{\"refused\":{\"reason\":\"busy\"}}\n";
+
+/// The line that a link past the cap of `image` gets before its close,
+/// or `None` for a plain close.
+#[must_use]
+pub const fn busy_line(image: ServiceImage) -> Option<&'static [u8]> {
+    match image {
+        ServiceImage::Browser => None,
+        ServiceImage::Scanner => Some(SCAN_BUSY_LINE),
+    }
+}
+
+/// The kind line of each guest link of `image`.
+#[must_use]
+pub const fn kind_line(image: ServiceImage) -> &'static [u8] {
+    match image {
+        ServiceImage::Browser => MCP_LINE,
+        ServiceImage::Scanner => SCAN_LINE,
+    }
+}
+
+/// The most open links of the socket of `image`.
+#[must_use]
+pub const fn link_cap(image: ServiceImage) -> usize {
+    match image {
+        ServiceImage::Browser => LINK_CAP,
+        ServiceImage::Scanner => SCAN_LINK_CAP,
+    }
+}
 
 /// The mode of the socket: the vmm user and the peer group.
 pub const SOCKET_MODE: u32 = 0o660;
@@ -195,9 +245,14 @@ async fn accept<S: ServiceVm>(listener: UnixListener, parts: Parts<S>, links: Li
         match listener.accept().await {
             Ok((client, _)) => {
                 number = number.saturating_add(1);
-                let name = parts.1.name();
-                if !links.admit(LINK_CAP, serve_link(client, Arc::clone(&parts), number)) {
-                    eprintln!("vmm: {name} link {number} closed: {LINK_CAP} links are open");
+                let (name, cap) = (parts.1.name(), link_cap(parts.1));
+                if links.full(cap) {
+                    refuse_busy(&client, parts.1);
+                    eprintln!("vmm: {name} link {number} closed: {cap} links are open");
+                    continue;
+                }
+                if !links.admit(cap, serve_link(client, Arc::clone(&parts), number)) {
+                    eprintln!("vmm: {name} link {number} closed: {cap} links are open");
                 }
             }
             Err(error) => {
@@ -205,6 +260,21 @@ async fn accept<S: ServiceVm>(listener: UnixListener, parts: Parts<S>, links: Li
                 sleep(ACCEPT_PAUSE).await;
             }
         }
+    }
+}
+
+/// Writes the busy line of `image` on `client`, a link past the cap
+/// (rule 5). The write does not wait: a new socket has an empty buffer,
+/// so the short line fits. A write that does not fit is skipped, and the
+/// close follows as for the browser.
+fn refuse_busy(client: &UnixStream, image: ServiceImage) {
+    let Some(line) = busy_line(image) else {
+        return;
+    };
+    match client.try_write(line) {
+        Ok(written) if written == line.len() => {}
+        Ok(written) => eprintln!("vmm: a busy line got {written} bytes of {}", line.len()),
+        Err(error) => eprintln!("vmm: a busy line failed: {}", error.kind()),
     }
 }
 
@@ -234,7 +304,7 @@ async fn serve_link<S: ServiceVm>(mut client: UnixStream, parts: Parts<S>, numbe
         }
     };
     let (mut guest, pending) = link.into_parts();
-    if let Err(error) = write_all(&guest, MCP_LINE).await {
+    if let Err(error) = write_all(&guest, kind_line(image)).await {
         eprintln!(
             "vmm: {name} link {number} closed: the kind line: {}",
             error.kind()

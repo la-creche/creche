@@ -39,7 +39,7 @@ use creche_wire::{
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
 
-use super::{Checked, StartError, VERSION_WAIT, Vmm, build, parts};
+use super::{Checked, StartError, VERSION_WAIT, Vmm, build, parts, service_socket};
 use crate::ServeError;
 use crate::config::{CH, CH_REMOTE, Config, GIT, GUEST_INIT as GUEST_INIT_KEY};
 use crate::guest_init::GuestInitError;
@@ -82,7 +82,7 @@ fn mismatch() -> String {
 
 /// The kernel, the root disk of each flavor and the root disk of each
 /// service image, each with the SHA-256 of its bytes.
-const IMAGES: [(&str, &str, &str); 5] = [
+const IMAGES: [(&str, &str, &str); 6] = [
     (
         "vmlinux",
         "",
@@ -107,6 +107,11 @@ const IMAGES: [(&str, &str, &str); 5] = [
         "browser.ext4",
         "browser",
         "d4c3e8a11256ab82a4fc72560eb4a2b0e87bad820c290dd9b03616de240aa6db",
+    ),
+    (
+        "scanner.ext4",
+        "scanner",
+        "6105d8625ada3c9bf514062b5696e9d7aa11e4b5e2c3d8629713f0bf2e45f6fd",
     ),
 ];
 
@@ -164,6 +169,7 @@ impl Scratch {
             "python": entry(IMAGES[2]),
             "coding": entry(IMAGES[3]),
             "browser": entry(IMAGES[4]),
+            "scanner": entry(IMAGES[5]),
         });
         fs::write(dir.join("images").join(DIGESTS_FILE), digests.to_string()).unwrap();
         fs::write(dir.join("bin/guest-init"), GUEST_INIT).unwrap();
@@ -205,6 +211,8 @@ impl Scratch {
             ("VMM_GIT_SPOOL_ROOT", text(dir.join("spool"))),
             ("VMM_BROWSER_SOCKET", text(dir.join("browser/relay.sock"))),
             ("VMM_BROWSER_PEER_USER", OsString::from("mcp-browser")),
+            ("VMM_SCANNER_SOCKET", text(dir.join("scanner/relay.sock"))),
+            ("VMM_SCANNER_PEER_USER", OsString::from("operator")),
         ]);
         Self { dir, env }
     }
@@ -359,7 +367,7 @@ fn kvm_build_wires_each_key_to_its_part() {
 
     // Decisions CH57 rule 1 and CH58 rule 4: the digests of
     // `digests.json`, each in the digest store of the state root.
-    let [kernel, base, python, coding, browser] =
+    let [kernel, base, python, coding, browser, scanner] =
         IMAGES.map(|(_, _, sha256)| sha256.parse().unwrap());
     let roots = PerFlavor::every(|flavor| match flavor {
         SandboxFlavor::Base => base,
@@ -368,6 +376,7 @@ fn kvm_build_wires_each_key_to_its_part() {
     });
     let services = PerService::every(|image| match image {
         ServiceImage::Browser => Some(browser),
+        ServiceImage::Scanner => Some(scanner),
     });
     let digests = Digests {
         kernel,
@@ -375,7 +384,7 @@ fn kvm_build_wires_each_key_to_its_part() {
         services,
     };
     assert_eq!(*start.digests.borrow(), digests);
-    for digest in [kernel, base, python, coding, browser] {
+    for digest in [kernel, base, python, coding, browser, scanner] {
         start.images.check(digest).unwrap();
     }
 
@@ -383,6 +392,36 @@ fn kvm_build_wires_each_key_to_its_part() {
     // program of the key, in the digest store.
     let stored = start.images.check(start.initramfs).unwrap();
     assert_eq!(fs::read(stored.path()).unwrap(), initramfs());
+
+    // Browser design 10.2 and the attachments design note: the socket key
+    // and the peer key of each service image reach its socket.
+    let (path, user) = vmm.services.get(ServiceImage::Browser);
+    assert_eq!(*path, scratch.dir.join("browser/relay.sock"));
+    assert_eq!(user.as_str(), "mcp-browser");
+    let (path, user) = vmm.services.get(ServiceImage::Scanner);
+    assert_eq!(*path, scratch.dir.join("scanner/relay.sock"));
+    assert_eq!(user.as_str(), "operator");
+}
+
+/// A socket of a service image with no dir is off, and the start goes
+/// on. The fault turns off only the socket of its own image: the other
+/// image binds (browser design 10.5 step 7, attachments design note
+/// section 8).
+#[test]
+fn a_service_socket_with_no_dir_is_off() {
+    let scratch = Scratch::new("service-off");
+    let root: crate::config::UserName = "root".parse().unwrap();
+    let missing = scratch.dir.join("scanner/relay.sock");
+    assert!(service_socket(ServiceImage::Scanner, &missing, &root).is_none());
+    assert!(service_socket(ServiceImage::Browser, &missing, &root).is_none());
+
+    let dir = scratch.dir.join("browser");
+    fs::create_dir(&dir).unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o750)).unwrap();
+    let socket = dir.join("relay.sock");
+    let (_bound, uid) = service_socket(ServiceImage::Browser, &socket, &root).unwrap();
+    assert_eq!(uid, 0);
+    assert!(service_socket(ServiceImage::Scanner, &missing, &root).is_none());
 }
 
 /// Decisions CH62 rule 17, CH67 rule 1 and CH69 rule 17: the vmm runs CH,

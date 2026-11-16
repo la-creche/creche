@@ -160,6 +160,7 @@ fn a_malformed_file_refuses() {
         other("extra", entry("vmlinux", EMPTY)),
         other("Base", entry("base.ext4", ABC)),
         other("Browser", entry("browser.ext4", ABC)),
+        other("Scanner", entry("scanner.ext4", ABC)),
         other("base", serde_json::json!({ "file": "base.ext4" })),
         other(
             "base",
@@ -307,31 +308,32 @@ fn a_wrong_digest_fails_and_names_the_entry() {
     assert_eq!(checks.len(), 1 + disk_names().len());
 }
 
-/// The browser design 10.5.2: the root disk of a service image imports
-/// and checks as a root disk of a flavor does, and a wrong digest of it
-/// refuses the import and names its file.
+/// The browser design 10.5.2: the root disk of each service image
+/// imports and checks as a root disk of a flavor does, and a wrong digest
+/// of it refuses the import and names its file.
 #[test]
 fn a_service_image_imports_and_checks() {
-    let root = Root::new("service");
-    let store = root.store();
-    let image = ServiceImage::Browser.name();
-    let file = format!("{image}.ext4");
-    let digests = root.set(&good()).import(&store).unwrap();
-    let browser = digests.services.get(ServiceImage::Browser).unwrap();
-    assert_eq!(browser, ABC.parse().unwrap());
-    store.check(browser).unwrap();
+    for (service, &image) in PerService::every(ServiceImage::name).iter() {
+        let root = Root::new(&format!("service-{image}"));
+        let store = root.store();
+        let file = format!("{image}.ext4");
+        let digests = root.set(&good()).import(&store).unwrap();
+        let disk = digests.services.get(service).unwrap();
+        assert_eq!(disk, ABC.parse().unwrap());
+        store.check(disk).unwrap();
 
-    let wrong = root.set(&other_sha(image, HELLO));
-    let checks = wrong.check(&PathBuf::from("/usr/bin/zstd"));
-    let failed: Vec<(&str, &str)> = checks
-        .iter()
-        .filter(|check| check.result.is_err())
-        .map(|check| (check.key, check.file.as_str()))
-        .collect();
-    assert_eq!(failed, [(image, file.as_str())]);
-    let fresh = Root::new("service-wrong");
-    let error = fresh.set(&other_sha(image, HELLO)).import(&fresh.store());
-    assert_eq!(error.unwrap_err().file, file);
+        let wrong = root.set(&other_sha(image, HELLO));
+        let checks = wrong.check(&PathBuf::from("/usr/bin/zstd"));
+        let failed: Vec<(&str, &str)> = checks
+            .iter()
+            .filter(|check| check.result.is_err())
+            .map(|check| (check.key, check.file.as_str()))
+            .collect();
+        assert_eq!(failed, [(image, file.as_str())]);
+        let fresh = Root::new(&format!("service-wrong-{image}"));
+        let error = fresh.set(&other_sha(image, HELLO)).import(&fresh.store());
+        assert_eq!(error.unwrap_err().file, file);
+    }
 }
 
 /// The good `digests.json` with no entry for any service image: the file
@@ -358,12 +360,13 @@ fn a_file_without_a_service_image_imports_it_as_absent() {
         *digests.roots.get(SandboxFlavor::Base),
         ABC.parse().unwrap()
     );
-    assert_eq!(set.absent_services(), ["browser"]);
+    assert_eq!(set.absent_services(), ["browser", "scanner"]);
     assert!(root.set(&good()).absent_services().is_empty());
 }
 
 /// The disks verify hook stays strict: `check` fails each service image
-/// with no entry, so a new disks row must ship the browser disk.
+/// with no entry, so a new disks row must ship the browser disk and the
+/// scanner disk.
 #[test]
 fn a_file_without_a_service_image_fails_the_check() {
     let root = Root::new("absent-check");
@@ -375,12 +378,14 @@ fn a_file_without_a_service_image_fails_the_check() {
         .filter(|check| check.result.is_err())
         .map(|check| (check.key, check.file.as_str()))
         .collect();
-    assert_eq!(failed, [("browser", DIGESTS_FILE)]);
-    let browser = checks.last().unwrap();
-    assert!(
-        matches!(browser.result, Err(EntryFault::Absent)),
-        "{browser:?}"
+    assert_eq!(
+        failed,
+        [("browser", DIGESTS_FILE), ("scanner", DIGESTS_FILE)]
     );
+    let absent = checks.iter().filter(|check| check.result.is_err());
+    for check in absent {
+        assert!(matches!(check.result, Err(EntryFault::Absent)), "{check:?}");
+    }
     assert_eq!(checks.len(), 1 + disk_names().len());
 }
 

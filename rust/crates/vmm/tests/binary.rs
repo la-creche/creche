@@ -32,7 +32,7 @@ const TRUE: &str = "/usr/bin/true";
 
 /// Each key with a good value. The paths need not exist: the config
 /// checks their form only.
-const GOOD: [(&str, &str); 24] = [
+const GOOD: [(&str, &str); 26] = [
     ("VMM_STATE_ROOT", "/srv/vmm/state"),
     ("RUNTIME_DIRECTORY", "/run/user/1000/vmm"),
     ("VMM_FAMILY_ROOT", "/srv/families"),
@@ -60,6 +60,8 @@ const GOOD: [(&str, &str); 24] = [
     ("VMM_GIT_SPOOL_ROOT", "/var/lib/creche-git-platform"),
     ("VMM_BROWSER_SOCKET", "/var/lib/creche-browser/relay.sock"),
     ("VMM_BROWSER_PEER_USER", "mcp-browser"),
+    ("VMM_SCANNER_SOCKET", "/var/lib/creche-scanner/relay.sock"),
+    ("VMM_SCANNER_PEER_USER", "operator"),
 ];
 
 /// The CH fixture of the version check (gap G10). Each scratch dir gets a
@@ -79,7 +81,7 @@ const PROGRAMS: [(&str, &str); 3] = [
 
 /// The kernel, the root disk of each flavor and the root disk of each
 /// service image, each with the SHA-256 of its bytes.
-const IMAGES: [(&str, &str, &str); 5] = [
+const IMAGES: [(&str, &str, &str); 6] = [
     (
         "vmlinux",
         "",
@@ -104,6 +106,11 @@ const IMAGES: [(&str, &str, &str); 5] = [
         "browser.ext4",
         "browser",
         "d4c3e8a11256ab82a4fc72560eb4a2b0e87bad820c290dd9b03616de240aa6db",
+    ),
+    (
+        "scanner.ext4",
+        "scanner",
+        "6105d8625ada3c9bf514062b5696e9d7aa11e4b5e2c3d8629713f0bf2e45f6fd",
     ),
 ];
 
@@ -155,6 +162,8 @@ impl Scratch {
                     "VMM_GIT_SPOOL_ROOT" => self.path("spool"),
                     "VMM_BROWSER_SOCKET" => self.path("browser/relay.sock"),
                     "VMM_BROWSER_PEER_USER" => good.to_owned(),
+                    "VMM_SCANNER_SOCKET" => self.path("scanner/relay.sock"),
+                    "VMM_SCANNER_PEER_USER" => good.to_owned(),
                     key if key.ends_with("_GIB") || key.ends_with("_ADDR") => good.to_owned(),
                     key => match PROGRAMS.iter().find(|program| program.0 == key) {
                         Some((_, file)) => self.path(&format!("bin/{file}")),
@@ -183,6 +192,7 @@ impl Scratch {
             "python": entry(IMAGES[2]),
             "coding": entry(IMAGES[3]),
             "browser": entry(IMAGES[4]),
+            "scanner": entry(IMAGES[5]),
         });
         let digests_file = self.0.join("images").join(DIGESTS_FILE);
         std::fs::write(&digests_file, digests.to_string()).unwrap();
