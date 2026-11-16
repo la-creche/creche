@@ -38,6 +38,7 @@ export function sessionService(options: ServiceOptions): SessionService {
 
   return {
     loadSession: (params, peer) => loader.loadSession(params, peer),
+    resumeSession: (params, peer) => loader.resumeSession(params, peer),
     prompt: (params, peer) => turns.prompt(params, peer),
     cancel: (params) => turns.cancel(params),
   };

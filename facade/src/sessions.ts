@@ -32,7 +32,7 @@ import { getAgentInstance, init } from "@flue/runtime";
 import type { Agent, AgentInstanceHandle } from "@flue/runtime";
 import type { Wire } from "agent/wire-read";
 
-import type { LoadSessionRequest, SessionInfoUpdate } from "./acp.js";
+import type { LoadSessionRequest, ResumeSessionRequest, SessionInfoUpdate } from "./acp.js";
 import { cutToBytes } from "./line.js";
 
 /** The longest title, in UTF-8 bytes. */
@@ -55,11 +55,12 @@ export function titleOf(text: string): string {
 }
 
 /**
- * What the facade refuses in `session/load`, or null. The family decides
- * the agent's tools. A client's offer would be dropped in silence, so the
- * facade refuses it.
+ * What the facade refuses in `session/load` or `session/resume`, or null.
+ * The family decides the agent's tools. A client's offer would be dropped
+ * in silence, so the facade refuses it. `mcpServers` is optional in a
+ * resume, and an absent list offers no server.
  */
-export function sessionFault(params: LoadSessionRequest): string | null {
+export function sessionFault(params: LoadSessionRequest | ResumeSessionRequest): string | null {
   if (!isAbsolute(params.cwd)) {
     return "cwd is not an absolute path";
   }
@@ -73,7 +74,7 @@ export function sessionFault(params: LoadSessionRequest): string | null {
     return `cwd is over ${String(MAX_CWD_CHARS)} characters`;
   }
 
-  if (params.mcpServers.length > 0) {
+  if ((params.mcpServers ?? []).length > 0) {
     return "the facade takes no client MCP server";
   }
 

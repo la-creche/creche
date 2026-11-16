@@ -2,10 +2,18 @@
 //
 //   hold the peer's live items ──► read the history ──► send the replay
 //     ──► send the held items after the last replayed chunk ──► answer {}
+//
+// `session/resume`: the live updates only. The client keeps the transcript
+// that it has, so the facade replays nothing.
+//
+//   check the params and the id ──► put the peer on the live updates ──► answer {}
+//
+// A turn that runs at the resume sends its next chunks to the resumed peer
+// too. The chunks that it sent before the resume do not reach that peer.
 
 import type { ConversationStreamStore } from "@flue/runtime/adapter";
 
-import type { LoadSessionRequest, Outcome, Peer } from "./acp.js";
+import type { LoadSessionRequest, Outcome, Peer, ResumeSessionRequest } from "./acp.js";
 import { readHistory } from "./flue-history.js";
 import type { Live } from "./live.js";
 import { replay } from "./replay.js";
@@ -51,5 +59,21 @@ export class Loader {
     await gate.release(last);
 
     return { ok: true, value: {} };
+  }
+
+  public resumeSession(params: ResumeSessionRequest, peer: Peer): Promise<Outcome<Record<string, never>>> {
+    const fault = sessionFault(params);
+    if (fault !== null) {
+      return Promise.resolve({ ok: false, refusal: { kind: "invalid_params", detail: fault } });
+    }
+
+    const { sessionId } = params;
+    if (!this.session.known(sessionId)) {
+      return Promise.resolve({ ok: false, refusal: { kind: "unknown_session", sessionId } });
+    }
+
+    this.live.attach(sessionId, peer);
+
+    return Promise.resolve({ ok: true, value: {} });
   }
 }

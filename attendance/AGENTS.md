@@ -36,8 +36,10 @@ inside the VM, which carries Node.
    `session/list` and `session/delete` itself, from the host list, with no
    boot (decisions CH21-7, CH27). `initialize` lists `delete`, and
    `session/delete` calls the vmm `drop` and answers `{}`. A delete cannot
-   be undone (contract 02 §5.6). It routes each other request and
-   notification by its `sessionId`, over one vmm stream per session. A
+   be undone (contract 02 §5.6). `initialize` lists `resume` too, and the
+   door routes `session/resume` to the facade. It routes each other
+   request and notification by its `sessionId`, over one vmm stream per
+   session. A
    notification for a session with no open stream does nothing: no request
    is in flight there (decision CH21-8). A message whose `params._meta` holds a key that starts with `creche/`
    gets `invalidParams` (-32602) and reaches no stream (contract 02 §5.1
@@ -357,6 +359,12 @@ is marked `slow`.
 - A vmm stream that ends with a request in flight closes the door
   connection, as a relay that ended did. The client opens the session again
   with `session/load` (decision CH19 (6)).
+- A turn that a client started on a connection that ended goes on in the
+  VM. A `session/resume` or a `session/load` of the session on a new
+  connection is in flight only until its answer. Then the door closes the
+  idle stream, so the client gets no more chunks of that turn. It sees the
+  turn at its next `session/load`. ACP v1 gives the door no sign that a
+  turn runs (`acp_door.py`).
 - A job whose vmm drop fails leaves its row. The log names it. The next
   start of attendance drops it (contract 02 §6 rule 5).
 - `caregiver` reads only the codes of minor 17 from the fault file of this

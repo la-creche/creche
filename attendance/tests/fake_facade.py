@@ -4,8 +4,8 @@ A test drives a `FakeFacade` over a `FakeChannel`, the far side of one vmm
 ACP stream, with `serve`. `fake_vmm.py` starts one for each stream.
 
 `session/load` sends the updates that `replays` holds for the session, then
-answers `{}`. An unknown session answers `-32002`. `session/prompt` follows
-`prompt_mode`.
+answers `{}`. An unknown session answers `-32002`. `session/resume` answers
+`{}` and sends no update. `session/prompt` follows `prompt_mode`.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 INITIALIZE_RESULT: dict[str, Any] = {
     "protocolVersion": 1,
-    "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"list": {}}},
+    "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"list": {}, "resume": {}}},
     "authMethods": [],
 }
 
@@ -104,6 +104,9 @@ class FakeFacade:
 
         if method == "session/load":
             return self._load(request_id, str(params.get("sessionId")))
+
+        if method == "session/resume":
+            return [answer(request_id, {})]
 
         if method == "session/cancel":
             held = self.held.pop(str(params.get("sessionId")), None)

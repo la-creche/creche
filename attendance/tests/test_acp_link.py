@@ -41,7 +41,7 @@ SMALL_CAP = 256
 
 READY_RESULT: dict[str, Any] = {
     "protocolVersion": 1,
-    "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"list": {}}},
+    "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"list": {}, "resume": {}}},
 }
 
 
