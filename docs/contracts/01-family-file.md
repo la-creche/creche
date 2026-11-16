@@ -21,6 +21,10 @@ note.
 Amended on 2026-11-15: §5.5 names the Forgejo platform server and token
 beside the GitHub ones.
 
+Amended on 2026-11-15: §5.5 rule 4 names `code-worker`, which took the
+non-platform coding reach when the attended `code` family was deleted
+(registry#90).
+
 `docs/invariants.md` lists each rule of this contract that the code does
 not hold yet.
 
@@ -721,9 +725,9 @@ Rules:
 2. This rule left in minor 18 with the mount grant.
 3. A family outside the platform families that declares a fenced grant is
    an error. The report names the fence and the families it allows.
-4. `code` therefore has no path to write a platform repository. Its GitHub
-   credential cannot reach those repositories (contract 01b §8.2), and a
-   clone of `repos` never pushes (§3.7.1 rule 6).
+4. `code-worker` therefore has no path to write a platform repository. Its
+   GitHub and Forgejo credentials cannot reach those repositories (contract
+   01b §8.2), and a clone of `repos` never pushes (§3.7.1 rule 6).
 5. This rule left in minor 18 with the mount grant.
 6. This rule left in minor 18 with the mount grant.
 7. **The operator lands every platform change.** No family is granted
