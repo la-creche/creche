@@ -21,7 +21,7 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from .config import ConfigError, read_key_file
-from .forward import MAX_FRAME_BYTES, Close
+from .forward import MAX_FRAME_BYTES, MAX_QUEUED_FRAMES, Close
 
 PROG = "creche-acp-connect"
 _ARG_KEY_FILE = "--key-file"
@@ -58,6 +58,7 @@ async def bridge(url: str, key: bytes, stdin: BinaryIO, stdout: BinaryIO) -> int
             url,
             additional_headers={"Authorization": "Bearer " + key.decode("ascii")},
             max_size=MAX_FRAME_BYTES,
+            max_queue=MAX_QUEUED_FRAMES,
         )
     except (OSError, TimeoutError, WebSocketException) as exc:
         print(f"{PROG}: cannot open {url}: {exc}", file=sys.stderr)

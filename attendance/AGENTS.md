@@ -120,7 +120,16 @@ the door step (`attachments.py`, `scanner.py`).
     or less, strict JSON of one shape. Each other reply, a link with no
     reply and a reply past `wait_s` give `failed`. A link that ends before
     it takes the whole request gives `busy`, because the vmm closes a link
-    past its cap at once.
+    past its cap at once. The busy refusal line of the vmm gives `busy`
+    too.
+13. One connection holds `MAX_SCANS` (2) prompts with files at once, from
+    the check to the route of the rebuilt prompt. Each such prompt holds a
+    frame and its files. Past the cap a prompt gets `invalidParams` with
+    the message `<name>: busy`, for its first file.
+14. The socket listener uses the sans-I/O WebSocket protocol of uvicorn,
+    with `ws_max_queue` 1. It stops its reads after each message and
+    waits for the transport before each send. So a connection holds about
+    one 16 MiB frame in each direction.
 
 ## The trigger door
 
@@ -261,7 +270,10 @@ conversation and the one-writer rule (Flue's queue).
     holder meets no claim of its own (decision CH83 rule 4).
 13. Each session has its own frame lane of `LANE_DEPTH` (64) frames. Past
     it, the read of the next frame waits (decision CH84 rule 5,
-    `acp_door.py`).
+    `acp_door.py`). The lanes of one connection also hold
+    `QUEUED_FRAME_BYTES` (32 MiB) at most, the frames in their routes
+    included. Past it, the read of the next frame waits too. A frame enters
+    when the lanes hold no frame, so a frame of 16 MiB always passes.
 14. A vmm that does not answer at the start drop leaves the rows (decision
     CH84 rule 6). A list or a drop that the vmm refuses leaves the rows,
     and the log names the family. The families run at once, and the step

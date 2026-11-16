@@ -15,7 +15,7 @@ import uvicorn
 
 from .app import create_app
 from .config import ConfigError, DoorConfig, from_env
-from .forward import MAX_CLIENT_MESSAGE_BYTES
+from .forward import MAX_CLIENT_MESSAGE_BYTES, MAX_QUEUED_FRAMES
 
 #: The `websockets` sans-I/O protocol of uvicorn. It supports the denial
 #: response, so a refusal is an HTTP status before the upgrade.
@@ -50,6 +50,9 @@ def server_config(config: DoorConfig) -> uvicorn.Config:
         # A frame over attendance's cap and one line ending closes 1009
         # before the door holds it.
         ws_max_size=MAX_CLIENT_MESSAGE_BYTES,
+        # The sans-I/O protocol stops its reads after each message. The cap
+        # holds the same bound for a protocol that reads this setting.
+        ws_max_queue=MAX_QUEUED_FRAMES,
         server_header=False,
     )
 

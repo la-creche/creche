@@ -23,7 +23,14 @@ from typing import Any
 
 import pytest
 import uvicorn
-from attendance.acp_door import INITIALIZE_RESPONSE, MAX_FRAME_BYTES, RPC_INVALID_PARAMS, SCAN_OFF
+from attendance.acp_door import (
+    INITIALIZE_RESPONSE,
+    MAX_FRAME_BYTES,
+    MAX_SCANS,
+    QUEUED_FRAME_BYTES,
+    RPC_INVALID_PARAMS,
+    SCAN_OFF,
+)
 from attendance.api import Listener, build_app
 from attendance.auth import Principal, TokenBook
 from attendance.scanner import MAX_FILE_BYTES, Reason
@@ -182,6 +189,20 @@ async def answer_of(connection: ClientConnection, request_id: object) -> dict[st
 
             if "method" not in message and message.get("id") == request_id:
                 return message
+
+
+async def answers_of(connection: ClientConnection, ids: set[object]) -> dict[object, Any]:
+    """The answer to each request of `ids`, in any order."""
+    found: dict[object, Any] = {}
+
+    async with asyncio.timeout(ANSWER_S):
+        while set(found) != ids:
+            message: dict[str, Any] = json.loads(await connection.recv())
+
+            if "method" not in message and message.get("id") in ids:
+                found[message["id"]] = message
+
+    return found
 
 
 async def refusal(door: Door, blocks: list[dict[str, Any]]) -> str:
@@ -526,3 +547,56 @@ async def test_other_frames_flow_while_a_scan_waits(door: Door) -> None:
 
     assert answer["result"] == {"stopReason": "end_turn"}
     assert prompt_sent(door, first)["params"]["prompt"] == [image("a.png")]
+
+
+@pytest.mark.slow
+async def test_a_prompt_past_the_scans_of_a_connection_is_busy(door: Door) -> None:
+    """Each scan holds a frame and its files. A connection holds
+    `MAX_SCANS` of them at once."""
+    door.scanner.gate = asyncio.Event()
+
+    async with door.connect() as connection:
+        sessions = [await new_session(connection) for _ in range(MAX_SCANS + 1)]
+
+        for spot, session in enumerate(sessions[:MAX_SCANS]):
+            params = {"sessionId": session, "prompt": [image(f"{spot}.png")]}
+            message = {"jsonrpc": "2.0", "id": spot, "method": "session/prompt", "params": params}
+            await send(connection, message)
+
+        await wait_until(lambda: door.scanner.waiting == MAX_SCANS)
+        await send_prompt(connection, sessions[-1], [image("last.png")])
+        answer = await answer_of(connection, PROMPT_ID)
+        door.scanner.gate.set()
+        answers = await answers_of(connection, set(range(MAX_SCANS)))
+
+    assert answer["error"] == {"code": RPC_INVALID_PARAMS, "message": "last.png: busy"}
+    assert [one["result"] for one in answers.values()] == [{"stopReason": "end_turn"}] * MAX_SCANS
+
+
+@pytest.mark.slow
+async def test_the_lanes_of_a_connection_hold_a_byte_cap(door: Door) -> None:
+    """A frame can be 16 MiB, so the lanes of one connection hold
+    `QUEUED_FRAME_BYTES`, the frames in their routes included. Past it the
+    read of the next frame waits, also for a frame of another lane."""
+    async with door.connect() as connection:
+        session = await new_session(connection)
+        gate = door.vmm.open_gates[session] = asyncio.Event()
+        third = QUEUED_FRAME_BYTES // 3 + 1
+
+        for spot in range(3):
+            params = {"sessionId": session, "prompt": [text("a" * third)]}
+            message = {"jsonrpc": "2.0", "id": spot, "method": "session/prompt", "params": params}
+            await send(connection, message)
+
+        await wait_until(lambda: door.vmm.opened == [session])
+        listing: dict[str, Any] = {"jsonrpc": "2.0", "id": "list", "method": "session/list"}
+        await send(connection, listing)
+
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(connection.recv(), QUIET_S)
+
+        gate.set()
+        ends = await answers_of(connection, {"list", 0, 1, 2})
+
+    assert "result" in ends.pop("list")
+    assert [one["result"] for one in ends.values()] == [{"stopReason": "end_turn"}] * 3

@@ -49,6 +49,16 @@ _SOCKET_DIR_MODE = 0o2750
 #: Unix socket only, so only that listener gets it.
 WS_MAX_SIZE = MAX_FRAME_BYTES + len("\r\n")
 
+#: The WebSocket protocol of uvicorn. The sans-I/O protocol stops its reads
+#: after each message and waits for the transport before each send, so one
+#: connection holds about one 16 MiB frame in each direction.
+WS_PROTOCOL = "websockets-sansio"
+
+#: The most messages that the WebSocket holds before it stops its reads, for
+#: a protocol that reads this setting. The default is 32: 512 MiB of 16 MiB
+#: frames.
+WS_MAX_QUEUE = 1
+
 _LOG = logging.getLogger("attendance")
 
 
@@ -113,7 +123,9 @@ def _uvicorn_configs(config: Config, socket_app: object, lan_app: object) -> lis
             uds=str(config.socket_path),
             log_level="info",
             access_log=False,
+            ws=WS_PROTOCOL,
             ws_max_size=WS_MAX_SIZE,
+            ws_max_queue=WS_MAX_QUEUE,
         )
     ]
 

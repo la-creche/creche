@@ -136,7 +136,7 @@ from .clock import from_ms, now_ms, rfc3339_ms
 from .commands import read_commands
 from .errors import ApiError
 from .ids import is_session_cwd, is_session_id, new_session_id
-from .scanner import ScanFile, Scanner
+from .scanner import Reason, ScanFile, Scanner
 from .tasks import report_failure
 from .vmm import NOT_FOUND, Vmm, VmmRefused
 
@@ -237,6 +237,18 @@ HANDSHAKE_FAILED = "protocol_violation"
 #: its own lane (decision CH84 rule 5).
 LANE_DEPTH: Final = 64
 
+#: The most bytes of the frames that wait in the lanes of one connection. A
+#: frame can be 16 MiB, so `LANE_DEPTH` alone lets one lane hold 1 GiB. Past
+#: this cap the read of the next frame waits, as past `LANE_DEPTH`. A frame
+#: enters when no frame waits, so a frame of the whole cap passes.
+QUEUED_FRAME_BYTES: Final = 2 * MAX_FRAME_BYTES
+
+#: The most prompts of one connection whose files the door holds at once,
+#: from the check to the route of the rebuilt prompt. Each holds up to a
+#: 16 MiB frame and its files. Past it the prompt gets `invalidParams` with
+#: the reason `busy`.
+MAX_SCANS: Final = 2
+
 #: The lane of each frame that names no session: `initialize`,
 #: `session/new`, `session/list`, and a client answer to no facade.
 _DOOR_LANE: Final = ""
@@ -279,6 +291,10 @@ class _Scan:
     session: str
     record: dict[str, Any]
     task: asyncio.Task[None] | None = None
+
+
+#: One frame of a lane and its count of UTF-8 bytes.
+type _Queued = tuple[str | _Scanned, int]
 
 
 @dataclass(slots=True, frozen=True)
@@ -469,7 +485,12 @@ class _Door:
         #: session waits for the event.
         self._closing: dict[str, asyncio.Event] = {}
         #: The frames of each lane, and the task that works them.
-        self._lanes: dict[str, asyncio.Queue[str | _Scanned]] = {}
+        self._lanes: dict[str, asyncio.Queue[_Queued]] = {}
+        #: The bytes of the frames in the lanes and in their routes, under
+        #: `QUEUED_FRAME_BYTES`. A route frees its bytes at its end.
+        self._queued_bytes = 0
+        #: Set at each free. A frame that waits for room checks again.
+        self._room = asyncio.Event()
         self._workers: list[asyncio.Task[None]] = []
         self.ended: asyncio.Future[Close] = asyncio.get_running_loop().create_future()
 
@@ -490,7 +511,7 @@ class _Door:
             if refused is not None:
                 return refused
 
-            await self._lane(self._lane_of(line)).put(line)
+            await self._enqueue(self._lane_of(line), line)
 
     def _lane_of(self, line: str) -> str:
         """The session whose frames keep their order with this one."""
@@ -505,12 +526,35 @@ class _Door:
         session = params.get("sessionId") if params is not None else None
         return session if isinstance(session, str) and session else _DOOR_LANE
 
-    def _lane(self, key: str) -> asyncio.Queue[str | _Scanned]:
+    async def _enqueue(self, key: str, frame: str | _Scanned) -> None:
+        """Put one frame in the lane `key`. It waits while the lanes of the
+        connection hold `QUEUED_FRAME_BYTES`, unless they hold no frame."""
+        text = frame if isinstance(frame, str) else frame.line
+        size = len(text.encode("utf-8", "surrogatepass"))
+
+        while self._queued_bytes and self._queued_bytes + size > QUEUED_FRAME_BYTES:
+            self._room.clear()
+            await self._room.wait()
+
+        self._queued_bytes += size
+
+        try:
+            await self._lane(key).put((frame, size))
+        except BaseException:
+            # A cancel of a scan can stop the put. The bytes never entered.
+            self._free(size)
+            raise
+
+    def _free(self, size: int) -> None:
+        self._queued_bytes -= size
+        self._room.set()
+
+    def _lane(self, key: str) -> asyncio.Queue[_Queued]:
         """The frames of one lane. The first frame starts its worker."""
         lane = self._lanes.get(key)
 
         if lane is None:
-            lane = asyncio.Queue[str | _Scanned](LANE_DEPTH)
+            lane = asyncio.Queue[_Queued](LANE_DEPTH)
             self._lanes[key] = lane
             worker = asyncio.create_task(self._work(lane), name="acp door lane")
             worker.add_done_callback(report_failure)
@@ -518,11 +562,11 @@ class _Door:
 
         return lane
 
-    async def _work(self, lane: asyncio.Queue[str | _Scanned]) -> None:
+    async def _work(self, lane: asyncio.Queue[_Queued]) -> None:
         """Route each frame of one lane in turn. A frame that closes the
         connection ends the lane and the connection."""
         while True:
-            frame = await lane.get()
+            frame, size = await lane.get()
 
             try:
                 refused = await self._route_frame(frame)
@@ -533,6 +577,8 @@ class _Door:
                     self.ended.set_result(Close.RELAY_GONE)
 
                 raise
+            finally:
+                self._free(size)
 
             if refused is not None:
                 if not self.ended.done():
@@ -673,6 +719,9 @@ class _Door:
         except AttachmentRefused as error:
             raise _Refusal(RPC_INVALID_PARAMS, str(error)) from error
 
+        if sum(len(scans) for scans in self._scans.values()) >= MAX_SCANS:
+            raise _Refusal(RPC_INVALID_PARAMS, f"{files[0].name}: {Reason.BUSY}")
+
         scan = _Scan(session, record)
         self._scans.setdefault(session, set()).add(scan)
         task = asyncio.create_task(self._scan(scan, self._scanner, files), name="acp door scan")
@@ -701,7 +750,7 @@ class _Door:
 
             raise
 
-        await self._lane(scan.session).put(_Scanned(scan, line))
+        await self._enqueue(scan.session, _Scanned(scan, line))
 
     def _end_scan(self, scan: _Scan) -> bool:
         """Take `scan` out of the scans. False when a cancel took it first."""

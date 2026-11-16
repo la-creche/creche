@@ -33,6 +33,12 @@ MAX_FRAME_BYTES = 16_777_216
 #: one line ending that the door strips before its check.
 MAX_CLIENT_MESSAGE_BYTES = MAX_FRAME_BYTES + len("\r\n")
 
+#: The most frames that one WebSocket holds before it stops its reads. A
+#: frame can be 16 MiB, and a sandbox facade can send such frames to a slow
+#: client. So each WebSocket of the door holds one frame, not the default
+#: 16 (32 for uvicorn), and the door holds a few frames per connection.
+MAX_QUEUED_FRAMES = 1
+
 #: The time to open the WebSocket to attendance.
 CONNECT_TIMEOUT_S = 10.0
 
@@ -125,6 +131,7 @@ async def forward(client: WebSocket, family: str, upstream: Upstream) -> None:
             f"ws://attendance/acp/{family}",
             additional_headers={"Authorization": "Bearer " + upstream.token.decode("ascii")},
             max_size=MAX_FRAME_BYTES,
+            max_queue=MAX_QUEUED_FRAMES,
             compression=None,
             open_timeout=CONNECT_TIMEOUT_S,
         )

@@ -62,6 +62,10 @@ attendance's token. attendance reads its token from
 4. When one side closes, the door closes the other side with the same code
    and reason. A close with no code becomes 1000, and a lost link 1001. A
    lost link to attendance closes the client with 1014.
+5. A frame can be 16 MiB. So each WebSocket of the door holds
+   `MAX_QUEUED_FRAMES` (1) frame before it stops its reads: the client
+   listener, the link to attendance and `creche-acp-connect`. The default
+   queue is 16 frames, which is 256 MiB of such frames.
 
 A close code from attendance reaches the client as it is: 4401 means that
 the door's token for attendance is wrong, not the client's bearer.
