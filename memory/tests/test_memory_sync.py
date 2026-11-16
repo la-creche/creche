@@ -391,10 +391,12 @@ def test_a_sync_through_cognee_counts_the_note_that_fits_no_schema(tmp_path: Pat
     (notes / "b.md").write_text("# B\n\nBeta builds the delta.\n")
     (notes / "unfit.md").write_text(f"# Unfit\n\n{UNFIT}: alpha in dense table rows.\n")
 
-    # The other notes complete, and search finds the text of all three.
+    # The other notes complete, and search finds the text of all three. The
+    # sync compacts the vector store: without it, a table keeps 3 fragments.
     assert ingest_through_cognee(tmp_path, Answer.FIT) == [
         "failed: 1",
         "found: notes/a.md,notes/b.md,notes/unfit.md",
+        "fragments: 1",
     ]
 
 
