@@ -41,7 +41,7 @@ function instanceOf(props: AgentProps | undefined): string | null {
 /** Records its level and a fixed count, as the agent module does. */
 function Metered(props?: AgentProps): string {
   const level = levels.of(instanceOf(props));
-  useModel(FAUX_MODEL, { thinkingLevel: level });
+  useModel(FAUX_MODEL);
   useResponseStart(() => ({ [THINKING_LEVEL_KEY]: level }));
   useResponseFinish(() => ({ [CONTEXT_TOKENS_KEY]: USED }));
 
@@ -133,7 +133,7 @@ describe("the meter", () => {
   it("sends no usage_update at the load of a session with no turn", async () => {
     const wire = serve();
 
-    expect((await wire.request("session/load", { sessionId: id, cwd: "/work", mcpServers: [] })).result).toEqual(optionsAt("off"));
+    expect((await wire.request("session/load", { sessionId: id, cwd: "/work", mcpServers: [] })).result).toEqual(optionsAt("auto"));
     expect(wire.updates(id)).toEqual([]);
   });
 });
@@ -191,6 +191,8 @@ describe("memoOf", () => {
     ];
 
     expect(memoOf(chunks)).toEqual({ contextTokens: 10, thinking: "medium" });
+    // The first release wrote `thinkingLevel`, whose `off` meant `auto`.
+    expect(memoOf([started({ thinkingLevel: "off" })])).toEqual({ contextTokens: null, thinking: null });
     expect(memoOf([])).toEqual({ contextTokens: null, thinking: null });
   });
 });

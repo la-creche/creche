@@ -147,9 +147,9 @@ a load does. `mcpServers` is optional in a resume.
 ## The thinking level and the meter
 
 The client's mode picker shows one config option: `mode`, of category
-`mode`, with the levels `off`, `low`, `medium` and `high`
+`mode`, with the levels `auto`, `off`, `low`, `medium` and `high`
 (`src/thinking.ts`). `new_session.configOptions` of
-`vectors/creche-extensions.json` holds the option at its default, `off`.
+`vectors/creche-extensions.json` holds the option at its default, `auto`.
 attendance answers `session/new` with no VM boot, so the ACP door holds a
 copy of that list, and its test holds the copy equal to the vector.
 
@@ -158,8 +158,9 @@ copy of that list, and its test holds the copy equal to the vector.
    level, because Flue reads `useModel` once per submission. Another
    option id, a boolean or an unlisted value gets `invalidParams`.
 2. `session/load` answers the same list with the session's level.
-3. A level changes the model call only. pi sends `reasoning_effort` for
-   each level other than `off`. A level widens no tool and no grant.
+3. A level changes the model call only. `auto` sends no
+   `reasoning_effort`, so the model decides. `off` sends `none`, and each
+   other level sends its name. A level widens no tool and no grant.
 4. The agent keeps the level and the context tokens of each response in
    the response's metadata (`agent/src/usage.ts`), so they live in
    `flue.db`. After a cold start, the facade reads the history once and
