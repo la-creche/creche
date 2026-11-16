@@ -194,9 +194,11 @@ def fake_model(answer: Answer) -> Generator[str]:
 #: A child that runs one sync of `sys.argv[1]/vault` through `cognee_ingest`,
 #: against the model server at `sys.argv[2]`. It prints the count of failed
 #: items, or the type of the error and the cause that Cognee recorded. Then
-#: it prints the notes that the search of the service finds.
+#: it prints the notes that the search of the service finds, and the most
+#: fragments that one table of the vector store holds.
 _INGEST = """
 import asyncio, sys
+import lance
 from pathlib import Path
 from typing import cast
 
@@ -226,6 +228,10 @@ async def main():
     _, hits = await cognee_backend("alpha", 10)
     paths = await cognee_paths()
     print("found:", ",".join(sorted({paths[hit.document_id] for hit in hits})), flush=True)
+
+    tables = (root / "store").glob("system/databases/*.lancedb/*.lance")
+    fragments = [len(lance.dataset(table).get_fragments()) for table in tables]
+    print("fragments:", max(fragments, default=0), flush=True)
 
 asyncio.run(main())
 """
@@ -265,6 +271,6 @@ def ingest_through_cognee(root: Path, answer: Answer) -> list[str]:
 
     assert done.returncode == 0, done.stderr[-3000:]
 
-    marks = ("failed:", "raised:", "found:")
+    marks = ("failed:", "raised:", "found:", "fragments:")
 
     return [line for line in done.stdout.splitlines() if line.startswith(marks)]

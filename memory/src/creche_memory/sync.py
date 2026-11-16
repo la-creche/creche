@@ -249,8 +249,17 @@ async def _cognify() -> int:
     One call for the notes and the PDFs together: Cognee rolls back the graph
     of a whole run with a failed item, and a second call would extract each
     of those items again. With `raise_on_error=False`, a run that failed
-    items returns them. An error of the run itself still raises."""
+    items returns them. An error of the run itself still raises.
+
+    Cognee compacts the vector store only after a run that completed. Each
+    upsert adds a fragment to a LanceDB table, and each later upsert reads
+    them all. So after a run that failed items, the sync compacts the store
+    itself, as Cognee does after a completed run. A compaction that fails
+    fails the sync, as it does after a completed run."""
     import cognee
+    from cognee.infrastructure.databases.vector.compact_vector_store import (
+        compact_vector_store,  # pyright: ignore[reportUnknownVariableType]
+    )
 
     runs = await cognee.cognify(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         datasets=[DATASET],
@@ -259,7 +268,11 @@ async def _cognify() -> int:
         raise_on_error=False,
     )
 
-    return failed_extractions(cast(object, runs))
+    failed = failed_extractions(cast(object, runs))
+    if failed:
+        await compact_vector_store()
+
+    return failed
 
 
 async def in_daemon_thread[T](work: Callable[[], T]) -> T:
