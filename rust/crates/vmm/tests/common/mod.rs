@@ -404,6 +404,8 @@ pub fn boot_with<V>(
         // A request opens a folder of the spool, and the start sweeps its
         // `push/` when it is there (decision CH3).
         (config::GIT_SPOOL_ROOT, work.join("spool")),
+        // No dir is there, so the browser socket is off.
+        (config::BROWSER_SOCKET, work.join("browser/relay.sock")),
     ];
     let mut env: Vec<(&str, &OsStr)> = paths
         .iter()
@@ -421,6 +423,7 @@ pub fn boot_with<V>(
             (config::BUDGET, budget.as_str()),
             (config::LITELLM, litellm.as_str()),
             (config::CHAPERONE, chaperone.as_str()),
+            (config::BROWSER_PEER, "mcp-browser"),
         ]
         .map(|(key, value)| (key, OsStr::new(value))),
     );

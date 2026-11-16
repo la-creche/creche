@@ -94,6 +94,12 @@ pub const GIT: &str = "VMM_GIT_PROGRAM";
 /// The git platform spool that host port 1105 serves: `push/` and
 /// `fetch/` (decision CH3).
 pub const GIT_SPOOL_ROOT: &str = "VMM_GIT_SPOOL_ROOT";
+/// The socket of the browser VM, which `browser-relay` dials (browser
+/// design 10.2 items 1 and 2). Root makes its dir.
+pub const BROWSER_SOCKET: &str = "VMM_BROWSER_SOCKET";
+/// The one user whose links the socket of the browser VM takes: the user
+/// that the chaperone runs `browser-relay` as.
+pub const BROWSER_PEER: &str = "VMM_BROWSER_PEER_USER";
 
 /// What the vmm reads from its env.
 #[derive(Debug)]
@@ -145,6 +151,47 @@ pub struct Config {
     /// step sweeps its `push/`, and each request opens a folder of it
     /// (`SpoolRoot`).
     pub git_spool_root: SpoolRoot,
+    /// `VMM_BROWSER_SOCKET`. The config checks its form only. The compose
+    /// step binds it when its dir is there (`service::link::bind`).
+    pub browser_socket: PathBuf,
+    /// `VMM_BROWSER_PEER_USER`. The compose step reads its uid from
+    /// `/etc/passwd`.
+    pub browser_peer: UserName,
+}
+
+/// A user name of the host: 1 to 32 bytes of `a-z`, `0-9`, `_` and `-`,
+/// with a letter or `_` first, as `useradd` takes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserName(String);
+
+impl UserName {
+    /// The most bytes of a user name.
+    pub const MAX: usize = 32;
+
+    /// The name as text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::str::FromStr for UserName {
+    type Err = Fault;
+
+    fn from_str(text: &str) -> Result<Self, Fault> {
+        let mut bytes = text.bytes();
+        let first = bytes
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase() || byte == b'_');
+        let rest = bytes.all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
+        });
+        if first && rest && text.len() <= Self::MAX {
+            Ok(Self(text.to_owned()))
+        } else {
+            Err(Fault::NotUserName)
+        }
+    }
 }
 
 /// What is wrong with one key. A fault never holds the value, as in
@@ -171,6 +218,9 @@ pub enum Fault {
     TooLarge,
     /// An address is not an IP address and a port.
     NotSocketAddr,
+    /// A user name is not 1 to 32 bytes of `a-z`, `0-9`, `_` and `-`
+    /// with a letter or `_` first.
+    NotUserName,
 }
 
 /// The first key that refused the start.
@@ -200,6 +250,7 @@ impl fmt::Display for ConfigError {
             Fault::Zero => "is 0",
             Fault::TooLarge => "is too large",
             Fault::NotSocketAddr => "is not an IP address and a port",
+            Fault::NotUserName => "is not a user name",
         };
         write!(formatter, "{}: the key {fault}", self.key)
     }
@@ -255,6 +306,8 @@ impl Config {
             git: program_of(GIT)?,
             git_spool_root: SpoolRoot::new(path_of(GIT_SPOOL_ROOT)?)
                 .map_err(|e| root(GIT_SPOOL_ROOT, e))?,
+            browser_socket: path_of(BROWSER_SOCKET)?,
+            browser_peer: user(&lookup, BROWSER_PEER)?,
         })
     }
 }
@@ -460,6 +513,16 @@ fn gib(
         return Err(error(key, Fault::Zero));
     }
     count.checked_mul(GIB).ok_or(error(key, Fault::TooLarge))
+}
+
+/// The user name of `key`.
+fn user(
+    lookup: &impl Fn(&str) -> Option<OsString>,
+    key: &'static str,
+) -> Result<UserName, ConfigError> {
+    let value = value(lookup, key)?;
+    let text = value.to_str().ok_or(error(key, Fault::NotUserName))?;
+    text.parse().map_err(|fault| error(key, fault))
 }
 
 /// The address of `key`: an IP address and a port, such as

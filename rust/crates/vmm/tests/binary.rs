@@ -32,7 +32,7 @@ const TRUE: &str = "/usr/bin/true";
 
 /// Each key with a good value. The paths need not exist: the config
 /// checks their form only.
-const GOOD: [(&str, &str); 22] = [
+const GOOD: [(&str, &str); 24] = [
     ("VMM_STATE_ROOT", "/srv/vmm/state"),
     ("RUNTIME_DIRECTORY", "/run/user/1000/vmm"),
     ("VMM_FAMILY_ROOT", "/srv/families"),
@@ -58,6 +58,8 @@ const GOOD: [(&str, &str); 22] = [
     ("VMM_MIRROR_ROOT", "/srv/agents/code"),
     ("VMM_GIT_PROGRAM", "/usr/bin/git"),
     ("VMM_GIT_SPOOL_ROOT", "/var/lib/creche-git-platform"),
+    ("VMM_BROWSER_SOCKET", "/var/lib/creche-browser/relay.sock"),
+    ("VMM_BROWSER_PEER_USER", "mcp-browser"),
 ];
 
 /// The CH fixture of the version check (gap G10). Each scratch dir gets a
@@ -151,6 +153,8 @@ impl Scratch {
                     "VMM_EGRESS_LOG" => self.path("egress.jsonl"),
                     "VMM_MIRROR_ROOT" => self.path("mirror"),
                     "VMM_GIT_SPOOL_ROOT" => self.path("spool"),
+                    "VMM_BROWSER_SOCKET" => self.path("browser/relay.sock"),
+                    "VMM_BROWSER_PEER_USER" => good.to_owned(),
                     key if key.ends_with("_GIB") || key.ends_with("_ADDR") => good.to_owned(),
                     key => match PROGRAMS.iter().find(|program| program.0 == key) {
                         Some((_, file)) => self.path(&format!("bin/{file}")),

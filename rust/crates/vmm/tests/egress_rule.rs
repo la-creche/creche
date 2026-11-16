@@ -6,7 +6,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use creche_vmm::egress::rule::{Target, decide, is_public, judge};
+use creche_vmm::egress::rule::{SERVICE_PORT, Target, decide, decide_public, is_public, judge};
 use creche_wire::{CheckReason, CheckReply, FamilyEgress};
 use tokio::runtime::Builder;
 
@@ -320,4 +320,35 @@ fn each_special_range_is_not_public() {
         let address: IpAddr = address.parse().unwrap();
         assert!(is_public(address), "{address}");
     }
+}
+
+/// The verdict of the rule of a service VM on `target`.
+#[cfg(test)]
+fn public_verdict(target: &str) -> CheckReply {
+    let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+    match Target::parse(target) {
+        Ok(target) => runtime.block_on(decide_public(&target)),
+        Err(reason) => refused(reason),
+    }
+}
+
+/// A service VM has no allowlist: any name on port 443 passes to the
+/// lookup, and the range check refuses a name with a record that is not
+/// public. Any other port is `not_listed` before any lookup (browser
+/// design 10.2 item 4, decision V2).
+#[test]
+fn the_service_rule_is_any_public_name_on_443() {
+    assert_eq!(SERVICE_PORT, 443);
+    let not_listed = refused(CheckReason::NotListed);
+    for target in ["example.org:80", "example.org:8443", "localhost:22"] {
+        assert_eq!(public_verdict(target), not_listed, "{target}");
+    }
+    assert_eq!(
+        public_verdict("localhost:443"),
+        refused(CheckReason::NotPublic)
+    );
+    assert_eq!(
+        public_verdict("127.0.0.1:443"),
+        refused(CheckReason::IpLiteral)
+    );
 }

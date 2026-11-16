@@ -10,6 +10,8 @@ use creche_vmm_store::rows::{self, Rows};
 use creche_wire::{CreateError, CreateRoute, CreateSession, Serve, SessionRow};
 use tokio::task::spawn_blocking;
 
+use crate::service;
+
 /// The handler of `create`. It shares the rows with the other handlers.
 #[derive(Debug)]
 pub struct Creates {
@@ -52,6 +54,13 @@ fn create(
     // its tries.
     check_family(families, &request)?;
     let id = request.id.clone();
+    // Browser design 10.4 gap 1: a service VM holds a reserved id in the
+    // VM table. A row of that id would reach the service VM through the
+    // acp route, so no create gets it.
+    if service::is_reserved(&id) {
+        eprintln!("vmm: create of {id}: the id is reserved for a service VM");
+        return Err(CreateError::Conflict {});
+    }
     let mut rows = rows.lock().map_err(|_| CreateError::Internal {})?;
     // Decision CH33 rule 3: caregiver removes the family files, then drops
     // the family. So the vmm reads the family again under the lock of the
