@@ -1,9 +1,11 @@
 # The release path on Forgejo: design
 
-> Status as of 2026-11-15: The operator decided FR1 to FR4 on 2026-11-15, all as recommended. This note proposes FR5 to FR15. Nothing is built. Next: the open questions of section 9, then PR 2 of section 8.
+> Status as of 2026-11-16: The operator decided FR1 to FR4 on 2026-11-15, all as recommended, and FR16 on 2026-11-16. This note proposes FR5 to FR15. Nothing is built. The revision of 2026-11-16 makes the signer a creche service that attaches to the generic runner from outside (FR16). Next: the open questions of section 10, then PR 2 of section 8.
 > Host names, addresses and accounts are placeholders. The operator's private notes hold the real values.
 
 Source: the operator's private migration plan (section 0c, the Actions facts measured on Forgejo 17.0.1 with runner v13.2.1, and the verification appendix), its raw inventory of GitHub dependencies, and the code of the five repositories. File evidence was checked at `origin/main` on 2026-11-15: creche `96fab11c`, chaperone `a3dd242`, mcp `dadfa2b`, registry `7673e0f`, creche-release `9f0ac54`. A "measured" fact comes from section 0c of the plan. Any other fact about Forgejo is marked "not measured".
+
+"The runner design" in this note is `docs/design.md` of the repository `ci-runner` in the organization `infra` on the Forgejo instance, read at commit `7cdaa18` of its branch `import/standalone` on 2026-11-16. This note cites it by section title, not by section number.
 
 ## 1. Goal and non-goals
 
@@ -19,28 +21,31 @@ Goal:
 Non-goals:
 
 1. The repositories of the code family. They moved in wave 2 and have no release path.
-2. Panda. It waits for the runner VMs of `ci-runner.md` (wave 3).
+2. Panda. It waits for the runner VMs of the runner design (wave 3).
 3. The agent MCP servers and their fences (the `forgejo-platform` server, `git-platform`, the bot `platform-bot`). They are a separate track.
-4. The runner VMs themselves. `ci-runner.md` designs them. This note adds one device and one check to them (section 4).
+4. The runner itself. The runner design covers it. This note adds nothing to the runner. The signer uses the runner's generic attachment interface, through a policy row that the operator owns (section 4.4).
 5. A public transparency log for the signatures (FR12).
 
 ## 2. Decisions
 
-The operator decided these rows on 2026-11-15:
+The operator decided FR1 to FR4 on 2026-11-15 and FR16 on 2026-11-16:
 
 | # | Topic | Decision | The operator's words | Date |
 | - | ----- | -------- | -------------------- | ---- |
 | FR1 | Signing | Cosign key-pair signing replaces keyless Sigstore. The host verifies with the public key. | "as recommended" | 2026-11-15 |
 | FR2 | Trust anchor of P1 | The signing key is the only trust anchor of P1. No author check. | "as recommended" | 2026-11-15 |
-| FR3 | Runners | CI runs in throwaway Cloud Hypervisor VMs on the host (`ci-runner.md`). The daemon runs as the system user `ci-runner` with a system unit. | "as recommended" | 2026-11-15 |
+| FR3 | Runners | CI runs in throwaway Cloud Hypervisor VMs on the host. The runner is generic infrastructure of the Forgejo instance (the runner design), and creche is one of its users. The daemon runs as the system user `ci-runner` with a system unit. | "as recommended" | 2026-11-15 |
 | FR4 | Cutover | The five repositories move in one frozen window behind a bridge release. The bridge is a release shipped from GitHub whose executor already speaks Forgejo and holds the signing public key. The current executor verifies the bridge. | "as recommended" | 2026-11-15 |
+| FR16 | The runner and creche | The runner is independent of creche. It holds no signing logic and no creche concept. The signer is a creche service that attaches to the VM of a release job from outside, through the runner's policy file. | "ci-runner needs to be generic enough that it can be used by any repo for any PR in any CI/CD pipeline" | 2026-11-16 |
 
-This note proposes these rows. The operator answered the open questions of the first draft on 2026-11-15 (section 9). The rows become decided when the operator merges this note.
+On 2026-11-16 the wording of FR3 changed. The first wording made the runner a part of creche. FR16 rejects that coupling. The decision of FR3 itself does not change.
+
+This note proposes these rows. The operator answered the open questions of the first draft on 2026-11-15 (section 9). Section 10 holds the questions that FR16 opens. The rows become decided when the operator merges this note.
 
 | # | Topic | Proposal | Why |
 | - | ----- | -------- | --- |
-| FR5 | The signer | A separate program `ci-signer` holds the private key. It runs as its own system user `ci-signer`, in its own unit `creche-ci-signer.service`. It ships in the `ci-runner` component. | Each CH process runs as `ci-runner` (`ci-runner.md` section 4.7). A CH escape must not reach the key. |
-| FR6 | The channel | Only a VM of a job with the label `release`, in a run that passes the checks of section 4.4, gets a vsock device. The signer serves the host end. No other VM has a path to the signer. | A vsock device is no network card. The nftables fence of `ci-runner.md` section 4.5 does not change. |
+| FR5 | The signer | A separate program `ci-signer` holds the private key. It is a creche component of its own. It runs as its own system user `ci-signer`, in its own unit `creche-ci-signer.service`. It ships through creche's own release path, not inside the runner. | The runner holds no signing logic (FR16). Each CH process runs as `ci-runner` (the runner design, section "The host user, the unit and the VM start"). A CH escape must not reach the key. |
+| FR6 | The channel | An `[[attach]]` row of the runner's policy file matches the release job of each repository of section 4.3. The runner relays one vsock port of that job's VM to the socket of the signer. The signer accepts only a run that passes the checks of section 4.4. No other VM has a path to the signer. | This is the generic interface of the runner design, section "Attachments of outside services". A vsock device is no network card. The fence of the runner design, section "The network fence", does not change. |
 | FR7 | What is signed | One release statement per run. The signer writes the repository, the workflow file, the event, the ref, the commit and the run id from its own read of Forgejo. The job gives only the tags and the SHA-256 of each asset. | `verify-blob --key` alone binds no workflow, ref or commit. Keyless signing bound all three (`artifacts.py:332-345`). The statement puts that binding back. |
 | FR8 | Where the statement travels | In the message of the annotated tag, with its bundle. The signer creates each release tag through the API with the token of the Forgejo bot `ci-signer`, the only user allowed on the tag protection of `*-v*` (section 6). The per-asset bundles `*.sigstore.json` retire. | A tag never moves. Root already reads the tag object for P2 (`provenance.py:248-257`). The follower fetches nothing new. |
 | FR9 | P1 for every kind | Each Release of a component with `Releases.YES` carries a statement, also a `venv` and a `units` component. mcp and creche-release join `catalog.RELEASE_WORKFLOW`. | FR2. Without a statement, P1 of a `venv` component has no anchor at all. |
@@ -74,7 +79,7 @@ This note proposes these rows. The operator answered the open questions of the f
 | M17 | The tag guard of creche-release | `.github/require-pr-merge.sh` (`gh api .../commits/$SHA/pulls`) | curl to `commits/{sha}/pull`. Check `merged`, `base.ref` is `main`, `merge_commit_sha` is the SHA | Measured: the 404 of a commit that is no merge |
 | M18 | The secrets guards of creche-release | `secrets-guard.yml:40-43` (`gh api --paginate .../files`, `previous_filename`, the operator's GitHub login). `gate.yml:29-35` (the same login) | curl to `pulls/{n}/files` with `page` and `limit` until an empty page. The operator's Forgejo login | Not measured: `previous_filename`, `pull_request_target` on 17.0.1 |
 | M19 | The checkout of creche at `CRECHE_REF` | chaperone `release.yml:48`, `:88-89`, `:314-315`. registry `tag.yml:54`, `:68-69` (`CRECHE_FAMILY_REF`), `:90-91`. mcp `rework-component-tags.yml:65`, `:98-99`. creche-release `tags.yml:56`, `:94-95` | `repository: <owner>/creche` resolves on the same Forgejo. A public creche needs no token | Measured: `github.api_url` names Forgejo. The visibility of creche on Forgejo: not checked |
-| M20 | The git dependencies of creche-release | `pyproject.toml:41-44`: four packages from `https://github.com/<owner>/creche` | The Forgejo clone URL, then `uv lock` | The runner fence allows the Forgejo HTTP port (`ci-runner.md` section 4.5) |
+| M20 | The git dependencies of creche-release | `pyproject.toml:41-44`: four packages from `https://github.com/<owner>/creche` | The Forgejo clone URL, then `uv lock` | The runner fence allows the Forgejo HTTP port (the runner design, section "The network fence") |
 | M21 | The asset download | `artifacts.py:213-228`, `corpus/artifacts.py:89` (HTTPS only), `:293` | The same path shape on `<forgejo-host>` | The plan: Forgejo uses the same path shape. HTTPS: see FR11 |
 | M22 | The asset size | `catalog.py:350` (`DISK_FILE_MAX_BYTES`) | `[repository.release] FILE_MAX_SIZE` and `ALLOWED_TYPES` of Forgejo | Not measured |
 
@@ -86,24 +91,25 @@ This note proposes these rows. The operator answered the open questions of the f
 Forgejo host                     the host
 +---------------+   HTTPS   +--------------------------------------------+
 | Forgejo 17    |<----------| ci-runner daemon (user ci-runner)          |
-|  runs, jobs   |           |   reads each waiting job and its run       |
-|  PRs, tags    |<--+       |   starts CH, adds --vsock for an eligible  |
-+---------------+   |       |   job with the label `release`             |
+|  runs, jobs   |           |   generic: reads the facts of each job,    |
+|  PRs, tags    |<--+       |   matches the operator's [[attach]] rows,  |
++---------------+   |       |   relays one vsock port of a matched VM    |
                     |       +----------------------+---------------------+
-                    | HTTPS                        | asks for a session
+                    |                              | open, relay, close
+                    | HTTPS                        | (Unix socket)
                     |       +----------------------v---------------------+
-                    +-------| ci-signer (user ci-signer)                 |
-                            |   checks the run again, on its own         |
+                    +-------| ci-signer (user ci-signer), a creche part  |
+                            |   checks the run itself, trusts no fact    |
                             |   holds the private key (a credential)     |
                             +----------------------^---------------------+
-                                                   | vsock, one VM only
+                                                   | vsock, relayed
                             +----------------------+---------------------+
                             | VM of the `release` job                    |
                             |   sends tags and digests, gets statement   |
                             +--------------------------------------------+
 ```
 
-The key never enters a VM. The job sends digests and gets back a signed statement.
+The key never enters a VM. The job sends digests and gets back a signed statement. The runner carries bytes between the job and the signer. It holds no secret of the signer and no part of its code.
 
 ### 4.2 Who makes the key pair, and where
 
@@ -118,11 +124,13 @@ A password beside the key would add no protection, so the key has none. The file
 
 ### 4.3 The signer
 
-1. `ci-signer` is a second program of the `ci-runner` component. It runs as the system user `ci-signer`, which the operator makes with one `sudo useradd`, as for `ci-runner`.
-2. The unit `creche-ci-signer.service` gives it the key with `LoadCredential=`. Only the unit reads the credential. The user `ci-runner` cannot read it.
-3. The signer holds its own token of the bot `release-reader`, also as a credential. It never uses the token of `runner-bot`.
-4. The list of signing pairs is a file in the `ci-runner` tree: each repository name with its release workflow file. A creche test holds the list equal to `catalog.RELEASE_WORKFLOW`. The owner comes from the host config of the signer, so a rehearsal names a shadow owner with no release.
-5. The signer writes one journal line for each statement: the run id, the commit and the SHA-256 of the statement.
+1. `ci-signer` is a creche component of its own (question 8). It ships through creche's release path, as each other creche component does: a tag, a Release, and P1 to P6 by root. The runner holds no part of it.
+2. It runs as the system user `ci-signer`, which the operator makes with one `sudo useradd`.
+3. The unit `creche-ci-signer.service` gives it the key with `LoadCredential=`. Only the unit reads the credential. The user `ci-runner` cannot read it.
+4. The signer holds its own token of the bot `release-reader` and the token of the Forgejo bot `ci-signer`, each as a credential. It never uses the token of the runner, and it never gets one.
+5. The signer listens on its own Unix socket, `/run/ci-signer/attach.sock`. The user `ci-signer` owns it, and the group `ci-runner` may connect. It speaks the version-1 lines of the runner design, section "Attachments of outside services".
+6. The list of signing pairs is a file in the tree of the `ci-signer` component: each repository name with its release workflow file. A creche test holds the list equal to `catalog.RELEASE_WORKFLOW`. The owner comes from the host config of the signer, so a rehearsal names a shadow owner with no release.
+7. The signer writes one journal line for each statement: the run id, the commit and the SHA-256 of the statement.
 
 | Repository | Workflow file |
 |---|---|
@@ -135,7 +143,43 @@ registry has no row. Its component `registry-data` is `Releases.NO` (`catalog.py
 
 ### 4.4 Which run gets a signature
 
-The label `release` takes a plain slot of R6 (`ci-runner.md` section 3). The daemon reads the run of each waiting job with that label: `GET /repos/{o}/{r}/actions/runs/{id}`. Measured on 2026-11-15: the entry of a waiting job has `repo_id`, `run_id`, `runs_on` and `handle`. The run reply has `workflow_id`, `event`, `trigger_event`, `prettyref`, `commit_sha` and `repository.full_name`. A run is eligible only when each check passes:
+Two parts select a run. A policy row of the runner is a first filter. The checks of the signer decide.
+
+**The policy rows.** The runner's policy file is root-owned on the host, outside every release. The operator owns it (question 9). For each pair of the list of section 4.3, the operator adds one `[[attach]]` row. The row for creche:
+
+```toml
+[[attach]]
+name = "ci-signer-creche"
+kind = "release"
+repository = "<owner>/creche"
+workflow = "release.yml"
+event = "push"
+ref = "refs/heads/main"
+vsock_port = 5000
+socket = "/run/ci-signer/attach.sock"
+```
+
+The row names the full ref `refs/heads/main`, not `default-branch`. An admin of a repository can change its default branch. Check 3 of the signer asks for `main`.
+
+The runner can match these job facts (the runner design, sections "Job facts" and "Attachments of outside services"):
+
+1. The slot kind of the job, from the labels of its `runs-on`.
+2. The repository, as `owner/name`.
+3. The workflow file.
+4. The event.
+5. The full ref. A tag never matches a branch.
+
+The runner cannot match:
+
+1. One job of a run. A row matches each job of the run that takes a slot of its kind.
+2. Whether the commit is a merge of a pull request into `main` (check 4).
+3. Whether the run already got a statement.
+
+So the release job asks for the label `release`, and the operator's policy holds a kind `release` with that one label (question 10). The kind lists the four repositories of section 4.3 in its `repositories`. A job of any other repository with that label stays waiting. The other jobs of a release workflow run on the plain kind and get no vsock device.
+
+The runner reads its facts with its own token. The signer does not trust them. The runner design does not yet record the facts of a push run on 17.0.1 (its open question "The event and the ref of a run"). Not measured: the event and the full ref that the runner reads for a push run.
+
+**The checks of the signer.** The daemon sends one `open` line to the signer before the VM starts. The signer takes only the repository and the run id from that line, as the key of its own read. It reads the run with its own token: `GET /repos/{o}/{r}/actions/runs/{id}`. Measured on 2026-11-15: the run reply has `workflow_id`, `event`, `trigger_event`, `prettyref`, `commit_sha` and `repository.full_name`. A run is eligible only when each check passes:
 
 1. The repository and the workflow file are a pair of the list of section 4.3. The run reply names the file in `workflow_id`, for example `test.yml` (measured 2026-11-15).
 2. `event` is `push`.
@@ -143,19 +187,20 @@ The label `release` takes a plain slot of R6 (`ci-runner.md` section 3). The dae
 4. `GET /repos/{o}/{r}/commits/{commit_sha}/pull` answers one PR with `merged` true, `base.ref` `main` and `merge_commit_sha` equal to `commit_sha`.
 5. The run is not finished.
 
-Check 4 is not redundant with check 3. `prettyref` is a short ref name. A tag named `main` gives a run with `event` `push` and `prettyref` `main`, the same as a push to the branch `main` (measured 2026-11-15 on a scratch repository: run 15, from a tag `main` made through the API). So checks 2 and 3 alone accept a run from a tag. Check 4 refuses that run, because its commit is no merge into `main`. Tag protection of the name `main` is a second layer (section 6).
+Check 4 is not redundant with check 3. `prettyref` is a short ref name. A tag named `main` gives a run with `event` `push` and `prettyref` `main`, the same as a push to the branch `main` (measured 2026-11-15 on a scratch repository: run 15, from a tag `main` made through the API). So checks 2 and 3 alone accept a run from a tag. Check 4 refuses that run, because its commit is no merge into `main`. Tag protection of the name `main` is a second layer (section 6). The full ref of the runner's row also tells a tag from the branch. The signer does not read that fact from the runner, so check 4 stays required.
 
-The daemon then asks the signer to open a session for that run. The signer does not trust the daemon. It reads the run and the PR itself with its own token and runs the same five checks. Only then does it serve the host end of the vsock device of that one VM.
+The signer answers `accept` only when each of the five checks passes. Only then does the daemon start the VM with a vsock device and relay its port to the signer. A refusal, a fault or a timeout gives the VM no vsock device (the runner design, section "Attachments of outside services"). The job still runs, and its allocator gets no statement.
 
 ### 4.5 The exchange
 
 1. The allocator in the `release` job plans its tags. It knows each tag and each asset before any tag exists.
-2. It sends one request over vsock: a list of tags, each with its assets as a name and a SHA-256. A `venv` or `units` tag has no asset.
-3. The signer refuses a request that breaks a limit: at most 32 tags, at most 16 assets for each tag, a tag of the form `<component>-vX.Y.Z`, a plain asset name, 64 lower-case hex digits.
-4. The signer builds the statement. It writes its own fields from section 4.4 and the tags of the request. It signs the bytes with `cosign sign-blob --key`, with no log entry.
-5. The signer answers the statement and its bundle. It serves one statement for each run id. A second request of the same run is refused.
-6. The signer creates each annotated tag of the request at the run's commit, through `POST /repos/{o}/{r}/tags` with the token of the Forgejo bot `ci-signer`. Tag protection refuses that call to every other user, the job token included (measured, section 6).
-7. The allocator reads the tags back and checks the bundle with `handover/release-signing.pub`. It then creates each Release and uploads its assets with the job token. A check that fails releases nothing.
+2. It connects to the vsock port of the row. The daemon relays the connection to the signer with a `relay` line that names the session. The signer refuses a session that it did not accept, and it forgets a session at its `close` line.
+3. It sends one request over vsock: a list of tags, each with its assets as a name and a SHA-256. A `venv` or `units` tag has no asset.
+4. The signer refuses a request that breaks a limit: at most 32 tags, at most 16 assets for each tag, a tag of the form `<component>-vX.Y.Z`, a plain asset name, 64 lower-case hex digits.
+5. The signer builds the statement. It writes its own fields from section 4.4 and the tags of the request. It signs the bytes with `cosign sign-blob --key`, with no log entry.
+6. The signer answers the statement and its bundle. It serves one statement for each run id. A second request of the same run is refused.
+7. The signer creates each annotated tag of the request at the run's commit, through `POST /repos/{o}/{r}/tags` with the token of the Forgejo bot `ci-signer`. Tag protection refuses that call to every other user, the job token included (measured, section 6).
+8. The allocator reads the tags back and checks the bundle with `handover/release-signing.pub`. It then creates each Release and uploads its assets with the job token. A check that fails releases nothing.
 
 The statement, in its strict JSON form:
 
@@ -180,7 +225,7 @@ The signer writes each tag of the run as an annotated tag. Its message has three
 
 ### 4.6 What a branch run gets
 
-1. A run of a branch push, of a PR or of `workflow_dispatch` fails check 2 or check 3. Its VM gets no vsock device, also when the job asks for the label `release`.
+1. A run of a branch push, of a PR or of `workflow_dispatch` matches no policy row of section 4.4, and it fails check 2 or check 3 of the signer. Its VM gets no vsock device, also when the job asks for the label `release`.
 2. Its allocator gets no statement and no tag. It releases no component of `Releases.YES`, and the run ends red.
 3. Its job token cannot create or delete a release tag, because tag protection refuses it (measured, section 6). It can still create a Release on another tag name. Root refuses that release at P1, because no statement names the tag at its commit.
 
@@ -205,14 +250,16 @@ A loss: the operator rotates (section 4.7). Nothing else is needed, because the 
 |---|---|
 | The key as a Forgejo Actions secret | Measured: a branch push and a PR of the same repository read every repo and org secret. Agents push branches. |
 | The key on the seed disk of an eligible VM | A compromised action in the job reads the key, and the VM reaches the public internet. |
-| The daemon itself signs | Each CH process runs as `ci-runner`. A CH escape would read the key. |
-| The daemon signs after the VM exits | The job is over. The daemon would then need a write token to attach the signature. |
+| The signer inside the runner | The runner serves every repository of the instance and holds no creche concept (FR16). |
+| The runner daemon itself signs | FR16. Also, each CH process runs as `ci-runner`. A CH escape would read the key. |
+| The runner daemon signs after the VM exits | FR16. Also, the job is over. The daemon would then need a write token to attach the signature. |
 | A private Sigstore with Forgejo as OIDC issuer | More services, and Forgejo's OIDC token is also given to every branch run. |
 
 ### 4.10 What stays open
 
-1. A CH escape gives code as `ci-runner`. That code can talk to an open session of a real release run and ask for its statement first. The real run then gets none and ends red, which the operator sees. The escape cannot read the key or open a session for another run.
-2. A malicious change that a PR merges into a release workflow gets signed. That is row 10 of the threat table in creche-release `docs/releases.md` section 6, as today.
+1. A CH escape gives code as `ci-runner`. The group `ci-runner` may connect to the socket of the signer, so that code can send its own `open` and `relay` lines. The signer still checks each run against Forgejo with its own token. So the code can ask first for the statement of a real release run that passes section 4.4. The real run then gets none and ends red, which the operator sees. The escape cannot read the key or get a statement for a run that fails section 4.4.
+2. The same escape may read the registration token of the runner, which has the admin scope of the instance (the runner design, section "Security", and its open question "Who holds the admin token"). An instance admin can change the protection of `main` and of release tags. The escape still cannot make a statement, so root refuses each release that it makes (P1).
+3. A malicious change that a PR merges into a release workflow gets signed. That is row 10 of the threat table in creche-release `docs/releases.md` section 6, as today.
 
 ## 5. Provenance on Forgejo
 
@@ -278,12 +325,13 @@ So tag protection does what the signature cannot do alone: a branch run can neit
 
 Before the window:
 
-1. **The rehearsal.** An agent imports the five repositories into a shadow owner on Forgejo. The ported branches of section 8 run there: a full gate and a full release of each repository, with the signer on the shadow owner. An agent runs P1 to P6 from a dev checkout of the bridge branch against the shadow releases, never on the host. It records each Forgejo reply that section 5 reads, for the tests. It proves each refusal: a branch push, a PR, a `workflow_dispatch` on `main`, a tag named `main`, a Release with no statement, a statement of another commit. Rollback point: delete the shadow owner.
+1. **The rehearsal.** An agent imports the five repositories into a shadow owner on Forgejo. The ported branches of section 8 run there: a full gate and a full release of each repository, with the signer on the shadow owner. The operator adds policy rows of section 4.4 that name the shadow owner, and removes them after the rehearsal. An agent runs P1 to P6 from a dev checkout of the bridge branch against the shadow releases, never on the host. It records each Forgejo reply that section 5 reads, for the tests. It proves each refusal: a branch push, a PR, a `workflow_dispatch` on `main`, a tag named `main`, a Release with no statement, a statement of another commit. Rollback point: delete the shadow owner.
 2. **The key** (the operator). Section 4.2. Rollback point: delete the files. Nothing reads them yet.
 3. **The bot** (the operator). Make `release-reader` as a read-only collaborator of the five repositories, and two tokens. Rollback point: delete the bot.
 4. **The site and the secret** (the operator opens the creche-release PR, because `secrets-guard` allows only the operator). Add `AGENT_FORGE_HOST`, `AGENT_FORGE_OWNER` and `RELEASE_FORGE_TOKEN`. The operator taps the `host` release. The current executor ignores the new keys. Rollback point: a revert PR and a tap.
 5. **HTTPS on the Forgejo host** (the operator, question 4). Rollback point: none needed. Nothing uses it yet.
 6. **Every pending GitHub tag installs or is dropped** (the operator). After the bridge, root refuses each GitHub Release (FR15).
+7. **The signer and its policy rows** (the operator, with exact commands from an agent). Root installs the `ci-signer` release of PR 2. The operator adds the kind `release` and the `[[attach]]` rows of section 4.4 to the runner's policy file, and restarts `ci-runner.service`. The rows name the real owner, which has no repository on Forgejo yet, so no job matches them. Rollback point: remove the rows and the kind, and restart the unit.
 
 The window:
 
@@ -301,7 +349,7 @@ The window:
 Each PR holds one idea. "Before" means the PR merges before the window and works on GitHub and on Forgejo. "Window" means the PR lands in the window.
 
 1. **This note** (creche, before). Proof: the operator merges it.
-2. **The signer** (creche, before, after PR 6 of `ci-runner.md` section 8). `ci-signer`, its unit, the vsock device on an eligible `release` job, the checks of section 4.4 in the daemon and in the signer, and the list test of section 4.3. Proof: unit tests against Forgejo replies recorded in the rehearsal refuse each failed check. The `kvm` CI job boots one VM with the device and one without, and only the first gets a statement.
+2. **The signer** (creche, before, after the PR "Attachments" of the runner design, section "Build plan"). The `ci-signer` component of question 8, its unit, its socket for the version-1 lines of the runner design, the checks of section 4.4, the exchange of section 4.5 and the list test of section 4.3. Proof: unit tests against Forgejo replies recorded in the rehearsal refuse each failed check. Unit tests refuse a `relay` line of a session that the signer did not accept. In the rehearsal of section 7, a release run of the shadow owner gets a statement, and each refused run of that step gets none.
 3. **The site keys and the secret** (creche-release, before, opened by the operator). Proof: the `host` release installs, and the current executor still passes a release.
 4. **The bridge executor** (creche, window step 2, merges on GitHub). The API client of section 5, P1 to P6 on Forgejo, `ReleaseStatement`, the key file of FR10, the site keys of FR11. It removes the GitHub client. Proof: tests against the recorded replies. The dev checkout run of rehearsal step 1 passes for one tag of each kind and refuses each attack of that step.
 5. **creche releases from Forgejo** (creche, window step 5). The allocator on `/api/v1` with the statement and the annotated tag, `release.yml` with the label `release` and no job `sign`, the artifact forks, the runner labels, `gate.yml` with no `merge_group`, the removal of `retest.yml` and its test, the tests that pin each workflow and the allocator. It also removes the unread keys of `env/src/creche_env/default.env:32-35` and fixes `steps.py:999`. Proof: its own run on `main` tags `handover`, and the host installs it.
@@ -309,6 +357,8 @@ Each PR holds one idea. "Before" means the PR merges before the window and works
 7. **mcp on Forgejo** (mcp, window). `CRECHE_REF`, the label `release`, the runner labels, the rerun line of `README.md` and `CONTRIBUTING.md`. Proof: the host installs the next `mcp-servers` tag, with P3 to P5 on the registry commit of PR 6.
 8. **chaperone on Forgejo** (chaperone, window). `CRECHE_REF`, no job `sign`, the label `release`, the artifact forks, `tests/release.rs`, `docs/design.md` section 12 (`:616-618`). Proof: the host installs the next `chaperone` tag, and P6 passes.
 9. **creche-release on Forgejo** (creche-release, window). `CRECHE_REF`, the label `release`, `require-pr-merge.sh`, both secrets guards, the git dependencies and `uv.lock`, the old site keys out, and the contract text: contract 06 section 3.4 and section 8.4, and `docs/releases.md` section 2.4 step 3 and section 6 rows 1, 2 and 22. Proof: the host installs the next `host` tag.
+
+The runner's policy rows are no creche PR. They are an operator step on the host (section 7, before the window, step 7). The runner's own PR "Attachments" builds the generic interface in the repository `infra/ci-runner`. This note does not change that repository.
 
 ## 9. Answers of the operator (2026-11-15)
 
@@ -323,7 +373,7 @@ The operator answered each open question of the first draft on 2026-11-15.
    3. The proxy forwards to the Forgejo HTTP port, with a body limit and timeouts that fit the largest release asset (the disks asset is about 1 GB).
    4. Forgejo's `ROOT_URL` names the HTTPS address, so API replies and clone URLs carry it.
    5. SSH stays on its own port and does not pass the proxy.
-   6. The ci-runner fence of `ci-runner.md` section 4.5 allows the proxy address and port in place of the Forgejo HTTP port. The client of ci-runner PR 4 then speaks HTTPS too.
+   6. The runner fence (the runner design, section "The network fence") allows the proxy address and port in place of the Forgejo HTTP port. The Forgejo client of the runner then speaks HTTPS too (the runner design, open question "HTTPS to Forgejo").
 5. **Visibility of creche and chaperone.** "Private." Consequences:
    1. The follower and root read with the token of `release-reader`.
    2. A job token reads only its own repository. Measured on 2026-11-15: a job of one repository got "User permission denied" from git and 404 from the API for another private repository of the organization.
@@ -331,3 +381,10 @@ The operator answered each open question of the first draft on 2026-11-15.
 6. **Two new accounts.** "Yes." The system user `ci-signer` on the host and the bot `release-reader` on Forgejo. Answer 1 adds the Forgejo bot `ci-signer`.
 7. **Who merges.** "Yes." The merge allowlist holds the operator's account only, on all five repositories.
 
+## 10. Open questions (2026-11-16)
+
+FR16 opens these questions. Each has a default. Only the operator can answer them.
+
+8. **How the creche catalog ships the signer.** Default: a new binary component `ci-signer` of the catalog, a Rust crate under `rust/crates/ci-signer/`, with its unit `creche-ci-signer.service` in the component. Root installs it as each other binary component, with P1 to P6. Its first release ships from GitHub before the window. Each later release carries a statement that the running signer made. Not taken: a second program in a component that the runner uses.
+9. **Who reviews the runner's policy file.** The file is root-owned on the host and is in no repository. Default: only the operator changes it, with exact commands from an agent. Section 4.4 of this note is the reference text for the rows of the signer. An agent proposes each change of a row in a creche PR to this note first.
+10. **The kind `release` and its capacity.** The runner gives one tap device to each slot, and the sum of the slots must not pass the tap count (the runner design, section "The policy file"). Default: one slot of the kind `release`, taken from the plain kind, so the plain kind keeps 3 slots and the tap count stays six. The kind has the size of a plain slot. Not taken: a seventh tap, which needs a change of the network unit by root.
