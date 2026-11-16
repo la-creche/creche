@@ -6,10 +6,15 @@
 //! no whitespace and no final LF. The tags are sorted by name and the
 //! assets of each tag by name, so the bytes depend only on the content.
 //! `from_canonical` takes exactly these bytes and nothing else.
+//!
+//! A `Statement` has no serde reader and no way to the bytes to sign.
+//! `from_canonical` is its one reader. Only `IssuedRuns::issue` makes a
+//! `Signable` (`issue.rs`). So a statement that a caller parsed can never
+//! be signed.
 
 use std::fmt;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer};
 
 use crate::limits::{MAX_ASSETS_PER_TAG, MAX_TAGS, WORST_STATEMENT_BYTES};
 use crate::names::{
@@ -19,16 +24,10 @@ use crate::signed_at::SignedAt;
 
 /// The version of the statement format: the value of the key `statement`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StatementVersion;
+struct StatementVersion;
 
 /// The one version that this crate writes and reads.
 const STATEMENT_VERSION: u64 = 1;
-
-impl Serialize for StatementVersion {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_u64(STATEMENT_VERSION)
-    }
-}
 
 impl<'de> Deserialize<'de> for StatementVersion {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -41,7 +40,7 @@ impl<'de> Deserialize<'de> for StatementVersion {
 }
 
 /// The event of a statement. Check 2 of section 4.4 passes only a push.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 pub enum Event {
     /// A push to `main`.
@@ -54,7 +53,7 @@ pub enum Event {
 // CONTRACT-QUESTION: forgejo-release-path.md section 4.5 (the example) and
 // section 5 (the P1 row) spell it `main`. Check 3 reads the full ref. The
 // reading here takes `main`. A change is one serde rename and the vectors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 pub enum Branch {
     /// The branch `main`.
@@ -75,6 +74,8 @@ pub enum LimitError {
     DuplicateTag,
     /// One asset name twice in one tag.
     DuplicateAsset,
+    /// Two tags of one component.
+    DuplicateComponent,
 }
 
 impl fmt::Display for LimitError {
@@ -85,6 +86,7 @@ impl fmt::Display for LimitError {
             Self::TooManyAssets => "a tag has more than 16 assets",
             Self::DuplicateTag => "a tag is given twice",
             Self::DuplicateAsset => "an asset name is given twice in one tag",
+            Self::DuplicateComponent => "a component has two tags",
         })
     }
 }
@@ -92,7 +94,7 @@ impl fmt::Display for LimitError {
 impl std::error::Error for LimitError {}
 
 /// One asset of a tag: its name and the SHA-256 of its bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[cfg_attr(test, schemars(transform = crate::schema::require_each_key))]
@@ -105,8 +107,8 @@ pub struct Asset {
 
 /// The assets of one tag: 0 to `MAX_ASSETS_PER_TAG`, sorted by name, each
 /// name once. A `venv` or `units` tag has none (section 4.5 step 3).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "Vec<Asset>", into = "Vec<Asset>")]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "Vec<Asset>")]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[cfg_attr(test, schemars(extend("maxItems" = MAX_ASSETS_PER_TAG)))]
 pub struct Assets(Vec<Asset>);
@@ -137,6 +139,10 @@ impl Assets {
     pub fn items(&self) -> &[Asset] {
         &self.0
     }
+
+    fn write(&self, out: &mut String) {
+        write_list(out, &self.0, Asset::write);
+    }
 }
 
 impl TryFrom<Vec<Asset>> for Assets {
@@ -147,14 +153,18 @@ impl TryFrom<Vec<Asset>> for Assets {
     }
 }
 
-impl From<Assets> for Vec<Asset> {
-    fn from(value: Assets) -> Self {
-        value.0
+impl Asset {
+    fn write(&self, out: &mut String) {
+        out.push_str("{\"name\":");
+        write_string(out, self.name.as_str());
+        out.push_str(",\"sha256\":");
+        write_string(out, self.sha256.as_str());
+        out.push('}');
     }
 }
 
 /// One tag of a statement with its assets.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[cfg_attr(test, schemars(transform = crate::schema::require_each_key))]
@@ -165,13 +175,21 @@ pub struct TagEntry {
     pub assets: Assets,
 }
 
-/// The tags of a statement: 1 to `MAX_TAGS`, sorted by tag, each tag once.
+/// The tags of a statement: 1 to `MAX_TAGS`, sorted by tag, each component
+/// once.
 // CONTRACT-QUESTION: forgejo-release-path.md section 4.5 gives no order and
-// says nothing of an empty list. The reading here sorts by name, refuses a
-// duplicate and refuses an empty list (fail closed). A change is this type
-// and the vector files.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "Vec<TagEntry>", into = "Vec<TagEntry>")]
+// says nothing of an empty list or of two tags of one component. The reading
+// here sorts by name, refuses an empty list and refuses two tags of one
+// component (fail closed): one run releases one version of a component.
+// A change is this type and the vector files.
+// CONTRACT-QUESTION: section 4.5 step 3 says that a `venv` or `units` tag
+// has no asset. The tag name does not say the kind of its component, and
+// the signer has no catalog. So the signer does not check it, and it does
+// not check that a component belongs to the repository either. Root's P1
+// reads the catalog row and refuses both. A change gives the signer the
+// kinds of its pairs in `signing-pairs.tsv`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "Vec<TagEntry>")]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[cfg_attr(test, schemars(extend("minItems" = 1, "maxItems" = MAX_TAGS)))]
 pub struct Tags(Vec<TagEntry>);
@@ -181,7 +199,8 @@ impl Tags {
     ///
     /// # Errors
     ///
-    /// No item, more than `MAX_TAGS` items, or one tag twice.
+    /// No item, more than `MAX_TAGS` items, one tag twice, or two tags of
+    /// one component.
     pub fn new(mut items: Vec<TagEntry>) -> Result<Self, LimitError> {
         if items.is_empty() {
             return Err(LimitError::NoTag);
@@ -197,7 +216,27 @@ impl Tags {
         {
             return Err(LimitError::DuplicateTag);
         }
+        let mut components: Vec<&str> = items.iter().map(|entry| entry.tag.component()).collect();
+        components.sort_unstable();
+        if components
+            .windows(2)
+            .any(|pair| pair.first() == pair.get(1))
+        {
+            return Err(LimitError::DuplicateComponent);
+        }
         Ok(Self(items))
+    }
+
+    /// The canonical JSON of the list, as the statement holds it.
+    #[must_use]
+    pub fn canonical_json(&self) -> String {
+        let mut out = String::new();
+        self.write(&mut out);
+        out
+    }
+
+    fn write(&self, out: &mut String) {
+        write_list(out, &self.0, TagEntry::write);
     }
 
     /// The tags, sorted by tag.
@@ -215,10 +254,49 @@ impl TryFrom<Vec<TagEntry>> for Tags {
     }
 }
 
-impl From<Tags> for Vec<TagEntry> {
-    fn from(value: Tags) -> Self {
-        value.0
+impl TagEntry {
+    fn write(&self, out: &mut String) {
+        out.push_str("{\"tag\":");
+        write_string(out, self.tag.as_str());
+        out.push_str(",\"assets\":");
+        self.assets.write(out);
+        out.push('}');
     }
+}
+
+/// Writes `text` as a JSON string. Each string of a statement holds only
+/// the bytes of its grammar: ASCII letters, digits and `._+-:/`. JSON
+/// escapes none of them, so the text goes in as it is. The test
+/// `grammar_bytes_need_no_escape` holds this.
+fn write_string(out: &mut String, text: &str) {
+    out.push('"');
+    out.push_str(text);
+    out.push('"');
+}
+
+/// Writes `items` as a JSON array, with a comma between two.
+fn write_list<T>(out: &mut String, items: &[T], write: fn(&T, &mut String)) {
+    out.push('[');
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        write(item, out);
+    }
+    out.push(']');
+}
+
+/// One release statement, as `IssuedRuns::issue` builds it or as
+/// `Statement::from_canonical` reads it. It has no serde reader, and it
+/// cannot become the bytes to sign.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Statement {
+    repository: RepoFullName,
+    workflow: WorkflowFile,
+    commit: CommitSha,
+    run: RunId,
+    signed_at: SignedAt,
+    tags: Tags,
 }
 
 /// One release statement. The field order is the key order of the
@@ -226,11 +304,17 @@ impl From<Tags> for Vec<TagEntry> {
 ///
 /// Only `IssuedRuns::issue` builds a statement to sign, from an `Eligible`
 /// run. Root reads one with `from_canonical`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// The wire form that `from_canonical` reads, and the source of the JSON
+// Schema. It is private, so no caller reads a statement past the byte cap
+// and the canonical check.
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
-#[cfg_attr(test, schemars(transform = crate::schema::require_each_key))]
-pub struct Statement {
+#[cfg_attr(
+    test,
+    schemars(rename = "Statement", transform = crate::schema::require_each_key)
+)]
+pub(crate) struct WireStatement {
     #[cfg_attr(test, schemars(with = "u64", extend("const" = STATEMENT_VERSION)))]
     statement: StatementVersion,
     repository: RepoFullName,
@@ -271,7 +355,8 @@ impl fmt::Display for StatementError {
 impl std::error::Error for StatementError {}
 
 impl Statement {
-    /// The statement of one eligible run. Only `issue.rs` calls it.
+    /// The statement of these facts. `issue.rs` calls it with the facts of
+    /// an `Eligible` run, and `from_canonical` with the facts it read.
     pub(crate) fn new(
         repository: RepoFullName,
         workflow: WorkflowFile,
@@ -281,11 +366,8 @@ impl Statement {
         tags: Tags,
     ) -> Self {
         Self {
-            statement: StatementVersion,
             repository,
             workflow,
-            event: Event::Push,
-            ref_: Branch::Main,
             commit,
             run,
             signed_at,
@@ -293,13 +375,27 @@ impl Statement {
         }
     }
 
-    /// The canonical bytes: compact JSON, ASCII only, no final LF.
+    /// The canonical bytes: compact JSON in the key order of the note,
+    /// ASCII only, no final LF. The writer cannot fail.
     #[must_use]
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        // Each string of a statement is ASCII by its grammar, so serde_json
-        // writes no escape and no byte above 0x7f. A failure is not
-        // possible for these types. An empty result fails each reader.
-        serde_json::to_vec(self).unwrap_or_default()
+        let mut out = String::with_capacity(WORST_STATEMENT_BYTES);
+        out.push_str("{\"statement\":");
+        out.push_str(&STATEMENT_VERSION.to_string());
+        out.push_str(",\"repository\":");
+        write_string(&mut out, &self.repository.to_string());
+        out.push_str(",\"workflow\":");
+        write_string(&mut out, self.workflow.as_str());
+        out.push_str(",\"event\":\"push\",\"ref\":\"main\",\"commit\":");
+        write_string(&mut out, self.commit.as_str());
+        out.push_str(",\"run\":");
+        out.push_str(&self.run.to_string());
+        out.push_str(",\"signed_at\":");
+        write_string(&mut out, &self.signed_at.to_string());
+        out.push_str(",\"tags\":");
+        self.tags.write(&mut out);
+        out.push('}');
+        out.into_bytes()
     }
 
     /// The statement of `bytes`, which must be its canonical bytes.
@@ -316,19 +412,26 @@ impl Statement {
             return Err(StatementError::NotJson);
         }
 
-        let statement: Self = serde_json::from_slice(bytes).map_err(|_| StatementError::Shape)?;
+        let wire: WireStatement =
+            serde_json::from_slice(bytes).map_err(|_| StatementError::Shape)?;
+        // Serde checked the version, the event and the ref. Each has one
+        // value, so the pattern cannot fail.
+        let WireStatement {
+            statement: StatementVersion,
+            repository,
+            workflow,
+            event: Event::Push,
+            ref_: Branch::Main,
+            commit,
+            run,
+            signed_at,
+            tags,
+        } = wire;
+        let statement = Self::new(repository, workflow, commit, run, signed_at, tags);
         if statement.canonical_bytes() != bytes {
             return Err(StatementError::NotCanonical);
         }
         Ok(statement)
-    }
-
-    /// The bytes to sign. The statement is final from here.
-    #[must_use]
-    pub fn signable(self) -> Signable {
-        Signable {
-            bytes: self.canonical_bytes(),
-        }
     }
 
     /// The repository of the run.
@@ -346,13 +449,13 @@ impl Statement {
     /// The event: always a push.
     #[must_use]
     pub fn event(&self) -> Event {
-        self.event
+        Event::Push
     }
 
     /// The ref: always `main`.
     #[must_use]
     pub fn branch(&self) -> Branch {
-        self.ref_
+        Branch::Main
     }
 
     /// The commit of the run.
@@ -377,20 +480,6 @@ impl Statement {
     #[must_use]
     pub fn tags(&self) -> &Tags {
         &self.tags
-    }
-}
-
-/// The canonical bytes of one statement, ready for `cosign sign-blob`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Signable {
-    bytes: Vec<u8>,
-}
-
-impl Signable {
-    /// The bytes that cosign signs.
-    #[must_use]
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
     }
 }
 
@@ -447,10 +536,20 @@ pub(crate) mod tests {
             Statement::from_canonical(EXAMPLE_BYTES.as_bytes()).unwrap(),
             statement
         );
-        assert_eq!(
-            statement.clone().signable().bytes(),
-            EXAMPLE_BYTES.as_bytes()
-        );
+    }
+
+    /// Each byte that a grammar of a statement string allows needs no JSON
+    /// escape, so `write_string` writes valid JSON.
+    #[test]
+    fn grammar_bytes_need_no_escape() {
+        let allowed = (b'0'..=b'9')
+            .chain(b'A'..=b'Z')
+            .chain(b'a'..=b'z')
+            .chain(*b"._+-:/");
+        for byte in allowed {
+            let text = char::from(byte).to_string();
+            assert_eq!(serde_json::to_string(&text).unwrap(), format!("\"{text}\""));
+        }
     }
 
     fn refuse(text: &str) -> StatementError {
@@ -559,6 +658,21 @@ pub(crate) mod tests {
                 entry("vmm-v1.0.0".into(), 1)
             ]),
             Err(LimitError::DuplicateTag)
+        );
+        assert_eq!(
+            Tags::new(vec![
+                entry("vmm-v0.1.24".into(), 0),
+                entry("vmm-v0.1.25".into(), 0)
+            ]),
+            Err(LimitError::DuplicateComponent)
+        );
+        // `vmm` and `vmm-x` are two components.
+        assert!(
+            Tags::new(vec![
+                entry("vmm-v0.1.24".into(), 0),
+                entry("vmm-x-v0.1.24".into(), 0)
+            ])
+            .is_ok()
         );
 
         let asset = |name: &str| Asset {

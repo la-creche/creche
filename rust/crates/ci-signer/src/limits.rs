@@ -14,12 +14,22 @@ pub const MAX_TAGS: usize = 32;
 /// The most assets of one tag (section 4.5 step 4).
 pub const MAX_ASSETS_PER_TAG: usize = 16;
 
-/// The most bytes of a tag name, of an asset name and of a workflow file
-/// name.
+/// The most bytes of a tag name and of an asset name.
 ///
 /// Proposal of 2026-11-16, item 1 (section 4.5). The operator has not
 /// accepted it yet.
 pub const MAX_NAME_BYTES: usize = 64;
+
+/// The most bytes of a workflow file name.
+///
+/// Not part of proposal 1. The note sets no cap on the workflow file name.
+/// This cap is the code's own reading, so that the worst statement has a
+/// size. Each workflow of `signing-pairs.tsv` is far below it. A run reply
+/// with a longer `workflow_id` is refused (fail closed).
+// CONTRACT-QUESTION: forgejo-release-path.md section 4.5 caps no workflow
+// file name. The reading here caps it at 64 bytes. A change is this
+// constant, the `WorkflowFile` pattern and one vector.
+pub const MAX_WORKFLOW_BYTES: usize = 64;
 
 /// The most bytes of a cosign bundle.
 ///
@@ -41,9 +51,6 @@ pub const FORGEJO_TAG_MESSAGE_LIMIT: usize = 131_071;
 
 /// The first line of a tag message (section 4.5).
 pub const MESSAGE_HEADER: &str = "release-statement-1";
-
-/// The most bytes of a workflow file name: the name cap.
-const MAX_WORKFLOW_BYTES: usize = MAX_NAME_BYTES;
 
 /// The most decimal digits of a run id: 2^53 - 1 has 16.
 const MAX_RUN_DIGITS: usize = 16;

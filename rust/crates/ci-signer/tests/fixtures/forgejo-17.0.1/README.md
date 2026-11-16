@@ -38,7 +38,9 @@ A scratch script made these changes to the bytes of each file and of
 `index.tsv`, also inside `event_payload`:
 
 1. The name of the organization became `example-owner`.
-2. The login of the operator became `operator`.
+2. Each occurrence of the operator's name became `operator`: the login,
+   the commit author name inside `event_payload` and the path of each
+   profile URL (`html_url`).
 3. Each UTC offset of a local time became `+00:00`. The clock time did not
    change.
 

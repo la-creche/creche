@@ -32,10 +32,18 @@ impl fmt::Display for Base64Error {
 
 impl std::error::Error for Base64Error {}
 
-/// The character of the low 6 bits of `bits`.
+/// The character of the low 6 bits of `bits`, as `ALPHABET` lists them.
+/// Each arm computes its character: the mask leaves only 0 to 63, and the
+/// last arm takes 63.
 fn symbol(bits: u32) -> char {
-    let index = usize::try_from(bits & 0x3f).unwrap_or(0);
-    ALPHABET.get(index).map_or('A', |byte| char::from(*byte))
+    let [.., low] = bits.to_be_bytes();
+    char::from(match low & 0x3f {
+        value @ 0..=25 => b'A' + value,
+        value @ 26..=51 => b'a' + (value - 26),
+        value @ 52..=61 => b'0' + (value - 52),
+        62 => b'+',
+        _ => b'/',
+    })
 }
 
 /// The base64 text of `bytes`, with padding.
@@ -124,6 +132,18 @@ mod tests {
         ] {
             assert_eq!(encode(plain.as_bytes()), coded);
             assert_eq!(decode(coded).unwrap(), plain.as_bytes());
+        }
+    }
+
+    #[test]
+    fn symbol_follows_the_alphabet() {
+        for (value, byte) in (0_u32..).zip(ALPHABET) {
+            assert_eq!(symbol(value), char::from(*byte));
+            assert_eq!(
+                symbol(value + 64),
+                char::from(*byte),
+                "only the low 6 bits count"
+            );
         }
     }
 

@@ -6,7 +6,7 @@ use creche_ci_signer::forgejo::{
     parse_commit_pull, parse_run,
 };
 use creche_ci_signer::limits::FORGEJO_TAG_MESSAGE_LIMIT;
-use creche_ci_signer::message::{MessageError, MessageSource, TagMessage};
+use creche_ci_signer::message::{MessageError, MessageSource, UnverifiedTagMessage};
 use serde_json::Value;
 
 use crate::common::{MERGE_COMMIT, REPOSITORY, json, message_of, mutated, reply};
@@ -235,7 +235,7 @@ fn message_sources_of_forgejo() {
 
     // The recorded message is no release statement.
     assert_eq!(
-        TagMessage::decode(&git_object, MessageSource::GitTagObject),
+        UnverifiedTagMessage::decode(&git_object, MessageSource::GitTagObject),
         Err(MessageError::Lines)
     );
 }

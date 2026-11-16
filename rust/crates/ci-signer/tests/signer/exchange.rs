@@ -1,7 +1,6 @@
 //! The request line and the answer line of section 4.5.
 
 use creche_ci_signer::exchange::{Answer, AnswerCode, REQUEST_MAX_BYTES, Request, RequestError};
-use creche_ci_signer::message::{MessageSource, TagMessage};
 use creche_ci_signer::names::NameFault;
 use creche_ci_signer::statement::LimitError;
 
@@ -117,6 +116,18 @@ fn refused_requests() {
         RequestError::Limits(LimitError::DuplicateTag)
     );
 
+    // Root reads `vmm-v0.1.024` as 0.1.24, so the grammar refuses the
+    // leading zero, and one component gets one tag.
+    assert_eq!(
+        parse(r#"{"v":1,"tags":[{"tag":"vmm-v0.1.024","assets":[]}]}"#).unwrap_err(),
+        RequestError::Grammar(name_error("ReleaseTag", NameFault::Grammar))
+    );
+    assert_eq!(
+        parse(r#"{"v":1,"tags":[{"tag":"vmm-v0.1.24","assets":[]},{"tag":"vmm-v0.1.25","assets":[]}]}"#)
+            .unwrap_err(),
+        RequestError::Limits(LimitError::DuplicateComponent)
+    );
+
     let padded = format!("{}{}", one_tag(""), " ".repeat(REQUEST_MAX_BYTES));
     assert_eq!(parse(&padded).unwrap_err(), RequestError::TooLarge);
     assert_eq!(RequestError::TooLarge.answer_code(), AnswerCode::Limits);
@@ -142,11 +153,4 @@ fn answer_lines() {
             format!("{{\"v\":1,\"refused\":\"{word}\"}}\n").into_bytes()
         );
     }
-
-    let message =
-        TagMessage::decode("release-statement-1\neyJ9\nYg==", MessageSource::TagsApi).unwrap();
-    assert_eq!(
-        Answer::Signed(message).to_line(),
-        b"{\"v\":1,\"signed\":{\"statement\":\"eyJ9\",\"bundle\":\"Yg==\"}}\n".to_vec()
-    );
 }

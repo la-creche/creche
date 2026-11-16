@@ -1,9 +1,11 @@
 //! One statement for each run (section 4.5 step 6, section 4.6), on an
 //! `Eligible` value that the recorded replies give.
 
+use creche_ci_signer::base64_encode;
 use creche_ci_signer::eligibility::{Eligible, decide_merge, decide_run};
-use creche_ci_signer::exchange::Request;
+use creche_ci_signer::exchange::{Answer, Request};
 use creche_ci_signer::issue::{AlreadyIssued, IssuedRuns, JournalError};
+use creche_ci_signer::message::{Bundle, MessageSource, TagMessage, UnverifiedTagMessage};
 use creche_ci_signer::signed_at::SignedAt;
 use creche_ci_signer::statement::{Branch, Event, Statement};
 
@@ -52,6 +54,32 @@ fn statement_takes_its_facts_from_eligible() {
     assert!(
         line.starts_with(&format!("48\t{MERGE_COMMIT}\t")) && line.ends_with('\n'),
         "{line}"
+    );
+}
+
+/// The whole signer path past the decision: issue, a tag message, the
+/// answer line, and the read back that root does.
+#[test]
+fn signed_answer_of_an_issued_run() {
+    let mut runs = IssuedRuns::from_journal("").unwrap();
+    let issued = runs.issue(eligible(), request(), now()).unwrap();
+    let statement = base64_encode(issued.signable.bytes());
+    let bundle = Bundle::new(b"opaque bundle".to_vec()).unwrap();
+
+    let message = TagMessage::new(issued.signable, bundle.clone());
+    let text = message.encode();
+    let read = UnverifiedTagMessage::decode(&text, MessageSource::TagsApi).unwrap();
+    assert_eq!(read.unverified_statement(), message.statement());
+    assert_eq!(read.bundle(), &bundle);
+    let read_back = Statement::from_canonical(read.unverified_statement()).unwrap();
+    assert_eq!(read_back.run().get(), 48);
+
+    assert_eq!(
+        String::from_utf8(Answer::Signed(message).to_line()).unwrap(),
+        format!(
+            "{{\"v\":1,\"signed\":{{\"statement\":\"{statement}\",\"bundle\":\"{}\"}}}}\n",
+            base64_encode(bundle.bytes())
+        )
     );
 }
 

@@ -13,7 +13,7 @@ use schemars::generate::SchemaSettings;
 use schemars::{JsonSchema, Schema};
 use serde_json::Value;
 
-use crate::statement::Statement;
+use crate::statement::WireStatement;
 
 /// The variable that makes the test write the file instead of checking it.
 const WRITE_VAR: &str = "CRECHE_CI_SIGNER_SCHEMA";
@@ -36,7 +36,7 @@ fn statement_schema() -> Schema {
     SchemaSettings::draft2020_12()
         .for_deserialize()
         .into_generator()
-        .into_root_schema_for::<Statement>()
+        .into_root_schema_for::<WireStatement>()
 }
 
 #[test]
@@ -72,5 +72,5 @@ fn schema_names_each_key() {
         schema.get("additionalProperties"),
         Some(&Value::Bool(false))
     );
-    let _ = <Statement as JsonSchema>::schema_name();
+    let _ = <WireStatement as JsonSchema>::schema_name();
 }

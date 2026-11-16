@@ -3,10 +3,10 @@
 //! and the guest helper (PR 5) run the same files. Do not change a vector
 //! to pass a test.
 
-use creche_ci_signer::exchange::{Answer, AnswerCode, Request};
-use creche_ci_signer::message::{Bundle, MessageSource, TagMessage};
+use creche_ci_signer::base64_encode;
+use creche_ci_signer::exchange::Request;
+use creche_ci_signer::message::{MessageSource, UnverifiedTagMessage};
 use creche_ci_signer::statement::Statement;
-use creche_ci_signer::{base64_decode, base64_encode};
 use serde::Deserialize;
 
 use crate::common::crate_dir;
@@ -69,7 +69,7 @@ fn tag_message_vectors() {
             "git_tag_object" => MessageSource::GitTagObject,
             other => panic!("{other}"),
         };
-        let decoded = TagMessage::decode(&case.message, source).ok();
+        let decoded = UnverifiedTagMessage::decode(&case.message, source).ok();
         let lines = decoded.as_ref().map(|message| {
             (
                 base64_encode(message.unverified_statement()),
@@ -79,10 +79,10 @@ fn tag_message_vectors() {
         let expected = case.statement_b64.clone().zip(case.bundle_b64.clone());
         assert_eq!(lines, expected, "{}", case.note);
 
-        // A decoded message encodes to the message as written.
-        if let Some(message) = decoded {
+        // The lines of a decoded message give the message as written.
+        if let Some((statement, bundle)) = lines {
             assert_eq!(
-                Ok(message.encode().as_str()),
+                Ok(format!("release-statement-1\n{statement}\n{bundle}").as_str()),
                 source.written(&case.message),
                 "{}",
                 case.note
@@ -100,46 +100,12 @@ struct RequestCase {
     note: String,
 }
 
+/// The requests of `vectors/exchange.json`. The unit test `answer_vectors`
+/// of `exchange.rs` reads its answers: a signed answer is made only from an
+/// issued statement, which this test cannot build from a vector.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SignedCase {
-    statement: String,
-    bundle: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
-enum AnswerCase {
-    Refused(String),
-    Signed(SignedCase),
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AnswerLine {
-    answer: AnswerCase,
-    line: String,
-    note: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ExchangeFile {
     requests: Vec<RequestCase>,
-    answers: Vec<AnswerLine>,
-}
-
-fn code_of(word: &str) -> AnswerCode {
-    [
-        AnswerCode::Grammar,
-        AnswerCode::Limits,
-        AnswerCode::AlreadyIssued,
-        AnswerCode::NotEligible,
-        AnswerCode::Fault,
-    ]
-    .into_iter()
-    .find(|code| code.word() == word)
-    .unwrap_or_else(|| panic!("{word}"))
 }
 
 #[test]
@@ -151,31 +117,7 @@ fn exchange_vectors() {
             .as_ref()
             .err()
             .map(|error| error.answer_code().word().to_owned());
-        let tags = parsed
-            .ok()
-            .map(|request| serde_json::to_string(request.tags()).unwrap());
+        let tags = parsed.ok().map(|request| request.tags().canonical_json());
         assert_eq!((refused, tags), (case.refused, case.tags), "{}", case.note);
-    }
-
-    for case in file.answers {
-        let answer = match case.answer {
-            AnswerCase::Refused(word) => Answer::Refused(code_of(&word)),
-            AnswerCase::Signed(signed) => {
-                let text = format!(
-                    "release-statement-1\n{}\n{}",
-                    signed.statement, signed.bundle
-                );
-                let message = TagMessage::decode(&text, MessageSource::TagsApi).unwrap();
-                let bundle = Bundle::new(base64_decode(&signed.bundle).unwrap()).unwrap();
-                assert_eq!(message.bundle(), &bundle);
-                Answer::Signed(message)
-            }
-        };
-        assert_eq!(
-            String::from_utf8(answer.to_line()).unwrap(),
-            case.line,
-            "{}",
-            case.note
-        );
     }
 }

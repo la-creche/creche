@@ -8,16 +8,21 @@
 //! eyJtZWRpYVR5cGUiOi...        <- base64 of the cosign bundle
 //! ```
 //!
+//! Two types hold a message. `TagMessage` is what the signer writes: only a
+//! `Signable` makes one, so it always holds a statement that
+//! `IssuedRuns::issue` built. `UnverifiedTagMessage` is what a reader
+//! decodes from a Forgejo reply. Nothing turns it into a `TagMessage`.
+//!
 //! Decode does not parse the statement. Root parses it only after cosign
 //! passes on the bundle (section 5).
 
 use std::fmt;
 
 use crate::base64;
+use crate::issue::Signable;
 use crate::limits::{
     MAX_BUNDLE_BYTES, MAX_TAG_MESSAGE_BYTES, MESSAGE_HEADER, WORST_STATEMENT_BYTES,
 };
-use crate::statement::Signable;
 
 /// A cosign bundle: 1 to `MAX_BUNDLE_BYTES` opaque bytes.
 // CONTRACT-QUESTION: forgejo-release-path.md section 3 M7 and section 4.5:
@@ -146,12 +151,20 @@ impl fmt::Display for MessageError {
 
 impl std::error::Error for MessageError {}
 
-/// The message of one release tag: the statement bytes and the bundle.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The text of a tag message, with no final LF.
+fn encode_lines(statement: &[u8], bundle: &Bundle) -> String {
+    format!(
+        "{MESSAGE_HEADER}\n{}\n{}",
+        base64::encode(statement),
+        base64::encode(bundle.bytes())
+    )
+}
+
+/// The message that the signer writes for one release tag: the statement
+/// that `IssuedRuns::issue` built and its bundle.
+#[derive(Debug, PartialEq, Eq)]
 pub struct TagMessage {
-    /// The canonical statement that the signer signed, or the bytes that a
-    /// reader decoded. A reader has not verified them.
-    statement: Vec<u8>,
+    signable: Signable,
     bundle: Bundle,
 }
 
@@ -161,22 +174,37 @@ impl TagMessage {
     /// (`limits.rs`).
     #[must_use]
     pub fn new(signable: Signable, bundle: Bundle) -> Self {
-        Self {
-            statement: signable.bytes().to_vec(),
-            bundle,
-        }
+        Self { signable, bundle }
     }
 
     /// The message text, with no final LF.
     #[must_use]
     pub fn encode(&self) -> String {
-        format!(
-            "{MESSAGE_HEADER}\n{}\n{}",
-            base64::encode(&self.statement),
-            base64::encode(self.bundle.bytes())
-        )
+        encode_lines(self.signable.bytes(), &self.bundle)
     }
 
+    /// The canonical statement that the signer signed.
+    #[must_use]
+    pub fn statement(&self) -> &[u8] {
+        self.signable.bytes()
+    }
+
+    /// The bundle.
+    #[must_use]
+    pub fn bundle(&self) -> &Bundle {
+        &self.bundle
+    }
+}
+
+/// A tag message that a reader decoded from a Forgejo reply. Its statement
+/// is not verified.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnverifiedTagMessage {
+    statement: Vec<u8>,
+    bundle: Bundle,
+}
+
+impl UnverifiedTagMessage {
     /// The message of the `message` field of a Forgejo reply.
     ///
     /// # Errors
@@ -224,7 +252,9 @@ impl TagMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::limits::{MAX_ASSETS_PER_TAG, MAX_NAME_BYTES, MAX_TAGS, WORST_TAG_MESSAGE_BYTES};
+    use crate::limits::{
+        MAX_ASSETS_PER_TAG, MAX_NAME_BYTES, MAX_TAGS, MAX_WORKFLOW_BYTES, WORST_TAG_MESSAGE_BYTES,
+    };
     use crate::names::{MAX_OWNER_BYTES, MAX_REPO_NAME_BYTES, RunId};
     use crate::statement::tests::{DIGEST, example};
     use crate::statement::{Asset, Assets, Statement, TagEntry, Tags};
@@ -233,28 +263,36 @@ mod tests {
         Bundle::new(vec![b'b'; len]).unwrap()
     }
 
+    /// The text of the example statement with a bundle of 10 bytes.
+    fn example_text() -> String {
+        encode_lines(&example().canonical_bytes(), &bundle(10))
+    }
+
     #[test]
     fn round_trip() {
-        let message = TagMessage::new(example().signable(), bundle(10));
-        let text = message.encode();
+        let text = example_text();
         assert!(text.starts_with("release-statement-1\n"));
         assert!(!text.ends_with('\n'));
 
+        let expected = UnverifiedTagMessage {
+            statement: example().canonical_bytes(),
+            bundle: bundle(10),
+        };
         assert_eq!(
-            TagMessage::decode(&text, MessageSource::TagsApi).unwrap(),
-            message
+            UnverifiedTagMessage::decode(&text, MessageSource::TagsApi).unwrap(),
+            expected
         );
         assert_eq!(
-            TagMessage::decode(&format!("{text}\n"), MessageSource::GitTagObject).unwrap(),
-            message
+            UnverifiedTagMessage::decode(&format!("{text}\n"), MessageSource::GitTagObject)
+                .unwrap(),
+            expected
         );
-        assert_eq!(message.unverified_statement(), example().canonical_bytes());
     }
 
     #[test]
     fn refusals() {
-        let text = TagMessage::new(example().signable(), bundle(10)).encode();
-        let decode = |text: &str, source| TagMessage::decode(text, source).unwrap_err();
+        let text = example_text();
+        let decode = |text: &str, source| UnverifiedTagMessage::decode(text, source).unwrap_err();
 
         assert_eq!(
             decode(&text, MessageSource::GitTagObject),
@@ -364,7 +402,7 @@ mod tests {
         );
         let statement = Statement::new(
             repository.parse().unwrap(),
-            format!("{}.yml", "w".repeat(MAX_NAME_BYTES - 4))
+            format!("{}.yml", "w".repeat(MAX_WORKFLOW_BYTES - 4))
                 .parse()
                 .unwrap(),
             "f".repeat(40).parse().unwrap(),
@@ -373,7 +411,7 @@ mod tests {
             Tags::new(tags).unwrap(),
         );
 
-        let text = TagMessage::new(statement.signable(), bundle(MAX_BUNDLE_BYTES)).encode();
+        let text = encode_lines(&statement.canonical_bytes(), &bundle(MAX_BUNDLE_BYTES));
         assert!(
             text.len() <= WORST_TAG_MESSAGE_BYTES,
             "{} > {WORST_TAG_MESSAGE_BYTES}",
@@ -386,6 +424,8 @@ mod tests {
             "{}",
             text.len()
         );
-        assert!(TagMessage::decode(&format!("{text}\n"), MessageSource::GitTagObject).is_ok());
+        assert!(
+            UnverifiedTagMessage::decode(&format!("{text}\n"), MessageSource::GitTagObject).is_ok()
+        );
     }
 }

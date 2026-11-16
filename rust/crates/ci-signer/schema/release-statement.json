@@ -106,9 +106,9 @@
       ]
     },
     "ReleaseTag": {
-      "description": "A release tag, `<component>-vX.Y.Z`: the component\n`[a-z][a-z0-9-]{1,30}` of `_TAG_RE`, then `-v`, then three numbers\nof 1 to 9 digits each (section 4.5 step 4).",
+      "description": "A release tag, `<component>-vX.Y.Z`: the component\n`[a-z][a-z0-9-]{1,30}` of `_TAG_RE`, then `-v`, then three numbers\nof 1 to 9 digits each with no leading zero (section 4.5 step 4).",
       "type": "string",
-      "pattern": "^[a-z][a-z0-9-]{1,30}-v[0-9]{1,9}\\.[0-9]{1,9}\\.[0-9]{1,9}$"
+      "pattern": "^[a-z][a-z0-9-]{1,30}-v(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$"
     },
     "RepoFullName": {
       "description": "A repository as `owner/name`, with exactly one slash.",
@@ -152,7 +152,7 @@
       ]
     },
     "Tags": {
-      "description": "The tags of a statement: 1 to `MAX_TAGS`, sorted by tag, each tag once.",
+      "description": "The tags of a statement: 1 to `MAX_TAGS`, sorted by tag, each component\nonce.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/TagEntry"
@@ -161,7 +161,7 @@
       "minItems": 1
     },
     "WorkflowFile": {
-      "description": "A workflow file name, not a path: `[A-Za-z0-9][A-Za-z0-9._-]*` with\nthe end `.yml` or `.yaml`, at most `MAX_NAME_BYTES`. The run reply\nnames it in `workflow_id`, for example `release.yml`.",
+      "description": "A workflow file name, not a path: `[A-Za-z0-9][A-Za-z0-9._-]*` with\nthe end `.yml` or `.yaml`, at most `MAX_WORKFLOW_BYTES`. The run reply\nnames it in `workflow_id`, for example `release.yml`.",
       "type": "string",
       "pattern": "^([A-Za-z0-9][A-Za-z0-9._-]{0,59}\\.yml|[A-Za-z0-9][A-Za-z0-9._-]{0,58}\\.yaml)$"
     }

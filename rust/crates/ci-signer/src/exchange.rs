@@ -20,7 +20,7 @@ use std::fmt;
 use serde::Deserialize;
 
 use crate::base64;
-use crate::message::TagMessage;
+use crate::message::{Bundle, TagMessage};
 use crate::names::{AssetName, NameError, ReleaseTag, Sha256Hex};
 use crate::statement::{Asset, Assets, LimitError, TagEntry, Tags};
 
@@ -176,9 +176,10 @@ impl AnswerCode {
 }
 
 /// The answer of the signer to one request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Answer {
-    /// The statement and its bundle.
+    /// The statement and its bundle. Only a `TagMessage` of an issued
+    /// statement fits here, never a decoded one.
     Signed(TagMessage),
     /// A refusal.
     Refused(AnswerCode),
@@ -191,13 +192,89 @@ impl Answer {
         // Each value is base64 or a fixed word, so no text needs a JSON
         // escape.
         let line = match self {
-            Self::Signed(message) => format!(
-                "{{\"v\":{VERSION},\"signed\":{{\"statement\":\"{}\",\"bundle\":\"{}\"}}}}\n",
-                base64::encode(message.unverified_statement()),
-                base64::encode(message.bundle().bytes())
-            ),
+            Self::Signed(message) => signed_line(message.statement(), message.bundle()),
             Self::Refused(code) => format!("{{\"v\":{VERSION},\"refused\":\"{}\"}}\n", code.word()),
         };
         line.into_bytes()
+    }
+}
+
+/// The signed answer line of `statement` and `bundle`, with its LF.
+fn signed_line(statement: &[u8], bundle: &Bundle) -> String {
+    format!(
+        "{{\"v\":{VERSION},\"signed\":{{\"statement\":\"{}\",\"bundle\":\"{}\"}}}}\n",
+        base64::encode(statement),
+        base64::encode(bundle.bytes())
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct SignedCase {
+        statement: String,
+        bundle: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields, rename_all = "snake_case")]
+    enum AnswerCase {
+        Refused(String),
+        Signed(SignedCase),
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct AnswerLine {
+        answer: AnswerCase,
+        line: String,
+        note: String,
+    }
+
+    #[derive(Deserialize)]
+    struct ExchangeFile {
+        answers: Vec<AnswerLine>,
+    }
+
+    fn code_of(word: &str) -> AnswerCode {
+        [
+            AnswerCode::Grammar,
+            AnswerCode::Limits,
+            AnswerCode::AlreadyIssued,
+            AnswerCode::NotEligible,
+            AnswerCode::Fault,
+        ]
+        .into_iter()
+        .find(|code| code.word() == word)
+        .unwrap_or_else(|| panic!("{word}"))
+    }
+
+    /// The answers of `vectors/exchange.json`. A signed answer of a vector
+    /// holds a statement that no `Eligible` run of the recordings gives, so
+    /// this test writes its line from the bytes. The test
+    /// `signed_answer_of_an_issued_run` in `tests/signer/issue.rs` writes a
+    /// line through `Answer::Signed`.
+    #[test]
+    fn answer_vectors() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/vectors/exchange.json");
+        let file: ExchangeFile =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert!(!file.answers.is_empty());
+        for case in file.answers {
+            let line = match case.answer {
+                AnswerCase::Refused(word) => {
+                    String::from_utf8(Answer::Refused(code_of(&word)).to_line()).unwrap()
+                }
+                AnswerCase::Signed(signed) => {
+                    let statement = base64::decode(&signed.statement).unwrap();
+                    let bundle = Bundle::new(base64::decode(&signed.bundle).unwrap()).unwrap();
+                    signed_line(&statement, &bundle)
+                }
+            };
+            assert_eq!(line, case.line, "{}", case.note);
+        }
     }
 }

@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::limits::MAX_NAME_BYTES;
+use crate::limits::{MAX_NAME_BYTES, MAX_WORKFLOW_BYTES};
 
 /// The largest integer that JSON keeps exact in every reader: 2^53 - 1.
 pub const JS_INTEGER_MAX: u64 = 9_007_199_254_740_991;
@@ -69,9 +69,17 @@ fn plain(text: &str, max: usize, extra: &[u8]) -> Result<(), NameFault> {
     Ok(())
 }
 
-/// `[0-9]{1,9}`: one number of a tag version.
+/// `0|[1-9][0-9]{0,8}`: one number of a tag version, with no leading zero.
+/// So two tags that root reads as one version (`int()` of each number in
+/// `newest_tagged_version`) are one text.
 fn version_number(text: &str) -> bool {
-    (1..=MAX_VERSION_DIGITS).contains(&text.len()) && text.bytes().all(|byte| byte.is_ascii_digit())
+    let Some((first, rest)) = text.as_bytes().split_first() else {
+        return false;
+    };
+    if *first == b'0' {
+        return rest.is_empty();
+    }
+    text.len() <= MAX_VERSION_DIGITS && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// The most digits of one number of a tag version. `_TAG_RE` of
@@ -162,12 +170,12 @@ name_type!(
 
 name_type!(
     /// A workflow file name, not a path: `[A-Za-z0-9][A-Za-z0-9._-]*` with
-    /// the end `.yml` or `.yaml`, at most `MAX_NAME_BYTES`. The run reply
+    /// the end `.yml` or `.yaml`, at most `MAX_WORKFLOW_BYTES`. The run reply
     /// names it in `workflow_id`, for example `release.yml`.
     WorkflowFile,
     "^([A-Za-z0-9][A-Za-z0-9._-]{0,59}\\.yml|[A-Za-z0-9][A-Za-z0-9._-]{0,58}\\.yaml)$",
     |text| {
-        plain(text, MAX_NAME_BYTES, b"._-")?;
+        plain(text, MAX_WORKFLOW_BYTES, b"._-")?;
         let stem = text.strip_suffix(".yml").or_else(|| text.strip_suffix(".yaml"));
         match stem {
             Some(stem) if !stem.is_empty() => Ok(()),
@@ -179,9 +187,9 @@ name_type!(
 name_type!(
     /// A release tag, `<component>-vX.Y.Z`: the component
     /// `[a-z][a-z0-9-]{1,30}` of `_TAG_RE`, then `-v`, then three numbers
-    /// of 1 to 9 digits each (section 4.5 step 4).
+    /// of 1 to 9 digits each with no leading zero (section 4.5 step 4).
     ReleaseTag,
-    "^[a-z][a-z0-9-]{1,30}-v[0-9]{1,9}\\.[0-9]{1,9}\\.[0-9]{1,9}$",
+    "^[a-z][a-z0-9-]{1,30}-v(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$",
     |text| {
         if text.len() > MAX_NAME_BYTES {
             return Err(NameFault::TooLong);
@@ -252,17 +260,22 @@ name_type!(
 impl Sha256Hex {
     /// The hex text of a digest. It is valid by construction.
     pub(crate) fn from_digest(digest: [u8; 32]) -> Self {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
         let mut text = String::with_capacity(64);
         for byte in digest {
-            for nibble in [byte >> 4, byte & 0x0f] {
-                text.push(
-                    HEX.get(usize::from(nibble))
-                        .map_or('0', |digit| char::from(*digit)),
-                );
-            }
+            text.push(hex_digit(byte >> 4));
+            text.push(hex_digit(byte & 0x0f));
         }
         Self(text)
+    }
+}
+
+/// The lower-case hex digit of the low 4 bits of `bits`. Each arm computes
+/// its digit: the mask leaves only 0 to 15, and the second arm takes 10 to
+/// 15.
+fn hex_digit(bits: u8) -> char {
+    match bits & 0x0f {
+        value @ 0..=9 => char::from(b'0' + value),
+        value => char::from(b'a' + (value - 10)),
     }
 }
 
@@ -428,10 +441,8 @@ mod tests {
                 .component(),
             "creche-release"
         );
-        assert!(
-            "vmm-v000000001.0.0".parse::<ReleaseTag>().is_ok(),
-            "_TAG_RE allows leading zeros"
-        );
+        assert!("vmm-v0.0.0".parse::<ReleaseTag>().is_ok());
+        assert!("vmm-v999999999.10.0".parse::<ReleaseTag>().is_ok());
 
         for bad in [
             "main",
@@ -442,6 +453,10 @@ mod tests {
             "vmm-v1.2.3\n",
             "vmm-v1.2.x",
             "vmm-v1234567890.0.0",
+            "vmm-v000000001.0.0",
+            "vmm-v0.1.024",
+            "vmm-v00.1.24",
+            "vmm-v0.01.24",
             "vmm_x-v1.2.3",
             "-vmm-v1.2.3",
         ] {
@@ -486,6 +501,15 @@ mod tests {
         for bad in ["creche", "a/b/c", "/creche", "owner/", "o wner/creche"] {
             assert!(bad.parse::<RepoFullName>().is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn digest_hex() {
+        let digest: [u8; 32] = std::array::from_fn(|n| u8::try_from(n * 8 + 7).unwrap());
+        let expected: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(Sha256Hex::from_digest(digest).as_str(), expected);
+        assert_eq!(Sha256Hex::from_digest([0xff; 32]).as_str(), "f".repeat(64));
+        assert_eq!(Sha256Hex::from_digest([0; 32]).as_str(), "0".repeat(64));
     }
 
     #[test]

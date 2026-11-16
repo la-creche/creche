@@ -99,7 +99,7 @@ impl std::error::Error for Refusal {}
 
 /// A run that passed the mismatch check and checks 1, 2, 3 and 5. Check 4
 /// needs one more read, of `commits/{commit}/pull`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct RunChecked {
     repository: RepoFullName,
     workflow: WorkflowFile,
@@ -121,8 +121,9 @@ impl RunChecked {
     }
 }
 
-/// A run that passed every check of section 4.4.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A run that passed every check of section 4.4. It is not `Clone`: one
+/// decision feeds one `IssuedRuns::issue`.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Eligible {
     repository: RepoFullName,
     workflow: WorkflowFile,

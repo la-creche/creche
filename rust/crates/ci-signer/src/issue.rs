@@ -1,11 +1,20 @@
 //! One statement for each run (section 4.5 step 6, section 4.6), and the
 //! one place that builds a statement to sign.
 //!
+//! `Signable` has a private field, so only this module makes one, and only
+//! `IssuedRuns::issue` does. It takes an `Eligible` value, which only
+//! `decide_merge` makes.
+//!
 //! The rule must hold across a restart of the signer, and section 4.7
 //! restarts it on each rotation. So `IssuedRuns` has no empty constructor.
 //! The program reads its journal of issued runs (section 4.3 item 7) with
-//! `IssuedRuns::from_journal` at start, and appends the `IssuedLine` of
-//! each issue. A first start reads an empty journal.
+//! `IssuedRuns::from_journal` once at start, and appends the `IssuedLine`
+//! of each issue. A first start reads an empty journal.
+//!
+//! The program must hold exactly one `IssuedRuns`. The type is not `Clone`,
+//! so a copy of the set cannot issue a second statement for a run. A second
+//! `from_journal` of the same text would give a second set: the program
+//! calls it once, at start.
 //!
 //! The set also refuses a second statement for a commit. A rerun that
 //! Forgejo gives a new run id then gets no second statement either.
@@ -31,7 +40,7 @@ use crate::eligibility::Eligible;
 use crate::exchange::Request;
 use crate::names::{CommitSha, NameError, RunId, RunIdError, Sha256Hex};
 use crate::signed_at::SignedAt;
-use crate::statement::{Signable, Statement};
+use crate::statement::Statement;
 
 /// The run or its commit already got a statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,8 +115,23 @@ impl fmt::Display for JournalError {
 
 impl std::error::Error for JournalError {}
 
+/// The canonical bytes of one issued statement, ready for
+/// `cosign sign-blob`. Only `IssuedRuns::issue` makes one.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Signable {
+    bytes: Vec<u8>,
+}
+
+impl Signable {
+    /// The bytes that cosign signs.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 /// What one issue gives: the bytes to sign and the line to append.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Issued {
     /// The canonical statement, for `cosign sign-blob`.
     pub signable: Signable,
@@ -115,8 +139,9 @@ pub struct Issued {
     pub line: IssuedLine,
 }
 
-/// The runs and the commits that already got a statement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The runs and the commits that already got a statement. The program
+/// holds one, loaded once at start.
+#[derive(Debug)]
 pub struct IssuedRuns {
     runs: BTreeSet<RunId>,
     commits: BTreeSet<CommitSha>,
@@ -213,7 +238,9 @@ impl IssuedRuns {
             signed_at,
             request.into_tags(),
         );
-        let signable = statement.signable();
+        let signable = Signable {
+            bytes: statement.canonical_bytes(),
+        };
         let line = IssuedLine {
             run,
             commit,

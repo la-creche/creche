@@ -97,8 +97,13 @@
     },
     {
       "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v000000001.0.0\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
-      "written": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v000000001.0.0\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
-      "note": "leading zeros pass, as in _TAG_RE"
+      "written": null,
+      "note": "a leading zero is refused: root reads each number with int(), so 000000001 and 1 would be one version"
+    },
+    {
+      "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-11-15T12:00:00Z\",\"tags\":[{\"tag\":\"vmm-v0.1.23\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
+      "written": null,
+      "note": "two tags of one component are refused"
     },
     {
       "json": "{\"statement\":1,\"repository\":\"example-owner/creche\",\"workflow\":\"release.yml\",\"event\":\"push\",\"ref\":\"main\",\"commit\":\"5791a8cdae55087207f12ab919c5eb964494d654\",\"run\":1234,\"signed_at\":\"2026-02-30T12:00:00Z\",\"tags\":[{\"tag\":\"handover-v0.1.96\",\"assets\":[]},{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}]}]}",
