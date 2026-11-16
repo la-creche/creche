@@ -98,16 +98,31 @@ impl Scratch {
     fn dial(&self) -> UnixStream {
         let path = self.run.host_listener(HostPort::GitPlatformSpool);
         let stream = UnixStream::connect(path).unwrap();
-        stream.set_read_timeout(Some(WAIT)).unwrap();
+        // A link past `LINK_CAP` closes at once. macOS then refuses the
+        // option with EINVAL. A closed link reads its end at once, so it
+        // needs no timeout.
+        if let Err(error) = stream.set_read_timeout(Some(WAIT)) {
+            assert_eq!(error.kind(), ErrorKind::InvalidInput, "{error}");
+        }
         stream
     }
 
     /// Sends `bytes` on a new link, half-closes it and gives every byte of
     /// the answer. A reset counts as the end of the answer, as in
-    /// `tests/mirror.rs`.
+    /// `tests/mirror.rs`. A link past `LINK_CAP` closes at once, so the
+    /// write can meet a closed link: a broken pipe or a reset there also
+    /// ends the answer, and the caller sees no reply.
     fn ask(&self, bytes: &[u8]) -> Vec<u8> {
         let mut stream = self.dial();
-        stream.write_all(bytes).unwrap();
+        if let Err(error) = stream.write_all(bytes) {
+            assert!(
+                matches!(
+                    error.kind(),
+                    ErrorKind::BrokenPipe | ErrorKind::ConnectionReset
+                ),
+                "{error}"
+            );
+        }
         if let Err(error) = stream.shutdown(Shutdown::Write) {
             assert_eq!(error.kind(), ErrorKind::NotConnected, "{error}");
         }
