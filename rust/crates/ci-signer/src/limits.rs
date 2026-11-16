@@ -14,34 +14,30 @@ pub const MAX_TAGS: usize = 32;
 /// The most assets of one tag (section 4.5 step 4).
 pub const MAX_ASSETS_PER_TAG: usize = 16;
 
-/// The most bytes of a tag name and of an asset name.
+/// The most bytes of a tag name and of an asset name (section 4.5).
 ///
-/// Proposal of 2026-11-16, item 1 (section 4.5). The operator has not
-/// accepted it yet.
+/// Decided by the operator on 2026-11-16.
 pub const MAX_NAME_BYTES: usize = 64;
 
 /// The most bytes of a workflow file name.
 ///
-/// Not part of proposal 1. The note sets no cap on the workflow file name.
-/// This cap is the code's own reading, so that the worst statement has a
-/// size. Each workflow of `signing-pairs.tsv` is far below it. A run reply
-/// with a longer `workflow_id` is refused (fail closed).
-// CONTRACT-QUESTION: forgejo-release-path.md section 4.5 caps no workflow
-// file name. The reading here caps it at 64 bytes. A change is this
-// constant, the `WorkflowFile` pattern and one vector.
+/// Decided by the operator on 2026-11-16. The cap gives the worst
+/// statement a size. Each workflow of `signing-pairs.tsv` is far below it.
+/// A run reply with a longer `workflow_id` is refused (fail closed). A
+/// change is this constant, the `WorkflowFile` pattern and one vector.
 pub const MAX_WORKFLOW_BYTES: usize = 64;
 
-/// The most bytes of a cosign bundle.
+/// The most bytes of a cosign bundle (section 4.5).
 ///
-/// Proposal of 2026-11-16, item 2 (section 4.5). The operator has not
-/// accepted it yet. The size of a cosign bundle with a key and no log entry
-/// is not measured.
+/// Decided by the operator on 2026-11-16. cosign v3.1.4 with a P-256 key
+/// and no log entry writes a bundle of 387 bytes (measured on 2026-11-16,
+/// `vectors/cosign-3.1.4/`). The cap leaves 3709 bytes for another key
+/// type or bundle form.
 pub const MAX_BUNDLE_BYTES: usize = 4096;
 
-/// The most bytes of a tag message that the signer writes.
+/// The most bytes of a tag message that the signer writes (section 4.5).
 ///
-/// Proposal of 2026-11-16, item 3 (section 4.5). The operator has not
-/// accepted it yet.
+/// Decided by the operator on 2026-11-16.
 pub const MAX_TAG_MESSAGE_BYTES: usize = 120_000;
 
 /// The largest message that `POST /repos/{o}/{r}/tags` of Forgejo 17.0.1
@@ -104,7 +100,7 @@ pub const WORST_STATEMENT_BYTES: usize = r#"{"statement":1,"repository":"/","wor
 pub const WORST_TAG_MESSAGE_BYTES: usize =
     MESSAGE_HEADER.len() + 1 + base64_len(WORST_STATEMENT_BYTES) + 1 + base64_len(MAX_BUNDLE_BYTES);
 
-// Proposal 3 of section 4.5 holds by construction: no statement that the
+// The message cap of section 4.5 holds by construction: no statement that the
 // types allow makes a message above the cap, and the cap is below the
 // measured limit of Forgejo. A git tag object adds one LF, so the cap keeps
 // a margin of more than one byte.
