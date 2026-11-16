@@ -10,10 +10,10 @@ use std::net::SocketAddr;
 use std::path::Path;
 
 use creche_vmm::config::{
-    BUDGET, CH, CH_REMOTE, CHAPERONE, Config, ConfigError, EGRESS_LOG, FALLOCATE, FAMILY_ROOT,
-    FAULTS_ROOT, FREE_FLOOR, Fault, GIT, GIT_SPOOL_ROOT, GUEST_INIT, GcConfig, IMAGE_ROOT,
-    KillScopesConfig, LITELLM, MIRROR_ROOT, MKE2FS, RAM_CAP, RUN_ROOT, STATE_ROOT, SYSTEMCTL,
-    SYSTEMD_RUN, ZSTD,
+    BROWSER_PEER, BROWSER_SOCKET, BUDGET, CH, CH_REMOTE, CHAPERONE, Config, ConfigError,
+    EGRESS_LOG, FALLOCATE, FAMILY_ROOT, FAULTS_ROOT, FREE_FLOOR, Fault, GIT, GIT_SPOOL_ROOT,
+    GUEST_INIT, GcConfig, IMAGE_ROOT, KillScopesConfig, LITELLM, MIRROR_ROOT, MKE2FS, RAM_CAP,
+    RUN_ROOT, STATE_ROOT, SYSTEMCTL, SYSTEMD_RUN, UserName, ZSTD,
 };
 use creche_vmm::planes::Upstreams;
 use creche_vmm_confine::admission::{GIB, Limits};
@@ -23,7 +23,7 @@ use creche_vmm_store::retention;
 const DEFAULT_ENV: &str = include_str!("../../../../env/src/creche_env/default.env");
 
 /// Each path key of the config, in the order that `Config` reads them.
-const PATHS: [&str; 17] = [
+const PATHS: [&str; 18] = [
     STATE_ROOT,
     RUN_ROOT,
     FAMILY_ROOT,
@@ -41,6 +41,7 @@ const PATHS: [&str; 17] = [
     MIRROR_ROOT,
     GIT,
     GIT_SPOOL_ROOT,
+    BROWSER_SOCKET,
 ];
 
 /// Each size key of the config.
@@ -49,9 +50,12 @@ const SIZES: [&str; 3] = [RAM_CAP, FREE_FLOOR, BUDGET];
 /// Each address key of the config (decision CH62 rule 20).
 const ADDRS: [&str; 2] = [LITELLM, CHAPERONE];
 
+/// Each user key of the config.
+const USERS: [&str; 1] = [BROWSER_PEER];
+
 /// Each key of the config.
 fn keys() -> impl Iterator<Item = &'static str> {
-    PATHS.into_iter().chain(SIZES).chain(ADDRS)
+    PATHS.into_iter().chain(SIZES).chain(ADDRS).chain(USERS)
 }
 
 /// An env with a good value for each key.
@@ -61,7 +65,13 @@ fn good() -> HashMap<&'static str, OsString> {
         .map(|(key, value)| (key, OsString::from(value)));
     let addrs = [(LITELLM, "192.0.2.10:4000"), (CHAPERONE, "192.0.2.10:8300")]
         .map(|(key, value)| (key, OsString::from(value)));
-    paths.into_iter().chain(sizes).chain(addrs).collect()
+    let users = [(BROWSER_PEER, OsString::from("mcp-browser"))];
+    paths
+        .into_iter()
+        .chain(sizes)
+        .chain(addrs)
+        .chain(users)
+        .collect()
 }
 
 fn read(env: &HashMap<&'static str, OsString>) -> Result<Config, ConfigError> {
@@ -123,6 +133,29 @@ fn a_good_env_gives_each_path_and_size() {
     assert_eq!(
         config.git_spool_root.path(),
         Path::new("/srv/VMM_GIT_SPOOL_ROOT")
+    );
+    assert_eq!(config.browser_socket, Path::new("/srv/VMM_BROWSER_SOCKET"));
+    assert_eq!(config.browser_peer.as_str(), "mcp-browser");
+}
+
+/// A user name is 1 to 32 bytes of `a-z`, `0-9`, `_` and `-`, with a
+/// letter or `_` first.
+#[test]
+fn the_peer_is_a_user_name() {
+    for good in ["mcp-browser", "_x", "a", "a0_-"] {
+        assert_eq!(good.parse::<UserName>().unwrap().as_str(), good);
+    }
+    let long = "a".repeat(33);
+    for bad in ["Mcp", "0a", "-a", "a b", "a:b", "a/b", long.as_str()] {
+        assert_eq!(
+            fault_of(BROWSER_PEER, bad).fault,
+            Fault::NotUserName,
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        fault_of(BROWSER_PEER, "Secret").to_string(),
+        "VMM_BROWSER_PEER_USER: the key is not a user name"
     );
 }
 
@@ -343,6 +376,9 @@ fn the_catalog_defaults_are_the_design_values() {
         // Decision CH3: the spool that root makes, which the upstream
         // names as its default too.
         (GIT_SPOOL_ROOT, "/var/lib/creche-git-platform"),
+        // Browser design 10.2: root makes the dir once, as for the memory
+        // socket.
+        (BROWSER_SOCKET, "/var/lib/creche-browser/relay.sock"),
     ];
     for (key, expected) in paths {
         assert_eq!(default_of(key), Some(expected), "{key}");
@@ -358,6 +394,8 @@ fn the_catalog_defaults_are_the_design_values() {
     for (key, expected) in addrs {
         assert_eq!(default_of(key), Some(expected), "{key}");
     }
+    // The user of the server file `browser` of the registry.
+    assert_eq!(default_of(BROWSER_PEER), Some("mcp-browser"));
     // Gap G14: the design values of the cap, the floor and the budget.
     let mut env = good();
     for key in SIZES {

@@ -27,8 +27,10 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
-use creche_wire::{CheckReason, FamilyName, HostName, SessionId};
+use creche_wire::{CheckReason, HostName, SessionId};
 use serde::Serialize;
+
+use crate::service::Owner;
 
 /// The most bytes of one log file: 64 MiB (decision CH69 rule 10).
 pub const LOG_CAP: u64 = 64 * 1024 * 1024;
@@ -44,8 +46,10 @@ pub const LOG_MODE: u32 = 0o600;
 pub struct Line {
     /// The time of the refusal, or of the end of a tunnel.
     pub time: String,
-    /// The family of the VM.
-    pub family: FamilyName,
+    /// The owner of the VM: `"family": <name>` for a family VM, or
+    /// `"service": <image>` for a service VM (browser design 10.2 item 4).
+    #[serde(flatten)]
+    pub owner: Owner,
     /// The session of the VM.
     pub session: SessionId,
     /// The host of the CONNECT target, when the target read.

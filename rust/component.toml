@@ -91,6 +91,8 @@ env.keys = [
   "VMM_MIRROR_ROOT",
   "VMM_GIT_PROGRAM",
   "VMM_GIT_SPOOL_ROOT",
+  "VMM_BROWSER_SOCKET",
+  "VMM_BROWSER_PEER_USER",
 ]
 restore.mode = "automatic"
 restore.keep = 1

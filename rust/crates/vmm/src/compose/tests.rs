@@ -203,6 +203,8 @@ impl Scratch {
             ("VMM_MIRROR_ROOT", text(dir.join("mirror"))),
             ("VMM_GIT_PROGRAM", text(dir.join("bin/git"))),
             ("VMM_GIT_SPOOL_ROOT", text(dir.join("spool"))),
+            ("VMM_BROWSER_SOCKET", text(dir.join("browser/relay.sock"))),
+            ("VMM_BROWSER_PEER_USER", OsString::from("mcp-browser")),
         ]);
         Self { dir, env }
     }

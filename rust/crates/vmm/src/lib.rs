@@ -24,6 +24,7 @@ pub mod relay;
 pub mod restore;
 pub mod root_owned;
 pub mod server;
+pub mod service;
 pub mod shutdown;
 pub mod sleep;
 pub mod spool;

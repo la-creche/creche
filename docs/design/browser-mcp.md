@@ -3,7 +3,7 @@
 > Status as of 2026-11-14: Open. The decisions B1 to B6 are decided and the VM option of section 10 is open. Host steps are on hold. Check the operator's private notes before you act on a step.
 > Host names, addresses and accounts are placeholders. The operator's private notes hold the real values.
 
-Status: DECIDED 2026-11-13 (B1-B5 all as recommended), B6 2026-11-14 (fix A). REOPENED 2026-11-14 for the VM option, section 10. V1-V6 DECIDED 2026-11-14, all as recommended: the browser runs in a service VM, and B1 (in its host form), B3, B5 and B6 are superseded. The host steps of section 7 will not run. Next: the spike, 10.5 step 1.
+Status: DECIDED 2026-11-13 (B1-B5 all as recommended), B6 2026-11-14 (fix A). REOPENED 2026-11-14 for the VM option, section 10. V1-V6 DECIDED 2026-11-14, all as recommended: the browser runs in a service VM, and B1 (in its host form), B3, B5 and B6 are superseded. The host steps of section 7 will not run. The spike passed on 2026-11-15, and 10.5 step 2 shipped (creche#583). Steps 3 to 5 are in build: section 10.8.
 
 **B5 (Chromium source), decided:** Chrome for Testing publishes no sha256, only md5 and crc32c, and contract 01b §3.2 forbids an author-computed pin. Chromium comes from Google's signed apt repo (`google-chrome-stable`) as a host step, with unattended-upgrades allowed for that origin. handover changes only to take a bare-binary release asset (`install.format = "binary"`). agent-browser's own sha256 is published by GitHub (asset digest `sha256:8e69c9fb...` for v0.43.0 linux-x64). The host lacked only `libasound.so.2` of Chrome's 32 needed libraries (checked 2026-11-13); apt pulls it with the package.
 
@@ -230,3 +230,16 @@ Cost on top of the VM option: the vmm viewer route and the filter, the Panda pan
 - **V4, browser state:** a fresh profile each time the VM starts, nothing saved (recommended), or a saved profile on a session disk (logins persist, and so would a page's tracking).
 - **V5, meanwhile:** hold the host steps until the VM option lands (recommended), or run the host plan now as a stopgap and remove it later.
 - **V6, live view (the operator, 2026-11-14: in the plan):** read-only, the vmm drops every viewer input (recommended), or allow takeover from the panel. Takeover would need its own design: who may click, and how the agent learns the page changed under it.
+
+### 10.8 Build state and the choices of steps 3 to 5 (2026-11-15)
+
+Step 2 shipped as creche#583: the `browser` disk and the browser facade. The facade uses the facade slot of guest init (guest port 1201) and reads a kind line, `mcp` or `view`. So guest init needs no program mode, and gap 3 closed with no guest init change.
+
+Steps 3 and 5 are one creche change: the vmm service VM kind, the browser socket and the 443 rule (`rust/crates/vmm/AGENTS.md`, "The service VMs"). The contract text of step 5 is in that section, because private-docs is retired. The plan left these choices open. Each takes the option with less work:
+
+1. **The table.** The browser VM runs in the one VM table, with a reserved session id. The slots, admission, the stop path and the shutdown need no new path. The control hello needs a session id anyway. The create route refuses the reserved id.
+2. **The socket dir.** `/var/lib/creche-browser`, as `/var/lib/creche-memory` for the memory socket: root makes it once, mode 2750, group `mcp-browser`. It needs no `tmpfiles.d` line, because `/var/lib` lasts across a reboot.
+3. **The peer check.** The vmm checks `SO_PEERCRED` against `VMM_BROWSER_PEER_USER`, as the memory service does.
+4. **The relay.** Step 4 moves to the `mcp` repository: `browser-relay` is an entry point of `agent-mcp`, as `memory-mcp` is. It ships with the `mcp-servers` release, so the vmm archive gains no program. It copies MCP lines, and it reads `method` and `id` only to survive the end of a VM: after a vmm restart it connects again, replays `initialize`, and answers each call that was in flight with an error.
+5. **The host steps of step 7.** The dir of choice 2, a chaperone drop-in with `ReadWritePaths=/var/lib/creche-browser`, the plugin manifest of `browser` and its `install.toml` entry, as steps 9 and 10 of the memory runbook. The Google key and `google-chrome.list` that `browser-host.sh` left go too.
+

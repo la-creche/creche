@@ -252,6 +252,24 @@ fn a_different_create_of_the_id_gets_conflict() {
     server.end();
 }
 
+/// A create of the reserved id of a service VM gets `conflict` 409 and
+/// makes no row, so no Upgrade reaches the browser VM (browser design
+/// 10.4 gap 1).
+#[test]
+fn the_id_of_a_service_vm_gets_conflict() {
+    let server = Server::start("create-reserved");
+    let mut create: Value =
+        serde_json::from_str(&vector("CreateSession", "a door session")).unwrap();
+    let id = creche_vmm::service::vm_id(creche_wire::ServiceImage::Browser).unwrap();
+    create["id"] = Value::from(id.as_str());
+    assert_eq!(
+        server.ask("create", &create.to_string()),
+        (409, r#"{"code":"conflict"}"#.to_owned())
+    );
+    assert!(server.page("chat", None).rows.is_empty());
+    server.end();
+}
+
 /// A family with no dir, a family dir with no `config/` and a `config`
 /// that is a file each get `unknown_family` 404 and make no row (decision
 /// CH33 rule 3).

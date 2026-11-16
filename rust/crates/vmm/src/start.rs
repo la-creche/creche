@@ -85,13 +85,14 @@ use std::time::{Duration, Instant, SystemTime};
 
 use creche_vmm_confine::admission::{Admission, Gate, Limits, Running, decide, free_bytes};
 use creche_vmm_confine::command::{Boot, ChCommand, DiskLimit};
-use creche_vmm_confine::deny::cmdline_of;
+use creche_vmm_confine::deny::{self, cmdline_of};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::faults::{FaultBook, FaultCode};
 use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
-use creche_vmm_confine::launch::{Launch, Program};
+use creche_vmm_confine::launch::{Launch, Payload, Program};
 use creche_vmm_confine::leftovers::stop_one;
 use creche_vmm_confine::limits::VmLimits;
+use creche_vmm_confine::scope::Scope;
 use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
 use creche_vmm_confine::spool::SpoolRoot;
 use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
@@ -108,9 +109,10 @@ use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
 use creche_wire::{
-    FamilyName, FamilyShape, GuestEvent, PerFlavor, PerService, SessionId, SessionRow,
+    FamilyName, FamilyShape, GuestEvent, HostPort, PerFlavor, PerService, ServiceImage, SessionId,
+    SessionRow,
 };
-use tokio::sync::{RwLock, watch};
+use tokio::sync::{Mutex as AsyncMutex, RwLock, watch};
 use tokio::task::spawn_blocking;
 use tokio::time::{sleep, timeout};
 
@@ -130,6 +132,8 @@ use crate::mirror::{self, Mirror};
 use crate::planes::{self, Bound, Planes, Upstreams, bind};
 use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
+use crate::service::link::ServiceVm;
+use crate::service::{self, Owner, ServiceError};
 use crate::shutdown::{Taken, VmSet};
 use crate::sleep::SERIAL_CAP;
 use crate::spool;
@@ -269,8 +273,9 @@ impl Launcher for Spawner {
 struct Vm<P> {
     /// The launched process.
     process: P,
-    /// The family of the session, for the fault file (decision CH21-1).
-    family: FamilyName,
+    /// The family of the session, for the fault file (decision CH21-1), or
+    /// the image of a service VM, which has no fault file.
+    owner: Owner,
     /// The run dir of the VM.
     run: VmRunDir,
     /// The configured guest RAM in bytes, for admission.
@@ -294,17 +299,22 @@ struct Vm<P> {
     last_use: Instant,
 }
 
-/// The served host listeners of one VM: the plane bridges (plan PR V6),
-/// the family-state reply (plan PR V8), and the follow of the reach files
-/// (plan PR E3), which holds the mirror of a family with a clone list
-/// (plan PR M1), the egress proxy of a family with a list (plan PR E2)
-/// and the spool of a family with the git platform grant (decision CH3).
-/// The drop closes each one.
+/// The served host listeners of one VM. The drop closes each one.
 #[derive(Debug)]
-struct Listeners {
-    _planes: Planes,
-    _family_state: Server,
-    _reach: Watch,
+enum Listeners {
+    /// A family VM: the plane bridges (plan PR V6), the family-state reply
+    /// (plan PR V8), and the follow of the reach files (plan PR E3), which
+    /// holds the mirror of a family with a clone list (plan PR M1), the
+    /// egress proxy of a family with a list (plan PR E2) and the spool of
+    /// a family with the git platform grant (decision CH3).
+    Family {
+        _planes: Planes,
+        _family_state: Server,
+        _reach: Watch,
+    },
+    /// A service VM: the egress proxy of its rule, and no other host port
+    /// (browser design 10.2 item 4).
+    Service { _egress: proxy::Server },
 }
 
 /// What the table holds for a session. Each entry holds its pool slot
@@ -441,7 +451,7 @@ struct Pending<P: VmProcess> {
     in_use: Arc<Mutex<InUse>>,
     root: RunRoot,
     id: SessionId,
-    family: FamilyName,
+    owner: Owner,
     guest_ram: u64,
     slot: PoolSlot,
     run: VmRunDir,
@@ -457,7 +467,7 @@ impl<P: VmProcess> Pending<P> {
         if let Some(process) = self.process.take() {
             let vm = Vm {
                 process,
-                family: self.family.clone(),
+                owner: self.owner.clone(),
                 run: self.run.clone(),
                 guest_ram: self.guest_ram,
                 slot: self.slot,
@@ -486,7 +496,7 @@ impl<P: VmProcess> Drop for Pending<P> {
                 let _ = process.kill();
                 let vm = Vm {
                     process,
-                    family: self.family.clone(),
+                    owner: self.owner.clone(),
                     run: self.run.clone(),
                     guest_ram: self.guest_ram,
                     slot: self.slot,
@@ -794,6 +804,9 @@ pub struct ColdBoot<L: Launcher, A: ChApi> {
     /// under the table lock, so no start adds a slot after a shutdown read
     /// the table.
     refusing: AtomicBool,
+    /// Each link of a service VM holds it from its table read to its
+    /// commit, so two links never start the same service VM.
+    service_starts: AsyncMutex<()>,
 }
 
 /// The gates of one running VM (PR D12).
@@ -833,6 +846,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             control,
             faults,
             refusing: AtomicBool::new(false),
+            service_starts: AsyncMutex::new(()),
         }
     }
 
@@ -948,13 +962,13 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
-    /// Reserves `guest_ram` and a pool slot for `id` of `family` when
+    /// Reserves `guest_ram` and a pool slot for `id` of `owner` when
     /// admission admits it, and takes out each VM that admission evicts
     /// first, in its order. With no free slot, the start takes the slot of
     /// its first eviction (plan PR L16b, decision CH58 rule 2).
     fn admit(
         &self,
-        (id, family): (&SessionId, &FamilyName),
+        (id, owner): (&SessionId, &Owner),
         guest_ram: u64,
         free: u64,
     ) -> Option<Admitted<L::Process>> {
@@ -1002,7 +1016,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             in_use: Arc::clone(&self.in_use),
             root: self.config.run.clone(),
             id: id.clone(),
-            family: family.clone(),
+            owner: owner.clone(),
             guest_ram,
             slot,
             run: self.config.run.vm(id),
@@ -1180,16 +1194,16 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             .filter_map(|(id, slot)| match slot {
                 Slot::Running(vm) => vm
                     .link_id
-                    .map(|link| ((id.clone(), link), vm.family.clone())),
+                    .map(|link| ((id.clone(), link), vm.owner.clone())),
                 _ => None,
             })
             .collect();
         let state = self.config.state.clone();
         let full = blocking(move || {
-            let full = running.into_iter().filter_map(|(session, family)| {
+            let full = running.into_iter().filter_map(|(session, owner)| {
                 let path = state.session(&session.0).serial_log();
                 match fs::metadata(&path) {
-                    Ok(meta) if meta.len() > SERIAL_CAP => Some((session, family, meta.len())),
+                    Ok(meta) if meta.len() > SERIAL_CAP => Some((session, owner, meta.len())),
                     Ok(_) => None,
                     Err(error) => {
                         eprintln!("vmm: cannot read the size of {}: {error}", path.display());
@@ -1205,7 +1219,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             Vec::new()
         });
         let mut stopped = Vec::new();
-        for (session, family, size) in full {
+        for (session, owner, size) in full {
             let id = session.0.clone();
             eprintln!("vmm: the serial log of {id} holds {size} bytes, past {SERIAL_CAP}");
             let parts = (self.stopper(), Arc::clone(&self.faults));
@@ -1213,7 +1227,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             let message =
                 format!("serial.log passed {mib} MiB ({size} bytes), so the vmm stops the VM");
             let fault = (FaultCode::SerialLogFull, message);
-            if detached(fault_stop(parts, family, session, fault)).await {
+            if detached(fault_stop(parts, owner, session, fault)).await {
                 stopped.push(id);
             }
         }
@@ -1412,11 +1426,12 @@ async fn reach_failed<P: VmProcess>(
         session.0
     );
     let fault = (FaultCode::EgressAssertFailed, message);
-    fault_stop(parts, family, session, fault).await;
+    fault_stop(parts, Owner::Family(family), session, fault).await;
 }
 
 /// Takes the VM of `id` on the control link `link` out of the table,
-/// writes `code` with `message` to the fault file of `family` and stops
+/// writes `code` with `message` to the fault file of the family of
+/// `owner` and stops
 /// the VM. The stop sends the graceful stop first (decision CH19 (3)),
 /// and a later VM of the session has another link, so the stop leaves it
 /// alone (decision CH54 rule 6). True when this call stopped a CH that
@@ -1428,14 +1443,23 @@ async fn reach_failed<P: VmProcess>(
 /// exited on its own write no fault.
 async fn fault_stop<P: VmProcess>(
     (stopper, faults): (Stopper<P>, Arc<Mutex<FaultBook>>),
-    family: FamilyName,
+    owner: Owner,
     (id, link): (SessionId, LinkId),
     (code, message): (FaultCode, String),
 ) -> bool {
-    let raise = |message| {
-        write_book(&faults, &family, move |book, family, now| {
-            book.raise(family, code, message, now)
-        })
+    // A service VM has no fault file: its fault goes to the journal only.
+    let raise = |message: String| {
+        let (faults, owner) = (Arc::clone(&faults), owner.clone());
+        async move {
+            let Owner::Family(family) = owner else {
+                eprintln!("vmm: {owner} faulted: {code:?}: {message}");
+                return;
+            };
+            write_book(&faults, &family, move |book, family, now| {
+                book.raise(family, code, message, now)
+            })
+            .await;
+        }
     };
     match stopper.take(&id, Some(link)).await {
         Claim::Took(mut eviction, sender) => {
@@ -1996,17 +2020,14 @@ fn launch<L: Launcher>(
     let files = VmFiles::new(start.clone(), host(root.path())?, &session, &run)
         .map_err(|error| error.to_string())?;
     let payload = command.payload(config.ch.clone());
-    let scope = limits.scope(id.clone());
-    // The table holds no VM of `id` here, so a loaded scope with its name
-    // is a leftover, and `systemd-run --unit` would refuse the name. On
-    // 2026-11-15 a dropped start left one, `active` with an empty cgroup,
-    // and every later start of the session failed for three hours.
-    let leftover = format!("{}.scope", scope.unit());
-    if stop_one(&config.systemctl, &leftover).map_err(|error| error.to_string())? {
-        eprintln!("vmm: stopped the leftover unit {leftover}");
-    }
-    let plan = Launch::new(config.systemd_run.clone(), scope, payload, files, unit).in_slot(slot);
-    let process = launcher.launch(plan).map_err(|error| error.to_string())?;
+    let process = launch_in_slot(
+        config,
+        launcher,
+        (unit, slot),
+        limits.scope(id.clone()),
+        payload,
+        files,
+    )?;
     Ok(Booted {
         process,
         key,
@@ -2019,6 +2040,283 @@ fn launch<L: Launcher>(
         egress,
         spool,
     })
+}
+
+/// The last part of step 3: the stop of a leftover scope, then the launch
+/// of CH in `slot` with `payload`, `files` and the vmm unit `unit`.
+fn launch_in_slot<L: Launcher>(
+    config: &StartConfig,
+    launcher: &L,
+    (unit, slot): (VmmUnit, PoolSlot),
+    scope: Scope,
+    payload: Payload,
+    files: VmFiles,
+) -> Result<L::Process, String> {
+    // The table holds no VM of the session here, so a loaded scope with
+    // its name is a leftover, and `systemd-run --unit` would refuse the
+    // name. On 2026-11-15 a dropped start left one, `active` with an empty
+    // cgroup, and every later start of the session failed for three hours.
+    let leftover = format!("{}.scope", scope.unit());
+    if stop_one(&config.systemctl, &leftover).map_err(|error| error.to_string())? {
+        eprintln!("vmm: stopped the leftover unit {leftover}");
+    }
+    let plan = Launch::new(config.systemd_run.clone(), scope, payload, files, unit).in_slot(slot);
+    launcher.launch(plan).map_err(|error| error.to_string())
+}
+
+/// What the launch step of a service VM gives the start.
+struct ServiceBooted<P> {
+    /// The CH process.
+    process: P,
+    /// The start that the ruleset and the deny check name.
+    start: Start,
+    /// The egress proxy listener, bound before CH started.
+    egress: proxy::Bound,
+}
+
+/// Step 3 of a service VM: the link of `vm/<id>` to `slot`, the egress
+/// listener, the files of a cold boot of the root disk of `image`, then
+/// the launch in `slot`. A service VM always cold-boots, and each boot
+/// gets a new session disk (decision V4).
+fn launch_service<L: Launcher>(
+    config: &StartConfig,
+    launcher: &L,
+    (id, slot): (&SessionId, PoolSlot),
+    image: ServiceImage,
+) -> Result<ServiceBooted<L::Process>, String> {
+    let unit = config.vmm_unit.clone().map_err(|error| error.to_string())?;
+    let limits = service::limits(image).map_err(|error| error.to_string())?;
+    let run = config
+        .run
+        .link_vm(id, slot)
+        .map_err(|error| format!("{error}: {}", error.source))?;
+    remove_stale(&run).map_err(|error| format!("{error}: {}", error.source))?;
+    // The one host listener of a service VM. The guest dials of 1100 to
+    // 1103 and 1105 find no listener and fail closed (decision CH46 rule
+    // 1).
+    let egress = proxy::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
+    let checked = |digest| {
+        config
+            .images
+            .check(digest)
+            .map_err(|error| error.to_string())
+    };
+    let digests = config.digests.borrow().clone();
+    let kernel = checked(digests.kernel)?;
+    let initramfs = checked(config.initramfs)?;
+    let Some(root) = *digests.services.get(image) else {
+        return Err(format!("digests.json has no {} disk", image.name()));
+    };
+    let root = checked(root)?;
+    let session = config.state.session(id);
+    // Decision V4: nothing of a VM start reaches the next one. The guest
+    // keeps the profile on its tmpfs, and the disk of the last start goes
+    // here.
+    match fs::remove_file(session.disk()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("{}: {error}", session.disk().display())),
+    }
+    let disk = config
+        .disks
+        .for_boot(id)
+        .map_err(|error| error.to_string())?;
+    make_dir(&session.snapshots())?;
+    let serial =
+        SerialLog::fresh(&session).map_err(|error| format!("{error}: {}", error.source))?;
+    let boot = Boot {
+        kernel: &kernel,
+        initramfs: &initramfs,
+        root: &root,
+        session: &disk,
+        serial: &serial,
+        disk: DiskLimit::SESSION,
+        limits,
+    };
+    let command = ChCommand::boot(boot, &run).map_err(|error| error.to_string())?;
+    let start = Start::Boot {
+        kernel: host(kernel.path())?,
+        initramfs: host(initramfs.path())?,
+    };
+    let files = VmFiles::new(start.clone(), host(root.path())?, &session, &run)
+        .map_err(|error| error.to_string())?;
+    let payload = command.payload(config.ch.clone());
+    let process = launch_in_slot(
+        config,
+        launcher,
+        (unit, slot),
+        limits.scope(id.clone()),
+        payload,
+        files,
+    )?;
+    Ok(ServiceBooted {
+        process,
+        start,
+        egress,
+    })
+}
+
+impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
+    /// Stops the VM of the service start `pending` after a fault, and
+    /// gives the fault. A service VM has no fault file, so the fault goes
+    /// to the journal only. The link `link` stops changing the control
+    /// state. After `ControlReady`, `control` sends the graceful stop
+    /// first (decision CH19 (3)).
+    async fn abort_service(
+        &self,
+        mut pending: Pending<L::Process>,
+        link: LinkId,
+        control: Option<&ControlLink>,
+        message: String,
+    ) -> ServiceError {
+        self.control().closed(&pending.id, link);
+        let message = format!("{} did not start: {message}", pending.owner);
+        eprintln!("vmm: {message}");
+        if let Some(process) = pending.process.as_mut() {
+            match stop(control, process, &pending.run).await {
+                Ok(_) => pending.process = None,
+                // Decision CH50 rule 4: the drop of `pending` keeps the VM
+                // in the table, so admission counts its RAM.
+                Err(error) => eprintln!("vmm: a faulted service VM did not stop: {error}"),
+            }
+        }
+        ServiceError(message)
+    }
+
+    /// Boots the VM of `image` with the reserved id `id`, then dials its
+    /// guest port 1201. The steps are the ones of a cold boot of a family
+    /// VM, with four changes (browser design 10.4 gaps 1 and 5):
+    ///
+    /// 1. The shape is `service::limits`, not a family file.
+    /// 2. The one host listener is the egress proxy, with the rule of a
+    ///    service VM (`rule::decide_public`). The deny check holds the
+    ///    bound set to it.
+    /// 3. No row, no snapshot and no fault file. The VM has no snapshot
+    ///    key, so admission never evicts it and it never sleeps.
+    /// 4. Each start is a cold boot on a new session disk (decision V4).
+    async fn boot_service(
+        &self,
+        image: ServiceImage,
+        id: &SessionId,
+    ) -> Result<AcpLink, ServiceError> {
+        let owner = Owner::Service(image);
+        let fail = |message: String| ServiceError(format!("{owner} did not start: {message}"));
+        let limits = service::limits(image)?;
+        let state = self.config.state.clone();
+        let free = blocking(move || {
+            free_bytes(state.path()).map_err(|error| format!("reading the free bytes: {error}"))
+        })
+        .await
+        .map_err(fail)?;
+        let (mut pending, evictions) = self
+            .admit((id, &owner), limits.guest_ram(), free)
+            .ok_or_else(|| fail("the host is full".to_owned()))?;
+        let fits = evictions.is_empty() || detached(self.retirer().evict_all(evictions)).await;
+        if !fits {
+            return Err(fail("the host is full".to_owned()));
+        }
+
+        let (config, lifecycle, launcher, session) = (
+            Arc::clone(&self.config),
+            self.image_lifecycle.clone(),
+            Arc::clone(&self.launcher),
+            id.clone(),
+        );
+        // As for a family VM, the process goes into `pending` inside the
+        // closure, so a dropped start kills its VM and keeps it in the
+        // table (decision CH50 rule 4).
+        let slot = pending.slot;
+        let launched = blocking(move || {
+            let _gate = lifecycle.read();
+            let booted = launch_service::<L>(&config, &*launcher, (&session, slot), image)?;
+            let cmdline = launcher.cmdline(&booted.process);
+            pending.process = Some(booted.process);
+            Ok((pending, booted.start, booted.egress, cmdline))
+        })
+        .await;
+        let (mut pending, start, egress, cmdline) = launched.map_err(|message| {
+            eprintln!("vmm: {owner} did not start: {message}");
+            fail(message)
+        })?;
+
+        let vsock = pending.run.vsock_socket();
+        let link = self.control().replace(id);
+        let log = Arc::clone(&self.config.egress_log);
+        let egress = match egress.serve_service(image, id.clone(), log) {
+            Ok(egress) => egress,
+            Err(error) => {
+                let message = format!("serving the egress listener: {error}");
+                return Err(self.abort_service(pending, link, None, message).await);
+            }
+        };
+        let opened = unless_ended(pending.process.as_mut(), open(&vsock, id, wall_time)).await;
+        let (control, ready) = match opened {
+            Ok(Ok(opened)) => opened,
+            Ok(Err(error)) => {
+                let message = format!("waiting for ControlReady: {error:?}");
+                return Err(self.abort_service(pending, link, None, message).await);
+            }
+            Err(message) => return Err(self.abort_service(pending, link, None, message).await),
+        };
+        // A service VM has no row, so a turn end of the ready has no row
+        // to go to.
+        let _change = self.control().ready(id, link, ready);
+
+        // Decision CH54 rule 2: the deny check runs after `ControlReady`
+        // and before the dial of 1201. The bound set is the egress port
+        // only.
+        let (ch, run, bound) = (
+            self.config.ch.clone(),
+            pending.run.clone(),
+            [HostPort::Egress],
+        );
+        let denied = blocking(move || {
+            deny::check(&cmdline, &ch, &start, &run, &bound).map_err(|error| error.to_string())
+        })
+        .await;
+        if let Err(message) = denied {
+            let control = Some(&control);
+            return Err(self.abort_service(pending, link, control, message).await);
+        }
+        let acp = match AcpLink::dial(&vsock).await {
+            Ok(acp) => acp,
+            Err(error) => {
+                let control = Some(&control);
+                let message = dial_text(error);
+                return Err(self.abort_service(pending, link, control, message).await);
+            }
+        };
+        let (sender, events) = control.split();
+        let (stopper, rows) = (self.stopper(), Arc::clone(&self.rows));
+        tokio::spawn(read_guest(events, (id.clone(), link), stopper, rows));
+        let listeners = Listeners::Service { _egress: egress };
+        pending.commit(sender, link, listeners);
+        eprintln!("vmm: {owner} runs");
+        Ok(acp)
+    }
+}
+
+impl<L: Launcher, A: ChApi> ServiceVm for ColdBoot<L, A> {
+    /// The VM of `image` in the table gets a new dial of guest port 1201.
+    /// With no VM, it boots one (`boot_service`). One start of a service
+    /// VM runs at a time.
+    async fn link(&self, image: ServiceImage) -> Result<AcpLink, ServiceError> {
+        let _start = self.service_starts.lock().await;
+        let id = service::vm_id(image)?;
+        let owner = Owner::Service(image);
+        match self.find(&id) {
+            Ok(Found::Runs(vsock)) => {
+                return AcpLink::dial(&vsock)
+                    .await
+                    .map_err(|error| ServiceError(format!("{owner}: {}", dial_text(error))));
+            }
+            Ok(Found::Free) => {}
+            Ok(Found::Evicting) => return Err(ServiceError(format!("{owner} is stopping"))),
+            Ok(Found::Refused) => return Err(ServiceError("the vmm shuts down".to_owned())),
+            Err(message) => return Err(ServiceError(format!("{owner}: {message}"))),
+        }
+        self.boot_service(image, &id).await
+    }
 }
 
 impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
@@ -2056,7 +2354,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let guest_ram = VmLimits::from(shape).guest_ram();
         // `host_full` is no fault of decision CH6-3, so it writes none.
         let (mut pending, evictions) = self
-            .admit((id, family), guest_ram, free)
+            .admit((id, &Owner::Family(family.clone())), guest_ram, free)
             .ok_or(StartFault::HostFull)?;
         // The evictions run in the order of admission, in a task of their
         // own. After one that fails, the rest go back, and the start does
@@ -2253,7 +2551,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let failed = move |message| {
             tokio::spawn(reach_failed(parts, name, session, message));
         };
-        let listeners = Listeners {
+        let listeners = Listeners::Family {
             _planes: planes,
             _family_state: family_state,
             _reach: follow.spawn(reach, reached, failed),

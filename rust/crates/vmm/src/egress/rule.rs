@@ -13,6 +13,10 @@
 //!    is not public refuses the whole name with `not_public`. No record is
 //!    `no_address`. Else the verdict allows the target at the records, in
 //!    the resolver's order.
+//!
+//! A service VM has no allowlist (browser design 10.2 item 4).
+//! `decide_public` replaces step 2: a port other than 443 gets
+//! `not_listed`. Steps 3 and 4 are the same.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::num::NonZeroU16;
@@ -112,6 +116,30 @@ pub async fn decide(list: &FamilyEgress, target: &Target) -> CheckReply {
     if !listed {
         return refused(CheckReason::NotListed);
     }
+    resolve(target).await
+}
+
+/// The one port of a service VM: HTTPS (decision V2 of the browser
+/// design, 10.7). Plain `http://` gets 405 from the proxy, which takes
+/// only CONNECT.
+pub const SERVICE_PORT: u16 = 443;
+
+/// The verdict of the rule of a service VM on `target` (browser design
+/// 10.2 item 4, decision V2). The service VM has no allowlist: it may
+/// reach any public name, on `SERVICE_PORT` only. Any other port gets
+/// `not_listed` before any lookup. Then the name gets the lookup and the
+/// range check of a family target, so a name with one record that is not
+/// public gets `not_public` (decision CH69 rule 8).
+pub async fn decide_public(target: &Target) -> CheckReply {
+    if target.port.get() != SERVICE_PORT {
+        return refused(CheckReason::NotListed);
+    }
+    resolve(target).await
+}
+
+/// Resolves the name of `target` with the system resolver and judges the
+/// records (decision CH69 rule 8).
+async fn resolve(target: &Target) -> CheckReply {
     match lookup_host((target.host.as_str(), target.port.get())).await {
         Ok(records) => judge(records),
         Err(_) => refused(CheckReason::NoAddress),

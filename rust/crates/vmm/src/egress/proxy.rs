@@ -23,7 +23,9 @@
 //!    CH69 rule 2). So a removal refuses the next CONNECT at once, and an
 //!    open tunnel runs on (fact 43). A refusal of the list, of an IP
 //!    literal or of a range gets 403, as does a list that does not read
-//!    (decision CH70 rule 2). A failed lookup gets 502.
+//!    (decision CH70 rule 2). A failed lookup gets 502. The listener of a
+//!    service VM reads no file: each CONNECT calls `rule::decide_public`
+//!    (browser design 10.2 item 4), and a port other than 443 gets 403.
 //! 5. The proxy connects to the addresses that the rule judged, in their
 //!    order, within `CONNECT_WAIT` in all (decisions CH6-4, CH62 rule 14).
 //!    No address that takes the connect gets 502, and the wait 504. Then
@@ -62,18 +64,19 @@ use std::time::{Duration, Instant, SystemTime};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::rfc3339;
 use creche_vmm_store::layout::{SLOTS, VmRunDir};
-use creche_wire::{CheckReason, CheckReply, FamilyName, HostPort, SessionId};
+use creche_wire::{CheckReason, CheckReply, FamilyName, HostPort, ServiceImage, SessionId};
 use tokio::net::{TcpStream, UnixListener, UnixStream};
 use tokio::runtime::Handle;
 use tokio::time::{sleep, timeout};
 
 use crate::egress::log::{Line, Log, ProxyReason, Reason, Verdict};
 use crate::egress::read_list;
-use crate::egress::rule::{Target, decide};
+use crate::egress::rule::{Target, decide, decide_public};
 use crate::links::{Accept, Links};
 use crate::planes::{BindError, CONNECT_WAIT, SPLICE_CAP};
 use crate::relay::Splice;
 use crate::server::ACCEPT_PAUSE;
+use crate::service::Owner;
 
 /// The most bytes of a request head, its CRLF CRLF included (decision
 /// CH69 rule 9).
@@ -132,12 +135,34 @@ pub fn bind(run: &VmRunDir) -> Result<Bound, BindError> {
         .map_err(|source| BindError { path, source })
 }
 
-/// What each link of one VM reads and names: the families dir and the
-/// family, for the allowlist, the session and the log, for the line.
+/// The rule of the CONNECTs of one VM.
+#[derive(Debug)]
+enum Rule {
+    /// The allowlist of `family` in `families`, read at each CONNECT.
+    Family {
+        families: FamilyRoot,
+        family: FamilyName,
+    },
+    /// The rule of a service VM: any public name on port 443
+    /// (`rule::decide_public`, browser design 10.2 item 4).
+    Service(ServiceImage),
+}
+
+impl Rule {
+    /// The owner that each log line names.
+    fn owner(&self) -> Owner {
+        match self {
+            Self::Family { family, .. } => Owner::Family(family.clone()),
+            Self::Service(image) => Owner::Service(*image),
+        }
+    }
+}
+
+/// What each link of one VM reads and names: the rule, the session and
+/// the log, for the line.
 #[derive(Debug)]
 struct Proxy {
-    families: FamilyRoot,
-    family: FamilyName,
+    rule: Rule,
     session: SessionId,
     log: Arc<Log>,
 }
@@ -157,12 +182,31 @@ impl Bound {
         session: SessionId,
         log: Arc<Log>,
     ) -> io::Result<Server> {
-        let proxy = Arc::new(Proxy {
-            families,
-            family,
-            session,
-            log,
-        });
+        let rule = Rule::Family { families, family };
+        self.serve_rule(rule, session, log)
+    }
+
+    /// Serves the listener of the VM of the service `image` in a task of
+    /// its own. Each CONNECT gets `rule::decide_public`, so the VM reaches
+    /// any public name on port 443 and nothing else (browser design 10.2
+    /// item 4). No edit follow reads a file for it, so its listener never
+    /// closes before the VM stops.
+    ///
+    /// # Errors
+    ///
+    /// The error of a listener that the runtime did not take.
+    pub fn serve_service(
+        self,
+        image: ServiceImage,
+        session: SessionId,
+        log: Arc<Log>,
+    ) -> io::Result<Server> {
+        self.serve_rule(Rule::Service(image), session, log)
+    }
+
+    /// Serves the listener with `rule`.
+    fn serve_rule(self, rule: Rule, session: SessionId, log: Arc<Log>) -> io::Result<Server> {
+        let proxy = Arc::new(Proxy { rule, session, log });
         let links = Links::default();
         Draining { proxy, links }.reopen(self)
     }
@@ -320,12 +364,16 @@ impl Link {
             Err(reason) => return self.answer(&mut guest, status(reason), reason.into()).await,
         };
         let proxy = Arc::clone(&self.proxy);
-        // Decision CH70 rule 2: a list that does not read allows nothing,
-        // and the line names `not_valid`, as `check` answers it.
-        let reply = match read_list(&proxy.families, &proxy.family).await {
-            None => return,
-            Some(Ok(list)) => decide(&list, &target).await,
-            Some(Err(_)) => return self.refused(&mut guest, CheckReason::NotValid).await,
+        let reply = match &proxy.rule {
+            // Decision CH70 rule 2: a list that does not read allows
+            // nothing, and the line names `not_valid`, as `check` answers
+            // it.
+            Rule::Family { families, family } => match read_list(families, family).await {
+                None => return,
+                Some(Ok(list)) => decide(&list, &target).await,
+                Some(Err(_)) => return self.refused(&mut guest, CheckReason::NotValid).await,
+            },
+            Rule::Service(_) => decide_public(&target).await,
         };
         let addresses = match reply {
             CheckReply::Allowed(allowed) => allowed.addresses,
@@ -390,7 +438,7 @@ impl Link {
         let millis = self.accepted.elapsed().as_millis();
         Line {
             time: rfc3339::format(SystemTime::now()),
-            family: self.proxy.family.clone(),
+            owner: self.proxy.rule.owner(),
             session: self.proxy.session.clone(),
             host: self.target.as_ref().map(|target| target.host().clone()),
             port: self.target.as_ref().map(Target::port),
