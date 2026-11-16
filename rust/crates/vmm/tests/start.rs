@@ -3690,7 +3690,8 @@ fn a_shutdown_stops_the_browser_vm_and_the_next_boot_is_fresh() {
     let test = Test::new("browser-stop", |_| {});
     assert_eq!(test.browser(), Ok(()));
     let disk = test.state.session(&browser_id()).disk();
-    fs::write(&disk, b"a page left this").unwrap();
+    let mark = b"a page left this";
+    fs::write(&disk, mark).unwrap();
     assert!(test.runtime.block_on(test.hook.stop(&browser_id())).is_ok());
     assert_eq!(test.stop_lines(), 1);
     assert!(test.stopped(0));
@@ -3698,7 +3699,15 @@ fn a_shutdown_stops_the_browser_vm_and_the_next_boot_is_fresh() {
 
     assert_eq!(test.browser(), Ok(()));
     assert_eq!(test.launches(), 2);
-    assert_ne!(fs::read(&disk).unwrap(), b"a page left this");
+    // The new disk is a large sparse file: read only its head, not all of
+    // it into memory.
+    let mut head = Vec::new();
+    fs::File::open(&disk)
+        .unwrap()
+        .take(mark.len() as u64)
+        .read_to_end(&mut head)
+        .unwrap();
+    assert_ne!(head, mark);
     assert_eq!(test.shut_down(), Ended::Clean);
     assert!(test.api.snapshots.lock().unwrap().is_empty());
     assert!(test.stopped(1));
