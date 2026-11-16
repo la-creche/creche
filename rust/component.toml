@@ -93,6 +93,8 @@ env.keys = [
   "VMM_GIT_SPOOL_ROOT",
   "VMM_BROWSER_SOCKET",
   "VMM_BROWSER_PEER_USER",
+  "VMM_SCANNER_SOCKET",
+  "VMM_SCANNER_PEER_USER",
 ]
 restore.mode = "automatic"
 restore.keep = 1

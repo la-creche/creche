@@ -22,7 +22,7 @@ const GUEST_VECTORS = join(ROOT, "..", "rust", "crates", "wire", "vectors", "gue
 /** The stages that ship to a family VM, the service images, and the build-only stages of `bin/tests/test_playpen_image.py`. */
 const SHIPPED = ["agent-sandbox", "agent-sandbox-python", "agent-sandbox-coding"];
 /** A service image runs no agent, so no list of the agent places its env (`playpen/AGENTS.md`, Known gaps). */
-const SERVICES = ["service-browser"];
+const SERVICES = ["service-browser", "service-scanner"];
 const BUILD_ONLY = ["build", "creche-test-venv"];
 
 /** `FROM [--flag=...] <parent> AS <stage>`, and `ENV <pairs>`. Docker reads both words in any case. */
