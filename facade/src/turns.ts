@@ -15,6 +15,8 @@
 // `updatedAt` of the turn record. The same end goes to each peer as
 // `session_info_update`, and only the first turn names the session. A
 // `usage_update` follows it, when the meter has a count (`src/usage.ts`).
+// After the pull, each peer gets the commands of the pulled skills
+// (`src/commands.ts`), so a granted or removed skill reaches the menu.
 //
 // One turn runs per session at a time. A second prompt is refused: Flue
 // would join it to the running response, and its reply would have no turn
@@ -33,6 +35,8 @@ import type {
   PromptResponse,
   StopReason,
 } from "./acp.js";
+import { commandsUpdate } from "./commands.js";
+import type { Commands } from "./commands.js";
 import { byteLength } from "./line.js";
 import type { Item, Live } from "./live.js";
 import type { LocalLink } from "./local-link.js";
@@ -47,12 +51,11 @@ export const MAX_PROMPT_BYTES = 262_144;
 export type Settlement = "completed" | "failed" | "aborted";
 
 /**
- * Pulls the family state into the agent before a prompt on the Flue
- * instance `instance` (decision CH5a). The agent renders that instance with
- * the pulled config. Null: the prompt runs. A text: the fault that fails
- * the prompt.
+ * Pulls the family state into the agent before a prompt of the session
+ * `sessionId` (decision CH5a). Null: the prompt runs. A text: the fault
+ * that fails the prompt.
  */
-export type Refresh = (instance: string) => Promise<string | null>;
+export type Refresh = (sessionId: string) => Promise<string | null>;
 
 /** No pull: the agent keeps the state of its start. */
 export const NO_REFRESH: Refresh = () => Promise.resolve(null);
@@ -136,6 +139,8 @@ export class Turns {
     private readonly link: LocalLink | null,
     private readonly meter: SessionMeter,
     private readonly refresh: Refresh = NO_REFRESH,
+    /** The session's commands. Null: the facade sends no `available_commands_update`. */
+    private readonly commands: Commands | null = null,
   ) {}
 
   /** The updates go to every peer on the session, the prompting one too. */
@@ -180,7 +185,7 @@ export class Turns {
   ): Promise<Outcome<PromptResponse>> {
     const { sessionId } = params;
     // A fault fails this prompt only (decision CH23 rule 2).
-    const fault = await this.refresh(running.handle.id);
+    const fault = await this.refresh(sessionId);
     if (running.cancelled) {
       return settle("aborted", "");
     }
@@ -195,6 +200,10 @@ export class Turns {
     // The first send makes the Flue instance, so this turn names the session.
     const first = await this.session.fresh();
     this.live.attach(sessionId, peer);
+    if (this.commands !== null) {
+      await this.live.publish(sessionId, [{ position: null, update: commandsUpdate(this.commands) }]);
+    }
+
     // Each start gets an end, so guest init sees each running turn
     // (decisions CH21, CH32 rule 6).
     this.link?.turnStart();

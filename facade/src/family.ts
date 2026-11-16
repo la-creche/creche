@@ -16,6 +16,7 @@ import { AGENT_NAME, composeAgent, FAMILY_STATE_SOCKET, readGuestStart, readKeyS
 import type { AgentStart, ComposedAgent, LimitsRead, StateBackend } from "agent/agent";
 import type { Wire } from "agent/wire-read";
 
+import { commandsOf } from "./commands.js";
 import { tapStores } from "./flue-history.js";
 import { lineagePath, readLineage } from "./lineage.js";
 import { guestLink } from "./local-link.js";
@@ -114,7 +115,7 @@ export function limitsLine(read: LimitsRead, alias: string | null = null): strin
  * (decision CH31 rule 1).
  */
 function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refresh {
-  return async (instance) => {
+  return async (sessionId) => {
     const pulled = await backend.pull();
     if (!pulled.ok) {
       return pulled.fault;
@@ -126,7 +127,7 @@ function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refr
       say(limitsLine(switched, modelAlias));
     }
 
-    state.apply(pulled.state, instance);
+    state.apply(pulled.state, sessionId);
     return null;
   };
 }
@@ -157,6 +158,7 @@ export async function serveFamily({ sessionId, lineageFile, composed, backend, m
       thinking: composed.thinking,
       meter,
       rewind: { file: lineageFile, lineage: read.lineage, earlier: composed.earlier },
+      commands: () => commandsOf(composed.state.configFor(sessionId).skills.map((skill) => skill.definition)),
     });
 
     return { ok: true, serving: { runtime, sessions } };

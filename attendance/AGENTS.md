@@ -36,7 +36,10 @@ inside the VM, which carries Node.
    `session/list` and `session/delete` itself, from the host list, with no
    boot (decisions CH21-7, CH27). `session/new` answers the id and the
    facade's config options at their default (`NEW_SESSION_CONFIG_OPTIONS`,
-   `facade/AGENTS.md`). `initialize` lists `delete`, and
+   `facade/AGENTS.md`). After that answer, the door sends the family's
+   slash commands as one `available_commands_update` for the new id: one
+   command for each valid skill in `config/skills/` (`commands.py`). A
+   family with no skill gets none. `initialize` lists `delete`, and
    `session/delete` calls the vmm `drop` and answers `{}`. A delete cannot
    be undone (contract 02 §5.6). `initialize` lists `resume` too, and the
    door routes `session/resume` to the facade. `initialize` lists the

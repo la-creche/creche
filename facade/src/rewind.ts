@@ -10,6 +10,9 @@
 //     ──► give the agent the transcript of the kept messages ──► answer {}
 //
 // The old instance stays in `flue.db`. The workspace files stay as they are.
+// Each pull of the family state stays keyed by the session id. The render
+// of a new instance finds no entry of its own and takes the latest pull,
+// which in a VM of one session is the pull of this session.
 // The client cuts its own view, and its next prompt is the first send of
 // the new instance.
 

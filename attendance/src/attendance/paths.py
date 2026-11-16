@@ -13,6 +13,7 @@ STATUS_FILE = "status.json"
 _FAMILIES = "families"
 _CREDS = "creds"
 _CONFIG = "config"
+_SKILLS = "skills"
 _FAULTS = "faults"
 _FAULT_SOURCE = "attendance"
 _TOKENS = "tokens"
@@ -52,6 +53,11 @@ def creds_dir(state_root: Path, family: str) -> Path:
 def config_dir(state_root: Path, family: str) -> Path:
     """The family config mount (contract 03 §7.1)."""
     return family_state_dir(state_root, family) / _CONFIG
+
+
+def skills_dir(state_root: Path, family: str) -> Path:
+    """The granted skills of the family config, one directory each (contract 01 §6.1)."""
+    return config_dir(state_root, family) / _SKILLS
 
 
 def families_dir(state_root: Path) -> Path:

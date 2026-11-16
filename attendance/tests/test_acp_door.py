@@ -36,6 +36,7 @@ from attendance.acp_door import (
 from attendance.api import Listener, build_app
 from attendance.auth import Principal, TokenBook
 from attendance.ids import is_session_id, new_session_id
+from attendance.paths import skills_dir
 from attendance.service import SessionService
 from attendance_harness import FAMILY, make_config, make_service, write_status, write_tokens
 from creche_wire import DoorOrigin
@@ -215,6 +216,44 @@ async def test_session_new_answers_the_thinking_option(door: Door) -> None:
 
     assert answer["result"]["configOptions"] == NEW_SESSION_CONFIG_OPTIONS
     assert door.vmm.opened == []
+
+
+@pytest.mark.slow
+async def test_session_new_sends_the_skill_commands_after_its_answer(
+    door: Door, tmp_path: Path
+) -> None:
+    """A family with a skill: the command list follows the answer, for the
+    new id, with no boot. A client adopts the session from the answer."""
+    skill = skills_dir(make_config(tmp_path).state_root, FAMILY) / "grill-me" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: grill-me\ndescription: Ask hard questions.\n---\nAsk.\n")
+
+    async with door.door_acp() as connection:
+        session = await new_session(connection)
+        update = json.loads(await asyncio.wait_for(connection.recv(), 5))
+
+    assert update == {
+        "jsonrpc": "2.0",
+        "method": "session/update",
+        "params": {
+            "sessionId": session,
+            "update": {
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": [{"name": "grill-me", "description": "Ask hard questions."}],
+            },
+        },
+    }
+    assert door.vmm.opened == []
+
+
+@pytest.mark.slow
+async def test_session_new_of_a_family_with_no_skill_sends_no_commands(door: Door) -> None:
+    """The list of a new session is empty, so the door sends none."""
+    async with door.door_acp() as connection:
+        await new_session(connection)
+
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(connection.recv(), QUIET_S)
 
 
 def test_the_door_options_are_the_facade_vector() -> None:

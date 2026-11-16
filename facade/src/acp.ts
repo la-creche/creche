@@ -15,6 +15,7 @@ import type {
   AgentConnection,
   AnyMessage,
   AnyResponse,
+  AvailableCommand,
   CancelNotification,
   ContentBlock,
   InitializeResponse,
@@ -40,6 +41,7 @@ import { MAX_LINE_BYTES, PROTOCOL_VERSION, REWIND_METHOD } from "./vectors.js";
 
 export type {
   AgentApp,
+  AvailableCommand,
   CancelNotification,
   ContentBlock,
   LoadSessionRequest,

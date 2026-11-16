@@ -9,6 +9,7 @@ session (decisions CH20, CH33 rule 7):
     initialize      -> INITIALIZE_RESPONSE
     session/new     -> mint an id -> vmm create, origin door
                        -> {"sessionId", "configOptions"}
+                       -> the family's commands, when it has a skill
     session/list    -> vmm list -> {"sessions", "nextCursor"}
     session/delete  -> vmm drop -> {}
     each other      -> the vmm ACP stream of its sessionId -> the facade of that VM
@@ -86,6 +87,7 @@ import re
 from collections.abc import Generator
 from dataclasses import dataclass, field
 from enum import IntEnum
+from pathlib import Path
 from typing import Any, Final, Literal
 
 from creche_wire import (
@@ -108,6 +110,7 @@ from .acp_link import (
     MAX_ACP_LINE_BYTES,
     METHOD_INITIALIZE,
     METHOD_PROMPT,
+    METHOD_UPDATE,
     PROTOCOL_VERSION,
     AcpHandshakeError,
     Malformed,
@@ -117,6 +120,7 @@ from .acp_link import (
 from .atomic import as_array, as_object
 from .channel import Channel, ChannelClosed
 from .clock import from_ms, now_ms, rfc3339_ms
+from .commands import read_commands
 from .errors import ApiError
 from .ids import is_session_cwd, is_session_id, new_session_id
 from .tasks import report_failure
@@ -388,9 +392,13 @@ class _Refusal(Exception):
 class _Door:
     """One door connection: its streams, its writes and its answers."""
 
-    def __init__(self, websocket: WebSocket, family: str, vmm: Vmm, prompts: _OpenPrompts) -> None:
+    def __init__(
+        self, websocket: WebSocket, family: str, vmm: Vmm, prompts: _OpenPrompts, skills: Path
+    ) -> None:
         self._websocket = websocket
         self._family = family
+        #: The `skills/` directory of the family config (`commands.py`).
+        self._skills = skills
         self._vmm = vmm
         self._prompts = prompts
         self._write = asyncio.Lock()
@@ -494,7 +502,33 @@ class _Door:
         if answer is not None and "id" in record:
             await self._send({"jsonrpc": JSONRPC, "id": record["id"], "result": answer})
 
+        created = as_object(answer) if method == METHOD_NEW else None
+
+        if created is not None:
+            await self._send_commands(str(created["sessionId"]))
+
         return None
+
+    async def _send_commands(self, session: str) -> None:
+        """The command list of a new session, after its answer: a client
+        adopts the session from the answer. A family with no skill sends
+        none, as the new session's list is empty. A list over the frame cap
+        is dropped: the facade sends it again at the first prompt."""
+        commands = read_commands(self._skills)
+
+        if not commands:
+            return
+
+        update = {
+            "sessionUpdate": "available_commands_update",
+            "availableCommands": [command.as_json() for command in commands],
+        }
+        params = {"sessionId": session, "update": update}
+        message = {"jsonrpc": JSONRPC, "method": METHOD_UPDATE, "params": params}
+        text = json.dumps(message, separators=(",", ":"), ensure_ascii=False)
+
+        if len(text.encode("utf-8")) <= MAX_FRAME_BYTES:
+            await self._send_text(text)
 
     async def _answer(self, method: str, record: dict[str, Any], line: str) -> object:
         """The result attendance answers, or None for a routed line. A
@@ -804,11 +838,14 @@ class _Door:
             await closing.wait()
 
 
-async def serve(websocket: WebSocket, family: str, vmm: Vmm, prompts: DoorPrompts) -> None:
+async def serve(
+    websocket: WebSocket, family: str, vmm: Vmm, prompts: DoorPrompts, skills: Path
+) -> None:
     """Serve one door connection until the client or a stream ends. Then
-    close each stream."""
+    close each stream. `skills` is the `skills/` directory of the family
+    config."""
     with prompts.connection() as open_prompts:
-        door = _Door(websocket, family, vmm, open_prompts)
+        door = _Door(websocket, family, vmm, open_prompts, skills)
         client = asyncio.create_task(door.from_client(), name="acp door in")
         client.add_done_callback(report_failure)
 

@@ -3,13 +3,15 @@
 //   hold the peer's live items ──► read the history of the instance
 //     ──► send the replay: the kept messages of the last rewind, then the history
 //     ──► seed the meter ──► send its usage_update
+//     ──► send the session's commands (`src/commands.ts`)
 //     ──► send the held items after the last replayed chunk
 //     ──► answer {configOptions}: the thinking option at the session's level
 //
 // `session/resume`: the live updates only. The client keeps the transcript
 // that it has, so the facade replays nothing.
 //
-//   check the params and the id ──► put the peer on the live updates ──► answer {}
+//   check the params and the id ──► put the peer on the live updates
+//     ──► send the session's commands ──► answer {}
 //
 // A turn that runs at the resume sends its next chunks to the resumed peer
 // too. The chunks that it sent before the resume do not reach that peer.
@@ -17,6 +19,8 @@
 import type { ConversationStreamStore } from "@flue/runtime/adapter";
 
 import type { LoadSessionRequest, LoadSessionResponse, Outcome, Peer, ResumeSessionRequest } from "./acp.js";
+import { commandsUpdate } from "./commands.js";
+import type { Commands } from "./commands.js";
 import { readHistory } from "./flue-history.js";
 import type { Live } from "./live.js";
 import { replay } from "./replay.js";
@@ -32,6 +36,8 @@ export class Loader {
     private readonly store: () => ConversationStreamStore | null,
     private readonly agentName: string,
     private readonly meter: SessionMeter,
+    /** The session's commands. Null: the facade sends no `available_commands_update`. */
+    private readonly commands: Commands | null,
   ) {}
 
   public async loadSession(params: LoadSessionRequest, peer: Peer): Promise<Outcome<LoadSessionResponse>> {
@@ -68,24 +74,33 @@ export class Loader {
       await peer.send(sessionId, usage);
     }
 
+    await this.sendCommands(sessionId, peer);
     await gate.release(last);
 
     return { ok: true, value: { configOptions: configOptionsOf(this.meter.level) } };
   }
 
-  public resumeSession(params: ResumeSessionRequest, peer: Peer): Promise<Outcome<Record<string, never>>> {
+  public async resumeSession(params: ResumeSessionRequest, peer: Peer): Promise<Outcome<Record<string, never>>> {
     const fault = sessionFault(params);
     if (fault !== null) {
-      return Promise.resolve({ ok: false, refusal: { kind: "invalid_params", detail: fault } });
+      return { ok: false, refusal: { kind: "invalid_params", detail: fault } };
     }
 
     const { sessionId } = params;
     if (!this.session.known(sessionId)) {
-      return Promise.resolve({ ok: false, refusal: { kind: "unknown_session", sessionId } });
+      return { ok: false, refusal: { kind: "unknown_session", sessionId } };
     }
 
     this.live.attach(sessionId, peer);
+    await this.sendCommands(sessionId, peer);
 
-    return Promise.resolve({ ok: true, value: {} });
+    return { ok: true, value: {} };
+  }
+
+  /** The commands go before the answer: the door closes an idle stream. */
+  private async sendCommands(sessionId: string, peer: Peer): Promise<void> {
+    if (this.commands !== null) {
+      await peer.send(sessionId, commandsUpdate(this.commands));
+    }
   }
 }
