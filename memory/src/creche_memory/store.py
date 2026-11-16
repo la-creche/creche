@@ -79,6 +79,9 @@ def cognee_env(settings: StoreSettings) -> dict[str, str]:
         "CACHE_ROOT_DIRECTORY": str(root / "cache"),
         "ENABLE_BACKEND_ACCESS_CONTROL": "false",
         "CACHING": "false",
+        # A failed item does not stop the run: the other items go on, and
+        # the run returns the failed ones (`sync.failed_extractions`).
+        "RAISE_INCREMENTAL_LOADING_ERRORS": "false",
         "LLM_PROVIDER": "custom",
         "LLM_MODEL": LLM_MODEL,
         "LLM_ENDPOINT": _api(settings.llm_base_url),
