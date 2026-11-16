@@ -1,0 +1,13 @@
+p4-commit-status.json	GET	/repos/example-owner/runner-test/commits/a393cd1babaeae380e9b234ff67dcb7f4b06fd0c/status	200	admin
+p4-commit-status-main.json	GET	/repos/example-owner/runner-test/commits/5791a8cdae55087207f12ab919c5eb964494d654/status	200	admin
+p5-compare-ancestor.json	GET	/repos/example-owner/runner-test/compare/main...9952faf3e8fe7455ef67695732c2676a637117c6	200	admin
+p5-compare-main-itself.json	GET	/repos/example-owner/runner-test/compare/main...5791a8cdae55087207f12ab919c5eb964494d654	200	admin
+p5-compare-ahead.json	GET	/repos/example-owner/runner-test/compare/main...a393cd1babaeae380e9b234ff67dcb7f4b06fd0c	200	admin
+p5-compare-diverged.json	GET	/repos/example-owner/runner-test/compare/main...799d73c83695dc33720856d26c3a451df2770a1b	200	admin
+p5-compare-missing.json	GET	/repos/example-owner/runner-test/compare/main...0123456789abcdef0123456789abcdef01234567	404	admin
+p2-git-refs-tag.json	GET	/repos/example-owner/runner-test/git/refs/tags/rec-ann	200	admin
+p2-git-refs-prefix.json	GET	/repos/example-owner/runner-test/git/refs/tags/rec-	200	admin
+p2-git-refs-prefix-measure.json	GET	/repos/example-owner/runner-test/git/refs/tags/measure	200	admin
+p2-git-refs-missing.json	GET	/repos/example-owner/runner-test/git/refs/tags/no-such-tag	404	admin
+p3-job-log-markers.txt	GET	/repos/example-owner/runner-test/actions/jobs/189/logs (lines with M only)	200	admin
+p3-release-by-tag.json	GET	/repos/example-owner/runner-test/releases/tags/rec-ann	200	admin
