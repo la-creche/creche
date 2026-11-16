@@ -1,0 +1,239 @@
+"""The Forgejo gate is the GitHub gate, but for a stated list of differences.
+
+`.forgejo/workflows/gate.yml` is the port of `.github/workflows/gate.yml`
+for Forgejo Actions. `bin/tests/test_gate_workflow.py` pins the GitHub
+file. This file pins the Forgejo file to it, so the two gates cannot drift
+apart without one red line: each job of the GitHub gate is in the Forgejo
+gate with the same name, the same steps and the same test commands.
+
+The tests port each GitHub job by the differences below, and compare the
+result with the Forgejo job. A difference that is not in this list fails.
+
+1. **Triggers.** `pull_request` only. Forgejo has no merge queue and sends
+   no `merge_group` event (docs/design/forgejo-release-path.md, FR13). So
+   the `frozen host api` step of `rust` and the scope action read no base
+   of a merge group.
+2. **Action URLs.** Forgejo resolves an action of another repository from
+   its default host, so each one is a full URL, pinned by commit. A local
+   action lives under `.forgejo/actions`.
+3. **Runner labels.** The Docker runner gives a job no Docker socket, no
+   systemd as process 1 and no /dev/kvm. A job that needs Docker or
+   systemd runs on `vm-plain`. The job that needs KVM runs on `vm-kvm`.
+4. **Artifact actions.** Upstream upload-artifact and download-artifact v4
+   and later refuse a server that is not GitHub. The gate uses neither, and
+   a test holds that. A port of one must name the Forgejo action and add
+   its own line to this list.
+5. **File keys.** No `permissions` key. Forgejo ignores it, and a job token
+   can write its own repository, so the key would claim a limit that does
+   not hold.
+
+The protection of `main` on Forgejo requires one status:
+`gate / gate (pull_request)`. The workflow name, the name of its last job
+and its one event make that context.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+REPO = Path(__file__).resolve().parents[2]
+GITHUB_DIR = REPO / ".github"
+FORGEJO_DIR = REPO / ".forgejo"
+
+
+def _load(path: Path) -> dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+GITHUB_GATE = _load(GITHUB_DIR / "workflows" / "gate.yml")
+FORGEJO_GATE_FILE = FORGEJO_DIR / "workflows" / "gate.yml"
+FORGEJO_GATE = _load(FORGEJO_GATE_FILE)
+GITHUB_JOBS: dict[str, dict[str, Any]] = GITHUB_GATE["jobs"]
+FORGEJO_JOBS: dict[str, dict[str, Any]] = FORGEJO_GATE["jobs"]
+
+#: The workflow name and the name of its last job.
+GATE_NAME = "gate"
+
+#: What starts the Forgejo gate (difference 1).
+FORGEJO_EVENTS = ["pull_request"]
+
+#: The status that the protection of `main` requires on Forgejo. Its form is
+#: `<workflow name> / <job name> (<event>)`.
+REQUIRED_CONTEXT = "gate / gate (pull_request)"
+
+#: Each key of the Forgejo file. PyYAML reads the key `on` as the boolean.
+#: No `permissions` (difference 5).
+FORGEJO_FILE_KEYS = {"name", True, "concurrency", "jobs"}
+
+#: The local actions that the gate uses, by their name.
+LOCAL_ACTIONS = ["scope", "uv-sync", "verdict"]
+GITHUB_LOCAL = "./.github/actions/"
+FORGEJO_LOCAL = "./.forgejo/actions/"
+
+#: The host of each action of another repository (difference 2).
+ACTION_HOST = "https://github.com/"
+
+#: The label of the Docker runner, and the labels of the runner VMs
+#: (difference 3). A job with no row in VM_LABELS runs on the Docker runner.
+DOCKER_LABEL = "ubuntu-24.04"
+VM_PLAIN = "vm-plain"
+VM_KVM = "vm-kvm"
+VM_LABELS = {"playpen-image": VM_PLAIN, "systemd-proof": VM_PLAIN, "kvm": VM_KVM}
+
+#: The GitHub actions that refuse a server that is not GitHub (difference 4).
+ARTIFACT_ACTIONS = ("actions/upload-artifact@", "actions/download-artifact@")
+
+#: The step of `rust` that reads the base of the change, and the variable
+#: that held the base of a merge group (difference 1).
+FROZEN_JOB = "rust"
+FROZEN_STEP = "frozen host api"
+GROUP_BASE = "GROUP_BASE"
+
+#: The text of that step that reads the base of a merge group, and its port.
+FROZEN_BASE = (
+    'base="$GROUP_BASE"\nif [[ -z "$base" && -n "$BASE_REF" ]]; then\n',
+    'base=""\nif [[ -n "$BASE_REF" ]]; then\n',
+)
+
+#: The text of the scope action that reads the base of a merge group, and
+#: its port.
+SCOPE_BASE = (
+    'base="$GROUP_BASE"\nif [[ -z "$base" ]]; then\n'
+    '  base="$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" || base=""\nfi\n',
+    'base="$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" || base=""\n',
+)
+
+#: An action of another repository in a Forgejo file: a full URL, a commit,
+#: and the tag as a comment.
+FULL_URL = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$")
+USES = re.compile(r"^\s*-?\s*uses:\s*(.+?)\s*$", re.MULTILINE)
+
+
+def _port_uses(uses: str) -> str:
+    """The Forgejo spelling of one `uses` of the GitHub gate."""
+    assert not uses.startswith(ARTIFACT_ACTIONS), f"{uses}: state its Forgejo action"
+    if uses.startswith(GITHUB_LOCAL):
+        return FORGEJO_LOCAL + uses.removeprefix(GITHUB_LOCAL)
+
+    return ACTION_HOST + uses
+
+
+def _ported(value: Any) -> Any:
+    """`value` with each `uses` in its Forgejo spelling."""
+    if isinstance(value, dict):
+        return {
+            key: _port_uses(one) if key == "uses" else _ported(one) for key, one in value.items()
+        }
+    if isinstance(value, list):
+        return [_ported(one) for one in value]
+
+    return value
+
+
+def _replaced(text: str, pair: tuple[str, str]) -> str:
+    old, new = pair
+    assert text.count(old) == 1, f"the GitHub text changed: {old!r}"
+
+    return text.replace(old, new)
+
+
+def _port_job(name: str, job: dict[str, Any]) -> dict[str, Any]:
+    """The GitHub job `name` after each stated difference."""
+    port = _ported(copy.deepcopy(job))
+    if name in VM_LABELS:
+        port["runs-on"] = VM_LABELS[name]
+    if name == FROZEN_JOB:
+        (step,) = [one for one in port["steps"] if one.get("name") == FROZEN_STEP]
+        del step["env"][GROUP_BASE]
+        step["run"] = _replaced(step["run"], FROZEN_BASE)
+
+    return port
+
+
+def _action(root: Path, name: str) -> dict[str, Any]:
+    return _load(root / "actions" / name / "action.yml")
+
+
+def _forgejo_files() -> list[Path]:
+    actions = [FORGEJO_DIR / "actions" / one / "action.yml" for one in LOCAL_ACTIONS]
+
+    return [FORGEJO_GATE_FILE, *actions]
+
+
+def test_the_forgejo_gate_has_the_name_and_the_jobs_of_the_github_gate() -> None:
+    assert FORGEJO_GATE["name"] == GITHUB_GATE["name"] == GATE_NAME
+    assert list(FORGEJO_JOBS) == list(GITHUB_JOBS)
+
+
+@pytest.mark.parametrize("name", list(GITHUB_JOBS))
+def test_each_job_equals_its_github_job_but_for_the_stated_differences(name: str) -> None:
+    """The same `needs`, `if`, matrix, env, time limit and steps, and so the
+    same test commands. Only the differences of the module docstring may
+    change a job."""
+    assert FORGEJO_JOBS[name] == _port_job(name, GITHUB_JOBS[name])
+
+
+def test_the_forgejo_gate_runs_on_a_pull_request_only() -> None:
+    assert FORGEJO_GATE[True] == FORGEJO_EVENTS
+    assert "merge_group" not in json.dumps(FORGEJO_GATE)
+
+
+def test_the_forgejo_file_has_no_permissions_key() -> None:
+    """A `permissions` key would claim a read-only token. Forgejo ignores it."""
+    assert set(FORGEJO_GATE) == FORGEJO_FILE_KEYS
+    assert FORGEJO_GATE["concurrency"] == GITHUB_GATE["concurrency"]
+
+
+def test_the_required_context_is_the_last_job_on_a_pull_request() -> None:
+    (event,) = FORGEJO_EVENTS
+
+    assert f"{FORGEJO_GATE['name']} / {GATE_NAME} ({event})" == REQUIRED_CONTEXT
+    assert sorted(FORGEJO_JOBS[GATE_NAME]["needs"]) == sorted(set(FORGEJO_JOBS) - {GATE_NAME})
+    assert FORGEJO_JOBS[GATE_NAME]["if"] == "always()"
+
+
+def test_only_the_jobs_of_the_vm_table_wait_for_a_runner_vm() -> None:
+    """A job with a label that no runner has waits for ever. The table names
+    each job that the Docker runner cannot serve."""
+    labels = {name: job["runs-on"] for name, job in FORGEJO_JOBS.items()}
+
+    assert {name: one for name, one in labels.items() if one != DOCKER_LABEL} == VM_LABELS
+    assert set(VM_LABELS) <= set(GITHUB_JOBS)
+
+
+@pytest.mark.parametrize("path", _forgejo_files(), ids=lambda one: str(one.relative_to(REPO)))
+def test_each_action_is_a_full_url_pinned_by_commit_or_local(path: Path) -> None:
+    for uses in USES.findall(path.read_text(encoding="utf-8")):
+        if uses.startswith(FORGEJO_LOCAL):
+            assert (REPO / uses / "action.yml").is_file(), uses
+            continue
+
+        assert FULL_URL.fullmatch(uses), uses
+
+
+def test_the_gate_uses_no_artifact_action() -> None:
+    """Difference 4 has no line yet: neither gate moves a file between jobs."""
+    for path in [GITHUB_DIR / "workflows" / "gate.yml", *_forgejo_files()]:
+        text = path.read_text(encoding="utf-8")
+        assert not any(one in text for one in ARTIFACT_ACTIONS), path
+
+
+@pytest.mark.parametrize("name", ["uv-sync", "verdict"])
+def test_a_local_action_equals_its_github_action_but_for_the_urls(name: str) -> None:
+    assert _action(FORGEJO_DIR, name) == _ported(_action(GITHUB_DIR, name))
+
+
+def test_the_scope_action_reads_no_merge_group() -> None:
+    port = _action(GITHUB_DIR, "scope")
+    (step,) = port["runs"]["steps"]
+    del step["env"]
+    step["run"] = _replaced(step["run"], SCOPE_BASE)
+
+    assert _action(FORGEJO_DIR, "scope") == port
