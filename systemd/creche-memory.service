@@ -42,36 +42,18 @@ RestartMaxDelaySec=120s
 # nothing until the operator fixes it (bin/systemd-proof.sh, the rule).
 RestartPreventExitStatus=78
 # THE STOP (memory/AGENTS.md, the stop). SIGTERM goes to the main process
-# only. It cancels the sync, waits for the statement that the graph worker
-# runs now, checkpoints and closes the graph database, and that close ends
-# the worker. With the default KillMode=control-group, the worker got the
-# SIGTERM too and died where it stood. A death inside a checkpoint can leave
-# a graph file that no open repairs (4 of 20 stops in a checkpoint with the
-# old stop on 2026-11-13, 11 of 70 kills in the test of 2026-11-09).
+# only. It cancels the tasks of the store loop, waits at most 10 s for them,
+# then exits at once, and the exit ends Cognee's workers. So no worker of
+# Cognee starts again during the stop. The stop writes nothing to the graph
+# database: ladybug 0.22.3 opens a file whose worker died in a checkpoint,
+# with every committed row.
 KillMode=mixed
-KillSignal=SIGTERM
-# The SIGKILL at the end of this time is the one stop that can still kill
-# the graph, so the time is generous. Measured on 2026-11-13 with a graph of
-# 110 to 185 MiB and statements of 200,000 rows (a 23 MB WAL, far over the
-# 2,000 rows of one Cognee write): the close took 1.1 to 2.3 s and the whole
-# stop 1.9 to 3.1 s. The stop waits at most 10 s for the tasks of the store
-# loop to end, then for the close or the drain. The journal prints the time
-# of each close.
-#
-# On 2026-11-16 a release stopped the unit at 8.8 GiB, over MemoryHigh, with
-# its 2 GiB of swap full. The kernel throttled it. A checkpoint of a 602 KB
-# WAL had run for 2 min 37 s when the old limit of 60 s killed it, and the
-# graph did not open again (memory/AGENTS.md, the stop).
-#
-# 480 s covers a throttled checkpoint. A stop without pressure still ends in
-# about 3 s. handover's restart waits 600 s for the stop and the start
-# together, and the start may take systemd's default 90 s for ExecStartPre
-# (handover/tests/test_handover_repo_manifests.py).
-TimeoutStopSec=480
+TimeoutStopSec=30
 # THE MEMORY. The kernel OOM killer picks the largest process of the unit,
-# and that is the graph worker. A kill inside a checkpoint can leave a dead
-# graph (memory/AGENTS.md, known gap 4). So the unit must never live at its
-# hard limit.
+# and that is the graph worker. A kill ends the sync that runs, so the unit
+# must never live at its hard limit. Cognee's buffer pool of the graph
+# database is 32 GiB by default. The service sets it to 2 GiB
+# (memory/src/creche_memory/store.py).
 #
 # Measured on the host on 2026-11-15 at 01:05 UTC, 3 h and 3 syncs after a
 # start, with the first limit MemoryMax=2G:
@@ -96,8 +78,7 @@ TimeoutStopSec=480
 # and kills nothing. Each crossing adds to `high` in the cgroup's
 # `memory.events`, and the syncs get slower. MemoryMax=12G is the kill. The
 # 4 GiB between them is the time to see the warning and stop the unit with a
-# SIGTERM, which checkpoints and closes the graph ("The stop"). No watcher
-# reads `high` yet (known gap 4).
+# SIGTERM. No watcher reads `high` yet (memory/AGENTS.md, known gaps).
 # MemorySwapMax=2G keeps the unit from filling the host's swap: a runaway
 # then ends in this unit's own OOM, not a host-wide one.
 MemoryHigh=8G

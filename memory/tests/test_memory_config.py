@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from creche_memory.cli import EX_CONFIG, EX_OK, EX_TEMPFAIL, ended, main
 from creche_memory.config import ConfigError, check, from_env
-from creche_memory.graph import GraphCheck, GraphReopen, GraphState, side_files
+from creche_memory.graph import ENGINE_MARK, GraphCheck, GraphState, OtherEngine, service_engine
 from creche_memory.search import STOP_TIMEOUT_S, StoreLoop
 from creche_memory.sync import Syncer
 from memory_graph_helpers import (
@@ -159,12 +159,26 @@ def test_the_service_serves_a_read_and_stops_on_sigterm(host: Path) -> None:
     assert reply["text"] == "Oak St.\n"
     assert service.returncode == EX_OK, err[-2000:]
     assert KEY not in err
-    # The stop closed the graph database, and the close ended its worker.
-    lines = [one for one in err.splitlines() if one.startswith("creche-memory: ")]
-    assert len(lines) == 1, err[-2000:]
-    assert lines[0].startswith("creche-memory: The graph database closed in ")
+    # The stop prints nothing, and its exit ended Cognee's workers.
+    assert [one for one in err.splitlines() if one.startswith("creche-memory: ")] == [], err[-2000:]
     assert not group_left(service.pid)
-    assert side_files(_graph_file(host)) == ()
+    # The start marked the graph that it built.
+    assert _graph_file(host).with_name(GRAPH_NAME + ENGINE_MARK).read_text() == (
+        service_engine() + "\n"
+    )
+
+
+def test_a_graph_with_no_engine_mark_stops_the_start_with_exit_78(host: Path) -> None:
+    graph_file = make_graph(_graph_file(host)).resolve()
+    graph_file.with_name(GRAPH_NAME + ENGINE_MARK).unlink()
+
+    service = _start(host)
+    _, err = service.communicate(timeout=START_TIMEOUT_S)
+
+    assert service.returncode == EX_CONFIG, err[-2000:]
+    assert not (host / "run" / "memory.sock").exists()
+    lines = [one for one in err.splitlines() if one.startswith("creche-memory: ")]
+    assert lines == [f"creche-memory: {OtherEngine(graph_file, None, service_engine()).report()}"]
 
 
 def test_a_dead_graph_stops_the_start_with_exit_78_and_one_line(host: Path) -> None:
@@ -241,16 +255,12 @@ async def _failing_sync(folders: list[str]) -> int:
     raise ConnectionError("http://secret.test/ refused")
 
 
-async def _no_reopen() -> GraphReopen:
-    raise AssertionError("a graph that failed its check was reopened")
-
-
 def _end_of_sync_loop(root: Path, check: GraphCheck) -> int:
     """Run a real sync loop whose sync fails, as `_serve` runs it, then
     read its exit status as `_serve` does after the stop."""
     (root / "profile" / "memories").mkdir(parents=True)
     (root / "profile" / "memories" / "a.md").write_text("a", encoding="utf-8")
-    syncer = Syncer(root, _failing_sync, check, _no_reopen, poll_s=60.0, quiet_s=0.0)
+    syncer = Syncer(root, _failing_sync, check, poll_s=60.0, quiet_s=0.0)
     loop = StoreLoop()
     loop.start()
     stop = threading.Event()

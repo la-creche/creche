@@ -7,22 +7,21 @@ from pathlib import Path
 import pytest
 from cognee_db_workers.harness import SubprocessTransportError
 from creche_memory.graph import (
+    ENGINE_MARK,
     MAX_ERROR_CHARS,
     SIDE_SUFFIXES,
     Dead,
     NotAVerdict,
+    OtherEngine,
     Usable,
+    check_engine,
     graph_state,
     side_files,
 )
 from memory_graph_helpers import (
-    CHURN_ROUNDS,
     CHURN_ROWS,
-    FILL_ROWS,
     GRAPH_NAME,
     churn_through_cognee,
-    count_rows,
-    fill_through_cognee,
     held_open,
     kill_graph,
     ladybug_check,
@@ -209,44 +208,50 @@ def test_the_report_names_the_files_from_before_the_open(graph_file: Path) -> No
     assert state.side_files == (f"{GRAPH_NAME}.wal",)
 
 
-def test_the_check_after_a_failed_checkpoint_keeps_every_row(tmp_path: Path) -> None:
-    store = tmp_path / "store"
-    lines = fill_through_cognee(store)
+def test_the_checkpoints_of_one_open_stay_under_a_small_cap(tmp_path: Path) -> None:
+    # The state of 2026-11-15 and 2026-11-16 on a small scale. With ladybug
+    # 0.19.0, a graph file of about 2 MiB reached a cap of 64 MiB in about 7
+    # checkpoints of one open, because each checkpoint kept the frames of
+    # its shadow pages (ladybug#924). Ladybug 0.22.3 reuses them.
+    lines = churn_through_cognee(tmp_path / "store")
 
-    # The open engine answers. The check does not close it: a close after
-    # the failed checkpoint makes a file that does not open. The close of
-    # the stop sees the shadow of the failed checkpoint and writes nothing.
-    assert lines == [
-        "Usable()",
-        "full: True",
-        "Usable()",
-        f"LeftOpen(reason='a checkpoint did not end ({GRAPH_NAME}.shadow)')",
-    ]
-    # The child exits as the service does, and its exit hooks end the idle
-    # worker with no close. A new process opens the file with every row.
-    graph_file = store / "system" / "databases" / GRAPH_NAME
-    assert count_rows(graph_file, "F") == FILL_ROWS
+    assert lines == ["Usable()", f"rows: {CHURN_ROWS}"]
 
 
-def test_the_checkpoints_of_one_open_fill_the_cap_and_a_reopen_empties_it(
-    tmp_path: Path,
-) -> None:
-    # The state of 2026-11-15 on a small scale: a graph file of about 2 MiB
-    # reaches a cap of 64 MiB in one open, because each checkpoint keeps
-    # the frames of its shadow pages.
-    unopened = churn_through_cognee(tmp_path / "unopened", every=0)
+ENGINE = "ladybug 0.22.3"
 
-    assert unopened[0] == "Usable()"
-    assert len(unopened) == 2
-    full, round_, reached = unopened[1].split()
-    assert (full, reached) == ("full:", "True")
-    assert int(round_) < CHURN_ROUNDS
 
-    # The same rounds with a reopen every 4 rounds never reach the cap. The
-    # handle of the first round goes to each new engine, and no row is lost.
-    reopened = churn_through_cognee(tmp_path / "reopened", every=4)
+def test_the_engine_check_marks_a_new_graph(tmp_path: Path) -> None:
+    graph_file = tmp_path / "databases" / GRAPH_NAME
 
-    assert reopened[0] == "Usable()"
-    assert [line.split("(")[0] for line in reopened[1:-2]] == ["Reopened"] * (CHURN_ROUNDS // 4)
-    assert reopened[-2] == f"rows: {CHURN_ROWS}"
-    assert reopened[-1].startswith("Closed(")
+    assert check_engine(graph_file, ENGINE) is None
+    assert graph_file.with_name(GRAPH_NAME + ENGINE_MARK).read_text() == f"{ENGINE}\n"
+    # The mark is not a side file: the report of a dead graph does not name it.
+    assert side_files(graph_file) == ()
+
+
+def test_a_graph_with_the_mark_of_the_engine_passes(graph_file: Path) -> None:
+    graph_file.with_name(GRAPH_NAME + ENGINE_MARK).write_text(f"{ENGINE}\n")
+
+    assert check_engine(graph_file, ENGINE) is None
+
+
+def test_a_graph_with_no_mark_or_another_mark_is_another_engine(graph_file: Path) -> None:
+    mark = graph_file.with_name(GRAPH_NAME + ENGINE_MARK)
+    mark.unlink()
+
+    assert check_engine(graph_file, ENGINE) == OtherEngine(graph_file, None, ENGINE)
+    # The check writes no mark beside a graph that it did not see built.
+    assert not mark.exists()
+
+    mark.write_text("ladybug 0.19.0\n")
+    other = check_engine(graph_file, ENGINE)
+
+    assert other == OtherEngine(graph_file, "ladybug 0.19.0", ENGINE)
+    assert other.report() == (
+        f"The graph database {graph_file} was built by ladybug 0.19.0, "
+        f"and the service runs {ENGINE}. "
+        "A newer ladybug can open an older file and miss keys with no error. "
+        f"To rebuild, set aside {graph_file.parent}. Then start the unit. "
+        "The first sync rebuilds the store from the vault."
+    )

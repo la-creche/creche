@@ -1,36 +1,34 @@
-"""A stop of the service never kills the graph database.
+"""A stop or a kill of the service never kills the graph database.
 
-A SIGTERM in a write cancels the sync, waits for the statement that the
-graph worker runs, checkpoints and closes the database. After a failed
-checkpoint of the same open, the stop writes nothing, because a checkpoint
-or a close then leaves a file that does not open.
+The stop cancels the tasks of the store loop, waits at most 10 s for them,
+then exits at once. It writes nothing to the graph database. Ladybug
+0.22.3 opens a file whose worker died in a checkpoint, with every committed
+row. With ladybug 0.19.0, 11 of 100 such kills on 2026-11-17 left a file
+that did not open (`memory/AGENTS.md`, the stop).
 
-`MEMORY_STOP_TRIALS` sets how many stops in a checkpoint the first test
-runs. The gate runs the default. The pull request of the stop ran it with a
-larger number."""
+`MEMORY_STOP_TRIALS` sets how many stops and kills in a checkpoint each of
+the first two tests runs. The gate runs the default. The pull request of
+the stop ran them with a larger number."""
 
 import asyncio
 import os
 import random
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-import ladybug
 import pytest
 from creche_memory.cli import EX_OK
-from creche_memory.graph import Closed, LeftOpen, close_graph, side_files, unfinished_files
 from creche_memory.search import STOP_TIMEOUT_S
 from creche_memory.sync import in_daemon_thread
 from memory_graph_helpers import (
-    BUFFER_POOL,
     GRAPH_NAME,
     STUBBORN_ROWS,
     WRITE_ROWS,
+    Stop,
     count_rows,
-    leave_recoverable,
-    make_graph,
     stop_in_a_checkpoint,
 )
 
@@ -39,156 +37,66 @@ TRIALS = int(os.environ.get("MEMORY_STOP_TRIALS", "3"))
 UNIT = Path(__file__).resolve().parents[2] / "systemd" / "creche-memory.service"
 
 
-@pytest.mark.parametrize("trial", range(TRIALS))
-def test_a_sigterm_in_a_checkpoint_closes_the_graph_and_keeps_every_row(
-    tmp_path: Path, trial: int
-) -> None:
-    store = tmp_path / "store"
+def _delay(trial: int) -> tuple[int, float]:
     # The 2026-11-09 kills that left a dead graph came 4 to 13 ms into a
-    # checkpoint. Each trial sends SIGTERM 0 to 30 ms into one.
+    # checkpoint. Each trial stops the writer 0 to 30 ms into one.
     rng = random.Random(trial)
-    run = stop_in_a_checkpoint(store, rng.randint(1, 3), rng.uniform(0.0, 0.03))
+
+    return rng.randint(1, 3), rng.uniform(0.0, 0.03)
+
+
+@pytest.mark.parametrize("trial", range(TRIALS))
+def test_a_sigterm_in_a_checkpoint_exits_0_and_keeps_every_row(tmp_path: Path, trial: int) -> None:
+    store = tmp_path / "store"
+    run = stop_in_a_checkpoint(store, *_delay(trial))
 
     assert run.returncode == EX_OK, run.stderr[-3000:]
-    assert len(run.lines) == 1, run.stderr[-3000:]
-    assert run.lines[0].startswith("creche-memory: The graph database closed in ")
-    # The close ended the worker: nothing of the group is left to kill.
+    assert run.lines == [], run.stderr[-3000:]
+    # The exit ended Cognee's workers: nothing of the group is left to kill.
     assert not run.group_left
-    graph_file = store / "system" / "databases" / GRAPH_NAME
-    # A clean close leaves the database file alone.
-    assert side_files(graph_file) == ()
-    rows = count_rows(graph_file, "F")
+    rows = count_rows(store / "system" / "databases" / GRAPH_NAME, "F")
     # Every row that a checkpoint made durable is there. A statement is
     # whole or absent.
     assert rows >= run.committed
     assert rows % WRITE_ROWS == 0
 
 
-def test_a_sync_that_ignores_its_cancel_gets_no_checkpoint_or_close_of_the_stop(
-    tmp_path: Path,
+@pytest.mark.parametrize("trial", range(TRIALS))
+def test_a_kill_of_every_process_in_a_checkpoint_keeps_every_row(
+    tmp_path: Path, trial: int
 ) -> None:
+    store = tmp_path / "store"
+    run = stop_in_a_checkpoint(store, *_delay(trial), stop=Stop.KILL_ALL)
+
+    assert run.returncode == -signal.SIGKILL, run.stderr[-3000:]
+    rows = count_rows(store / "system" / "databases" / GRAPH_NAME, "F")
+    assert rows >= run.committed
+    assert rows % WRITE_ROWS == 0
+
+
+def test_a_sync_that_ignores_its_cancel_still_exits_0(tmp_path: Path) -> None:
     store = tmp_path / "store"
     run = stop_in_a_checkpoint(store, 1, 0.0, rows=STUBBORN_ROWS, ignores_the_cancel=True)
 
     assert run.ignored, run.stderr[-3000:]
     assert run.returncode == EX_OK, run.stderr[-3000:]
-    # One line, and no line of a close: the sync still wrote when the stop
-    # would have checkpointed.
     assert run.lines == [
         f"creche-memory: a task of the store loop still ran {STOP_TIMEOUT_S:.0f} s after the "
-        "stop. The graph database stays open until the service exits. "
-        "The next start replays its WAL."
+        "stop. The service exits without it."
     ], run.stderr[-3000:]
     assert not run.group_left
-    graph_file = store / "system" / "databases" / GRAPH_NAME
-    # The stop waited for the statement of the sync, so the exit did not end
-    # the worker in a checkpoint. Such an end left these files, and then the
-    # next open crashed or failed in 3 of 16 stops on Linux.
-    assert unfinished_files(graph_file) == ()
+    # The exit ended the worker in a statement of the sync, or between two.
     # The next open replays the WAL. A statement is whole or absent.
-    rows = count_rows(graph_file, "F")
+    rows = count_rows(store / "system" / "databases" / GRAPH_NAME, "F")
     assert rows >= run.committed
     assert rows % STUBBORN_ROWS == 0
 
 
-def _probe(conn: ladybug.Connection) -> object:
-    return conn.execute("RETURN 1")
-
-
-def test_the_stop_closes_a_graph_with_a_wal_and_leaves_one_file(tmp_path: Path) -> None:
-    graph_file = make_graph(tmp_path / GRAPH_NAME)
-    db = ladybug.Database(str(graph_file), buffer_pool_size=BUFFER_POOL)
-    conn = ladybug.Connection(db)
-    conn.execute("UNWIND range(101, 200) AS i CREATE (:N {id: i})")
-    assert side_files(graph_file) == (f"{GRAPH_NAME}.wal",)
-
-    async def probe() -> object:
-        return _probe(conn)
-
-    async def checkpoint() -> object:
-        return conn.execute("CHECKPOINT")
-
-    async def close() -> None:
-        conn.close()
-        db.close()
-
-    closed = asyncio.run(close_graph(graph_file, probe, checkpoint, close))
-
-    assert isinstance(closed, Closed)
-    assert closed.report().startswith("The graph database closed in ")
-    assert side_files(graph_file) == ()
-    assert count_rows(graph_file, "N") == 200
-
-
-def test_the_files_of_an_unfinished_checkpoint_keep_the_graph_open(tmp_path: Path) -> None:
-    graph_file = make_graph(tmp_path / GRAPH_NAME)
-    leave_recoverable(graph_file)
-    calls: list[str] = []
-
-    async def probe() -> None:
-        calls.append("probe")
-
-    async def checkpoint() -> None:
-        calls.append("checkpoint")
-
-    async def close() -> None:
-        calls.append("close")
-
-    left = asyncio.run(close_graph(graph_file, probe, checkpoint, close))
-
-    assert isinstance(left, LeftOpen)
-    assert calls == ["probe"]
-    assert unfinished_files(graph_file) == (
-        f"{GRAPH_NAME}.shadow",
-        f"{GRAPH_NAME}.checkpoint.intent.lock",
-        f"{GRAPH_NAME}.checkpoint.apply.lock",
-    )
-    assert left.report() == (
-        "The graph database stays open until the service exits: a checkpoint did not end "
-        f"({GRAPH_NAME}.shadow, {GRAPH_NAME}.checkpoint.intent.lock, "
-        f"{GRAPH_NAME}.checkpoint.apply.lock). The next start replays its WAL."
-    )
-
-
-def test_a_wal_alone_is_not_an_unfinished_checkpoint(tmp_path: Path) -> None:
-    graph_file = make_graph(tmp_path / GRAPH_NAME)
-    graph_file.with_name(f"{GRAPH_NAME}.wal").write_bytes(b"")
-
-    assert unfinished_files(graph_file) == ()
-
-
-def test_a_failed_statement_or_checkpoint_keeps_the_graph_open(tmp_path: Path) -> None:
-    graph_file = make_graph(tmp_path / GRAPH_NAME)
-    db = ladybug.Database(str(graph_file), buffer_pool_size=BUFFER_POOL)
-    conn = ladybug.Connection(db)
-    closes: list[str] = []
-
-    async def fails() -> object:
-        # A real error of ladybug: the table does not exist.
-        return conn.execute("MATCH (n:Missing) RETURN n")
-
-    async def probe() -> object:
-        return _probe(conn)
-
-    async def close() -> None:
-        closes.append("close")
-
-    first = asyncio.run(close_graph(graph_file, fails, probe, close))
-    second = asyncio.run(close_graph(graph_file, probe, fails, close))
-    conn.close()
-    db.close()
-
-    assert first == LeftOpen("the last statement failed (RuntimeError)")
-    assert second == LeftOpen("the checkpoint of the stop failed (RuntimeError)")
-    assert closes == []
-
-
-def test_the_unit_signals_the_main_process_alone_and_gives_the_stop_480_s() -> None:
+def test_the_unit_signals_the_main_process_alone_and_gives_the_stop_30_s() -> None:
     lines = UNIT.read_text(encoding="utf-8").splitlines()
 
     assert "KillMode=mixed" in lines
-    assert "KillSignal=SIGTERM" in lines
-    assert "TimeoutStopSec=480" in lines
+    assert "TimeoutStopSec=30" in lines
 
 
 def test_the_unit_throttles_at_8g_before_the_kill_at_12g_and_caps_its_swap() -> None:

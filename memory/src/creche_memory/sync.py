@@ -22,11 +22,6 @@ wait doubles with each failed sync in a row, up to 30 minutes. From
 2026-11-04 to 2026-11-09, a sync that failed every 8 to 9 minutes filled
 the journal (`memory/AGENTS.md`, the journal).
 
-After each sync, good or failed, the loop reopens the graph database
-(`graph.reopen_graph`). The checkpoints of one open use up a budget of
-ladybug, and on 2026-11-15 one open of 2 hours used up 32 GiB of it
-(`memory/AGENTS.md`, the reopen).
-
 A sync in which the model's answer for some notes never fits the
 extraction schema is a partial sync, not a failed one. It sets `ready`, and
 those notes sync again at the next change of the vault. On 2026-11-15 one
@@ -45,7 +40,7 @@ from pathlib import Path
 from typing import cast
 from uuid import UUID
 
-from .graph import Dead, GraphCheck, GraphReopener, LeftOpen
+from .graph import Dead, GraphCheck
 from .pdf import PDF_SUFFIX, PdfTexts, pdf_source
 
 POLL_S = 30.0
@@ -385,7 +380,6 @@ class Syncer:
         root: Path,
         ingest: Ingest,
         check: GraphCheck,
-        reopen: GraphReopener,
         *,
         poll_s: float = POLL_S,
         quiet_s: float = QUIET_S,
@@ -394,7 +388,6 @@ class Syncer:
         self._root = root
         self._ingest = ingest
         self._check = check
-        self._reopen = reopen
         self._poll_s = poll_s
         self._clock = clock
         self._debounce = Debounce(quiet_s)
@@ -458,28 +451,10 @@ class Syncer:
         self._failures = 0
         _say(f"sync done in {self._clock() - started:.0f} s{after}{partial}{ready}")
 
-        return await self._reopened(Outcome.PARTIAL if failed else Outcome.SYNCED)
-
-    async def _reopened(self, outcome: Outcome) -> Outcome | Dead:
-        """Reopen the graph database after a sync, and print one line. A
-        dead graph stops the loop, and the command prints its own line."""
-        reopened = await self._reopen()
-        if isinstance(reopened, Dead):
-            return reopened
-
-        if isinstance(reopened, LeftOpen):
-            _say(
-                f"the reopen of the graph database wrote nothing: {reopened.reason}. "
-                "The next sync uses the same open."
-            )
-        else:
-            _say(reopened.report())
-
-        return outcome
+        return Outcome.PARTIAL if failed else Outcome.SYNCED
 
     async def _failed(self, error: Exception, seconds: float) -> Outcome | Dead:
-        """Count a failed sync, check the graph, and print one line. Then
-        reopen a graph that opens.
+        """Count a failed sync, check the graph, and print one line.
 
         Only the type of the error is printed: a message can hold a URL. A
         dead graph stops the loop, and the command prints its own line. Any
@@ -503,7 +478,7 @@ class Syncer:
 
         _say(f"{line} The next sync waits at least {wait:.0f} s.")
 
-        return await self._reopened(Outcome.FAILED)
+        return Outcome.FAILED
 
     async def run(self, stop: threading.Event) -> Dead | None:
         """Check and sync until `stop` is set, or until a failed sync finds a

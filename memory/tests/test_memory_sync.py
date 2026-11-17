@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
-from creche_memory.graph import Dead, GraphCheck, GraphReopen, LeftOpen, Reopened
+from creche_memory.graph import Dead, GraphCheck
 from creche_memory.sync import (
     BACKOFF_MAX_S,
     POLL_S,
@@ -92,18 +92,6 @@ class Ingests:
         return self.unfit
 
 
-class Reopens:
-    """Counts the reopens, and answers each one with `answer`."""
-
-    def __init__(self, answer: GraphReopen | None = None) -> None:
-        self.calls = 0
-        self.answer: GraphReopen = Reopened(1.5) if answer is None else answer
-
-    async def __call__(self) -> GraphReopen:
-        self.calls += 1
-        return self.answer
-
-
 def _step(syncer: Syncer) -> Outcome | Dead:
     return asyncio.run(syncer.step())
 
@@ -162,7 +150,7 @@ def test_a_poll_waits_for_a_quiet_vault_and_a_write_does_not() -> None:
 
 def test_the_syncer_syncs_once_the_vault_is_quiet(vault: Path, usable: GraphCheck) -> None:
     clock, ingests = Clock(), Ingests()
-    syncer = Syncer(vault, ingests, usable, Reopens(), quiet_s=QUIET_S, clock=clock)
+    syncer = Syncer(vault, ingests, usable, quiet_s=QUIET_S, clock=clock)
 
     assert _step(syncer) is Outcome.WAITING
     assert not syncer.ready.is_set()
@@ -179,7 +167,7 @@ def test_the_syncer_syncs_once_the_vault_is_quiet(vault: Path, usable: GraphChec
 
 def test_a_write_syncs_at_the_next_check(vault: Path, usable: GraphCheck) -> None:
     clock, ingests = Clock(), Ingests()
-    syncer = Syncer(vault, ingests, usable, Reopens(), quiet_s=QUIET_S, clock=clock)
+    syncer = Syncer(vault, ingests, usable, quiet_s=QUIET_S, clock=clock)
 
     (vault / "profile" / "memories" / "new.md").write_text("new", encoding="utf-8")
     syncer.request()
@@ -192,7 +180,7 @@ def test_a_failed_sync_prints_no_message_and_tries_again(
     vault: Path, capsys: pytest.CaptureFixture[str], usable: GraphCheck
 ) -> None:
     clock, ingests = Clock(), Ingests()
-    syncer = Syncer(vault, ingests, usable, Reopens(), quiet_s=0.0, clock=clock)
+    syncer = Syncer(vault, ingests, usable, quiet_s=0.0, clock=clock)
     ingests.fail = True
 
     assert _step(syncer) is Outcome.FAILED
@@ -209,7 +197,7 @@ def test_a_failed_sync_with_a_dead_graph_returns_the_dead_graph(
 ) -> None:
     ingests = Ingests()
     ingests.fail = True
-    syncer = Syncer(vault, ingests, dead, Reopens(), quiet_s=0.0, clock=Clock())
+    syncer = Syncer(vault, ingests, dead, quiet_s=0.0, clock=Clock())
 
     state = _step(syncer)
 
@@ -225,7 +213,7 @@ def test_a_failed_sync_with_a_dead_graph_returns_the_dead_graph(
 def test_a_dead_graph_ends_run_and_sets_the_stop(vault: Path, dead: GraphCheck) -> None:
     ingests = Ingests()
     ingests.fail = True
-    syncer = Syncer(vault, ingests, dead, Reopens(), poll_s=60.0, quiet_s=0.0, clock=Clock())
+    syncer = Syncer(vault, ingests, dead, poll_s=60.0, quiet_s=0.0, clock=Clock())
     stop = threading.Event()
 
     started = time.monotonic()
@@ -238,59 +226,9 @@ def test_a_dead_graph_ends_run_and_sets_the_stop(vault: Path, dead: GraphCheck) 
 
 
 def test_a_successful_sync_does_not_check_the_graph(vault: Path, dead: GraphCheck) -> None:
-    syncer = Syncer(vault, Ingests(), dead, Reopens(), quiet_s=0.0, clock=Clock())
+    syncer = Syncer(vault, Ingests(), dead, quiet_s=0.0, clock=Clock())
 
     assert _step(syncer) is Outcome.SYNCED
-
-
-def test_a_good_sync_and_a_failed_one_each_reopen_the_graph(
-    vault: Path, usable: GraphCheck
-) -> None:
-    ingests, reopens = Ingests(), Reopens()
-    syncer = Syncer(vault, ingests, usable, reopens, quiet_s=0.0, clock=Clock())
-
-    assert _step(syncer) is Outcome.SYNCED
-    assert reopens.calls == 1
-
-    ingests.fail = True
-    (vault / "docs" / "new.md").write_text("new\n")
-    assert _step(syncer) is Outcome.FAILED
-    assert reopens.calls == 2
-
-
-def test_a_dead_graph_after_a_failed_sync_is_not_reopened(vault: Path, dead: GraphCheck) -> None:
-    ingests, reopens = Ingests(), Reopens()
-    ingests.fail = True
-    syncer = Syncer(vault, ingests, dead, reopens, quiet_s=0.0, clock=Clock())
-
-    assert isinstance(_step(syncer), Dead)
-    assert reopens.calls == 0
-
-
-def test_a_reopen_that_finds_a_dead_graph_ends_run_and_sets_the_stop(
-    vault: Path, dead: GraphCheck
-) -> None:
-    # The sync ends well. The new open of the reopen does not open.
-    state = asyncio.run(dead())
-    assert isinstance(state, Dead)
-    syncer = Syncer(vault, Ingests(), dead, Reopens(state), poll_s=60.0, quiet_s=0.0, clock=Clock())
-    stop = threading.Event()
-
-    assert asyncio.run(syncer.run(stop)) == state
-    assert stop.is_set()
-
-
-def test_a_reopen_that_writes_nothing_prints_why_and_the_loop_goes_on(
-    vault: Path, capsys: pytest.CaptureFixture[str], usable: GraphCheck
-) -> None:
-    left = LeftOpen(f"a checkpoint did not end ({GRAPH_NAME}.shadow)")
-    syncer = Syncer(vault, Ingests(), usable, Reopens(left), quiet_s=0.0, clock=Clock())
-
-    assert _step(syncer) is Outcome.SYNCED
-    assert capsys.readouterr().err.splitlines()[-1] == (
-        "memory: the reopen of the graph database wrote nothing: "
-        f"a checkpoint did not end ({GRAPH_NAME}.shadow). The next sync uses the same open."
-    )
 
 
 def test_an_error_of_the_check_ends_run_and_sets_the_stop(vault: Path) -> None:
@@ -299,7 +237,7 @@ def test_an_error_of_the_check_ends_run_and_sets_the_stop(vault: Path) -> None:
 
     ingests = Ingests()
     ingests.fail = True
-    syncer = Syncer(vault, ingests, broken, Reopens(), poll_s=60.0, quiet_s=0.0, clock=Clock())
+    syncer = Syncer(vault, ingests, broken, poll_s=60.0, quiet_s=0.0, clock=Clock())
     stop = threading.Event()
 
     with pytest.raises(TimeoutError):
@@ -324,19 +262,18 @@ def test_each_sync_logs_its_start_and_end_and_the_first_says_search_is_ready(
     vault: Path, capsys: pytest.CaptureFixture[str], usable: GraphCheck
 ) -> None:
     clock = Clock()
-    syncer = Syncer(vault, SlowIngests(clock), usable, Reopens(), quiet_s=0.0, clock=clock)
+    syncer = Syncer(vault, SlowIngests(clock), usable, quiet_s=0.0, clock=clock)
     folders = len(ingest_folders(vault))
 
     assert _step(syncer) is Outcome.SYNCED
     assert capsys.readouterr().err.splitlines() == [
         f"memory: sync started: {folders} folders",
         "memory: sync done in 125 s; search is ready",
-        "memory: The graph database reopened in 1.5 s.",
     ]
 
     (vault / "docs" / "new.md").write_text("new\n")
     assert _step(syncer) is Outcome.SYNCED
-    assert capsys.readouterr().err.splitlines()[-2] == "memory: sync done in 125 s"
+    assert capsys.readouterr().err.splitlines()[-1] == "memory: sync done in 125 s"
 
 
 def test_a_failed_sync_logs_its_time_and_the_type_only(
@@ -345,13 +282,12 @@ def test_a_failed_sync_logs_its_time_and_the_type_only(
     clock = Clock()
     ingests = SlowIngests(clock)
     ingests.fail = True
-    syncer = Syncer(vault, ingests, usable, Reopens(), quiet_s=0.0, clock=clock)
+    syncer = Syncer(vault, ingests, usable, quiet_s=0.0, clock=clock)
 
     assert _step(syncer) is Outcome.FAILED
-    assert capsys.readouterr().err.splitlines()[-2:] == [
+    assert capsys.readouterr().err.splitlines()[-1:] == [
         "memory: sync failed after 125 s: ConnectionError. Failed syncs in a row: 1. "
         "The next sync waits at least 30 s.",
-        "memory: The graph database reopened in 1.5 s.",
     ]
 
 
@@ -359,17 +295,16 @@ def test_a_partial_sync_opens_search_and_waits_for_the_next_change(
     vault: Path, capsys: pytest.CaptureFixture[str], usable: GraphCheck
 ) -> None:
     clock = Clock()
-    ingests, reopens = SlowIngests(clock), Reopens()
+    ingests = SlowIngests(clock)
     ingests.fail = True
-    syncer = Syncer(vault, ingests, usable, reopens, quiet_s=0.0, clock=clock)
+    syncer = Syncer(vault, ingests, usable, quiet_s=0.0, clock=clock)
     assert _step(syncer) is Outcome.FAILED
 
     ingests.fail, ingests.unfit = False, 2
     clock.now += POLL_S
     assert _step(syncer) is Outcome.PARTIAL
     assert syncer.ready.is_set()
-    assert reopens.calls == 2
-    assert capsys.readouterr().err.splitlines()[-2] == (
+    assert capsys.readouterr().err.splitlines()[-1] == (
         "memory: sync done in 125 s after 1 failed syncs; 2 note(s) or PDF(s) failed graph "
         "extraction and sync again at the next change; search is ready"
     )
@@ -443,14 +378,14 @@ def test_failed_syncs_in_a_row_back_off_and_a_good_one_resets_the_count(
 ) -> None:
     clock, ingests = Clock(), Ingests()
     ingests.fail = True
-    syncer = Syncer(vault, ingests, usable, Reopens(), quiet_s=0.0, clock=clock)
+    syncer = Syncer(vault, ingests, usable, quiet_s=0.0, clock=clock)
 
     assert _step(syncer) is Outcome.FAILED
     clock.now += POLL_S
     assert _step(syncer) is Outcome.FAILED
     assert (
         capsys.readouterr()
-        .err.splitlines()[-2]
+        .err.splitlines()[-1]
         .endswith("Failed syncs in a row: 2. The next sync waits at least 60 s.")
     )
 
@@ -462,7 +397,7 @@ def test_failed_syncs_in_a_row_back_off_and_a_good_one_resets_the_count(
     ingests.fail = False
     clock.now += 1.0
     assert _step(syncer) is Outcome.SYNCED
-    assert capsys.readouterr().err.splitlines()[-2] == (
+    assert capsys.readouterr().err.splitlines()[-1] == (
         "memory: sync done in 0 s after 2 failed syncs; search is ready"
     )
 
@@ -472,7 +407,7 @@ def test_failed_syncs_in_a_row_back_off_and_a_good_one_resets_the_count(
     assert _step(syncer) is Outcome.FAILED
     assert (
         capsys.readouterr()
-        .err.splitlines()[-2]
+        .err.splitlines()[-1]
         .endswith("Failed syncs in a row: 1. The next sync waits at least 30 s.")
     )
 
@@ -480,7 +415,7 @@ def test_failed_syncs_in_a_row_back_off_and_a_good_one_resets_the_count(
 def test_a_write_in_the_wait_syncs_after_the_wait(vault: Path, usable: GraphCheck) -> None:
     clock, ingests = Clock(), Ingests()
     ingests.fail = True
-    syncer = Syncer(vault, ingests, usable, Reopens(), quiet_s=QUIET_S, clock=clock)
+    syncer = Syncer(vault, ingests, usable, quiet_s=QUIET_S, clock=clock)
     syncer.request()
     assert _step(syncer) is Outcome.FAILED
 
@@ -496,7 +431,7 @@ def test_a_write_in_the_wait_syncs_after_the_wait(vault: Path, usable: GraphChec
 
 def test_a_vault_with_no_folder_to_read_is_never_synced(tmp_path: Path, usable: GraphCheck) -> None:
     ingests = Ingests()
-    syncer = Syncer(tmp_path, ingests, usable, Reopens(), quiet_s=0.0, clock=Clock())
+    syncer = Syncer(tmp_path, ingests, usable, quiet_s=0.0, clock=Clock())
 
     assert _step(syncer) is Outcome.NOTHING_TO_READ
     assert ingests.calls == []
@@ -545,7 +480,7 @@ def test_a_write_to_a_skipped_folder_neither_syncs_nor_spins(
     vault: Path, usable: GraphCheck
 ) -> None:
     clock, ingests = Clock(), Ingests()
-    syncer = Syncer(vault, ingests, usable, Reopens(), poll_s=60.0, quiet_s=0.0, clock=clock)
+    syncer = Syncer(vault, ingests, usable, poll_s=60.0, quiet_s=0.0, clock=clock)
     assert _step(syncer) is Outcome.SYNCED
 
     (vault / "house" / "scrum" / "STATE.md").write_text("an hour later", encoding="utf-8")
@@ -557,7 +492,6 @@ def test_a_write_to_a_skipped_folder_neither_syncs_nor_spins(
         vault,
         ingests,
         usable,
-        Reopens(),
         poll_s=60.0,
         quiet_s=0.0,
         clock=lambda: checks.append(0) or 0,
@@ -579,7 +513,7 @@ def test_a_write_to_a_skipped_folder_neither_syncs_nor_spins(
 
 
 def test_wake_ends_the_wait_of_run_at_once(vault: Path, usable: GraphCheck) -> None:
-    syncer = Syncer(vault, Ingests(), usable, Reopens(), poll_s=60.0, quiet_s=60.0, clock=Clock())
+    syncer = Syncer(vault, Ingests(), usable, poll_s=60.0, quiet_s=60.0, clock=Clock())
     stop = threading.Event()
 
     def end() -> None:

@@ -29,6 +29,7 @@ configure(StoreSettings(
 ))
 
 from cognee.base_config import get_base_config
+from cognee.infrastructure.databases.graph import get_graph_config
 from cognee.infrastructure.databases.vector.embeddings.config import get_embedding_config
 from cognee.infrastructure.llm.config import get_llm_config
 from cognee.infrastructure.llm.structured_output_framework.litellm_native.native_adapter import (
@@ -47,6 +48,7 @@ print(json.dumps({
     "rate": [llm.llm_rate_limit_enabled, llm.llm_rate_limit_requests],
     "embedding": [embed.embedding_model, embed.embedding_endpoint, embed.embedding_dimensions],
     "schema": _supports_native_schema(llm.llm_model),
+    "buffer_pool": get_graph_config().kuzu_buffer_pool_size,
 }))
 """
 
@@ -86,6 +88,7 @@ def test_cognee_reads_each_setting(tmp_path: Path) -> None:
     # provider holds the model to each required field.
     assert seen["schema"] is True
     assert seen["rate"] == [True, store.LLM_REQUESTS_PER_MINUTE]
+    assert seen["buffer_pool"] == store.GRAPH_BUFFER_POOL_BYTES
     assert seen["embedding"] == [
         store.EMBEDDING_MODEL,
         "http://embed.test:8085/v1",
