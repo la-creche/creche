@@ -5,14 +5,12 @@ socket server. `creche-memory --check` reads the config and checks the host,
 opens no socket, and exits. A deploy runs it before it swaps the unit.
 
 Exit 0 after a stop by SIGTERM or SIGINT. The stop closes the socket, ends
-every task of the store loop, then checkpoints and closes the graph database
-(`stop_store`). The systemd unit sends SIGTERM to this process only, so the
-graph worker runs until the close ends it. Exit 78 (EX_CONFIG) for a config
-or a host that stops the start, so systemd does not restart the unit in a
-loop (systemd/creche-caregiver.service, the restart policy). Exit 78 too for
-a graph database that does not open, at the start, after a failed sync or
-after the reopen that follows each sync (`graph.py`): a restart cannot
-repair it.
+every task of the store loop, then exits at once (`stop_store`). Exit 78
+(EX_CONFIG) for a config or a host that stops the start, so systemd does
+not restart the unit in a loop (systemd/creche-caregiver.service, the
+restart policy). Exit 78 too for a graph database that does not open, at
+the start or after a failed sync, and for one that another engine built
+(`graph.py`): a restart cannot repair either one.
 
 Exit 75 (EX_TEMPFAIL) for an error that ends the start check or the sync
 loop and is not a verdict on the database, such as a worker that did not
@@ -25,16 +23,16 @@ import sys
 import threading
 from concurrent.futures import Future, wait
 from types import FrameType
+from typing import NoReturn
 
 from .config import Config, ConfigError, check, from_env
 from .graph import (
     Dead,
-    GraphReopen,
     NotAVerdict,
-    close_cognee_graph,
+    check_engine,
+    cognee_graph_file,
     cognee_graph_state,
-    drain_cognee_graph,
-    reopen_cognee_graph,
+    service_engine,
 )
 from .logs import plain_console
 from .search import STOP_TIMEOUT_S, Searcher, StoreLoop
@@ -105,38 +103,24 @@ def stop_signals(stop: threading.Event) -> None:
     signal.signal(signal.SIGINT, on_signal)
 
 
-def stop_store(loop: StoreLoop, syncing: Future[Dead | None] | None) -> int:
-    """End the store after a stop, and return the exit status.
+def stop_store(loop: StoreLoop, syncing: Future[Dead | None] | None) -> NoReturn:
+    """End the store after a stop, and exit with its status.
 
     1. Read the end of the sync loop. A loop that ended before the stop
        stopped the service, and its end gives the status. A loop that still
        runs is in a stop by signal: exit 0.
-    2. Cancel every task of the loop. No new statement reaches the graph
-       worker. The statement that it runs now goes on to its end.
-    3. Close the graph database (`close_graph`): wait for the current
-       statement, checkpoint, then close. The close ends the worker
-       process. After a checkpoint of this open that did not end, the
-       database stays open and gets no statement. A dead graph is not
-       closed: it never opened.
-    4. Stop the loop.
+    2. Cancel every task of the loop, and wait at most `STOP_TIMEOUT_S` for
+       them.
+    3. End the process at once (`os._exit`). The exit ends Cognee's workers,
+       by `PR_SET_PDEATHSIG` on Linux and by Cognee's parent watchdog on
+       macOS. The next start replays the WAL of the graph database.
 
-    A task that still runs `STOP_TIMEOUT_S` after its cancel can still send
-    statements, a checkpoint among them. A checkpoint or a close of the stop
-    could then follow a failed checkpoint of that task. So the stop then
-    writes nothing. It refuses every further statement to the graph worker,
-    waits for each statement that the worker runs (`drain_cognee_graph`),
-    and then ends the process at once (`os._exit`). The exit ends the
-    worker at once, on Linux and on macOS. Without the wait, the exit can
-    end the worker in a checkpoint of the task, and then the next open can
-    crash or fail. The database stays open until the exit.
-    The next start replays its WAL. A normal exit would wait: Python joins
+    The stop writes nothing to the graph database. Ladybug 0.22.3 opens a
+    file whose worker died in a checkpoint, with every committed row
+    (`memory/AGENTS.md`, the stop). A normal exit would wait: Python joins
     Cognee's query threads at the exit. And on Linux the end of the loop
-    thread sends SIGTERM to the graph worker (`PR_SET_PDEATHSIG`), and
-    Cognee answers a dead worker with a new one, which opens the database
-    again.
-
-    The close has no deadline of its own. `TimeoutStopSec` of the unit
-    bounds the whole stop (`systemd/creche-memory.service`)."""
+    thread sends SIGTERM to the graph worker, and Cognee answers a dead
+    worker with a new one."""
     status = EX_OK
     if syncing is not None and syncing.done():
         status = ended(syncing, 0.0)
@@ -144,30 +128,12 @@ def stop_store(loop: StoreLoop, syncing: Future[Dead | None] | None) -> int:
     if not loop.cancel():
         _say(
             f"a task of the store loop still ran {STOP_TIMEOUT_S:.0f} s after the stop. "
-            "The graph database stays open until the service exits. "
-            "The next start replays its WAL."
+            "The service exits without it."
         )
-        if status != EX_CONFIG:
-            try:
-                loop.spawn(drain_cognee_graph()).result()
-            except Exception as error:
-                # Only the type: a message can hold the URL of a service.
-                _say(f"the wait for the graph worker failed: {type(error).__name__}.")
-        sys.stdout.flush()
-        os._exit(status)
 
-    if status != EX_CONFIG:
-        try:
-            closed = loop.spawn(close_cognee_graph()).result()
-        except Exception as error:
-            # Only the type: a message can hold the URL of a service.
-            _say(f"the close of the graph database failed: {type(error).__name__}.")
-        else:
-            _say(closed.report())
-
-    loop.stop()
-
-    return status
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(status)
 
 
 def _say(line: str) -> None:
@@ -192,6 +158,15 @@ def _serve(config: Config) -> int:
     except RuntimeError as error:
         return _fail(str(error))
 
+    # Before the first open of the graph database, which builds a new file.
+    try:
+        other = check_engine(cognee_graph_file(), service_engine())
+    except OSError as error:
+        return _broke("the engine check", error)
+
+    if other is not None:
+        return _fail(other.report())
+
     loop = StoreLoop()
     loop.start()
     # The first open of the graph database. A dead one stops the start
@@ -209,10 +184,7 @@ def _serve(config: Config) -> int:
     if stop.is_set():
         return stop_store(loop, None)
 
-    async def reopen() -> GraphReopen:
-        return await loop.alone(reopen_cognee_graph)
-
-    syncer = Syncer(places.vault_root, cognee_ingest(places.vault_root), cognee_graph_state, reopen)
+    syncer = Syncer(places.vault_root, cognee_ingest(places.vault_root), cognee_graph_state)
     searcher = Searcher(syncer.ready, cognee_backend, cognee_paths)
 
     def search(request: SearchRequest) -> SearchReply | RefusedReply:

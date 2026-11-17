@@ -42,6 +42,12 @@ EMBEDDING_MAX_TOKENS = 512
 #: The embedding server takes no key. Cognee's client needs a value.
 EMBEDDING_KEY = "unused"
 
+#: The buffer pool of the graph database, a power of two. Cognee's default is
+#: 32 GiB, and Cognee does not size it to the unit, which throttles at 8G
+#: (`systemd/creche-memory.service`). The largest graph file of the host was
+#: 448 MB, on 2026-11-15.
+GRAPH_BUFFER_POOL_BYTES = 1 << 31
+
 URL_SCHEMES = ("http://", "https://")
 API_SUFFIX = "/v1"
 
@@ -80,7 +86,7 @@ def _api(url: str) -> str:
 
 
 def cognee_env(settings: StoreSettings) -> dict[str, str]:
-    """The env names that Cognee 1.6.6 reads, with the values of `settings`."""
+    """The env names that Cognee 1.6.8 reads, with the values of `settings`."""
     root = settings.store_root
 
     return {
@@ -112,6 +118,7 @@ def cognee_env(settings: StoreSettings) -> dict[str, str]:
         "HUGGINGFACE_TOKENIZER": EMBEDDING_MODEL,
         "HF_HUB_CACHE": str(settings.tokenizer_cache),
         "HF_HUB_OFFLINE": "1",
+        "KUZU_BUFFER_POOL_SIZE": str(GRAPH_BUFFER_POOL_BYTES),
     }
 
 

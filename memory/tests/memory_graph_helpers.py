@@ -6,9 +6,8 @@ checkpoint (the pull request of `graph.py` has the runs). A garbage
 every open. An empty `.shadow` with the two lock files is a state that the
 next open recovers from and removes.
 
-`fill_through_cognee` runs the check of the service, through Cognee's
-engine, in a process of its own: Cognee reads its settings once, at its
-first import."""
+The writers through Cognee's engine run in a process of their own: Cognee
+reads its settings once, at its first import."""
 
 import asyncio
 import os
@@ -19,10 +18,17 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 import ladybug
-from creche_memory.graph import GraphCheck, GraphState, graph_state
+from creche_memory.graph import (
+    ENGINE_MARK,
+    GraphCheck,
+    GraphState,
+    graph_state,
+    service_engine,
+)
 
 #: The name of Cognee's graph file under `<store>/system/databases`.
 GRAPH_NAME = "cognee_graph_ladybug"
@@ -36,8 +42,16 @@ LOCKS = (".checkpoint.intent.lock", ".checkpoint.apply.lock")
 FROZEN_WAL_BYTES = 27105
 
 
+def mark_engine(graph_file: Path) -> None:
+    """The mark that the service writes before it builds `graph_file`."""
+    graph_file.with_name(graph_file.name + ENGINE_MARK).write_text(
+        service_engine() + "\n", encoding="utf-8"
+    )
+
+
 def make_graph(graph_file: Path) -> Path:
-    """A real database with one table and 100 rows, closed cleanly."""
+    """A real database with one table and 100 rows, closed cleanly, with the
+    mark of the service's engine."""
     graph_file.parent.mkdir(parents=True, exist_ok=True)
     db = ladybug.Database(str(graph_file), buffer_pool_size=BUFFER_POOL)
     conn = ladybug.Connection(db)
@@ -45,6 +59,7 @@ def make_graph(graph_file: Path) -> Path:
     conn.execute("UNWIND range(1, 100) AS i CREATE (:N {id: i})")
     conn.close()
     db.close()
+    mark_engine(graph_file)
 
     return graph_file
 
@@ -85,122 +100,54 @@ def count_rows(graph_file: Path, table: str) -> int:
     return int(rows[0][0])
 
 
-#: The rows of table `F` that `fill_through_cognee` writes.
-FILL_ROWS = 200000
-
-#: The largest graph file of `fill_through_cognee`.
-FULL_DB_BYTES = 1 << 25
-
-#: A child that runs the check of the service through Cognee's engine and
-#: prints the state. A checkpoint through the same open engine then fills
-#: the database past `KUZU_MAX_DB_SIZE`, and the child prints the state
-#: again. Then it runs the close of the stop and prints what it did. Then
-#: the interpreter exits as the service does, with its exit hooks.
-_FILL = f"""
-import asyncio, sys
-from pathlib import Path
-from creche_memory.store import StoreSettings, configure
-
-root = Path(sys.argv[1])
-configure(StoreSettings(root, "http://127.0.0.1:9", "unused", "http://127.0.0.1:9", root / "hf"))
-from creche_memory.graph import close_cognee_graph, cognee_graph_state
-
-async def main():
-    print(repr(await cognee_graph_state()), flush=True)
-    from cognee.infrastructure.databases.graph import get_graph_engine
-    engine = await get_graph_engine()
-    # A checkpoint of the empty database first. Without it, the checkpoint
-    # after the rows fits under the limit.
-    await engine.query("CHECKPOINT", {{}})
-    await engine.query("CREATE NODE TABLE F(id INT64 PRIMARY KEY, s STRING)", {{}})
-    # The rows fit in memory. The checkpoint that writes them fails.
-    row = "UNWIND range(1, {FILL_ROWS}) AS i CREATE (:F {{id: i, s: '" + "x" * 64 + "'}})"
-    await engine.query(row, {{}})
-    try:
-        await engine.query("CHECKPOINT", {{}})
-    except RuntimeError as error:
-        print("full:", "Maximum database size" in str(error), flush=True)
-    print(repr(await cognee_graph_state()), flush=True)
-    # The close of the stop, after the failed checkpoint.
-    print(repr(await close_cognee_graph()), flush=True)
-
-asyncio.run(main())
-"""
-
-
-def fill_through_cognee(store_root: Path) -> list[str]:
-    """The lines that `_FILL` prints, for a store at `store_root`."""
-    (store_root / "hf").mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, "NO_COLOR": "1", "KUZU_MAX_DB_SIZE": str(FULL_DB_BYTES)}
-    done = subprocess.run(
-        [sys.executable, "-c", _FILL, str(store_root)],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    assert done.returncode == 0, done.stderr[-3000:]
-
-    marks = ("Usable(", "Dead(", "full:", "Closed(", "LeftOpen(")
-
-    return [line for line in done.stdout.splitlines() if line.startswith(marks)]
-
-
 #: The rows that `churn_through_cognee` rewrites in each round.
 CHURN_ROWS = 20000
 
-#: The cap on the buffer frames of one open in `churn_through_cognee`. The
-#: graph file stays near 2 MiB. Without a reopen, the checkpoints of one
-#: open reach this cap in about 7 rounds.
+#: A small cap on the buffer frames of one open. The graph file stays near
+#: 2 MiB. With ladybug 0.19.0, the checkpoints of one open reached this cap
+#: in about 7 rounds.
 CHURN_DB_BYTES = 1 << 26
 
 #: The rounds of `churn_through_cognee`.
 CHURN_ROUNDS = 30
 
 #: A child that rewrites `CHURN_ROWS` rows and checkpoints, `sys.argv[2]`
-#: rounds, through Cognee's engine, as Cognee does after each `add_nodes`.
-#: Every `sys.argv[3]` rounds it runs the reopen of the sync loop, or
-#: never for 0. It keeps the engine handle of the first round, as Cognee's
-#: own tasks do. Each line says what happened.
+#: rounds, through Cognee's engine in one open, as Cognee does after each
+#: `add_nodes`. Each line says what happened.
 _CHURN = """
 import asyncio, sys
 from pathlib import Path
 from creche_memory.store import StoreSettings, configure
 
 root = Path(sys.argv[1])
-rounds, every = int(sys.argv[2]), int(sys.argv[3])
 configure(StoreSettings(root, "http://127.0.0.1:9", "unused", "http://127.0.0.1:9", root / "hf"))
-from creche_memory.graph import close_cognee_graph, cognee_graph_state, reopen_cognee_graph
+from creche_memory.graph import cognee_graph_state
 
 async def main():
     print(repr(await cognee_graph_state()), flush=True)
     from cognee.infrastructure.databases.graph import get_graph_engine
     engine = await get_graph_engine()
     await engine.query("CREATE NODE TABLE F(id INT64 PRIMARY KEY, s STRING)", {})
-    await engine.query("UNWIND range(1, " + sys.argv[4] + ") AS i CREATE (:F {id: i, s: 'a'})", {})
+    await engine.query("UNWIND range(1, " + sys.argv[3] + ") AS i CREATE (:F {id: i, s: 'a'})", {})
     await engine.query("CHECKPOINT", {})
-    for n in range(1, rounds + 1):
+    for n in range(1, int(sys.argv[2]) + 1):
         try:
             await engine.query("MATCH (f:F) SET f.s = '" + ("x" + str(n)) * 8 + "'", {})
             await engine.query("CHECKPOINT", {})
         except RuntimeError as error:
             print("full:", n, "Maximum database size" in str(error), flush=True)
             return
-        if every and n % every == 0:
-            print(repr(await reopen_cognee_graph()), flush=True)
     print("rows:", (await engine.query("MATCH (f:F) RETURN count(*)", {}))[0][0], flush=True)
-    print(repr(await close_cognee_graph()), flush=True)
 
 asyncio.run(main())
 """
 
 
-def churn_through_cognee(store_root: Path, every: int) -> list[str]:
-    """The lines that `_CHURN` prints, for a store at `store_root`, with a
-    reopen every `every` rounds, or none for 0."""
+def churn_through_cognee(store_root: Path) -> list[str]:
+    """The lines that `_CHURN` prints, for a store at `store_root`."""
     (store_root / "hf").mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "NO_COLOR": "1", "KUZU_MAX_DB_SIZE": str(CHURN_DB_BYTES)}
-    args = [str(store_root), str(CHURN_ROUNDS), str(every), str(CHURN_ROWS)]
+    args = [str(store_root), str(CHURN_ROUNDS), str(CHURN_ROWS)]
     done = subprocess.run(
         [sys.executable, "-c", _CHURN, *args],
         env=env,
@@ -210,7 +157,7 @@ def churn_through_cognee(store_root: Path, every: int) -> list[str]:
     )
     assert done.returncode == 0, done.stderr[-3000:]
 
-    marks = ("Usable(", "Dead(", "full:", "rows:", "Reopened(", "Closed(", "LeftOpen(")
+    marks = ("Usable(", "Dead(", "full:", "rows:")
 
     return [line for line in done.stdout.splitlines() if line.startswith(marks)]
 
@@ -277,7 +224,7 @@ STUBBORN_ROWS = 20000
 #: a real `Syncer` on a `StoreLoop`. The sync writes `sys.argv[2]` rows
 #: through Cognee's engine, then checkpoints, until the stop. Each line
 #: says where the writer is. At SIGTERM, `stop_store` ends the store and
-#: gives the exit status. With `sys.argv[3]` set to `ignore`, the sync
+#: exits with its status. With `sys.argv[3]` set to `ignore`, the sync
 #: ignores its first cancel and writes on, as a task in a rollback can.
 _WRITER = """
 import asyncio, sys, threading
@@ -287,7 +234,7 @@ from creche_memory.store import StoreSettings, configure
 root = Path(sys.argv[1])
 configure(StoreSettings(root, "http://127.0.0.1:9", "unused", "http://127.0.0.1:9", root / "hf"))
 from creche_memory.cli import stop_signals, stop_store
-from creche_memory.graph import cognee_graph_state, reopen_cognee_graph
+from creche_memory.graph import cognee_graph_state
 from creche_memory.search import StoreLoop
 from creche_memory.sync import Syncer
 
@@ -326,12 +273,11 @@ stop_signals(stop)
 loop = StoreLoop()
 loop.start()
 print(repr(loop.spawn(cognee_graph_state()).result()), flush=True)
-reopen = lambda: loop.alone(reopen_cognee_graph)
-syncer = Syncer(vault, write, cognee_graph_state, reopen, poll_s=0.05, quiet_s=0.0)
+syncer = Syncer(vault, write, cognee_graph_state, poll_s=0.05, quiet_s=0.0)
 syncing = loop.spawn(syncer.run(stop))
 stop.wait()
 syncer.wake()
-sys.exit(stop_store(loop, syncing))
+stop_store(loop, syncing)
 """
 
 
@@ -380,17 +326,28 @@ def group_left(pgid: int) -> bool:
     return False
 
 
+class Stop(Enum):
+    """How the stop of `stop_in_a_checkpoint` reaches the writer."""
+
+    #: SIGTERM to the main process alone, as `KillMode=mixed` sends it.
+    SIGTERM = "sigterm"
+    #: SIGKILL to every process of the group at once, as an OOM kill of the
+    #: unit or a crash ends it.
+    KILL_ALL = "kill-all"
+
+
 def stop_in_a_checkpoint(
     store_root: Path,
     nth: int,
     delay_s: float,
     *,
+    stop: Stop = Stop.SIGTERM,
     rows: int = WRITE_ROWS,
     ignores_the_cancel: bool = False,
 ) -> StopInAWrite:
-    """Start `_WRITER` on a new store, and send SIGTERM to its main process
-    alone, as `KillMode=mixed` does, `delay_s` after it starts its `nth`
-    checkpoint. Then wait for its exit. Each statement writes `rows` rows."""
+    """Start `_WRITER` on a new store, and stop it as `stop` says,
+    `delay_s` after it starts its `nth` checkpoint. Then wait for its exit.
+    Each statement writes `rows` rows."""
     (store_root / "hf").mkdir(parents=True)
     mode = "ignore" if ignores_the_cancel else "obey"
     writer = subprocess.Popen(
@@ -414,7 +371,10 @@ def stop_in_a_checkpoint(
                     break
         assert started == nth, "the writer ended before its checkpoint"
         time.sleep(delay_s)
-        writer.send_signal(signal.SIGTERM)
+        if stop is Stop.SIGTERM:
+            writer.send_signal(signal.SIGTERM)
+        else:
+            os.killpg(writer.pid, signal.SIGKILL)
         out, err = writer.communicate(timeout=120)
         left = group_left(writer.pid)
     finally:

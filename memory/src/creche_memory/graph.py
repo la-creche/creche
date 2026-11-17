@@ -1,10 +1,10 @@
 """Whether the graph database of the memory store can be opened.
 
-Cognee keeps its knowledge graph in one ladybug database file. A worker
-process that dies in a checkpoint can leave that file in a state that no
-open recovers from. Then every sync and every search fails with the same
+Cognee keeps its knowledge graph in one ladybug database file. A file that
+no open recovers from fails every sync and every search with the same
 error, and only the operator can repair it (`memory/AGENTS.md`, the dead
-graph).
+graph). Ladybug 0.19.0 left such a file after a kill in a checkpoint, and
+after a checkpoint that followed a refusal of its size cap.
 
 The test is the open itself, not the names of the files beside the
 database. A checkpoint that stops part way leaves files that the next open
@@ -12,20 +12,14 @@ replays and removes, so a leftover file alone is a normal state. Each file
 that is there before the open goes into the report, for the operator.
 
 The check never closes the engine, and its own query writes nothing. It
-asks Cognee's cached engine `RETURN 1`. A checkpoint in the check can lose
-rows or leave a file that does not open. A close after a failed checkpoint
-can leave a file that does not open. The first check of a process builds
+asks Cognee's cached engine `RETURN 1`. The first check of a process builds
 Cognee's engine, and that build runs three `CREATE ... IF NOT EXISTS`
-statements. Their commit can write a `.wal` and can checkpoint a replayed
-WAL (`memory/AGENTS.md`, known gaps).
+statements.
 
-The stop of the service closes the engine (`close_graph`), and so does
-the reopen after each sync (`reopen_graph`). The close runs `CHECKPOINT`
-first, and it closes only after that checkpoint ends well. After a failed
-checkpoint of the same open, both a checkpoint and a close leave a file
-that does not open, so the stop then writes nothing. After a task that
-ignored its cancel, the stop does not close: it waits for the statements
-of that task (`drain_cognee_graph`).
+Before the first open, `check_engine` compares the engine that built the
+file with the engine of the service (`ENGINE_MARK`). Ladybug 0.21 changed
+how it hashes text keys and kept its storage version, so a newer engine
+opens an older file and can miss keys with no error.
 
 An error of the open is a verdict only when ladybug raises it for the
 file. An error of Cognee's worker process, a lock that another opener
@@ -33,18 +27,15 @@ still holds, or an error of the host such as a full disk says nothing
 about the file. A restart can clear it, so the check passes it to the
 caller."""
 
-import asyncio
-import time
 from collections.abc import Awaitable, Callable
-from concurrent.futures import Executor
 from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
-from typing import Any, cast
 
 from cognee_db_workers.harness import SubprocessTransportError
 
-#: The files that ladybug 0.19.0 keeps beside the database while it writes
-#: or checkpoints. A clean close leaves none of them.
+#: The files that ladybug keeps beside the database while it writes or
+#: checkpoints. A clean close leaves none of them.
 SIDE_SUFFIXES = (
     ".wal",
     ".wal.checkpoint",
@@ -174,14 +165,21 @@ async def graph_state(graph_file: Path, query: GraphQuery) -> GraphState:
     return Usable()
 
 
+def cognee_graph_file() -> Path:
+    """The graph database file of Cognee. Call it only after `configure`."""
+    from cognee.infrastructure.databases.graph import get_graph_config
+
+    return Path(get_graph_config().graph_file_path)
+
+
 async def cognee_graph_state() -> GraphState:
     """The state of the graph database of Cognee, through Cognee's own engine.
     Call it only after `configure`. The engine opens the database once and
     keeps it open, so a sync, a search and each later check use the same
     open. The check does not close the engine."""
-    from cognee.infrastructure.databases.graph import get_graph_config, get_graph_engine
+    from cognee.infrastructure.databases.graph import get_graph_engine
 
-    graph_file = Path(get_graph_config().graph_file_path)
+    graph_file = cognee_graph_file()
 
     async def query() -> object:
         engine = await get_graph_engine()
@@ -191,199 +189,61 @@ async def cognee_graph_state() -> GraphState:
     return await graph_state(graph_file, query)
 
 
-@dataclass(frozen=True)
-class Closed:
-    """The stop folded the WAL into the database file, then closed it."""
-
-    #: The seconds from the start of the close to its end. They count the
-    #: wait for the current statement.
-    seconds: float
-
-    def report(self) -> str:
-        return f"The graph database closed in {self.seconds:.1f} s."
+#: The suffix of the file beside the database that names the engine that
+#: built it, for example `ladybug 0.22.3`.
+ENGINE_MARK = ".engine"
 
 
 @dataclass(frozen=True)
-class LeftOpen:
-    """The stop did not close the database. It runs no statement after the
-    current one, and the worker ends with the service. The next start
-    replays the WAL."""
+class OtherEngine:
+    """The graph database was built by another engine than the service's,
+    or before the service wrote `ENGINE_MARK`."""
 
-    #: Why: the files of a checkpoint that did not end, or the type of the
-    #: error of a statement. Only the type: a message can hold the URL of a
-    #: service.
-    reason: str
+    graph_file: Path
+    #: The text of the mark, or `None` for a file with no mark.
+    built_by: str | None
+    #: The engine of the service.
+    engine: str
 
     def report(self) -> str:
+        """One journal line: the cause, then the operator's recovery."""
+        built = self.built_by or "an engine with no mark"
+        databases = self.graph_file.parent
+
         return (
-            f"The graph database stays open until the service exits: {self.reason}. "
-            "The next start replays its WAL."
+            f"The graph database {self.graph_file} was built by {built}, "
+            f"and the service runs {self.engine}. "
+            "A newer ladybug can open an older file and miss keys with no error. "
+            f"To rebuild, set aside {databases}. "
+            "Then start the unit. "
+            "The first sync rebuilds the store from the vault."
         )
 
 
-type GraphClose = Closed | LeftOpen
+def service_engine() -> str:
+    """The engine of the service, as the mark names it."""
+    return f"ladybug {version('ladybug')}"
 
 
-@dataclass(frozen=True)
-class Reopened:
-    """The reopen closed the database as the stop does, and a new open of
-    it answers."""
+def check_engine(graph_file: Path, engine: str) -> OtherEngine | None:
+    """Compare the mark beside `graph_file` with `engine`. Call it before
+    the first open of the database.
 
-    #: The seconds from the start of the close to the end of the new open.
-    seconds: float
-
-    def report(self) -> str:
-        return f"The graph database reopened in {self.seconds:.1f} s."
-
-
-#: What a reopen did. `LeftOpen`: it wrote nothing, and the old open stays.
-#: `Dead`: the new open does not open.
-type GraphReopen = Reopened | LeftOpen | Dead
-
-#: A call that reopens the graph database.
-type GraphReopener = Callable[[], Awaitable[GraphReopen]]
-
-#: A call that runs one statement, or the close, on the open engine.
-type GraphCall = Callable[[], Awaitable[object]]
-
-
-def unfinished_files(graph_file: Path) -> tuple[str, ...]:
-    """The side files of a checkpoint that did not end: each one from
-    `SIDE_SUFFIXES` except the WAL itself."""
-    wal = graph_file.name + ".wal"
-
-    return tuple(name for name in side_files(graph_file) if name != wal)
-
-
-async def close_graph(
-    graph_file: Path, probe: GraphCall, checkpoint: GraphCall, close: GraphCall
-) -> GraphClose:
-    """Close the graph database at the stop or at a reopen, or leave it open
-    when a close could kill it.
-
-    1. `probe` (`RETURN 1`) writes nothing. The worker runs one statement
-       at a time, so the probe ends after the statement that runs now. Then
-       the worker is idle.
-    2. A file of a checkpoint that did not end, beside the database, means
-       that a checkpoint of this open failed. A checkpoint or a close after
-       that leaves a file that does not open, and no write keeps every row
-       (`memory/AGENTS.md`, the stop). So the database stays open.
-    3. `checkpoint` folds the WAL into the file. After it ends well,
-       `close` closes the database. After a failed one, the database stays
-       open, as in step 2."""
-    started = time.monotonic()
-    try:
-        await probe()
-    except Exception as error:
-        return LeftOpen(f"the last statement failed ({type(error).__name__})")
-
-    left = unfinished_files(graph_file)
-    if left:
-        return LeftOpen(f"a checkpoint did not end ({', '.join(left)})")
+    With no database file, the first open builds one, so the check writes
+    the mark of `engine`. A database with no mark, or with another mark,
+    is an `OtherEngine`. The check never moves or removes a file."""
+    mark = graph_file.with_name(graph_file.name + ENGINE_MARK)
+    if not graph_file.exists():
+        graph_file.parent.mkdir(parents=True, exist_ok=True)
+        mark.write_text(engine + "\n", encoding="utf-8")
+        return None
 
     try:
-        await checkpoint()
-    except Exception as error:
-        return LeftOpen(f"the checkpoint of the stop failed ({type(error).__name__})")
+        built_by = mark.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return OtherEngine(graph_file, None, engine)
 
-    await close()
+    if built_by != engine:
+        return OtherEngine(graph_file, built_by, engine)
 
-    return Closed(time.monotonic() - started)
-
-
-async def reopen_graph(
-    close: Callable[[], Awaitable[GraphClose]], check: GraphCheck
-) -> GraphReopen:
-    """Close the graph database as the stop does, then open it again.
-
-    Ladybug 0.19.0 never gives back the buffer frames that a checkpoint
-    takes for its shadow pages. The frames of one open add up over each
-    checkpoint, and `KUZU_MAX_DB_SIZE` caps their sum, not the size of the
-    file. At the cap, each statement fails with `Maximum database size of
-    <n> bytes has been reached` (`memory/AGENTS.md`, the reopen). A new
-    open starts again from zero.
-
-    1. `close` is `close_graph`. When it leaves the database open, the
-       reopen writes nothing more, and the old open stays.
-    2. `check` opens the database again and asks it `RETURN 1`. A dead
-       graph goes to the caller as a `Dead`."""
-    started = time.monotonic()
-    closed = await close()
-    if isinstance(closed, LeftOpen):
-        return closed
-
-    state = await check()
-    if isinstance(state, Dead):
-        return state
-
-    return Reopened(time.monotonic() - started)
-
-
-async def close_cognee_graph() -> GraphClose:
-    """`close_graph` on Cognee's cached engine. Call it only after the
-    start check, and after every task that writes has ended."""
-    return await _close_cognee_graph(evict=False)
-
-
-async def reopen_cognee_graph() -> GraphReopen:
-    """`reopen_graph` on Cognee's cached engine. Call it only from the sync
-    loop, between two syncs, while no search runs (`StoreLoop.alone`).
-
-    After the close, the cache of Cognee still holds the closed engine.
-    The eviction removes it, so the next call into Cognee opens a new
-    engine. An engine handle that a caller still holds goes to the new
-    engine at its next use."""
-    return await reopen_graph(lambda: _close_cognee_graph(evict=True), cognee_graph_state)
-
-
-async def _close_cognee_graph(*, evict: bool) -> GraphClose:
-    from cognee.infrastructure.databases.graph import get_graph_config, get_graph_engine
-    from cognee.infrastructure.databases.graph.config import get_graph_context_config
-    from cognee.infrastructure.databases.graph.get_graph_engine import graph_engine_cache
-
-    graph_file = Path(get_graph_config().graph_file_path)
-    engine = await get_graph_engine()
-
-    async def probe() -> object:
-        # The interface types `params` as a bare `dict`.
-        return await engine.query("RETURN 1", {})  # pyright: ignore[reportUnknownMemberType]
-
-    async def checkpoint() -> object:
-        return await engine.query("CHECKPOINT", {})  # pyright: ignore[reportUnknownMemberType]
-
-    async def close() -> None:
-        # The ladybug adapter waits for its queries, closes the connection
-        # and the database, and ends its worker process. The interface of a
-        # graph engine has no `close`.
-        await engine.close()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        if evict:
-            # The engine is closed already, so the eviction closes nothing.
-            # Cognee types the config as a bare `dict`.
-            config = cast(dict[str, Any], get_graph_context_config())
-            graph_engine_cache.evict(**config)  # pyright: ignore[reportUnknownMemberType]
-
-    return await close_graph(graph_file, probe, checkpoint, close)
-
-
-async def drain_cognee_graph() -> None:
-    """Refuse every further statement to Cognee's graph engine, and wait for
-    each statement that already runs. The database stays open, and the graph
-    worker is idle at the end. Call it only after the start check.
-
-    It is for the stop after a task that ignored its cancel (`cli.stop_store`).
-    That task can still send statements, a checkpoint among them. The exit
-    after the drain then ends an idle worker, never a worker in a checkpoint.
-
-    The ladybug adapter runs each statement in a thread of its executor, and
-    that thread waits for the answer of the worker. The shutdown of the
-    executor makes each later statement raise a `RuntimeError` before it
-    reaches the worker. It cancels each statement that no thread has started.
-    It waits for each statement that a thread runs."""
-    from cognee.infrastructure.databases.graph import get_graph_engine
-
-    engine = await get_graph_engine()
-    # The interface of a graph engine has no executor. The ladybug adapter
-    # of the pinned Cognee has one.
-    executor = cast(Executor, engine.executor)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-
-    await asyncio.to_thread(executor.shutdown, wait=True, cancel_futures=True)
+    return None

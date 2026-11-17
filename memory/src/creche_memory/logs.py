@@ -1,6 +1,6 @@
 """The lines that Cognee writes to the journal.
 
-Cognee 1.6.6 sets up the root logger at its first import
+Cognee 1.6.8 sets up the root logger at its first import
 (`cognee.shared.logging_utils.setup_logging`). Its console handler writes
 each record at INFO and above to stderr. It forces colour codes, writes an
 empty line before each record, and draws a rich traceback box for each
