@@ -312,7 +312,7 @@ def test_a_denied_set_stays_quiet(host: _Host) -> None:
 
 @pytest.mark.parametrize("verdict", [Verdict.TIMEOUT, Verdict.EXPIRED, Verdict.UNDELIVERABLE])
 def test_a_tap_nobody_gave_is_asked_again_after_the_hold(host: _Host, verdict: Verdict) -> None:
-    """The phone was out of reach for fifteen minutes, or the hook did not
+    """The phone was out of reach for the whole gate, or the hook did not
     take the push. That is not a no."""
     host.install(BOARD, LIVE)
     host.tag(BOARD, NEXT)

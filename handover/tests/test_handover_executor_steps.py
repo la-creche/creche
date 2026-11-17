@@ -353,6 +353,29 @@ def test_an_approval_for_another_hash_is_refused(bench: Bench) -> None:
     assert installed_version(bench.components / "caregiver") == LIVE_VERSION
 
 
+def test_step_5_waits_an_hour_and_believes_a_tap_late_in_it(bench: Bench) -> None:
+    """The gate is open for one hour (2026-11-17). A tap 59 minutes after
+    the push still releases the set."""
+    waits: list[float] = []
+
+    def late_tap(action_id: str, gate: str, summary: Summary, wait_s: float) -> Decision:
+        del action_id, summary
+        waits.append(wait_s)
+
+        return Decision(Verdict.GRANTED, gate, bench.wiring.host.clock() - 59 * 60)
+
+    bench.wiring = Wiring(
+        host=bench.wiring.host,
+        transport=late_tap,
+        readers=bench.wiring.readers,
+        api=bench.wiring.api,
+    )
+    _run_one(bench)
+
+    assert waits == [3600.0]
+    assert installed_version(bench.components / "caregiver") == NEW_VERSION
+
+
 def test_the_phone_summary_comes_from_roots_own_resolution(bench: Bench) -> None:
     """§2.5: the summary and the deployed set are one computation, so a
     requester cannot show the operator one thing and deploy another."""

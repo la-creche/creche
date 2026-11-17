@@ -25,8 +25,8 @@ Ten rules hold its shape, each with the reason it is a rule.
 4. **An answer is an answer.** A denial, a refusal and a failed release
    each hold the set until a newer tag changes it. Root has pushed the
    outcome already, and asking again would push it again.
-5. **A tap nobody gave is not an answer.** The gate closes after fifteen
-   minutes. A phone out of reach must not send the operator to a terminal,
+5. **A tap nobody gave is not an answer.** The gate closes after
+   `APPROVAL_TTL_S`. A phone out of reach must not send the operator to a terminal,
    which is the step this module removes. So that one outcome is asked
    again after `AGAIN_S`, and `MAX_ASKS` times in all. Two more outcomes
    are asked again in the same way. A push the hook did not take
@@ -111,7 +111,8 @@ from ..state import ReleaseState
 REQUESTED_BY: Final = "follow"
 
 #: How long a set that nobody answered (rule 5) waits before it is asked again.
-#: The gate itself is open for fifteen minutes, so an hour is four of them.
+#: The gate itself is open for an hour (`APPROVAL_TTL_S`), so a set nobody
+#: answered is asked again as soon as its gate closes.
 AGAIN_S: Final = 3600.0
 
 #: How many requests one set gets, the first one included. Past it the set
