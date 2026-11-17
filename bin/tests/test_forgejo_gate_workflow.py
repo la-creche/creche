@@ -92,7 +92,7 @@ FORGEJO_EVENTS = ["pull_request"]
 REQUIRED_CONTEXT = "gate / gate (pull_request)"
 
 #: Each key of the Forgejo file. PyYAML reads the key `on` as the boolean.
-#: No `permissions` (difference 5).
+#: No `permissions` (difference 7).
 FORGEJO_FILE_KEYS = {"name", True, "concurrency", "env", "jobs"}
 
 #: The workflow env: 6 workers for each tool (difference 9).
