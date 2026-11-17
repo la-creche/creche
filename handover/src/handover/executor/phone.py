@@ -235,7 +235,7 @@ def make_transport(
         return _post(url, token, body)
 
     def transport(action_id: str, gate: str, summary: Summary, wait_s: float) -> Decision:
-        # A tap the flow would drop is a fifteen minute silence, which reads
+        # A tap the flow would drop is a silence of the whole gate, which reads
         # like a hung release. Refuse it here instead, which is contract 04
         # §8.4's undeliverable rule applied one step earlier.
         if ACTION_RE.fullmatch(release_action(action_id, gate)) is None:
@@ -272,7 +272,7 @@ def _wait(
     An unreachable hook mid-wait does NOT deny: the push already went out,
     so the operator may be holding an actionable notification, and denying under
     them would cost a release for one dropped poll. It keeps asking until
-    §2.5's fifteen minutes run out, and then answers `timeout`.
+    `wait_s` runs out, and then answers `timeout`.
     """
     started = clock()
     while True:

@@ -36,7 +36,7 @@ from ..resolve import Resolution
 #: §A.2. The flow drops
 #: any action string this refuses BEFORE the tap reaches anything, so root
 #: checks its own string against it rather than discovering the drop as a
-#: fifteen minute silence.
+#: silence of the whole gate.
 ACTION_RE: Final = re.compile(r"^AGENT_(APPROVE|DENY)_([0-9a-z]{26})_([0-9a-f]{16})$")
 
 #: What the flow prefixes an approval with, and what root builds to check
@@ -51,8 +51,11 @@ GATE_ID_HEX_LEN: Final = 16
 #: never collide with a tool-call gate id computed the same way.
 GATE_PURPOSE: Final = "release"
 
-#: §2.5: decisions expire after 15 minutes, and step 5 waits that long.
-APPROVAL_TTL_S: Final = 900.0
+#: How long step 5 waits for the tap, and how old a decision may be. §2.5
+#: said 15 minutes. The operator raised it to one hour on 2026-11-17, after
+#: four asks in a row closed unanswered overnight: a phone out of reach for a
+#: quarter of an hour is common, and a release that waits costs nothing.
+APPROVAL_TTL_S: Final = 3600.0
 
 #: §2.5: each of the seven fields of the record has at most this many
 #: characters.
@@ -257,8 +260,8 @@ def check_decision(decision: Decision, expected_gate: str, now: float | None = N
     1. It names another gate. That is a REPLAY: an approval the operator gave for
        a different manifest, presented for this one.
     2. It is not `granted`.
-    3. It is OLDER than `APPROVAL_TTL_S`. §2.5 says decisions expire after
-       fifteen minutes, and a transport that answers with an old granted
+    3. It is OLDER than `APPROVAL_TTL_S`. Decisions expire with the gate,
+       and a transport that answers with an old granted
        decision was believed without this. `now` is the
        caller's clock; None skips the age check, which is what a caller
        with no clock to offer gets.
