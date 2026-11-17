@@ -1,0 +1,82 @@
+# A user that is not root, for the run steps of a job on the Docker runner.
+#
+# The hosted GitHub runner runs each step as the user `runner`, with the
+# umask 0022 and passwordless sudo. The Docker runner of Forgejo runs each
+# step as root, with the umask 0000. The checkout then holds each file with
+# the mode 0666. Root reads a file of the mode 000, and the handover tests
+# refuse a site file that the group or another user can write. So on the
+# Docker runner a large part of the suite failed.
+#
+# This action gives a job the GitHub case. It makes the user `ubuntu` of the
+# runner image the owner of the checkout and of the toolchains that the steps
+# before it installed. It takes the write bit of the group and of other
+# users from the checkout. It gives `ubuntu` passwordless sudo, as on the
+# hosted runner. It then installs the program `as-runner`. A job names it as
+# the shell of its run steps (`defaults.run.shell: as-runner {0}`). That shell
+# runs the script of a step as `ubuntu`, with HOME /home/ubuntu, a
+# RUNNER_TEMP of its own, the umask 0022 and the open file limit 65536.
+#
+# Run it after the last step that installs a tool, and before the first run
+# step. A step of a local action keeps its own shell, and so runs as root.
+name: runner-user
+description: Run the run steps of the job as a user that is not root, with the umask 0022
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        RUN_USER: ubuntu
+        RUN_TEMP: /home/ubuntu/work/_temp
+        # The open file limit of the hosted runner. The Docker runner gives
+        # a job less, and the vmm start tests then fail with EMFILE.
+        OPEN_FILES: "65536"
+      run: |
+        set -euo pipefail
+        id -u -- "$RUN_USER"
+
+        echo "$RUN_USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/runner-user
+        chmod 0440 /etc/sudoers.d/runner-user
+
+        # setup-uv installs Python below /root, which has the mode 0700.
+        chmod 0711 /root
+
+        chmod -R go-w -- "$GITHUB_WORKSPACE"
+        # uv installs a Python there when a step asks for one it lacks.
+        if [[ -n "${UV_PYTHON_INSTALL_DIR:-}" ]]; then
+          mkdir -p -- "$UV_PYTHON_INSTALL_DIR"
+        fi
+
+        # A cache that an action restored as root lies below this home.
+        # The run steps write their lock and build files there.
+        owned=("$GITHUB_WORKSPACE" "/home/$RUN_USER")
+        for dir in "${CARGO_HOME:-}" "${RUSTUP_HOME:-}" "${UV_PYTHON_INSTALL_DIR:-}"; do
+          if [[ -n "$dir" ]]; then
+            owned+=("$dir")
+          fi
+        done
+        chown -R -- "$RUN_USER:" "${owned[@]}"
+
+        # A step with its own shell still runs as root. git refuses a
+        # repository that another user owns, unless the config names it.
+        git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+        # RUNNER_TEMP is /tmp on the Docker runner. bin/build-artifacts.sh
+        # refuses a program that holds the path RUNNER_TEMP, and guest-init
+        # holds "/tmp" as a guest path. The hosted runner gives a directory
+        # of its own, so the run steps get one too.
+        install -d -m 0755 -o "$RUN_USER" -g "$RUN_USER" -- "$RUN_TEMP"
+
+        # The heredoc expands $RUN_USER now. \$ keeps a name for the shell.
+        cat > /usr/local/bin/as-runner <<SHELL
+        #!/bin/bash
+        # as-runner SCRIPT: the shell of a run step, as $RUN_USER.
+        set -euo pipefail
+        chmod a+r -- "\$1"
+        ulimit -n $OPEN_FILES
+        exec setpriv --reuid=$RUN_USER --regid=$RUN_USER --init-groups \\
+          env HOME=/home/$RUN_USER USER=$RUN_USER LOGNAME=$RUN_USER RUNNER_TEMP=$RUN_TEMP \\
+          bash -c 'umask 0022 && exec bash --noprofile --norc -eo pipefail "\$0"' "\$1"
+        SHELL
+        chmod 0755 /usr/local/bin/as-runner
+        cat /usr/local/bin/as-runner

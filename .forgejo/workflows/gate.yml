@@ -1,0 +1,736 @@
+# PR gate on Forgejo Actions: the port of .github/workflows/gate.yml.
+# Forgejo reads .forgejo/workflows when the directory exists, and then
+# ignores .github/workflows. Each job here has the name, the steps and the
+# test commands of the job of the same name in the GitHub file.
+# bin/tests/test_forgejo_gate_workflow.py pins the two files together and
+# names each difference:
+#
+#   1. Triggers: `pull_request` only. Forgejo has no merge queue and no
+#      `merge_group` event (docs/design/forgejo-release-path.md, FR13). So
+#      no step reads the base of a merge group.
+#   2. Actions: each action of another repository is a full URL, pinned by
+#      commit. The local actions live under .forgejo/actions.
+#   3. Runner labels: a job that needs Docker, systemd as process 1 and
+#      passwordless sudo runs on `vm-plain`. So does `memory`, whose tests
+#      need a process 1 that reaps orphans. A job that needs /dev/kvm runs
+#      on `vm-kvm`: kvm, and rust, two of whose tests open /dev/kvm.
+#      Every other job runs on `ubuntu-24.04`, a container with no Docker
+#      socket, no systemd and no KVM.
+#   4. Shard numbers: Forgejo sets no `strategy.job-index` and no
+#      `strategy.job-total`. The shard command reads K from the matrix and
+#      N from its env.
+#   5. rustup: the Docker runner image has no rustup and no cargo. The
+#      jobs that run cargo first run .forgejo/actions/rustup, which does
+#      nothing on a runner that has rustup.
+#   6. No `permissions` key: Forgejo ignores it, and each job token can
+#      write its own repository.
+#   7. User: the Docker runner runs a step as root with the umask 0000.
+#      The jobs tests, proc, suites and vmm-archive run the local action
+#      runner-user. Their run steps then run as a user that is not root,
+#      with the umask 0022, the open file limit 65536 and a RUNNER_TEMP
+#      that is not /tmp, as on the hosted GitHub runner.
+#   8. Load: the env block below holds each job to 6 CPUs.
+#   9. Time limits: each job has a `timeout-minutes`. A job of the GitHub
+#      file with a limit keeps it.
+#  10. Checkout: on a pull request, Forgejo checks out the head of the
+#      branch. GitHub checks out the merge with the base. A branch behind
+#      main can pass here while the merge fails.
+#
+# Where each job runs today. One Docker runner serves `ubuntu-24.04`. No
+# runner serves `vm-plain` or `vm-kvm` yet: memory, playpen-image, rust,
+# systemd-proof and the two kvm shards wait for the runner VMs, and `gate`
+# waits for them. Until those runners exist, no run of this file ends green.
+#
+#   scope ──┬── tests (1..N)   code   the full suite, one shard per job
+#           ├── agent       code   the agent module's suite and types
+#           ├── facade      code   the ACP facade's suite, build and types
+#           ├── proc        code   the process-level suite
+#           ├── suites      code   the old suite of integration/
+#           ├── memory      code   the memory package, in its own venv
+#           │                      (vm-plain)
+#           ├── playpen-image
+#           │              code   each flavor image (vm-plain)
+#           ├── rust        code   cargo fmt, clippy and test of rust/
+#           │                      (vm-kvm)
+#           ├── systemd-proof
+#           │               code   the restart rule of the daemon units
+#           │                      (vm-plain)
+#           ├── kvm         code   the kvm_ tests of rust/ (vm-kvm)
+#           └── vmm-archive code   the vmm archive, built unsigned
+#   lint ─────────────────────────┐   ruff, ruff format, pyright, and on a
+#                                 │   docs PR the tests marked `docs`
+#                                 └── gate   red unless every job passed
+#
+# The required status of the protection of `main` is the job `gate`:
+# "gate / gate (pull_request)". It stays ONE workflow with ONE check named
+# `gate`, as in the GitHub file. A rerun goes through the rerun API of
+# Forgejo (FR14): retest.yml has no port.
+#
+# The docs rule (bin/lib/docsrule.sh) and the shard rule are those of the
+# GitHub file. Its header has the reasons.
+name: gate
+
+on: [pull_request]
+
+# A new push to a PR stops the run of its old head.
+concurrency:
+  group: gate-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+# The load (difference 8). The Docker runner runs 4 jobs at once, in one
+# Docker daemon that has 24 CPUs and 48 GB of memory for all of them. A job
+# sees every CPU of the host, so `-n auto`, cargo and vitest would each start
+# one worker per CPU of the host. Each value here is 24 / 4 = 6 CPUs for one
+# job, so the four jobs ask for 24 CPUs at most. In rehearsal run 162 on
+# the Docker runner, the daemon peaked at 23.0 CPUs and 7.2 GB of memory,
+# with four jobs at once.
+env:
+  # cargo: the number of rustc processes at once.
+  CARGO_BUILD_JOBS: "6"
+  # cargo test: the number of test threads of one test binary.
+  RUST_TEST_THREADS: "6"
+  # pytest-xdist: the number of workers of `-n auto`.
+  PYTEST_XDIST_AUTO_NUM_WORKERS: "6"
+  # vitest: the number of workers of its pool.
+  VITEST_MAX_FORKS: "6"
+  VITEST_MAX_THREADS: "6"
+
+jobs:
+  scope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+      systemd: ${{ steps.scope.outputs.systemd }}
+      vmm: ${{ steps.scope.outputs.vmm }}
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the merge-base with the base branch.
+          fetch-depth: 0
+
+      - uses: ./.forgejo/actions/scope
+        id: scope
+
+  # It asks the scope itself, so it starts with the scope job and a docs PR
+  # does not wait for one job before the other.
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the merge-base with the base branch.
+          fetch-depth: 0
+
+      - uses: ./.forgejo/actions/scope
+        id: scope
+
+      - uses: ./.forgejo/actions/uv-sync
+
+      # No flag: ruff, ruff format and pyright, no test. The shards test.
+      - run: bin/quality-gate.sh
+        if: steps.scope.outputs.scope == 'code'
+
+      # A docs PR has no shard: the tests that read a doc run here.
+      - run: bin/quality-gate.sh --docs
+        if: steps.scope.outputs.scope == 'docs'
+
+  tests:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: as-runner {0}
+    strategy:
+      # A red shard does not stop the others: one run shows every failure.
+      fail-fast: false
+      matrix:
+        # The numbers 1..N. Forgejo sets no `strategy.job-index` and no
+        # `strategy.job-total`, so the run line reads K from the matrix and
+        # N from TOTAL. bin/tests/test_forgejo_gate_workflow.py holds the
+        # list to 1..N and TOTAL to N, so no edit here can leave a shard out.
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: some tests read git state.
+          fetch-depth: 0
+
+      - uses: ./.forgejo/actions/uv-sync
+
+      # Five tests of handover start the cargo on PATH, and skip when
+      # there is none. The hosted runner has cargo. The Docker runner has
+      # none (.forgejo/actions/rustup).
+      - uses: ./.forgejo/actions/rustup
+
+      # Difference 7: the run steps below run as a user that is not root.
+      - uses: ./.forgejo/actions/runner-user
+
+      # `worksteal`: a runner has two workers, and under xdist's default
+      # one of them ends up holding the slow tests while the other idles.
+      # An idle worker that takes from the busy one's queue cut the
+      # slowest of six shards from 153 s to 121 s.
+      - run: uv run pytest -n auto --dist worksteal --shard "$SHARD/$TOTAL"
+        env:
+          SHARD: ${{ matrix.shard }}
+          TOTAL: "4"
+
+  # The agent module (agent/AGENTS.md). TypeScript, so the Python gate never
+  # runs its suite. pnpm's version is agent/package.json's packageManager
+  # field. The module is a library: the facade job builds it.
+  agent:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: https://github.com/pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: agent/package.json
+
+      - uses: https://github.com/actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: agent/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck
+        working-directory: agent
+
+  # The ACP facade (facade/AGENTS.md). TypeScript, so the Python gate never
+  # runs its suite. pnpm's version is facade/package.json's packageManager
+  # field. `pnpm test` builds `dist/` first: the suite runs the built bin.
+  # facade/pnpm-workspace.yaml names ../agent, so the install here installs
+  # agent/ too, from facade/pnpm-lock.yaml, and the build builds it first.
+  facade:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: https://github.com/pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: facade/package.json
+
+      - uses: https://github.com/actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: facade/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck
+        working-directory: facade
+
+  # The process-level suite (integration/proc/AGENTS.md). It starts each
+  # service as a process, from the command its unit runs, so it can judge a
+  # service in any language. It is not in `testpaths`: no shard runs it.
+  # No test of it starts node, so the job has no node, no pnpm and no
+  # build.
+  #
+  # CRECHE_PROC_NO_SKIP: a test skips itself when the platform cannot bind
+  # its socket path, or when a toolchain or `cargo` is missing. A run in
+  # which every test skips is green and judged nothing, so here a skip is a
+  # failure.
+  #
+  # Four workers (-n 4): the runner has 4 vCPU and 16 GB. A run of four
+  # workers peaks near 1.3 GB. On one worker the suite took 175 s here.
+  #
+  # The time limit: each test has 180 s (integration/proc/AGENTS.md, rule
+  # 22), and a hung test fails while the run goes on. A job has 6 hours by
+  # default. A cold build of the Rust chaperone adds about 1 minute.
+  proc:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: as-runner {0}
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: ./.forgejo/actions/uv-sync
+
+      # The suite builds the Rust chaperone with the cargo on PATH, and the
+      # Docker runner has none (.forgejo/actions/rustup).
+      - uses: ./.forgejo/actions/rustup
+
+      # The Rust chaperone of the row `chaperone-rs`: the binary that the
+      # suite builds from the commit of integration/proc/chaperone.pin
+      # (integration/proc/proc_chaperone_pin.py). The key holds the pin
+      # file and the build script, so a new pin or a new program of the
+      # build starts from an empty cache. On a miss the first
+      # test that needs the binary builds it with the cargo of the runner.
+      # The action runs as root, so `~` is /root. The suite runs as the
+      # user of runner-user and builds below that HOME (difference 7).
+      - uses: https://github.com/actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /home/ubuntu/.cache/creche-proc/chaperone-rs
+          key: proc-chaperone-rs-${{ runner.os }}-${{ hashFiles('integration/proc/chaperone.pin', 'integration/proc/proc_chaperone_pin.py') }}
+
+      # Difference 7: the run steps below run as a user that is not root.
+      - uses: ./.forgejo/actions/runner-user
+
+      - run: uv run pytest integration/proc -m slow -n 4
+        env:
+          CRECHE_PROC_NO_SKIP: "1"
+
+  # The old suite of integration/ (integration/AGENTS.md):
+  # integration/tests_manager. It runs the services inside the pytest
+  # process. It is not in `testpaths`: no shard runs it. It needs no node:
+  # the job has the checkout and the venv.
+  #
+  # The job runs the suite with the pytest command that
+  # integration/AGENTS.md tells a person to run. integration/tests held a
+  # second suite until the session API left attendance (phase 2 plan, row
+  # 21). Its stand-in for the old playpen left at the Cloud Hypervisor cut.
+  #
+  # A test of the suite can skip itself, and a run in which every test
+  # skips is green and judged nothing. The suite reads no switch that makes
+  # a skip a failure. So the run writes a JUnit report,
+  # and the last step reads it. It fails for a test that skipped, for a
+  # suite that ran no test and for a report that is missing. It prints the
+  # counts and the time of the suite.
+  #
+  # The time limit: the stack of a test waits for each listener and for each
+  # child at its teardown, and the suite has no limit for one test.
+  suites:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: as-runner {0}
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: ./.forgejo/actions/uv-sync
+
+      # Difference 7: the run steps below run as a user that is not root.
+      - uses: ./.forgejo/actions/runner-user
+
+      # PYTEST_ADDOPTS: the report is the one addition to the command that
+      # integration/AGENTS.md gives.
+      - run: uv run pytest integration/tests_manager -m slow
+        env:
+          PYTEST_ADDOPTS: --junitxml=${{ runner.temp }}/suites/tests_manager.xml
+
+      # REPORTS: the report of each suite, one path on each line, in the
+      # order of the runs. A run that fails stops the job before this step.
+      - name: no test skipped
+        shell: python3 {0}
+        env:
+          REPORTS: |-
+            ${{ runner.temp }}/suites/tests_manager.xml
+        run: |
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          red = []
+          reports = [Path(one) for one in os.environ["REPORTS"].splitlines() if one]
+          if not reports:
+              red.append("REPORTS names no report")
+
+          for report in reports:
+              name = report.stem
+              try:
+                  suites = list(ET.parse(report).getroot().iter("testsuite"))
+              except (OSError, ET.ParseError) as error:
+                  red.append(f"{name}: no report to read: {error}")
+                  continue
+
+              tests = sum(int(one.get("tests", "0")) for one in suites)
+              skipped = sum(int(one.get("skipped", "0")) for one in suites)
+              seconds = sum(float(one.get("time", "0")) for one in suites)
+              ran = tests - skipped
+              print(f"{name}: {ran} of {tests} tests ran, {skipped} skipped, {seconds:.0f} s")
+
+              if ran == 0:
+                  red.append(f"{name}: the suite ran no test")
+              elif skipped:
+                  red.append(f"{name}: {skipped} of {tests} tests skipped")
+
+          for line in red:
+              print(f"::error::{line}")
+
+          sys.exit(1 if red else 0)
+
+  # The memory package (memory/AGENTS.md). It is not a workspace member: it
+  # has its own lock, because the memory store it pins is too large for the
+  # root venv. So it gets a venv, a pyright run and a pytest run of its own.
+  memory:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    # `vm-plain`: the stop tests hold that no process of the service's group
+    # is left after its exit. That needs a process 1 that reaps orphans, as
+    # systemd does. On the container runner five of them failed: the group
+    # stayed after the exit.
+    runs-on: vm-plain
+    timeout-minutes: 15
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: https://github.com/astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+          python-version: "3.14"
+
+      - run: uv sync --locked
+        working-directory: memory
+
+      - run: uv run pyright
+        working-directory: memory
+
+      - run: uv run pytest
+        working-directory: memory
+
+  # Build each flavor and each service image of the disks row and its root
+  # disk, then check what the build alone cannot: /etc/creche/env equals
+  # the image config env (CH7-7, CH49). The steps live in
+  # playpen/bin/playpen-ci. This run also catches a missing source file and
+  # an import that only the image sees.
+  playpen-image:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    # `vm-plain`: `docker build` needs a Docker daemon, which the container
+    # runner does not give a job.
+    runs-on: vm-plain
+    timeout-minutes: 20
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - run: playpen/bin/playpen-ci
+
+  # The Cargo workspace under rust/ (rust/Cargo.toml): the format check,
+  # the lint gate and the tests. The local action rustup installs rustup
+  # when the runner has none. `rustup toolchain install` with no name installs
+  # what rust/rust-toolchain.toml names, with rustfmt and clippy.
+  #
+  # `--locked`: a build that would change rust/Cargo.lock fails.
+  #
+  # The time limit: the workspace builds in seconds today, and a job has 6
+  # hours by default.
+  rust:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    # `vm-kvm`: two tests of the suite open /dev/kvm for a Landlock rule
+    # (vmm-confine: landlock::tests::the_ruleset_denies_a_tcp_connect and
+    # tests/launch.rs). The container runner has no /dev/kvm, and there
+    # both tests failed. Every other test of the suite passed there, as a
+    # user that is not root, with the open file limit 65536.
+    runs-on: vm-kvm
+    timeout-minutes: 15
+    env:
+      # A CI build starts from nothing, never from the last build of the
+      # same tree, so the incremental state is only weight.
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # A runner with no rustup gets one (.forgejo/actions/rustup).
+      - uses: ./.forgejo/actions/rustup
+
+      - name: toolchain
+        working-directory: rust
+        run: |
+          rustup toolchain install --no-self-update
+          cargo --version
+
+      # The frozen host API files (decision CH33 rule 8, wire/AGENTS.md "The
+      # protocol number"). A change may add a host-api-<N>.json of the wire
+      # crate, and never edit or delete one. The pathspec * also matches a
+      # slash, so it reaches the files in the schema dir. The schema test
+      # cannot see a file that a change deleted and wrote again, so this
+      # step diffs against the commit the change starts from: the PR's
+      # merge-base, or main before the push. A
+      # dispatch has no such commit, and the gate of each PR ran this step.
+      # A base that this clone lacks fails the step.
+      - name: frozen host api
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base=""
+          if [[ -n "$BASE_REF" ]]; then
+            base="$(git merge-base "origin/$BASE_REF" HEAD)"
+          fi
+          if [[ -z "$base" && "$BEFORE" =~ ^[0-9a-f]{40}$ && ! "$BEFORE" =~ ^0+$ ]]; then
+            base="$BEFORE"
+          fi
+          if [[ -z "$base" ]]; then
+            echo "frozen host api: no base commit, nothing to compare"
+            exit 0
+          fi
+          git diff --no-renames --diff-filter=MDT --name-status --exit-code \
+            "$base" HEAD -- 'rust/crates/wire/*host-api-*.json'
+
+      - run: cargo fmt --check
+        working-directory: rust
+
+      - run: cargo clippy --all-targets --locked -- -D warnings
+        working-directory: rust
+
+      - run: cargo test --locked
+        working-directory: rust
+
+  # The restart rule of the daemon units: bin/systemd-proof.sh. A unit with
+  # `RestartPreventExitStatus=78` must stay stopped after exit status 78, and
+  # only systemd can prove that. The script makes three units of its own on
+  # the systemd of the runner, as root. It then gives each unit file under
+  # systemd/ to `systemd-analyze verify`. The runner must run systemd as its
+  # first process, and its sudo must not ask for a password.
+  #
+  # The job runs on every code change, and on a change that touches no file
+  # of the proof its one step after the checkout is skipped (`--unchanged`
+  # of the script). The job is then a success: a job skipped as a whole on a
+  # code change reads as red in the verdict. The files of the proof are
+  # systemd/ and the script.
+  #
+  # The step asks `!= 'false'`, not `== 'true'`: an answer that is missing
+  # runs the proof.
+  #
+  # No `container:` key: a container has no systemd as process 1. On a
+  # machine without one of the two the script fails. It does not skip.
+  #
+  # The time limit: a job has 6 hours by default, and the proof needs minutes.
+  systemd-proof:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    # `vm-plain`: systemd as process 1 and passwordless sudo. The container
+    # runner has neither.
+    runs-on: vm-plain
+    timeout-minutes: 10
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - run: bin/systemd-proof.sh
+        if: needs.scope.outputs.systemd != 'false'
+
+  # The KVM smoke job (decisions CH8-4, CH36 G19 and G20). It runs each
+  # test whose name holds `kvm_` and that is `#[ignore]`d, in any crate of
+  # rust/, so a new kvm_ test needs no edit here. bin/vm-smoke-setup.sh
+  # first opens /dev/kvm and /dev/vhost-vsock with the runner's own sudo,
+  # starts the user manager, fetches the guest kernel by its digest (fact
+  # 53) and busybox from apt. It installs the toolchain and the musl
+  # target, builds guest-init and builds the test programs. The method is
+  # the one the C0 spike proved (fact 79).
+  #
+  # CH and ch-remote: the script builds both on every run, with the CH7-4
+  # argv at the rev of fact 78 and no cache (decision CH75). The build
+  # starts first and runs in the background of the same script, beside
+  # the rest of the setup and the build of the test programs. The script
+  # waits for it before it ends, so each test runs the built CH. A second
+  # job for the build would hand its programs to this job only at its end,
+  # so the rest of the setup would wait for the whole build.
+  #
+  # No KVM on the runner fails the job. It never skips: a job skipped on a
+  # code change reads as red in the verdict.
+  #
+  # The base disk: the script also builds the base flavor disk from the
+  # tree of the run in the background, beside the CH build, so the real
+  # facade test of rust/crates/vmm/tests/kvm_facade.rs boots the facade of
+  # this change (decisions CH75 rule 2, CH80). It needs no step here.
+  #
+  # The time limit: the CH build takes about 3 to 6 minutes, with a limit
+  # of 12 minutes in the script. The rest of the setup, the base disk build
+  # (about 80 s, 8 minutes for each of its steps at most) and the build of
+  # the tests run beside it. The setup took 208 s in gate run 43666120428.
+  #
+  # The two shards: the disk-swap test of tests/kvm_reach.rs waits for the
+  # follow of `vmm serve` (305 s) and for its idle timeout (300 s) at the
+  # same time. It holds the one vmm lock of its binary
+  # (tests/common/mod.rs) for all of that wait. In one job, the other
+  # kvm_reach tests waited behind it, and the test run took 650 s. So the
+  # shard `disk-swap` runs that test alone, on a runner of its own, and the
+  # shard `main` runs every other kvm_ test. Each shard runs the whole
+  # setup. The two shards run at once, and each takes about 9 of its 25
+  # minutes.
+  kvm:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    # `vm-kvm`: /dev/kvm and /dev/vhost-vsock, which the container runner
+    # does not give a job.
+    runs-on: vm-kvm
+    timeout-minutes: 25
+    strategy:
+      # A red shard does not stop the other: one run shows every failure.
+      fail-fast: false
+      matrix:
+        # `tests`: the words after `--ignored` in the count and in the run.
+        # `--skip` matches a part of a name, and `--exact` the whole name.
+        include:
+          - shard: main
+            tests: kvm_ --skip kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk
+          - shard: disk-swap
+            tests: --exact kvm_a_disk_swap_cold_boots_a_snapshot_of_the_old_disk
+    env:
+      CARGO_INCREMENTAL: 0
+      KVM_TESTS: ${{ matrix.tests }}
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - run: bin/vm-smoke-setup.sh
+        env:
+          CRECHE_KVM_DIR: ${{ runner.temp }}/kvm
+
+      - name: toolchain
+        working-directory: rust
+        run: |
+          rustup toolchain install --no-self-update
+          cargo --version
+
+      # `cargo test` exits 0 when the filter matches no test. So a renamed
+      # test, a lost `#[ignore]` or a wrong cfg would leave the shard green
+      # with no boot. This step fails when the shard matches no ignored
+      # test. A rename of the disk-swap test fails the shard `disk-swap`.
+      # $KVM_TESTS has no quotes: it holds a filter and its flags.
+      - name: count the kvm tests
+        working-directory: rust
+        run: |
+          count=$(cargo test --locked -q -- --ignored --list $KVM_TESTS | grep -c ': test$' || true)
+          echo "ignored kvm_ tests of the shard: $count"
+          test "$count" -ge 1
+
+      # `--no-fail-fast` runs every test binary, so one red binary does
+      # not hide the result of the next one.
+      - run: cargo test --locked --no-fail-fast -- --ignored $KVM_TESTS
+        working-directory: rust
+        env:
+          CRECHE_KVM_DIR: ${{ runner.temp }}/kvm
+
+  # The vmm archive, built as the `artifacts` job of release.yml builds it,
+  # and signed by no one (decision CH76 rule 4). The release builds the
+  # archive only after the merge, so a broken build would fail the release
+  # run and mint no vmm tag. This job fails the PR first. It runs
+  # bin/build-artifacts.sh for the planned row `vmm`, with no step that the
+  # `artifacts` job lacks. Its first run showed that the CH build needs
+  # musl-tools: ring v0.17.14 compiles C with x86_64-linux-musl-gcc (plan
+  # risk 13). Both jobs install it from apt before the build, as
+  # bin/vm-smoke-setup.sh does, with runner sudo (CH36 G20). The script
+  # runs `handover check-tree` and holds the archive to the limits of its
+  # row. The last step holds guest-init of the archive static, with the
+  # check of step 7 of bin/vm-smoke-setup.sh: no PT_INTERP header, after a
+  # proof that the check refuses the dynamic /bin/bash of the runner.
+  # guest-init runs as the init of a guest that has no program interpreter.
+  #
+  # It runs on every code change, and on a change that touches no file of
+  # the vmm build its steps after the checkout are skipped, as in the
+  # `systemd-proof` job. The files of the build are the `vmm` answer of the
+  # scope. No job uploads the archive, and no job signs it.
+  #
+  # The time limit: the CH build took 131 to 152 s in the kvm job (fact
+  # 83), and the vmm and guest-init build after it. The `artifacts` job has
+  # the same 30 minutes.
+  vmm-archive:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: as-runner {0}
+    steps:
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: https://github.com/astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        if: needs.scope.outputs.vmm != 'false'
+        with:
+          enable-cache: false
+          python-version: "3.14"
+
+      # bin/build-artifacts.sh runs rustup, and the Docker runner has none
+      # (.forgejo/actions/rustup).
+      - uses: ./.forgejo/actions/rustup
+        if: needs.scope.outputs.vmm != 'false'
+
+      # Difference 7: the run steps below run as a user that is not root.
+      - uses: ./.forgejo/actions/runner-user
+        if: needs.scope.outputs.vmm != 'false'
+
+      # musl-gcc for the C of ring under CH (plan risk 13). The `artifacts`
+      # job of release.yml holds the same step.
+      - name: musl-tools
+        if: needs.scope.outputs.vmm != 'false'
+        run: sudo apt-get update -qq && sudo apt-get install --yes --no-install-recommends -qq musl-tools
+
+      - name: build
+        if: needs.scope.outputs.vmm != 'false'
+        env:
+          ARTIFACT_REPO: creche
+          ARTIFACT_PLANNED: vmm
+          ARTIFACT_OUT: ${{ runner.temp }}/artifacts
+        run: bin/build-artifacts.sh
+
+      - name: static guest-init
+        if: needs.scope.outputs.vmm != 'false'
+        shell: bash
+        env:
+          ARCHIVE: ${{ runner.temp }}/artifacts/vmm-x86_64-unknown-linux-musl.tar.gz
+          TREE: ${{ runner.temp }}/vmm-tree
+        run: |
+          set -euo pipefail
+          interp='^[[:space:]]+INTERP[[:space:]]'
+          if ! readelf -lW /bin/bash | grep -Eq "$interp"; then
+            echo "the static check is broken: it passes the dynamic /bin/bash" >&2
+            exit 1
+          fi
+          mkdir -- "$TREE"
+          tar --extract --gzip --file "$ARCHIVE" --directory "$TREE"
+          headers=$(readelf -lW "$TREE/vmm/bin/guest-init")
+          if grep -Eq "$interp" <<< "$headers"; then
+            echo "guest-init names a program interpreter: it is not static" >&2
+            exit 1
+          fi
+          echo "guest-init of the vmm archive is static"
+
+  # The one check a session reads. `always()`: a job that needs a failed job
+  # is skipped by default, and a skipped `gate` would not read as red.
+  gate:
+    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, kvm, vmm-archive]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # The verdict is a local action, read from the checkout. Full history
+      # as in every job (bin/tests/test_gate_workflow.py).
+      - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: every job passed
+        uses: ./.forgejo/actions/verdict
+        with:
+          needs: ${{ toJSON(needs) }}

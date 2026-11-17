@@ -1,0 +1,51 @@
+# rustup for a runner that has none. The hosted GitHub runner has rustup,
+# so .github/workflows/gate.yml installs no toolchain manager. The Docker
+# runner of Forgejo runs each job in a container image with no rustup and
+# no cargo. A runner that has rustup on PATH skips the install.
+#
+# The program is rustup-init of a pinned release, held to its SHA-256 before
+# it runs. To take another release, read the file
+# rustup/archive/<version>/x86_64-unknown-linux-gnu/rustup-init.sha256 of
+# the release host and change the two values here.
+#
+# `stable` is the default toolchain, as on the hosted runner: the proc
+# suite builds the pinned chaperone with the cargo on PATH. A job that runs
+# in rust/ then installs what rust/rust-toolchain.toml names.
+name: rustup
+description: Install rustup and the stable toolchain when the runner has no rustup
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        RUSTUP_VERSION: "1.28.2"
+        RUSTUP_SHA256: "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c"
+        RUSTUP_DIR: ${{ runner.temp }}/rustup
+        TOOLS_DIR: ${{ runner.tool_cache }}
+      run: |
+        set -euo pipefail
+        if command -v rustup > /dev/null; then
+          echo "rustup: on PATH, nothing to install"
+          exit 0
+        fi
+
+        mkdir -p -- "$RUSTUP_DIR"
+        init="$RUSTUP_DIR/rustup-init"
+        curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+          --output "$init" \
+          "https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/x86_64-unknown-linux-gnu/rustup-init"
+        found="$(sha256sum "$init" | cut -d ' ' -f 1)"
+        if [[ "$found" != "$RUSTUP_SHA256" ]]; then
+          echo "rustup: rustup-init has the SHA-256 $found, not $RUSTUP_SHA256" >&2
+          exit 1
+        fi
+
+        # The homes live outside /root, so that the user of
+        # .forgejo/actions/runner-user can use the toolchain too.
+        export CARGO_HOME="$TOOLS_DIR/cargo" RUSTUP_HOME="$TOOLS_DIR/rustup"
+        chmod 0755 "$init"
+        "$init" -y --no-modify-path --profile minimal --default-toolchain stable
+        echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+        echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
+        echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"

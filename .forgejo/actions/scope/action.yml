@@ -1,0 +1,66 @@
+# `docs` or `code`: what the PR changes, from where it forks off its base
+# (bin/lib/docsrule.sh, the rule release.yml reads too). A rule that
+# cannot read the change answers `code`. Written once: gate.yml's scope job
+# and its lint job both ask. It needs a full-history checkout, for the
+# merge-base.
+#
+# The port of .github/actions/scope for Forgejo, which has no merge group:
+# the base is the merge-base with the base branch of the PR.
+#
+# `systemd` is a second answer on the same change: `false` only when
+# bin/systemd-proof.sh says that the change holds no file of the systemd
+# proof (`--unchanged`). The answer starts as `true`, so a script that fails,
+# or that is absent, runs the proof. The files of the proof are systemd/ and
+# the script.
+#
+# `vmm` is a third answer: `false` only when the change touches no file of
+# the vmm build (decision CH76 rule 4): rust/, bin/lib/chbuild.sh,
+# bin/build-artifacts.sh and bin/lib/artifactrows.sh.
+# The answer starts as `true`, so a base that git cannot read runs the
+# build.
+name: scope
+description: Say whether the pull request changes docs only or code
+
+outputs:
+  scope:
+    description: docs or code
+    value: ${{ steps.scope.outputs.scope }}
+  systemd:
+    description: true when the change touches a file of the systemd proof, false when it does not
+    value: ${{ steps.scope.outputs.systemd }}
+  vmm:
+    description: true when the change touches a file of the vmm build, false when it does not
+    value: ${{ steps.scope.outputs.vmm }}
+
+runs:
+  using: composite
+  steps:
+    - id: scope
+      shell: bash
+      run: |
+        set -euo pipefail
+        . bin/lib/docsrule.sh
+        base="$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)" || base=""
+
+        scope=code
+        if docs_only "$base" HEAD; then
+          scope=docs
+        fi
+        echo "scope=$scope" >> "$GITHUB_OUTPUT"
+        echo "scope: $scope"
+
+        systemd=true
+        if bin/systemd-proof.sh --unchanged "$base" HEAD; then
+          systemd=false
+        fi
+        echo "systemd=$systemd" >> "$GITHUB_OUTPUT"
+        echo "systemd: $systemd"
+
+        vmm=true
+        if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$base^{commit}" 2> /dev/null &&
+          git diff --quiet --no-renames "$base" HEAD -- rust bin/lib/chbuild.sh \
+            bin/build-artifacts.sh bin/lib/artifactrows.sh; then
+          vmm=false
+        fi
+        echo "vmm=$vmm" >> "$GITHUB_OUTPUT"
+        echo "vmm: $vmm"
