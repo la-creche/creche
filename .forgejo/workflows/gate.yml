@@ -11,9 +11,9 @@
 #   2. Actions: each action of another repository is a full URL, pinned by
 #      commit. The local actions live under .forgejo/actions.
 #   3. Runner labels: a job that needs Docker, systemd as process 1 and
-#      passwordless sudo runs on `vm-plain`. So does `memory`, whose tests
+#      passwordless sudo runs on `ci-vm`. So does `memory`, whose tests
 #      need a process 1 that reaps orphans. A job that needs /dev/kvm runs
-#      on `vm-kvm`: kvm, and rust, two of whose tests open /dev/kvm.
+#      on `ci-vm-kvm`: kvm, and rust, two of whose tests open /dev/kvm.
 #      Every other job runs on `ubuntu-24.04`, a container with no Docker
 #      socket, no systemd and no KVM.
 #   4. Shard numbers: Forgejo sets no `strategy.job-index` and no
@@ -36,10 +36,10 @@
 #      branch. GitHub checks out the merge with the base. A branch behind
 #      main can pass here while the merge fails.
 #
-# Where each job runs today. One Docker runner serves `ubuntu-24.04`. No
-# runner serves `vm-plain` or `vm-kvm` yet: memory, playpen-image, rust,
-# systemd-proof and the two kvm shards wait for the runner VMs, and `gate`
-# waits for them. Until those runners exist, no run of this file ends green.
+# Where each job runs today. One Docker runner serves `ubuntu-24.04`. The
+# VM runner serves `ci-vm` and `ci-vm-kvm`, with a new VM for each job:
+# memory, playpen-image, rust, systemd-proof and the two kvm shards run
+# there. No run of this file has yet proved those jobs in a runner VM.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
 #           ├── agent       code   the agent module's suite and types
@@ -47,15 +47,15 @@
 #           ├── proc        code   the process-level suite
 #           ├── suites      code   the old suite of integration/
 #           ├── memory      code   the memory package, in its own venv
-#           │                      (vm-plain)
+#           │                      (ci-vm)
 #           ├── playpen-image
-#           │              code   each flavor image (vm-plain)
+#           │              code   each flavor image (ci-vm)
 #           ├── rust        code   cargo fmt, clippy and test of rust/
-#           │                      (vm-kvm)
+#           │                      (ci-vm-kvm)
 #           ├── systemd-proof
 #           │               code   the restart rule of the daemon units
-#           │                      (vm-plain)
-#           ├── kvm         code   the kvm_ tests of rust/ (vm-kvm)
+#           │                      (ci-vm)
+#           ├── kvm         code   the kvm_ tests of rust/ (ci-vm-kvm)
 #           └── vmm-archive code   the vmm archive, built unsigned
 #   lint ─────────────────────────┐   ruff, ruff format, pyright, and on a
 #                                 │   docs PR the tests marked `docs`
@@ -379,11 +379,11 @@ jobs:
   memory:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    # `vm-plain`: the stop tests hold that no process of the service's group
+    # `ci-vm`: the stop tests hold that no process of the service's group
     # is left after its exit. That needs a process 1 that reaps orphans, as
     # systemd does. On the container runner five of them failed: the group
     # stayed after the exit.
-    runs-on: vm-plain
+    runs-on: ci-vm
     timeout-minutes: 15
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -412,9 +412,9 @@ jobs:
   playpen-image:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    # `vm-plain`: `docker build` needs a Docker daemon, which the container
+    # `ci-vm`: `docker build` needs a Docker daemon, which the container
     # runner does not give a job.
-    runs-on: vm-plain
+    runs-on: ci-vm
     timeout-minutes: 20
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -435,12 +435,12 @@ jobs:
   rust:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    # `vm-kvm`: two tests of the suite open /dev/kvm for a Landlock rule
+    # `ci-vm-kvm`: two tests of the suite open /dev/kvm for a Landlock rule
     # (vmm-confine: landlock::tests::the_ruleset_denies_a_tcp_connect and
     # tests/launch.rs). The container runner has no /dev/kvm, and there
     # both tests failed. Every other test of the suite passed there, as a
     # user that is not root, with the open file limit 65536.
-    runs-on: vm-kvm
+    runs-on: ci-vm-kvm
     timeout-minutes: 15
     env:
       # A CI build starts from nothing, never from the last build of the
@@ -522,9 +522,9 @@ jobs:
   systemd-proof:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    # `vm-plain`: systemd as process 1 and passwordless sudo. The container
+    # `ci-vm`: systemd as process 1 and passwordless sudo. The container
     # runner has neither.
-    runs-on: vm-plain
+    runs-on: ci-vm
     timeout-minutes: 10
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -576,9 +576,9 @@ jobs:
   kvm:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    # `vm-kvm`: /dev/kvm and /dev/vhost-vsock, which the container runner
+    # `ci-vm-kvm`: /dev/kvm and /dev/vhost-vsock, which the container runner
     # does not give a job.
-    runs-on: vm-kvm
+    runs-on: ci-vm-kvm
     timeout-minutes: 25
     strategy:
       # A red shard does not stop the other: one run shows every failure.
