@@ -18,9 +18,9 @@ result with the Forgejo job. A difference that is not in this list fails.
    action lives under `.forgejo/actions`.
 3. **Runner labels.** The Docker runner gives a job no Docker socket, no
    systemd as process 1 and no /dev/kvm. A job that needs Docker or
-   systemd runs on `vm-plain`. So does `memory`: its stop tests need a
+   systemd runs on `ci-vm`. So does `memory`: its stop tests need a
    process 1 that reaps orphans. The jobs that need /dev/kvm run on
-   `vm-kvm`: `kvm`, and `rust`, two of whose tests open /dev/kvm.
+   `ci-vm-kvm`: `kvm`, and `rust`, two of whose tests open /dev/kvm.
 4. **Artifact actions.** Upstream upload-artifact and download-artifact v4
    and later refuse a server that is not GitHub. The gate uses neither, and
    a test holds that. A port of one must name the Forgejo action and add
@@ -115,8 +115,8 @@ ACTION_HOST = "https://github.com/"
 #: The label of the Docker runner, and the labels of the runner VMs
 #: (difference 3). A job with no row in VM_LABELS runs on the Docker runner.
 DOCKER_LABEL = "ubuntu-24.04"
-VM_PLAIN = "vm-plain"
-VM_KVM = "vm-kvm"
+VM_PLAIN = "ci-vm"
+VM_KVM = "ci-vm-kvm"
 VM_LABELS = {
     "memory": VM_PLAIN,
     "playpen-image": VM_PLAIN,
