@@ -63,6 +63,7 @@ Rules:
 | `repos` | array | `[]` | all | §3.7.1 |
 | `shell` | boolean | `false` | all | §3.8 |
 | `sandbox_tools` | array | `["read", "grep", "find", "ls"]` | all | §3.8 |
+| `system_prompt` | enum | `append` | all | §3.8 |
 | `sandbox` | table | `{ cpus = 2, memory = "2g", image = "base" }` | all | §3.9 |
 | `skills` | array | `[]` | all | §3.10 |
 | `approval` | array | `[]` | all | §3.11 |
