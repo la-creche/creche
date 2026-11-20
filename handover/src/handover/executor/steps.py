@@ -154,9 +154,14 @@ MCP_COMPONENT: Final = "mcp-servers"
 REGISTRY_REPO: Final = str(Repo.REGISTRY)
 REGISTRY_MCP_DIR: Final = "mcp"
 
-#: §3.2's caps, applied to the registry too. Twenty servers is well past
-#: the count contract 06 §7 says to revisit the one-component decision at.
-MAX_SERVERS: Final = 20
+#: §3.2's caps, applied to the registry too. A registry branch is hostile
+#: input, and each folder under `mcp/` costs one build in step 8. The cap
+#: bounds that work in one run of the unit. The registry held 20 servers
+#: on 2026-11-20, and the migration adds about five more. 32 leaves room
+#: for them and still stops a flood of folders. `stage7-releases.md` §8
+#: question 3 asks to revisit the one-component decision past about
+#: twenty servers. That question is open, and this cap does not answer it.
+MAX_SERVERS: Final = 32
 
 #: Step 9's detail when the set holds `handover`. The entry is written
 #: before the swap, so it says the swap is still to come.
