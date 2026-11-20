@@ -96,6 +96,11 @@ class Config:
     #: The URL of the hook of the approvals Node-RED (`releases.py`).
     #: Empty means no release page: each one says so and shows no button.
     release_hook_url: str = ""
+    #: The base URL of the Panda chat interface. Empty means no chat link:
+    #: the session rows show no link. It carries no credential: the address
+    #: is public, and a token in a URL would land in every page and every
+    #: browser history.
+    panda_url: str = ""
     #: The file that holds the bearer of the release page. `releases.py`
     #: reads it at each call and is its only reader.
     release_token_file: Path | None = None
@@ -135,6 +140,8 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
     approval_token_file = _optional_path(source, "APPROVAL_TOKEN_FILE")
     _refuse_half_channel(approval_url, approval_token_file, "APPROVAL_URL", "APPROVAL_TOKEN_FILE")
 
+    panda_url = _text(source, "PANDA_URL", "")
+
     release_hook_url = _text(source, "RELEASE_HOOK_URL", "")
     release_token_file = _optional_path(source, "RELEASE_TOKEN_FILE")
     _refuse_half_channel(
@@ -161,6 +168,7 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
         approval_token_file=approval_token_file,
         release_hook_url=release_hook_url,
         release_token_file=release_token_file,
+        panda_url=panda_url,
     )
 
 

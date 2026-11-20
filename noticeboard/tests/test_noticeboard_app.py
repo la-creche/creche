@@ -834,3 +834,51 @@ def test_the_fixture_family_is_the_one_the_registry_holds(board: Harness) -> Non
     held = (board.config.registry_dir / "families/chat/family.toml").read_text(encoding="utf-8")
 
     assert held == CHAT_FAMILY_TOML
+
+
+def _board_with_chat(tmp_path: Path, panda_url: str) -> Iterator[Harness]:
+    """A board whose pages carry the chat links (ADR 0010 of the Panda fork)."""
+    state = make_state_root(tmp_path)
+    registry = make_registry(tmp_path)
+    config = Config(
+        bind="127.0.0.1",
+        port=8370,
+        state_root=state,
+        registry_dir=registry,
+        attendance_socket=None,
+        attendance_url="http://sessiond",
+        page_size=DEFAULT_PAGE_SIZE,
+        audit_file=state / AUDIT_FILE,
+        cookie_secure=False,
+        access_key=KEY,
+        panda_url=panda_url,
+    )
+    fake = FakeAttendance()
+    fake.answer(f"/families/{CHAT}/sessions", {"sessions": [view_row()], "next_cursor": None})
+    fake.answer(
+        f"/families/{CHAT}/sessions/{SESSION}",
+        transcript_doc([said(0, "user", "when is the boiler due?"), said(1, "agent", "In March.")]),
+    )
+    reader = SessionReader(transport=fake, token_file=write_token(state))
+    app = build_app(config, reader, lambda: NOW)
+
+    with TestClient(app, base_url=f"http://{HOST}") as client:
+        yield Harness(client, config, fake)
+
+
+def test_a_session_row_links_to_the_chat_when_the_address_is_set(tmp_path: Path) -> None:
+    """The chat link names the family and the session id: the pair the chat
+    interface uses, so the link opens the same conversation."""
+    for board in _board_with_chat(tmp_path, "https://chat.example"):
+        family = board.get(f"/families/{CHAT}").text
+        session = board.get(f"/sessions/{CHAT}/{SESSION}").text
+
+        assert f"https://chat.example/#/chat/{CHAT}/{SESSION}" in family
+        assert f"https://chat.example/#/chat/{CHAT}/{SESSION}" in session
+
+
+def test_a_session_row_carries_no_chat_link_without_the_address(board: Harness) -> None:
+    """With no address the rows carry no link, and the page says so."""
+    family = board.get(f"/families/{CHAT}").text
+
+    assert "#/chat/" not in family

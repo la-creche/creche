@@ -29,7 +29,7 @@
 {# The VM state comes from `attendance`, which passes on the vmm list row
    (decisions CH21-1, CH33 rule 9). The status document names no VM. #}
 <table>
-<thead><tr><th>title</th><th>started by</th><th>vm</th><th>last activity</th></tr></thead>
+<thead><tr><th>title</th><th>started by</th><th>vm</th><th>last activity</th>{% if panda_url %}<th>chat</th>{% endif %}</tr></thead>
 <tbody>
 {% for one in page.sessions.rows %}
 <tr>
@@ -37,9 +37,15 @@
   <td>{{ one.origin or "—" }}</td>
   <td>{{ one.vm.value }}</td>
   <td>{{ when(one.updated) }}</td>
+  {% if panda_url %}
+  {# The chat link names the family and the session id, the same pair the
+     chat interface uses (ADR 0010 of the Panda fork). The family is the
+     namespace there, so the operator gives the family that slug. #}
+  <td><a href="{{ panda_url }}/#/chat/{{ one.family }}/{{ one.session }}" rel="noopener">open</a></td>
+  {% endif %}
 </tr>
 {% else %}
-<tr><td colspan="4">no sessions</td></tr>
+<tr><td colspan="{% if panda_url %}5{% else %}4{% endif %}">no sessions</td></tr>
 {% endfor %}
 </tbody>
 </table>
