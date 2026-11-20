@@ -437,6 +437,10 @@ def _entrypoint_for(command: Command) -> str:
             if word.endswith(f"/{name}.new") or f"/{name}.new/" in word:
                 return ENTRYPOINTS[name]
 
+        # A copy that the cap tests make runs its source's script.
+        if f"/{FILLER_PREFIX}" in word:
+            return ENTRYPOINTS[FILLER_SOURCE]
+
     return ENTRYPOINTS["kagi"]
 
 
@@ -518,8 +522,8 @@ def _server_names(bench: Bench) -> tuple[str, ...]:
 
 
 def test_the_fixture_is_the_registry_as_agent_registry_holds_it(bench: Bench) -> None:
-    """Twelve declarations, and the count matters: `MAX_SERVERS` is 20, so
-    a thirteenth is not what refuses this release."""
+    """Twelve declarations, and the count matters: they stay under
+    `MAX_SERVERS`, so the cap is not what refuses this release."""
     found = tuple(sorted(one.name for one in (bench.registry / REGISTRY_MCP_DIR).iterdir()))
 
     assert found == DECLARED
@@ -643,6 +647,59 @@ def test_a_refusal_names_the_server_it_refused(bench: Bench) -> None:
     assert (
         "refused [server] mcp/board-lead: install.ref does not belong to agent-mcp" in bench.log()
     )
+
+
+# -- the cap on the count of servers -------------------------------------
+
+#: The fixture server the cap tests copy. It installs from the `mcp`
+#: checkout, so a copy needs no closure and no asset of its own.
+FILLER_SOURCE: Final = "board-lead"
+FILLER_SECRET: Final = "secret:vikunja_token_scrum_lead"
+FILLER_PREFIX: Final = "filler-"
+
+
+def _fill_registry(bench: Bench, count: int) -> None:
+    """Copy `FILLER_SOURCE` until the registry holds `count` servers.
+
+    Each copy gets its own name and its own secret, so rule 2 refuses
+    none of them. Only the count can refuse the set.
+    """
+    mcp_dir = bench.registry / REGISTRY_MCP_DIR
+    text = (mcp_dir / FILLER_SOURCE / SERVER_FILE_NAME).read_text(encoding="utf-8")
+    for n in range(count - len(DECLARED)):
+        name = f"{FILLER_PREFIX}{n:02d}"
+        copy = text.replace(f'name = "{FILLER_SOURCE}"', f'name = "{name}"')
+        copy = copy.replace(FILLER_SECRET, f"secret:filler_token_{n:02d}")
+        (mcp_dir / name).mkdir()
+        (mcp_dir / name / SERVER_FILE_NAME).write_text(copy, encoding="utf-8")
+
+    assert len(list(mcp_dir.iterdir())) == count
+
+
+def test_a_registry_at_the_cap_installs(bench: Bench) -> None:
+    """`MAX_SERVERS` servers is a registry root accepts. One release
+    installs a tree for each of them."""
+    _fill_registry(bench, MAX_SERVERS)
+
+    result = _release(bench)
+
+    assert "succeeded" in result, bench.ledger()["reason"]
+    assert len(bench.installed()) == MAX_SERVERS
+
+
+def test_a_registry_past_the_cap_is_refused(bench: Bench) -> None:
+    """One server past `MAX_SERVERS` refuses the whole set in step 8,
+    before any swap. The host stays as it was."""
+    _fill_registry(bench, MAX_SERVERS + 1)
+
+    result = _release(bench)
+
+    assert "succeeded" not in result
+    assert bench.ledger()["refused_check"] == "server"
+    assert bench.ledger()["reason"] == f"declares more than {MAX_SERVERS} servers"
+    assert bench.step("stage")["status"] == "refused"
+    assert bench.installed() == []
+    assert not (bench.components / COMPONENT).exists()
 
 
 # -- the release that lands ----------------------------------------------
