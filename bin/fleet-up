@@ -410,6 +410,17 @@ env_from_catalog() {  # env_from_catalog <file> <key...>
   done
 }
 
+# Sets a key in an env file to its value in the catalog, when the site file
+# has one. An empty value leaves the key out: the service reads no default,
+# and the page it guards says so.
+env_from_catalog_optional() {  # env_from_catalog_optional <file> <key>
+  local file="$1" key="$2" value
+  value="$(creche_env_get "$key" --env "$SITE_FILE")" \
+    || die "creche-env cannot read $key from $SITE_FILE"
+  [[ -n "$value" ]] || return 0
+  env_set "$file" "$key" "$value"
+}
+
 up_env_files() {
   local pep_url key
   hdr "3. env files"
@@ -430,6 +441,9 @@ up_env_files() {
   # file (noticeboard/component.yaml). So the file holds the bind, the port
   # and the cookie flag that the service would read from the catalog.
   env_from_catalog "$NOTICEBOARD_ENV" NOTICEBOARD_BIND NOTICEBOARD_PORT NOTICEBOARD_COOKIE_SECURE
+  # The chat links are optional: with no address the session rows carry no
+  # link, and the noticeboard says so in its check.
+  env_from_catalog_optional "$NOTICEBOARD_ENV" NOTICEBOARD_PANDA_URL
 
   # The vmm compiles in no default, and the site file holds only the
   # overrides. So `creche-vmm.service` and its verify hooks read this file

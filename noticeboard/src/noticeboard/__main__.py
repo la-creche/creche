@@ -86,6 +86,7 @@ def _report(config: Config) -> None:
     print(f"attendance      {_attendance(config)}")
     print(f"approval page {_approval(config)}")
     print(f"release page  {_release(config)}")
+    print(f"chat links    {_panda(config)}")
 
 
 def _key_state(config: Config) -> str:
@@ -112,6 +113,15 @@ def _approval(config: Config) -> str:
         return "off (NOTICEBOARD_APPROVAL_URL or NOTICEBOARD_APPROVAL_TOKEN_FILE is not set)"
 
     return f"{config.approval_url}, token {_where(config.approval_token_file)}"
+
+
+def _panda(config: Config) -> str:
+    """Whether the session rows link to the chat. The address has no
+    credential, so it is safe to print."""
+    if not config.panda_url:
+        return "off (NOTICEBOARD_PANDA_URL is not set)"
+
+    return config.panda_url
 
 
 def _release(config: Config) -> str:

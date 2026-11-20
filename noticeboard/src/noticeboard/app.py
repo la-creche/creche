@@ -128,6 +128,9 @@ def _renderer(config: Config) -> Callable[[Request, str, dict[str, object]], HTM
             # button and the branch that reads it cannot drift apart.
             "verb_preview": VERB_PREVIEW,
             "verb_save": VERB_SAVE,
+            # The base URL of the chat interface, so a session row can link
+            # to the live chat. Empty means no link on any row.
+            "panda_url": config.panda_url,
         }
 
         text = template.render(**shared, **body)

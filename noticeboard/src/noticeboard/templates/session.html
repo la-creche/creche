@@ -8,6 +8,11 @@
 
 <p class="foot">
   <a href="/families/{{ page.family }}">{{ page.family }}</a> · {{ page.session }}
+  {% if panda_url %}
+  {# The chat link names the family and the session id, the same pair the
+     chat interface uses (ADR 0010 of the Panda fork). #}
+  · <a href="{{ panda_url }}/#/chat/{{ page.family }}/{{ page.session }}" rel="noopener">open in the chat</a>
+  {% endif %}
 </p>
 
 <h2>transcript</h2>

@@ -184,6 +184,7 @@ uv run noticeboard-verify --json                # the component's verify hook
 | `NOTICEBOARD_APPROVAL_TOKEN_FILE` | a mode-0600 file that holds the plugin's `RESUME_TOKEN`. The service reads it at each call. |
 | `NOTICEBOARD_RELEASE_HOOK_URL` | the URL of the hook of the approvals Node-RED, the same URL root posts to |
 | `NOTICEBOARD_RELEASE_TOKEN_FILE` | a mode-0600 file that holds the flow's `REWORK_PAGE_TOKEN`. The service reads it at each call. |
+| `NOTICEBOARD_PANDA_URL` | the base URL of the chat interface. Empty means the session rows carry no chat link. It holds no credential. |
 
 A LAN bind with no key refuses to start, exit 2. The reverse proxy injects
 `X-View-Key` inside its `location /` block and forwards `Cookie`, `Origin`
