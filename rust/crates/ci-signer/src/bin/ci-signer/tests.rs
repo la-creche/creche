@@ -64,10 +64,24 @@ pub(crate) struct Seen {
     pub(crate) body: Vec<u8>,
 }
 
+/// The reply of the stand-in to each `POST .../tags`.
+#[derive(Debug, Default, Clone)]
+pub(crate) enum TagReply {
+    /// 201 with the recorded create reply, its name, commit and message
+    /// those of the request.
+    #[default]
+    Echo,
+    /// The echo, then this change in test code.
+    Changed(fn(&mut Value)),
+    /// This reply, whatever the request.
+    Fixed(Reply),
+}
+
 /// The replies of the stand-in by method and path, and what it got.
 #[derive(Debug, Default)]
 pub(crate) struct Forgejo {
     replies: BTreeMap<(String, String), Reply>,
+    tag_reply: TagReply,
     pub(crate) seen: Mutex<Vec<Seen>>,
 }
 
@@ -153,16 +167,22 @@ impl Forgejo {
             .collect()
     }
 
-    /// The reply to one request. A `POST .../tags` answers 201 with the
-    /// recorded create reply, its name, commit and message those of the
-    /// request.
+    /// The reply to one request. A `POST .../tags` gets its `TagReply`.
     fn answer(&self, seen: &Seen) -> Reply {
         if seen.method == "POST" && seen.path.ends_with("/tags") {
             let request: Value = serde_json::from_slice(&seen.body).unwrap();
+            let change = match &self.tag_reply {
+                TagReply::Fixed(reply) => return reply.clone(),
+                TagReply::Echo => None,
+                TagReply::Changed(change) => Some(*change),
+            };
             return recorded("p2-tag-create.json", |tag| {
                 tag["name"] = request["tag_name"].clone();
                 tag["message"] = request["message"].clone();
                 tag["commit"]["sha"] = request["target"].clone();
+                if let Some(change) = change {
+                    change(tag);
+                }
             });
         }
         self.replies
@@ -562,6 +582,55 @@ fn a_failed_sign_keeps_the_run_issued_and_makes_no_tag() {
         );
         // The bundle file is gone.
         assert_eq!(fs::read_dir(&host.paths.work).unwrap().count(), 2);
+    });
+}
+
+/// A `POST /tags` reply that is not 201 with the name, the commit and the
+/// message of the request gives `fault`. The loop stops at the first bad
+/// tag, and the run stays issued: the allocator gets no statement for a tag
+/// that does not exist or that another user made.
+#[test]
+fn a_tag_reply_that_is_not_the_request_gives_fault() {
+    let cases = [
+        // Refused by Forgejo: the tag protection, and the recorded 500 of
+        // a message past the limit of Forgejo.
+        TagReply::Fixed(Reply {
+            status: 422,
+            body: b"{}".to_vec(),
+        }),
+        TagReply::Fixed(recorded("p2-tag-size-b131072.json", |_| {})),
+        // 201, but one field is not the one of the request.
+        TagReply::Changed(|tag| {
+            tag["commit"]["sha"] = Value::from("0123456789abcdef0123456789abcdef01234567");
+        }),
+        TagReply::Changed(|tag| tag["name"] = Value::from("vmm-v0.1.25")),
+        TagReply::Changed(|tag| tag["message"] = Value::from("annotated probe")),
+    ];
+    runtime().block_on(async {
+        for tag_reply in cases {
+            let host = Host::new(STAND_IN_COSIGN);
+            let mut forgejo =
+                Forgejo::with_run(48, recorded("p1-run-push-main.json", running_release));
+            forgejo.tag_reply = tag_reply.clone();
+            let forgejo = Arc::new(forgejo);
+            let origin = forgejo.start().await;
+            let signer = Arc::new(Signer::start(host.config(&origin), &host.paths).unwrap());
+            let eligible = signer.decide(&key(48)).await.unwrap();
+
+            let answer = exchange(&signer, Some(eligible), REQUEST.as_bytes()).await;
+            assert_eq!(
+                answer,
+                serde_json::json!({"v": 1, "refused": "fault"}),
+                "{tag_reply:?}"
+            );
+            assert_eq!(forgejo.posts().len(), 1, "{tag_reply:?}");
+            assert_eq!(host.journal().lines().count(), 1, "{tag_reply:?}");
+            assert_eq!(
+                signer.decide(&key(48)).await.unwrap_err().code(),
+                "already_issued",
+                "{tag_reply:?}"
+            );
+        }
     });
 }
 

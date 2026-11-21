@@ -209,7 +209,9 @@ library. No other crate of this workspace calls the package.
   creations, with a stand-in Forgejo of the recorded replies and a
   stand-in cosign. Each failed check of section 4.4 on the recordings
   gives no statement, no POST and no journal line. A failed sign keeps
-  the run issued. A bad request gets its refusal. A guest that sends
+  the run issued. A `POST /tags` reply that is not 201 with the name, the
+  commit and the message of the request gives `fault` after one POST. A
+  bad request gets its refusal. A guest that sends
   nothing is refused at `REQUEST_WAIT`, in paused time.
 - The session tests (`src/bin/ci-signer/tests/linux.rs`, Linux only) put
   a stand-in daemon on a socketpair: open, accept, a conn line with an fd
