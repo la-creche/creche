@@ -1,13 +1,19 @@
-# The core of the release signer ci-signer (forgejo-release-path.md,
-# section 4): the release statement, its tag message, the eligibility of a
-# run and the exchange with the job VM. The crate is a library with no I/O.
-# The program, its unit and its catalog row come in a later PR.
+# The release signer ci-signer (forgejo-release-path.md, section 4). The
+# library is the core: the release statement, its tag message, the
+# eligibility of a run and the exchange with the job VM, with no I/O. The
+# program `ci-signer` (src/bin/ci-signer/) is the service on the attach
+# interface of the runner: the socket, the peer check, the Forgejo client,
+# the journal and the cosign call.
 [package]
 name = "creche-ci-signer"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "ci-signer"
+path = "src/bin/ci-signer/main.rs"
 
 [dependencies]
 # Only for `creche_wire::strict`, the strict JSON check.
@@ -16,9 +22,34 @@ serde.workspace = true
 serde_json.workspace = true
 # The SHA-256 of a statement in its line of the issued-runs journal.
 sha2.workspace = true
+# The program only. The HTTP/1.1 client of the Forgejo API, as the vmm and
+# ci-runner use it: hyper for the exchange, hyper-util for the tokio glue,
+# http-body-util for the cap of each reply body.
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+# The program only. `net` for the Unix sockets of the attach interface and
+# the TCP connection to Forgejo, `time` for the bound of each wait,
+# `process` for the cosign child, `io-util` for the reads and writes of a
+# stream, `sync` for the one ledger of the issued runs. The features add
+# no crate to the lock: the vmm turns on `net`, `time`, `process` and
+# `sync`, and `io-util` needs only `bytes`, which the lock holds.
+tokio = { workspace = true, features = ["net", "time", "process", "io-util", "sync"] }
+
+# The program only, Linux only: the peer check of the runner design,
+# section 6.3, and the receive of each passed fd by SCM_RIGHTS. The peer
+# check is vendored (rust/vendor/ci-runner/SOURCE.md).
+[target.'cfg(target_os = "linux")'.dependencies]
+ci-runner-peer = { path = "../../vendor/ci-runner/crates/ci-runner-peer" }
+rustix.workspace = true
 
 [dev-dependencies]
 schemars.workspace = true
+# The stand-in Forgejo of the program tests serves the recorded replies.
+hyper = { workspace = true, features = ["server"] }
+# `test-util` for paused time: the tests of the bounds wait with no real
+# wait.
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

@@ -75,11 +75,17 @@ dependencies = [
 name = "creche-ci-signer"
 version = "0.0.0"
 dependencies = [
+ "ci-runner-peer",
  "creche-wire",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rustix",
  "schemars",
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
 ]
 
 [[package]]

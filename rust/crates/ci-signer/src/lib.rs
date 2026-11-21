@@ -1,9 +1,11 @@
 //! The core of the release signer `ci-signer`
 //! (`docs/design/forgejo-release-path.md`, section 4).
 //!
-//! The crate holds the decisions and the data formats of the signer. It
-//! does no I/O. A later PR adds the program around it: the socket listener,
-//! the Forgejo client, the cosign call and the tag creation.
+//! The library holds the decisions and the data formats of the signer. It
+//! does no I/O. The program `ci-signer` of this package
+//! (`src/bin/ci-signer/`) holds the I/O around it: the socket of the attach
+//! interface, the peer check, the Forgejo client, the journal, the cosign
+//! call and the tag creation.
 //!
 //! ```text
 //!   open line ──► RunKey ─┐
@@ -17,7 +19,7 @@
 //!                                          ▼       ▼
 //!                               IssuedRuns::issue ──► Signable
 //!                                                        │
-//!                                    cosign (later PR) ──► Bundle
+//!                               cosign (the program) ──► Bundle
 //!                                                        │
 //!                                  TagMessage::new ◄─────┘
 //!                                        │
