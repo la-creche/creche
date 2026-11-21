@@ -340,7 +340,9 @@ printf '%s\\n' "$*" >> "$HOME/git.argv"
 case "$1" in
   remote) cat "$HOME/origin" ;;
   fetch)
-    printf '%s|%s\\n' "${GIT_CONFIG_VALUE_0:-}" "${GIT_CONFIG_VALUE_1:-}" >> "$HOME/git.header"
+    printf '%s|%s=%s|%s=%s\\n' "${GIT_CONFIG_COUNT:-}" \\
+      "${GIT_CONFIG_KEY_0:-}" "${GIT_CONFIG_VALUE_0:-}" \\
+      "${GIT_CONFIG_KEY_1:-}" "${GIT_CONFIG_VALUE_1:-}" >> "$HOME/git.header"
     ;;
   rev-parse) cat "$HOME/fetched" ;;
 esac
@@ -388,7 +390,8 @@ def test_a_forge_build_sends_the_token_in_a_header_only(
     assert binary.is_file()
     assert f"fetch --quiet --depth 1 {FORGE_CHAPERONE} {pinned_commit()}\n" in argv
     assert READ_TOKEN not in argv
-    assert (home / "git.header").read_text(encoding="utf-8") == f"{READ_HEADER}|false\n"
+    header = f"2|http.extraHeader={READ_HEADER}|http.followRedirects=false\n"
+    assert (home / "git.header").read_text(encoding="utf-8") == header
 
 
 def test_a_forge_build_of_another_commit_is_an_error(
@@ -398,9 +401,10 @@ def test_a_forge_build_of_another_commit_is_an_error(
     _stub_build(tmp_path, monkeypatch, "f" * 40)
     monkeypatch.setenv(TOKEN_VAR, READ_TOKEN)
 
-    with pytest.raises(BuildError, match="the pin is"):
+    with pytest.raises(BuildError, match="the pin is") as raised:
         build_pinned()
 
+    assert READ_TOKEN not in str(raised.value)
     assert not pinned_binary().parent.exists()
 
 

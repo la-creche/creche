@@ -115,7 +115,9 @@ The build fetches the commit from the repository `chaperone` beside the
   it. The build fetches from the same forge and the same owner. It sends
   the read token of `CRECHE_READ_TOKEN` in a header, and then compares
   the fetched commit with the pin. The `proc` job of the Forgejo gate
-  gives the token to its test step, and to no other step.
+  gives the token to its test step, and to no other step. A pull request from
+  a fork gets no secret. Its `proc` job then fails, unless the cache
+  already holds the pinned build.
 
 Any other origin fails the build. A forge origin with no token, or with a
 token that is not 40 lower-case hex characters, also fails the build.

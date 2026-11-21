@@ -44,7 +44,9 @@
 #      suite reads the pinned chaperone from the same forge and owner, with
 #      that token (integration/proc/proc_chaperone_pin.py). The token is
 #      the read token of release-reader of docs/design/forgejo-release-path.md
-#      section 9, answer 5. No other step gets a secret.
+#      section 9, answer 5. No other step gets a secret. A pull request
+#      from a fork gets no secret. Its proc job then fails, unless the
+#      cache already holds the pinned build.
 #
 # Where each job runs today. One Docker runner serves `ubuntu-24.04`. The
 # VM runner serves `ci-vm` and `ci-vm-kvm`, with a new VM for each job:

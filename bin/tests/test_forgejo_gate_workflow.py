@@ -62,7 +62,8 @@ result with the Forgejo job. A difference that is not in this list fails.
     that token (`integration/proc/proc_chaperone_pin.py`). The token is the
     read token of `release-reader` of `docs/design/forgejo-release-path.md`
     section 9, answer 5. No other step of the gate and no local action
-    names a secret.
+    names a secret. A pull request from a fork gets no secret. Its `proc`
+    job then fails, unless the cache already holds the pinned build.
 
 The protection of `main` on Forgejo requires one status:
 `gate / gate (pull_request)`. The workflow name, the name of its last job
@@ -203,7 +204,7 @@ WORK_ENV = {"TMPDIR": "${{ runner.temp }}"}
 TOKEN_JOB = "proc"
 TOKEN_RUN = "uv run pytest integration/proc -m slow -n 4"
 TOKEN_ENV = {"CRECHE_READ_TOKEN": "${{ secrets.CRECHE_READ_TOKEN }}"}
-SECRETS = "secrets."
+SECRETS = re.compile(r"\bsecrets\b")
 
 #: The time limit of each job that has none in the GitHub file
 #: (difference 10).
@@ -414,8 +415,9 @@ def test_only_the_proc_test_step_gets_a_secret() -> None:
     ]
 
     assert {key: step["env"][key] for key in TOKEN_ENV} == TOKEN_ENV
-    assert [one.count(SECRETS) for one in texts] == [len(TOKEN_ENV), *[0] * len(LOCAL_ACTIONS)]
-    assert SECRETS not in json.dumps(GITHUB_JOBS)
+    counts = [len(SECRETS.findall(one)) for one in texts]
+    assert counts == [len(TOKEN_ENV), *[0] * len(LOCAL_ACTIONS)]
+    assert not SECRETS.search(json.dumps(GITHUB_JOBS))
 
 
 def test_the_gate_uses_no_artifact_action() -> None:
