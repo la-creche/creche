@@ -207,7 +207,9 @@ library. No other crate of this workspace calls the package.
 - The program tests (`src/bin/ci-signer/tests.rs`) run the eligible run
   48 of the recordings to its statement, its journal line and its two tag
   creations, with a stand-in Forgejo of the recorded replies and a
-  stand-in cosign. Each failed check of section 4.4 on the recordings
+  stand-in cosign. The stand-in cosign requires the command line of
+  section 4.5 step 5, the empty signing config and an empty environment
+  with an empty `COSIGN_PASSWORD`. Each failed check of section 4.4 on the recordings
   gives no statement, no POST and no journal line. A failed sign keeps
   the run issued. A `POST /tags` reply that is not 201 with the name, the
   commit and the message of the request gives `fault` after one POST. A

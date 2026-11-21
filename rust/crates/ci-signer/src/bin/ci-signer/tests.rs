@@ -242,18 +242,33 @@ impl Forgejo {
     }
 }
 
-/// The stand-in cosign: it drains stdin, requires an empty
-/// `COSIGN_PASSWORD`, and writes a bundle at the path of `--bundle`. It
-/// uses builtins of `sh` only, because the child has no `PATH`.
+/// The stand-in cosign. It requires the command line and the environment
+/// of section 4.5 step 5, drains stdin and writes a bundle at the path of
+/// `--bundle`. Each failed check exits with its own status. It uses
+/// builtins of `sh` only, because the child has no `PATH`. `Host::new`
+/// puts the paths of the test host and the signing config in place of
+/// `@CREDENTIALS@`, `@WORK@` and `@SIGNING_CONFIG@`.
+///
+/// 1. `COSIGN_PASSWORD` is set and empty (M7 fact 5).
+/// 2. The argv is `sign-blob --key <key> --signing-config <config>
+///    --bundle <bundle> -`, with the paths of the host.
+/// 3. The signing config holds the one line `EMPTY_SIGNING_CONFIG`, so
+///    sign stays off the public log (M7 fact 3).
+/// 4. `CARGO_MANIFEST_DIR`, a variable of the test process, is unset: the
+///    child gets an empty environment.
 const STAND_IN_COSIGN: &str = r#"#!/bin/sh
-bundle=""
-while [ $# -gt 0 ]; do
-  if [ "$1" = "--bundle" ]; then bundle="$2"; shift; fi
-  shift
-done
-while IFS= read -r line; do :; done
 [ "${COSIGN_PASSWORD-unset}" = "" ] || exit 3
-printf '%s' '{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","standIn":true}' > "$bundle"
+[ $# -eq 8 ] && [ "$1" = "sign-blob" ] || exit 4
+[ "$2" = "--key" ] && [ "$3" = "@CREDENTIALS@/release-signing.key" ] || exit 5
+[ -z "${CARGO_MANIFEST_DIR+x}" ] || exit 6
+[ "$4" = "--signing-config" ] && [ "$5" = "@WORK@/empty-signing-config.json" ] || exit 7
+config=""
+IFS= read -r config < "$5"
+[ "$config" = '@SIGNING_CONFIG@' ] || exit 7
+[ "$6" = "--bundle" ] && [ "$7" = "@WORK@/bundle-48.json" ] || exit 8
+[ "$8" = "-" ] || exit 9
+while IFS= read -r line; do :; done
+printf '%s' '{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","standIn":true}' > "$7"
 "#;
 
 /// A stand-in cosign that fails.
@@ -292,6 +307,10 @@ impl Host {
         .unwrap();
         fs::write(credentials.join("ci-signer.token"), format!("{TAGGER}\n")).unwrap();
         let program = root.join("cosign");
+        let cosign = cosign
+            .replace("@CREDENTIALS@", credentials.to_str().unwrap())
+            .replace("@WORK@", work.to_str().unwrap())
+            .replace("@SIGNING_CONFIG@", crate::cosign::EMPTY_SIGNING_CONFIG);
         fs::write(&program, cosign).unwrap();
         fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
         let paths = Paths {
@@ -369,6 +388,9 @@ fn the_eligible_run_gets_its_statement_its_journal_line_and_its_tags() {
         ));
         let origin = forgejo.start().await;
         let signer = Arc::new(Signer::start(host.config(&origin), &host.paths).unwrap());
+        // The stand-in cosign requires that this variable of the test
+        // process does not reach the child.
+        assert!(std::env::var_os("CARGO_MANIFEST_DIR").is_some());
 
         let eligible = signer.decide(&key(48)).await.unwrap();
         assert_eq!(eligible.commit().as_str(), MERGE_COMMIT);
