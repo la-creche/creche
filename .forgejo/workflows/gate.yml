@@ -19,9 +19,10 @@
 #   4. Shard numbers: Forgejo sets no `strategy.job-index` and no
 #      `strategy.job-total`. The shard command reads K from the matrix and
 #      N from its env.
-#   5. rustup: the Docker runner image has no rustup and no cargo. The
-#      jobs that run cargo first run .forgejo/actions/rustup, which does
-#      nothing on a runner that has rustup.
+#   5. rustup: the Docker runner image and the guest image of the VM
+#      runner have no rustup and no cargo. Each job that runs cargo or
+#      rustup first runs .forgejo/actions/rustup: tests, proc, rust, kvm and
+#      vmm-archive. It does nothing on a runner that has rustup.
 #   6. No `permissions` key: Forgejo ignores it, and each job token can
 #      write its own repository.
 #   7. User: the Docker runner runs a step as root with the umask 0000.
@@ -35,11 +36,14 @@
 #  10. Checkout: on a pull request, Forgejo checks out the head of the
 #      branch. GitHub checks out the merge with the base. A branch behind
 #      main can pass here while the merge fails.
+#  11. Work folder: playpen-image runs playpen-ci with TMPDIR on the temp
+#      folder of the runner. /tmp of the VM guest is on its small root disk.
 #
 # Where each job runs today. One Docker runner serves `ubuntu-24.04`. The
 # VM runner serves `ci-vm` and `ci-vm-kvm`, with a new VM for each job:
 # memory, playpen-image, rust, systemd-proof and the two kvm shards run
-# there. No run of this file has yet proved those jobs in a runner VM.
+# there. A rehearsal run of this file ran each of those jobs in a runner
+# VM.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
 #           ├── agent       code   the agent module's suite and types

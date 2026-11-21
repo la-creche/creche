@@ -29,9 +29,10 @@ result with the Forgejo job. A difference that is not in this list fails.
    `strategy.job-total`. Its shard command reads K from `matrix.shard` and
    N from the step's `TOTAL`. A test holds the matrix to 1..N and `TOTAL`
    to N, so a shard cannot fall out.
-6. **rustup.** The image of the Docker runner has no rustup and no cargo.
-   Each job that runs cargo first runs `.forgejo/actions/rustup`, at a
-   stated place. That action does nothing on a runner with rustup.
+6. **rustup.** The image of the Docker runner and the guest image of the
+   VM runner have no rustup and no cargo. Each job that runs cargo or
+   rustup first runs `.forgejo/actions/rustup`, at a stated place. That
+   action does nothing on a runner with rustup.
 7. **File keys.** No `permissions` key. Forgejo ignores it, and a job token
    can write its own repository, so the key would claim a limit that does
    not hold. One `env` key: the load limits of difference 9.
@@ -48,6 +49,11 @@ result with the Forgejo job. A difference that is not in this list fails.
    jobs at once.
 10. **Time limits.** A job with no `timeout-minutes` in the GitHub file gets
     the limit of `TIME_LIMITS`. A job with one keeps it.
+11. **Work folder.** `playpen-image` runs `playpen-ci` with `TMPDIR` on the
+    temp folder of the runner. The work folder of `playpen-ci` holds a
+    rootfs tar and the disks of each target. /tmp of the VM guest is on its
+    small root disk, where the first disk stopped with "No space left on
+    device".
 
 The protection of `main` on Forgejo requires one status:
 `gate / gate (pull_request)`. The workflow name, the name of its last job
@@ -156,6 +162,7 @@ RUSTUP_STEPS: dict[str, tuple[int, dict[str, str]]] = {
     "tests": (2, {"uses": RUSTUP}),
     "proc": (2, {"uses": RUSTUP}),
     "rust": (1, {"uses": RUSTUP}),
+    "kvm": (1, {"uses": RUSTUP}),
     "vmm-archive": (2, {"uses": RUSTUP, "if": ONLY_VMM}),
 }
 
@@ -175,6 +182,12 @@ AS_RUNNER = {"run": {"shell": "as-runner {0}"}}
 CACHE_JOB = "proc"
 CACHE_DIR = ".cache/creche-proc/chaperone-rs"
 CACHE_PATH = (f"~/{CACHE_DIR}", f"/home/ubuntu/{CACHE_DIR}")
+
+#: The job of the work folder, its one run step, and the env that the
+#: Forgejo gate gives that step (difference 11).
+WORK_JOB = "playpen-image"
+WORK_RUN = "playpen/bin/playpen-ci"
+WORK_ENV = {"TMPDIR": "${{ runner.temp }}"}
 
 #: The time limit of each job that has none in the GitHub file
 #: (difference 10).
@@ -254,6 +267,10 @@ def _port_job(name: str, job: dict[str, Any]) -> dict[str, Any]:
         (step,) = [one for one in port["steps"] if "cache@" in one.get("uses", "")]
         assert step["with"]["path"] == CACHE_PATH[0]
         step["with"]["path"] = CACHE_PATH[1]
+    if name == WORK_JOB:
+        (step,) = [one for one in port["steps"] if "run" in one]
+        assert step == {"run": WORK_RUN}, f"{name}: the GitHub step changed"
+        step["env"] = dict(WORK_ENV)
     if name in TIME_LIMITS:
         assert "timeout-minutes" not in port, f"{name}: the GitHub job has a limit"
         port["timeout-minutes"] = TIME_LIMITS[name]
@@ -381,8 +398,9 @@ def test_the_scope_action_reads_no_merge_group() -> None:
 
 
 def test_the_rustup_action_installs_nothing_on_a_runner_with_rustup(tmp_path: Path) -> None:
-    """The hosted runner and the runner VMs have rustup. There the action must
-    not download a second one: a `curl` that fails proves no download ran."""
+    """The hosted GitHub runner has rustup, and the runner images may gain
+    one. There the action must not download a second one: a `curl` that
+    fails proves no download ran."""
     (step,) = _action(FORGEJO_DIR, "rustup")["runs"]["steps"]
     for tool in ("rustup", "curl"):
         stub = tmp_path / tool
