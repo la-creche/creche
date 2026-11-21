@@ -421,7 +421,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The work folder of playpen-ci (mktemp -d) holds a rootfs tar and the
+      # disks of each target. /tmp of the VM guest is on its small root
+      # disk, where the first disk stopped with "No space left on device".
+      # The temp folder of the runner is on the data disk.
       - run: playpen/bin/playpen-ci
+        env:
+          TMPDIR: ${{ runner.temp }}
 
   # The Cargo workspace under rust/ (rust/Cargo.toml): the format check,
   # the lint gate and the tests. The local action rustup installs rustup
