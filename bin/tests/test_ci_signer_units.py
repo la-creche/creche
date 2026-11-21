@@ -44,6 +44,9 @@ SERVICE_DECIDED: Final = [
     ("ExecStart", [EXEC_START]),
     ("StandardInput", ["socket"]),
     ("RestartPreventExitStatus", ["78"]),
+    # Whole seconds with no unit: the restart-bound test of
+    # handover/tests/test_handover_repo_manifests.py reads it with int().
+    ("TimeoutStopSec", ["15"]),
     (
         "LoadCredential",
         [

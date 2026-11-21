@@ -40,7 +40,7 @@ RestartSec=5s
 # restart cannot fix it, so systemd does not restart (owner item 86, as
 # creche-vmm.service).
 RestartPreventExitStatus=78
-TimeoutStopSec=15s
+TimeoutStopSec=15
 
 # The key and the two tokens (section 4.3 items 3 and 4). systemd reads
 # each root-owned file and copies it into the credentials folder of this
