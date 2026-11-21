@@ -124,7 +124,7 @@ spelling; a script that probes uses it and no other name.
 |---|---|---|---|
 | `router` | string | required | one LiteLLM alias, `[a-z0-9][a-z0-9._/-]*`, no `*` |
 | `budget_usd_per_day` | number | required | greater than 0, at most 500 |
-| `context_window` | integer | the alias's window | from 65536 to 2097152 tokens |
+| `context_window` | integer | `200000` | from 65536 to 2097152 tokens |
 
 One alias, not a list. The family key is minted with `models: [router]`, so the
 sandbox can reach that alias and nothing else. A wildcard alias is ungrantable:
@@ -138,8 +138,8 @@ zero here rather than on a bill.
 smaller of this value and the window LiteLLM gives for the alias. The agent
 compacts its context when the context passes 90% of that window, and at the
 first prompt after one hour without a turn. Each model call sends the whole
-context, so the cap bounds the cost of one call. Without the field, the agent
-uses the alias's own window.
+context, so the cap bounds the cost of one call. The default of 200000 keeps
+one call cheap. A family that needs more history in view sets a larger cap.
 
 ```toml
 model.router = "agent-router"
@@ -852,10 +852,12 @@ Rules:
    the write fails and the old revision stays.
 2. `runtime.json` holds no credential and no grant. The perimeter stays where
    invariant 12 puts it: mounts, egress, the chaperone and the model key (§3.8 rule
-   3). Its keys are `shell`, `sandbox_tools` and `model_alias`, plus three keys
+   3). Its keys are `shell`, `sandbox_tools`, `model_alias` and
+   `context_window`, copied from `model.context_window` (§3.2), plus two keys
    that are written only when set: `model_live_at`, once a model change sets
-   it (rules 5 and 7), `system_prompt`, when it is `replace` (§3.8 rule 4),
-   and `context_window`, copied from `model.context_window` (§3.2).
+   it (rules 5 and 7), and `system_prompt`, when it is `replace` (§3.8 rule 4).
+   A `runtime.json` of a caregiver from before `context_window` has no such
+   key, and the vmm reads it as no cap.
 3. `model_alias` names the model of the family's prompts. It is a bare
    LiteLLM alias, copied from `model.router` unchanged. The facade gives
    the bare alias to its LiteLLM provider (`agent/src/litellm.ts`

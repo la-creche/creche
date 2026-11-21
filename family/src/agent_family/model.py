@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .grammar import (
     ALL_TOOLS,
+    DEFAULT_CONTEXT_WINDOW,
     DEFAULT_CPUS,
     DEFAULT_JOB_TIMEOUT,
     DEFAULT_MAX_INFLIGHT_DELEGATIONS,
@@ -44,9 +45,8 @@ class ModelBlock(Strict):
     router: str
     budget_usd_per_day: float
     # The largest context the agent keeps, in tokens: the agent uses the
-    # smaller of this and the window LiteLLM gives for the alias. `None`:
-    # the alias's own window.
-    context_window: int | None = None
+    # smaller of this and the window LiteLLM gives for the alias.
+    context_window: int = DEFAULT_CONTEXT_WINDOW
 
 
 class SandboxBlock(Strict):

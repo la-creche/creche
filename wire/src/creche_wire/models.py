@@ -1227,7 +1227,7 @@ class FamilyConfig(BaseModel):
     context_window: Annotated[
         ContextWindow | None,
         Field(
-            description="The largest context of the agent: `model.context_window` of the\nfamily file. The agent uses the smaller of this and the window\nLiteLLM gives for the alias. `null`: the alias's own window.\ncaregiver leaves the key out of `runtime.json` when the family file\nhas no `model.context_window`, so the vmm reads a missing key as\n`null`."
+            description="The largest context of the agent: `model.context_window` of the\nfamily file, 200000 by default. The agent uses the smaller of this\nand the window LiteLLM gives for the alias. `null`: the alias's own\nwindow. caregiver writes the key for each family, so `null` comes\nonly from a `runtime.json` of a caregiver from before the key."
         ),
     ]
     instructions: Annotated[

@@ -329,9 +329,9 @@ struct CredsFile {
 }
 
 /// `config/runtime.json` as caregiver writes it (`config_mount.py`
-/// `RuntimeConfig.as_json`). `system_prompt` is absent for `append`,
-/// `model_live_at` until a model change sets it, and `context_window` when
-/// the family file has no `model.context_window` (decision CH45 rule 1).
+/// `RuntimeConfig.as_json`). `system_prompt` is absent for `append`, and
+/// `model_live_at` until a model change sets it (decision CH45 rule 1).
+/// `context_window` is absent only in a file of a caregiver from before it.
 /// `shell` must be a bool, and the reply does not carry it (`FamilyConfig`).
 // Decision CH67 rule 6: this reader refuses an unknown key and a missing
 // `shell` or `sandbox_tools`, as it refuses an unknown key of
@@ -374,7 +374,7 @@ fn live_at<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<SystemTi
 }
 
 /// `context_window`: an integer of the range of `ContextWindow`. caregiver
-/// leaves the key out for no cap, so a `null` refuses the file.
+/// never writes `null`, so a `null` refuses the file.
 fn window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<ContextWindow>, D::Error> {
     ContextWindow::deserialize(deserializer).map(Some)
 }

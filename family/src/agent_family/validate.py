@@ -203,7 +203,7 @@ def _check_model(family: FamilyFile, issues: Issues, host: HostFacts | None) -> 
         )
 
     window = family.model.context_window
-    if window is not None and not CONTEXT_WINDOW_MIN <= window <= CONTEXT_WINDOW_MAX:
+    if not CONTEXT_WINDOW_MIN <= window <= CONTEXT_WINDOW_MAX:
         issues.error(
             "model.context_window",
             f"{window} is outside {CONTEXT_WINDOW_MIN} to {CONTEXT_WINDOW_MAX} tokens",

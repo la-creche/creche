@@ -57,7 +57,8 @@ class RuntimeConfig:
     #: that `live_at` of `rust/crates/vmm-confine/src/family.rs` reads.
     model_live_at: int | None = None
     #: `model.context_window` of the family file: the largest context of
-    #: the agent, in tokens. `None`: the alias's own window.
+    #: the agent, in tokens. The family file has a default, so caregiver
+    #: always sets it. `None` leaves the key out.
     context_window: int | None = None
 
     def as_json(self) -> dict[str, Any]:
@@ -65,8 +66,10 @@ class RuntimeConfig:
         the default: `config_mount_matches` compares bytes, so a key every
         family carried would rewrite every family's directory at the first
         pass after a release. The playpen reads a missing key as the
-        default. `model_live_at` and `context_window` are written only when
-        they are set, for the same reason (decision CH45 rule 1)."""
+        default. `model_live_at` is written only when it is set, for the
+        same reason (decision CH45 rule 1). `context_window` is written for
+        each family, so the first pass after the release that brought it
+        rewrites each family's directory once."""
         body: dict[str, Any] = {
             "shell": self.shell,
             "sandbox_tools": list(self.sandbox_tools),

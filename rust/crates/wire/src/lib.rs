@@ -1662,11 +1662,10 @@ impl schemars::JsonSchema for FamilySkills {
 #[cfg_attr(test, schemars(transform = schema::require_each_key))]
 pub struct FamilyConfig {
     /// The largest context of the agent: `model.context_window` of the
-    /// family file. The agent uses the smaller of this and the window
-    /// LiteLLM gives for the alias. `null`: the alias's own window.
-    /// caregiver leaves the key out of `runtime.json` when the family file
-    /// has no `model.context_window`, so the vmm reads a missing key as
-    /// `null`.
+    /// family file, 200000 by default. The agent uses the smaller of this
+    /// and the window LiteLLM gives for the alias. `null`: the alias's own
+    /// window. caregiver writes the key for each family, so `null` comes
+    /// only from a `runtime.json` of a caregiver from before the key.
     #[serde(deserialize_with = "Option::deserialize")]
     pub context_window: Option<ContextWindow>,
     /// The text of `config/instructions.md`. The agent trims it, and an empty
