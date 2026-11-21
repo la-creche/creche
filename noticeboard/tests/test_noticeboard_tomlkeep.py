@@ -124,7 +124,11 @@ def test_an_untouched_field_keeps_its_place() -> None:
 def test_a_nested_change_leaves_its_neighbours_alone() -> None:
     text = saved(model={"router": "agent-router", "budget_usd_per_day": 9})
 
-    assert model_of(text)["model"] == {"router": "agent-router", "budget_usd_per_day": 9}
+    assert model_of(text)["model"] == {
+        "router": "agent-router",
+        "budget_usd_per_day": 9,
+        "context_window": 200_000,
+    }
     assert lines_that_moved(text, FIXTURE) == ["model.budget_usd_per_day = 9"]
     assert "# The chat router. The budget is 15 USD per day." in text.splitlines()
 
