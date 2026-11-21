@@ -97,8 +97,13 @@ module.
    the `open` line (section 4.4). It trusts no other fact.
 4. The signer answers `accept` only for a run that passes the five checks
    of section 4.4 and that the ledger admits. The session then holds the
-   `Eligible` run, and the first guest exchange takes it. A later one
-   answers `already_issued`.
+   `Eligible` run in one `guest::SessionRun`, which each guest task of the
+   session shares. A guest exchange takes the run only after
+   `Request::parse` passes, and then signs. So a guest that sends no
+   request, or a request that breaks a rule, leaves the run to a later fd
+   of the session. An exchange that finds no run left answers
+   `already_issued`. Of two exchanges at the same time, exactly one takes
+   the run.
 5. The guest exchange reads the whole request line before it answers,
    also for a refusal. A close with unread bytes resets the read of the
    guest on Linux, and the answer is lost.
@@ -213,7 +218,11 @@ library. No other crate of this workspace calls the package.
   gives no statement, no POST and no journal line. A failed sign keeps
   the run issued. A `POST /tags` reply that is not 201 with the name, the
   commit and the message of the request gives `fault` after one POST. A
-  bad request gets its refusal. A guest that sends nothing is refused at
+  bad request gets its refusal. A guest that closes with no request, or a
+  bad request, leaves the run to the next fd of the session, and that fd
+  gets the statement and the journal line. Two valid requests of one
+  session, in turn or at the same time on two threads, give one statement
+  and one `already_issued`. A guest that sends nothing is refused at
   `REQUEST_WAIT`, in paused time. A guest that streams bytes with no LF
   is cut off at the cap of the request line, and a run reply past
   `REPLY_MAX_BYTES` gives `too_large`.
