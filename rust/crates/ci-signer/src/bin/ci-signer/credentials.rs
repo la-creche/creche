@@ -71,9 +71,9 @@ pub struct Credentials {
     pub tagger: Token,
 }
 
-/// The open file `name` of `folder`, a regular file of at most `cap` bytes,
-/// read in full.
-fn read(folder: &Path, name: &'static str, cap: u64) -> Result<Vec<u8>, CredentialFault> {
+/// The open file `name` of `folder`, a regular file of 1 to `cap` bytes.
+/// It reads no byte.
+fn open(folder: &Path, name: &'static str, cap: u64) -> Result<File, CredentialFault> {
     let file = File::open(folder.join(name)).map_err(|error| CredentialFault::Io(name, error))?;
     let meta = file
         .metadata()
@@ -81,6 +81,13 @@ fn read(folder: &Path, name: &'static str, cap: u64) -> Result<Vec<u8>, Credenti
     if !meta.is_file() || meta.len() == 0 || meta.len() > cap {
         return Err(CredentialFault::Shape(name));
     }
+    Ok(file)
+}
+
+/// The file `name` of `folder`, a regular file of 1 to `cap` bytes, read
+/// in full.
+fn read(folder: &Path, name: &'static str, cap: u64) -> Result<Vec<u8>, CredentialFault> {
+    let file = open(folder, name, cap)?;
     let mut bytes = Vec::new();
     file.take(cap.saturating_add(1))
         .read_to_end(&mut bytes)
@@ -96,7 +103,9 @@ impl Credentials {
     /// Each `CredentialFault`. A missing or malformed credential refuses
     /// the start.
     pub fn read(folder: &Path) -> Result<Self, CredentialFault> {
-        read(folder, KEY, KEY_MAX_BYTES)?;
+        // The key: open and check its size only. No byte of the private
+        // key enters the memory of the service.
+        open(folder, KEY, KEY_MAX_BYTES)?;
         let reader = Token::parse(&read(folder, READER_TOKEN, TOKEN_MAX_BYTES)?)
             .map_err(|_| CredentialFault::Shape(READER_TOKEN))?;
         let tagger = Token::parse(&read(folder, TAGGER_TOKEN, TOKEN_MAX_BYTES)?)

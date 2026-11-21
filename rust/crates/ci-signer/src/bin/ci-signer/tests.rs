@@ -772,6 +772,22 @@ fn a_start_with_no_credential_or_a_bad_journal_is_refused() {
     .unwrap();
     assert!(Signer::start(host.config("http://127.0.0.1:9"), &host.paths).is_err());
 
+    // The key: an empty file and a file past 4096 bytes are refused by
+    // their size, and a file of 4096 bytes passes.
+    for (bytes, refused) in [(0, true), (4097, true), (4096, false)] {
+        let host = Host::new(STAND_IN_COSIGN);
+        fs::write(
+            host.paths.credentials.join("release-signing.key"),
+            vec![b'k'; bytes],
+        )
+        .unwrap();
+        let started = Signer::start(host.config("http://127.0.0.1:9"), &host.paths);
+        assert_eq!(started.is_err(), refused, "{bytes} bytes");
+        if let Err(fault) = started {
+            assert!(fault.to_string().contains("release-signing.key"), "{fault}");
+        }
+    }
+
     let host = Host::new(STAND_IN_COSIGN);
     fs::write(&host.paths.journal, b"48\tnot-a-commit\tx\n").unwrap();
     let fault = Signer::start(host.config("http://127.0.0.1:9"), &host.paths).unwrap_err();
