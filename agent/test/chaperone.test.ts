@@ -22,7 +22,7 @@ const ALIAS = "chat";
 const ch = new FakeCh(FIXTURE_TOKEN);
 const fake = new FakeModel([{ tool: GATED, args: ARGS }, { text: "waiting" }]);
 const config = familyConfig({ pepUrl: await ch.start(), litellmUrl: await fake.start() });
-const model = new LiveModel(config.planes, ALIAS, FALLBACK_LIMITS, () => config.creds);
+const model = new LiveModel(config.planes, ALIAS, FALLBACK_LIMITS, null, () => config.creds);
 const connection = chaperoneConnection(config);
 
 function Probe(): string {

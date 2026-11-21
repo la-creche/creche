@@ -62,6 +62,14 @@ export interface ModelLimits {
 /** The limits when LiteLLM gives none for the alias. */
 export const FALLBACK_LIMITS: ModelLimits = { contextWindow: 128000, maxTokens: REQUEST_MAX_TOKENS };
 
+/**
+ * `limits` with the window at most `cap`: `model.context_window` of the
+ * family file (contract 01 §3.2). Null: the alias's own window.
+ */
+export function capped(limits: ModelLimits, cap: number | null): ModelLimits {
+  return cap === null || cap >= limits.contextWindow ? limits : { ...limits, contextWindow: cap };
+}
+
 /** Why the read gave the fallback. */
 export type LimitsFault = "model_alias_unset" | "unreachable" | "not_valid" | "alias_absent" | "window_unset";
 
@@ -224,7 +232,7 @@ export function specOf(alias: string): string {
 }
 
 /** One provider with one model for each alias of `models`. */
-function providerOf(planes: Planes, models: ReadonlyMap<string, ModelLimits>, creds: () => LiveCreds): Provider {
+function providerOf(planes: Planes, models: ReadonlyMap<string, ModelLimits>, cap: number | null, creds: () => LiveCreds): Provider {
   return createProvider({
     id: LITELLM_PROVIDER,
     auth: {
@@ -233,7 +241,7 @@ function providerOf(planes: Planes, models: ReadonlyMap<string, ModelLimits>, cr
         resolve: async () => ({ auth: { apiKey: revealSecret(creds().litellmKey) } }),
       },
     },
-    models: [...models].map(([alias, limits]) => ({
+    models: [...models].map(([alias, read]) => [alias, capped(read, cap)] as const).map(([alias, limits]) => ({
       id: alias,
       name: `${alias} (LiteLLM)`,
       api: PROVIDER_API,
@@ -271,27 +279,39 @@ function providerOf(planes: Planes, models: ReadonlyMap<string, ModelLimits>, cr
  *
  * No wait for `model_live_at` happens here. The vmm holds the `state`
  * reply until that time (decision CH31 rule 1).
+ *
+ * The window of each model is the smaller of LiteLLM's and the family's
+ * cap. A pulled cap that differs replaces the provider too, with no read
+ * of LiteLLM.
  */
 export class LiveModel {
   private served = new Map<string, ModelLimits>();
   private last: Promise<unknown> = Promise.resolve();
   private current: string;
+  private cap: number | null;
   private latest: Provider;
 
   public constructor(
     private readonly planes: Planes,
     alias: string,
     limits: ModelLimits,
+    cap: number | null,
     private readonly creds: () => LiveCreds,
   ) {
     this.current = alias;
+    this.cap = cap;
     this.served.set(alias, limits);
-    this.latest = providerOf(planes, this.served, creds);
+    this.latest = providerOf(planes, this.served, cap, creds);
   }
 
-  /** The limits of the alias of the last change. */
+  /** The limits of the alias of the last change, with the window capped. */
   public get limits(): ModelLimits {
-    return this.served.get(this.current) ?? FALLBACK_LIMITS;
+    return this.limitsOf(this.current);
+  }
+
+  /** The limits that Flue gets for `alias`, with the window capped. */
+  public limitsOf(alias: string): ModelLimits {
+    return capped(this.served.get(bareAlias(alias)) ?? FALLBACK_LIMITS, this.cap);
   }
 
   /** The provider of every alias served so far, for `start()`. */
@@ -300,34 +320,37 @@ export class LiveModel {
   }
 
   /**
-   * `alias` and `key` are those of the pull. The holder gets the pull only
-   * after this call, so its creds are still those of the pull before.
-   * Null: the alias is the alias of the last change. Else the limits read
-   * of the new alias, with the fallback on a fault. The calls run one at a
-   * time, so a pull applies only after its provider is in Flue.
+   * `alias`, `cap` and `key` are those of the pull. The holder gets the
+   * pull only after this call, so its creds are still those of the pull
+   * before. Null: the alias and the cap are those of the last change. Else
+   * the limits of the alias with the window capped: a new alias is read,
+   * with the fallback on a fault. The calls run one at a time, so a pull
+   * applies only after its provider is in Flue.
    */
-  public follow(alias: string, key: Secret): Promise<LimitsRead | null> {
-    const next = this.last.then(() => this.switchTo(bareAlias(alias), key));
+  public follow(alias: string, cap: number | null, key: Secret): Promise<LimitsRead | null> {
+    const next = this.last.then(() => this.switchTo(bareAlias(alias), cap, key));
     this.last = next.catch(() => undefined);
 
     return next;
   }
 
-  private async switchTo(alias: string, key: Secret): Promise<LimitsRead | null> {
-    if (alias === this.current) {
+  private async switchTo(alias: string, cap: number | null, key: Secret): Promise<LimitsRead | null> {
+    if (alias === this.current && cap === this.cap) {
       return null;
     }
 
-    const read = await readModelLimits(this.planes, alias, key);
+    const read: LimitsRead =
+      alias === this.current ? { ok: true, limits: this.served.get(alias) ?? FALLBACK_LIMITS } : await readModelLimits(this.planes, alias, key);
     // The state changes only once the new provider is in Flue. A throw
-    // leaves the old alias current, so the next pull tries again.
+    // leaves the old alias and cap current, so the next pull tries again.
     const served = new Map(this.served).set(alias, read.limits);
-    const provider = providerOf(this.planes, served, this.creds);
+    const provider = providerOf(this.planes, served, cap, this.creds);
     setProvider(provider);
     this.served = served;
     this.latest = provider;
     this.current = alias;
+    this.cap = cap;
 
-    return read;
+    return { ...read, limits: capped(read.limits, cap) };
   }
 }

@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import { FALLBACK_LIMITS, LiveModel, limitsOf, readModelLimits } from "../src/litellm.js";
+import { capped, FALLBACK_LIMITS, LiveModel, limitsOf, readModelLimits } from "../src/litellm.js";
 import { familyConfig, FIXTURE_KEY } from "./family.js";
 
 const ALIAS = "code-router";
@@ -69,10 +69,36 @@ describe("readModelLimits", () => {
     expect(read).toEqual({ ok: true, limits: { contextWindow: 1048576, maxTokens: 16384 } });
     expect(seen).toEqual([{ path: "/v1/model/info", authorization: `Bearer ${FIXTURE_KEY}` }]);
 
-    const model = new LiveModel(config.planes, ALIAS, read.limits, () => config.creds);
+    const model = new LiveModel(config.planes, ALIAS, read.limits, null, () => config.creds);
     const [first] = model.provider.getModels();
     expect(first?.contextWindow).toBe(1048576);
     expect(first?.maxTokens).toBe(16384);
+  });
+
+  it("caps the window at the family's context window", async () => {
+    const config = familyConfig({ litellmUrl: await listening });
+    const read = await readModelLimits(config.planes, ALIAS, config.creds.litellmKey);
+    const model = new LiveModel(config.planes, ALIAS, read.limits, 400_000, () => config.creds);
+
+    expect(model.provider.getModels()[0]?.contextWindow).toBe(400_000);
+    expect(model.limits.contextWindow).toBe(400_000);
+    expect(model.limitsOf(`litellm/${ALIAS}`).contextWindow).toBe(400_000);
+    // A cap past LiteLLM's window keeps LiteLLM's.
+    expect(capped(read.limits, 2_000_000)).toEqual(read.limits);
+  });
+
+  it("takes a pulled cap with no read of LiteLLM", async () => {
+    const config = familyConfig({ litellmUrl: await listening });
+    const read = await readModelLimits(config.planes, ALIAS, config.creds.litellmKey);
+    const model = new LiveModel(config.planes, ALIAS, read.limits, null, () => config.creds);
+    seen.length = 0;
+
+    expect(await model.follow(ALIAS, null, config.creds.litellmKey)).toBeNull();
+    const switched = await model.follow(ALIAS, 200_000, config.creds.litellmKey);
+
+    expect(switched).toEqual({ ok: true, limits: { contextWindow: 200_000, maxTokens: 16384 } });
+    expect(model.provider.getModels()[0]?.contextWindow).toBe(200_000);
+    expect(seen).toEqual([]);
   });
 
   it("gives the fallback when LiteLLM does not answer", async () => {

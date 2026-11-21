@@ -256,6 +256,14 @@ def test_a_first_write_sets_no_model_live_at(tmp_path: Path) -> None:
     assert model_live_at("chat", tmp_path) is None
 
 
+def test_the_context_window_is_written_only_when_the_file_sets_it(tmp_path: Path) -> None:
+    """A key every family carried would rewrite every family's directory at
+    the first pass after a release (decision CH45 rule 1)."""
+    assert "context_window" not in _runtime_of(tmp_path, _FAMILY_HEAD)
+    capped = _FAMILY_HEAD + "model.context_window = 400000\n"
+    assert _runtime_of(tmp_path, capped)["context_window"] == 400_000
+
+
 def test_a_new_alias_sets_model_live_at_in_the_same_swap(tmp_path: Path) -> None:
     """Decision CH23-1: the alias and its live time change together."""
     _runtime_of(tmp_path, _FAMILY_HEAD)

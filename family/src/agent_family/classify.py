@@ -187,6 +187,18 @@ def _model(old: FamilyFile, new: FamilyFile, changes: list[FieldChange]) -> None
             f"model.budget_usd_per_day changed: {old_budget} to {new_budget}",
         )
 
+    old_window = old.model.context_window
+    new_window = new.model.context_window
+    if old_window != new_window:
+        _add(
+            changes,
+            "model.context_window",
+            Landing.LIVE,
+            _number(old_window, new_window),
+            Step.WRITE_CONFIG,
+            f"model.context_window changed: {old_window} to {new_window}, read at turn start",
+        )
+
 
 def _grants(old: FamilyFile, new: FamilyFile, changes: list[FieldChange]) -> None:
     tools = _tools_direction(old.tools, new.tools)

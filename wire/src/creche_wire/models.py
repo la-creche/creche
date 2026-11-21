@@ -463,6 +463,17 @@ class ConfigMissingReply(BaseModel):
     config_missing: ConfigMissing
 
 
+class ContextWindow(RootModel[StrictInt]):
+    root: Annotated[
+        StrictInt,
+        Field(
+            description="The largest context of a family's agent, in tokens:\n`model.context_window` of the family file, `CONTEXT_WINDOW_MIN` to\n`CONTEXT_WINDOW_MAX` of `family/grammar.py`. It caps the window that\nthe agent's compaction uses (`agent/src/litellm.ts`).",
+            ge=65536,
+            le=2097152,
+        ),
+    ]
+
+
 class ControlHello(BaseModel):
     """
     What the vmm sends first on each new control link, guest port 1200
@@ -1213,6 +1224,12 @@ class FamilyConfig(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    context_window: Annotated[
+        ContextWindow | None,
+        Field(
+            description="The largest context of the agent: `model.context_window` of the\nfamily file. The agent uses the smaller of this and the window\nLiteLLM gives for the alias. `null`: the alias's own window.\ncaregiver leaves the key out of `runtime.json` when the family file\nhas no `model.context_window`, so the vmm reads a missing key as\n`null`."
+        ),
+    ]
     instructions: Annotated[
         StrictStr,
         Field(

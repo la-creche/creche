@@ -96,6 +96,12 @@ MAX_VALUE_CHARS: Final = 256
 # --- ranges (contract 01 §3) ---
 
 BUDGET_USD_MAX: Final = 500.0
+#: `model.context_window`, in tokens. Below the floor, the agent's own
+#: prompt, one compaction summary and the kept tail leave no room to work.
+#: The ceiling is twice the largest window LiteLLM serves today; a family
+#: that wants the model's whole window leaves the field out.
+CONTEXT_WINDOW_MIN: Final = 65_536
+CONTEXT_WINDOW_MAX: Final = 2_097_152
 CPUS_MIN: Final = 1
 CPUS_MAX: Final = 8
 MEMORY_MIN_MB: Final = 256

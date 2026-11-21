@@ -43,6 +43,10 @@ class Strict(BaseModel):
 class ModelBlock(Strict):
     router: str
     budget_usd_per_day: float
+    # The largest context the agent keeps, in tokens: the agent uses the
+    # smaller of this and the window LiteLLM gives for the alias. `None`:
+    # the alias's own window.
+    context_window: int | None = None
 
 
 class SandboxBlock(Strict):

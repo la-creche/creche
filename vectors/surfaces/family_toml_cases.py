@@ -302,6 +302,11 @@ quiet.daily = { hour = 7 }
     _case("lax-bool-int", HEAD + "shell = 1\n"),
     _case("lax-bool-as-int", HEAD + "sandbox.cpus = true\n"),
     _case("lax-int-as-budget", _head(budget_usd_per_day="true")),
+    # --- model.context_window (contract 01 §3.2) -----------------------------
+    _case("context-window", HEAD + "model.context_window = 400000\n"),
+    _case("context-window-floor", HEAD + "model.context_window = 65535\n"),
+    _case("context-window-ceiling", HEAD + "model.context_window = 2097153\n"),
+    _case("context-window-float", HEAD + "model.context_window = 400000.0\n"),
     _case("lax-int-as-string", _head(description="5")),
     # --- triggers (contract 01 §3.13) ---------------------------------------
     _case(

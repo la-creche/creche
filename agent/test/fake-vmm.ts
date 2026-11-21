@@ -16,6 +16,7 @@ export const SKILL = "---\nname: weather-report\ndescription: Write a short weat
 
 /** A wire `FamilyConfig` with each part set. */
 export const CONFIG = {
+  context_window: 400000,
   instructions: "  FIXTURE-INSTRUCTIONS  \n",
   model_alias: "litellm/chat",
   sandbox_tools: { bash: true, edit: false, glob: false, grep: false, read: true, write: false },
@@ -25,6 +26,7 @@ export const CONFIG = {
 
 /** A wire `FamilyConfig` that grants nothing: the alias `chat`, and no instructions, tool or skill. */
 export const BARE_CONFIG = {
+  context_window: null,
   instructions: "",
   model_alias: "chat",
   sandbox_tools: { bash: false, edit: false, glob: false, grep: false, read: false, write: false },

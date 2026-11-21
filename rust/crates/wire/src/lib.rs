@@ -1659,7 +1659,16 @@ impl schemars::JsonSchema for FamilySkills {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(remote = "Self", deny_unknown_fields)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(transform = schema::require_each_key))]
 pub struct FamilyConfig {
+    /// The largest context of the agent: `model.context_window` of the
+    /// family file. The agent uses the smaller of this and the window
+    /// LiteLLM gives for the alias. `null`: the alias's own window.
+    /// caregiver leaves the key out of `runtime.json` when the family file
+    /// has no `model.context_window`, so the vmm reads a missing key as
+    /// `null`.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub context_window: Option<ContextWindow>,
     /// The text of `config/instructions.md`. The agent trims it, and an empty
     /// text gives no instructions (`agent/src/family-state.ts` `liveConfig`).
     pub instructions: String,
@@ -1767,6 +1776,19 @@ shape_size!(
     256,
     16384,
     "the guest RAM of a family VM is 256 to 16384 MiB"
+);
+
+shape_size!(
+    /// The largest context of a family's agent, in tokens:
+    /// `model.context_window` of the family file, `CONTEXT_WINDOW_MIN` to
+    /// `CONTEXT_WINDOW_MAX` of `family/grammar.py`. It caps the window that
+    /// the agent's compaction uses (`agent/src/litellm.ts`).
+    ContextWindow,
+    ContextWindowError,
+    u32,
+    65536,
+    2097152,
+    "the context window of a family is 65536 to 2097152 tokens"
 );
 
 /// The image flavor of the family VM: `sandbox.image` of the family file,

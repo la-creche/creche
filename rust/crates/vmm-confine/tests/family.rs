@@ -317,6 +317,7 @@ fn reads_creds_and_config_into_one_state() {
     let read = root.state().unwrap();
     let expected = json!({"state": {
         "config": {
+            "context_window": 400_000,
             "instructions": "You help the code family.\n",
             "model_alias": "litellm/fixture-model",
             "sandbox_tools": {
@@ -399,6 +400,7 @@ fn absent_parts_take_their_defaults() {
     assert_eq!(config["instructions"], "");
     assert_eq!(config["skills"], json!({}));
     assert_eq!(config["system_prompt"], "append");
+    assert_eq!(config["context_window"], Value::Null);
     assert_eq!(read.model_live_at(), None);
 }
 
@@ -475,6 +477,10 @@ fn a_bad_runtime_file_is_not_valid() {
         runtime(|body| drop(body.insert("model_live_at".into(), json!(1_793_966_410_000.5)))),
         runtime(|body| drop(body.insert("model_live_at".into(), json!(-1)))),
         runtime(|body| drop(body.insert("model_live_at".into(), json!(1_u64 << 53)))),
+        runtime(|body| drop(body.insert("context_window".into(), Value::Null))),
+        runtime(|body| drop(body.insert("context_window".into(), json!(65_535)))),
+        runtime(|body| drop(body.insert("context_window".into(), json!(2_097_153)))),
+        runtime(|body| drop(body.insert("context_window".into(), json!("400000")))),
         runtime(|body| drop(body.insert("config_rev".into(), json!(1)))),
         r#"{"shell":true,"shell":true,"sandbox_tools":[],"model_alias":"m"}"#.to_owned(),
     ];

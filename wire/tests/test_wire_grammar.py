@@ -75,6 +75,7 @@ def test_the_family_shape_has_the_flavors_of_the_grammar() -> None:
     [
         ("FamilyCpus", grammar.CPUS_MIN, grammar.CPUS_MAX),
         ("FamilyMemoryMib", grammar.MEMORY_MIN_MB, grammar.MEMORY_MAX_MB),
+        ("ContextWindow", grammar.CONTEXT_WINDOW_MIN, grammar.CONTEXT_WINDOW_MAX),
     ],
 )
 def test_each_shape_size_has_the_range_of_the_grammar(wire_name: str, low: int, high: int) -> None:

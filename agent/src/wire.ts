@@ -415,6 +415,13 @@ export const wire = {
       "description": "The reply of a pull when `config/` is absent. It carries nothing.",
       "type": "object"
     },
+    "ContextWindow": {
+      "description": "The largest context of a family's agent, in tokens:\n`model.context_window` of the family file, `CONTEXT_WINDOW_MIN` to\n`CONTEXT_WINDOW_MAX` of `family/grammar.py`. It caps the window that\nthe agent's compaction uses (`agent/src/litellm.ts`).",
+      "format": "uint64",
+      "maximum": 2097152,
+      "minimum": 65536,
+      "type": "integer"
+    },
     "ControlCommand": {
       "description": "What the vmm sends on control link 1200 after `ControlHello` (decision\nCH36 G11). Guest init sends `stop` on its local link to the facade too\n(decision CH62 rule 10).\n\n`stop` starts the graceful stop of decision CH19 rule 3. Guest init\nstops the facade, for up to 25 s when a turn runs (decision CH62 rule\n9). It then syncs the disks and powers the VM off. The vmm sends\nSIGTERM, then SIGKILL, only when the VM does not exit in time, because\na kill is a power cut for the guest.\n\n`sync` asks guest init to sync the session disk before a snapshot\n(decision CH62 rule 23, item 5.7). Guest init runs `syncfs` of the\nsession disk, then `sync`, and answers with `GuestEvent::Synced`. A VM\nwith no `synced` in time gets no snapshot, and the graceful stop runs.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name. An externally tagged enum has\nno unit variant, so each variant holds an empty object (decision CH22\nrule 3).",
       "oneOf": [
@@ -1102,6 +1109,17 @@ export const wire = {
       "additionalProperties": false,
       "description": "The family's part of `config/` that the guest reads: what caregiver writes\nin `write_config` (`steps.py:229-249`). Instructions, skills, sandbox\ntools and the model change at the next prompt of a running session\n(decision CH5c).\n\n`shell` of `runtime.json` is not here. The vmm refuses a `runtime.json`\nwith no `shell`, and the pull carries none, so `shell` grants nothing.\n\n`model_live_at` of `runtime.json` is not here either. The vmm holds the\nreply on it (`FamilyStateReply`).",
       "properties": {
+        "context_window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContextWindow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The largest context of the agent: `model.context_window` of the\nfamily file. The agent uses the smaller of this and the window\nLiteLLM gives for the alias. `null`: the alias's own window.\ncaregiver leaves the key out of `runtime.json` when the family file\nhas no `model.context_window`, so the vmm reads a missing key as\n`null`."
+        },
         "instructions": {
           "description": "The text of `config/instructions.md`. The agent trims it, and an empty\ntext gives no instructions (`agent/src/family-state.ts` `liveConfig`).",
           "type": "string"
@@ -1129,6 +1147,7 @@ export const wire = {
         }
       },
       "required": [
+        "context_window",
         "instructions",
         "model_alias",
         "sandbox_tools",
