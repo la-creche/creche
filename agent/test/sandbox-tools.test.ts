@@ -30,7 +30,7 @@ async function toolNames(grant: readonly SandboxToolName[]): Promise<string[]> {
 const cwd = mkdtempSync(join(tmpdir(), "agent-cwd-"));
 const fake = new FakeModel([{ text: "done" }]);
 const config = familyConfig({ litellmUrl: await fake.start() });
-const model = new LiveModel(config.planes, ALIAS, FALLBACK_LIMITS, () => config.creds);
+const model = new LiveModel(config.planes, ALIAS, FALLBACK_LIMITS, null, () => config.creds);
 
 function Empty(): string {
   useModel(specOf(ALIAS));

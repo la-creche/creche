@@ -65,10 +65,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use creche_vmm_store::layout::RootError;
 use creche_vmm_store::placeholder::Placeholders;
 use creche_wire::{
-    FAMILY_EGRESS_FILE, FAMILY_GIT_PLATFORM_FILE, FAMILY_REPOS_FILE, FAMILY_SHAPE_FILE,
-    FAMILY_STATE_CAP, FamilyConfig, FamilyCreds, FamilyEgress, FamilyGitPlatform, FamilyName,
-    FamilyRepos, FamilyShape, FamilySkills, FamilyState, FamilyStateReply, LitellmKey, ModelAlias,
-    PepToken, SandboxGrant, SystemPrompt, UnixMillis, strict,
+    ContextWindow, FAMILY_EGRESS_FILE, FAMILY_GIT_PLATFORM_FILE, FAMILY_REPOS_FILE,
+    FAMILY_SHAPE_FILE, FAMILY_STATE_CAP, FamilyConfig, FamilyCreds, FamilyEgress,
+    FamilyGitPlatform, FamilyName, FamilyRepos, FamilyShape, FamilySkills, FamilyState,
+    FamilyStateReply, LitellmKey, ModelAlias, PepToken, SandboxGrant, SystemPrompt, UnixMillis,
+    strict,
 };
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
 use rustix::io::Errno;
@@ -330,6 +331,7 @@ struct CredsFile {
 /// `config/runtime.json` as caregiver writes it (`config_mount.py`
 /// `RuntimeConfig.as_json`). `system_prompt` is absent for `append`, and
 /// `model_live_at` until a model change sets it (decision CH45 rule 1).
+/// `context_window` is absent only in a file of a caregiver from before it.
 /// `shell` must be a bool, and the reply does not carry it (`FamilyConfig`).
 // Decision CH67 rule 6: this reader refuses an unknown key and a missing
 // `shell` or `sandbox_tools`, as it refuses an unknown key of
@@ -345,6 +347,8 @@ struct RuntimeFile {
     system_prompt: Option<SystemPrompt>,
     #[serde(default, deserialize_with = "live_at")]
     model_live_at: Option<SystemTime>,
+    #[serde(default, deserialize_with = "window")]
+    context_window: Option<ContextWindow>,
 }
 
 /// A name of `sandbox_tools` in `runtime.json`: `SandboxTool` of
@@ -367,6 +371,12 @@ enum SandboxTool {
 fn live_at<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<SystemTime>, D::Error> {
     let millis = UnixMillis::deserialize(deserializer)?;
     Ok(Some(UNIX_EPOCH + Duration::from_millis(millis.as_u64())))
+}
+
+/// `context_window`: an integer of the range of `ContextWindow`. caregiver
+/// never writes `null`, so a `null` refuses the file.
+fn window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<ContextWindow>, D::Error> {
+    ContextWindow::deserialize(deserializer).map(Some)
 }
 
 /// The grant of a tool list. The validator refuses a tool listed twice
@@ -731,6 +741,7 @@ fn read_config(
         Err(fault) => return Ok(Err(fault.into())),
     };
     let family = FamilyConfig {
+        context_window: runtime.context_window,
         instructions,
         model_alias: runtime.model_alias,
         sandbox_tools,

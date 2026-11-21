@@ -5,6 +5,9 @@
 //    threshold is compacted before the next model call, and the run goes on.
 // 2. A reply that stops at the output limit is continued, in the same
 //    submission, with one short user prompt.
+// 3. A prompt that comes after an idle time compacts the context before its
+//    first model call. A prompt within the idle time, or a context under the
+//    floor, does not.
 //
 // The faux provider counts tokens as characters / 4, so a small context
 // window and a tool that returns a long text reach the threshold in a few
@@ -55,7 +58,19 @@ function Reader(): string {
   return "Read pages until told to stop.";
 }
 
-const flue = await start({ agents: [Reader], db: sqlite(), providers: [faux.provider] });
+/** The idle time of the idle agent, and its floor in faux tokens. */
+const IDLE_MS = 300;
+const IDLE_MIN_TOKENS = 1000;
+
+function IdleReader(): string {
+  // The kept tail is small, so the few faux tokens of a test leave something to summarize.
+  useModel(MODEL_SPEC, { compaction: { idleAfterMs: IDLE_MS, idleMinTokens: IDLE_MIN_TOKENS, keepRecentTokens: 200 } });
+  useTool(readPage);
+
+  return "Read pages until told to stop.";
+}
+
+const flue = await start({ agents: [Reader, IdleReader], db: sqlite(), providers: [faux.provider] });
 afterAll(() => flue.stop());
 
 /** What each model request held, in order. */
@@ -139,5 +154,52 @@ describe("the Flue patch", () => {
     expect(reply.text).toBe(`partial\n\n${DONE}`);
     expect(calls).toBe(2);
     expect(seen.filter((one) => !one.summarize).at(-1)?.hasContinue).toBe(true);
+  });
+  /** Two prompts on one instance, `pause` ms apart. The first reads `pages` pages. */
+  async function twoPrompts(id: string, pages: number, pause: number): Promise<Seen[]> {
+    let read = 0;
+    const step: FauxResponseFactory = (context) => {
+      const now = record(JSON.stringify(context));
+      if (now.summarize) {
+        return fauxAssistantMessage(SUMMARY);
+      }
+
+      if (read < pages) {
+        read += 1;
+
+        return fauxAssistantMessage(fauxToolCall("read_page", {}));
+      }
+
+      return fauxAssistantMessage(DONE);
+    };
+    faux.setResponses(Array.from({ length: 20 }, () => step));
+
+    const handle = init(IdleReader, { id });
+    expect((await handle.read(await handle.dispatch(`Read ${pages} pages, then say done.`))).text).toBe(DONE);
+    await new Promise((resolve) => setTimeout(resolve, pause));
+    const before = seen.length;
+    expect((await handle.read(await handle.dispatch("Say done."))).text).toBe(DONE);
+
+    return seen.slice(before);
+  }
+
+  it("compacts before the first model call after an idle time", async () => {
+    const second = await twoPrompts("idle", 2, IDLE_MS * 2);
+
+    expect(second[0]?.summarize).toBe(true);
+    expect(second[1]?.summarize).toBe(false);
+    expect(second[1]?.hasSummary).toBe(true);
+  });
+
+  it("does not compact within the idle time", async () => {
+    const second = await twoPrompts("busy", 2, 0);
+
+    expect(second.some((one) => one.summarize)).toBe(false);
+  });
+
+  it("does not compact a context under the floor", async () => {
+    const second = await twoPrompts("small", 0, IDLE_MS * 2);
+
+    expect(second.some((one) => one.summarize)).toBe(false);
   });
 });

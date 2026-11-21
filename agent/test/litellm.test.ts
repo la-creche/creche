@@ -19,7 +19,7 @@ const PIXEL = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgA
 
 const fake = new FakeModel([{ text: REPLY }]);
 const config = familyConfig({ litellmUrl: await fake.start() });
-const model = new LiveModel(config.planes, ALIAS, FALLBACK_LIMITS, () => config.creds);
+const model = new LiveModel(config.planes, ALIAS, FALLBACK_LIMITS, null, () => config.creds);
 
 function Probe(): string {
   useModel(specOf(ALIAS));

@@ -7,5 +7,6 @@
   ],
   "model_alias": "litellm/fixture-model",
   "system_prompt": "replace",
-  "model_live_at": 1793966410000
+  "model_live_at": 1793966410000,
+  "context_window": 400000
 }

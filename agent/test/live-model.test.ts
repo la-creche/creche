@@ -54,7 +54,7 @@ async function pullFor(session: string): Promise<unknown> {
     throw new Error(pulled.fault);
   }
 
-  const switched = await composed.model.follow(pulled.state.config.modelAlias, pulled.state.creds.litellmKey);
+  const switched = await composed.model.follow(pulled.state.config.modelAlias, pulled.state.config.contextWindow, pulled.state.creds.litellmKey);
   composed.state.apply(pulled.state, session);
 
   return switched;

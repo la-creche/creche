@@ -21,6 +21,8 @@ from .fences import Fences
 from .grammar import (
     ALL_TOOLS,
     BUDGET_USD_MAX,
+    CONTEXT_WINDOW_MAX,
+    CONTEXT_WINDOW_MIN,
     CPUS_MAX,
     CPUS_MIN,
     CRON_FIELD,
@@ -198,6 +200,13 @@ def _check_model(family: FamilyFile, issues: Issues, host: HostFacts | None) -> 
             "model.budget_usd_per_day",
             f"{budget} is outside 0 to {BUDGET_USD_MAX}; the ceiling refuses a typed extra zero "
             "here rather than on a bill",
+        )
+
+    window = family.model.context_window
+    if not CONTEXT_WINDOW_MIN <= window <= CONTEXT_WINDOW_MAX:
+        issues.error(
+            "model.context_window",
+            f"{window} is outside {CONTEXT_WINDOW_MIN} to {CONTEXT_WINDOW_MAX} tokens",
         )
 
     # §5.1: without host context the check is a warning, and the report says

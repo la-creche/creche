@@ -124,6 +124,7 @@ spelling; a script that probes uses it and no other name.
 |---|---|---|---|
 | `router` | string | required | one LiteLLM alias, `[a-z0-9][a-z0-9._/-]*`, no `*` |
 | `budget_usd_per_day` | number | required | greater than 0, at most 500 |
+| `context_window` | integer | `200000` | from 65536 to 2097152 tokens |
 
 One alias, not a list. The family key is minted with `models: [router]`, so the
 sandbox can reach that alias and nothing else. A wildcard alias is ungrantable:
@@ -133,9 +134,17 @@ it would hand the family every model LiteLLM serves.
 `budget_duration`. The ceiling of 500 refuses a typed extra
 zero here rather than on a bill.
 
+`context_window` caps the context of the family's agent. The agent uses the
+smaller of this value and the window LiteLLM gives for the alias. The agent
+compacts its context when the context passes 90% of that window, and at the
+first prompt after one hour without a turn. Each model call sends the whole
+context, so the cap bounds the cost of one call. The default of 200000 keeps
+one call cheap. A family that needs more history in view sets a larger cap.
+
 ```toml
 model.router = "agent-router"
 model.budget_usd_per_day = 15
+model.context_window = 400000
 ```
 
 ### 3.3 `files`
@@ -761,6 +770,7 @@ state lives on the host (invariant 5).
 | `description` | registry only | no |
 | `model.router` | `/key/update` on the family key. An added model works at once. A removed model takes up to 10 s to be refused everywhere (§6.2) | no |
 | `model.budget_usd_per_day` | `/key/update` on the family key. A budget drop refuses the next request at once (§6.2) | no |
+| `model.context_window` | `caregiver` rewrites `runtime.json` in the family config mount (§6.1). The facade reads it on the family-state pull before each prompt | no |
 | `tools`, `verbs`, `delegates`, `approval` | `caregiver` rewrites the grant file, the chaperone re-reads it per call | no |
 | `max_inflight_delegations` | the same grant file, the same per-call re-read (§3.6.1 rule 5) | no |
 | `egress` | `caregiver` rewrites `egress.json` (§6.1.1), and the proxy reads it on every CONNECT (§3.7 rule 11) | no |
@@ -812,7 +822,7 @@ document. One counter covers the whole directory.
 |---|---|---|
 | `instructions.md` | `families/<name>/instructions.md` | the agent process, at turn start |
 | `skills/<name>/SKILL.md` | the granted skills (§3.10) | the agent process, at turn start |
-| `runtime.json` | `shell`, `sandbox_tools`, `system_prompt` and `model.router` (§3.8, §3.2), and `model_live_at`, which `caregiver` sets (rule 5) | the facade, on the family-state pull before each prompt (decision CH5c). `model_live_at`: `caregiver` and the vmm (rule 5) |
+| `runtime.json` | `shell`, `sandbox_tools`, `system_prompt`, `model.router` and `model.context_window` (§3.8, §3.2), and `model_live_at`, which `caregiver` sets (rule 5) | the facade, on the family-state pull before each prompt (decision CH5c). `model_live_at`: `caregiver` and the vmm (rule 5) |
 | `shape.json` | `sandbox.cpus`, `sandbox.memory` and `sandbox.image` (§3.9) | the vmm, before it starts a VM of the family (rule 6) |
 
 ```json
@@ -842,9 +852,12 @@ Rules:
    the write fails and the old revision stays.
 2. `runtime.json` holds no credential and no grant. The perimeter stays where
    invariant 12 puts it: mounts, egress, the chaperone and the model key (§3.8 rule
-   3). Its keys are `shell`, `sandbox_tools` and `model_alias`, plus two keys
+   3). Its keys are `shell`, `sandbox_tools`, `model_alias` and
+   `context_window`, copied from `model.context_window` (§3.2), plus two keys
    that are written only when set: `model_live_at`, once a model change sets
    it (rules 5 and 7), and `system_prompt`, when it is `replace` (§3.8 rule 4).
+   A `runtime.json` of a caregiver from before `context_window` has no such
+   key, and the vmm reads it as no cap.
 3. `model_alias` names the model of the family's prompts. It is a bare
    LiteLLM alias, copied from `model.router` unchanged. The facade gives
    the bare alias to its LiteLLM provider (`agent/src/litellm.ts`

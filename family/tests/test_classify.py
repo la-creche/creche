@@ -82,6 +82,28 @@ def test_model_budget_change_direction_follows_the_number(
     assert change.step is Step.UPDATE_KEY
 
 
+@pytest.mark.parametrize(
+    ("before", "after", "expect"),
+    [
+        (None, 400_000, Direction.ADD),
+        (400_000, 200_000, Direction.REMOVE),
+        (400_000, None, Direction.REMOVE),
+    ],
+)
+def test_a_context_window_change_rewrites_the_config(
+    before: int | None, after: int | None, expect: Direction
+) -> None:
+    """`None` leaves the field out, so the family has the default 200000."""
+    model = {"router": "agent-router", "budget_usd_per_day": 15}
+    old_model = model if before is None else {**model, "context_window": before}
+    new_model = model if after is None else {**model, "context_window": after}
+    old, new = built("chat", {"model": old_model}, {"model": new_model})
+    change = change_for(classify(old, new), "model.context_window")
+    assert change.landing is Landing.LIVE
+    assert change.direction is expect
+    assert change.step is Step.WRITE_CONFIG
+
+
 # --- grants: tools, verbs, delegates, approval (contract 01 §3.4-3.6, §3.11) -
 
 

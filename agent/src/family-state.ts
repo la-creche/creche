@@ -44,6 +44,8 @@ export interface LiveCreds {
  */
 export interface LiveConfig {
   readonly modelAlias: string;
+  /** `model.context_window` of the family file, in tokens. Null: the alias's own window. */
+  readonly contextWindow: number | null;
   readonly instructions: string | null;
   readonly systemPrompt: SystemPrompt;
   readonly sandboxTools: readonly SandboxToolName[];
@@ -109,6 +111,7 @@ export function liveConfig(config: Wire<"FamilyConfig">, previous: readonly Live
 
   return {
     modelAlias: bareAlias(config.model_alias),
+    contextWindow: config.context_window,
     instructions: instructions.length > 0 ? instructions : null,
     systemPrompt: config.system_prompt,
     sandboxTools: SANDBOX_TOOL_NAMES.filter((name) => config.sandbox_tools[name]),

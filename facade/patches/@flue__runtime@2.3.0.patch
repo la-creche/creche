@@ -1,5 +1,5 @@
 diff --git a/dist/conversation-stream-store-CXrgv-b0.mjs b/dist/conversation-stream-store-CXrgv-b0.mjs
-index 28be2fc98bba07dfc9628da831dbbe6a029ba970..0da740d0311ef75bad52c9ed93ea93ecf6cbf9fc 100644
+index 28be2fc..0c5cc11 100644
 --- a/dist/conversation-stream-store-CXrgv-b0.mjs
 +++ b/dist/conversation-stream-store-CXrgv-b0.mjs
 @@ -10,6 +10,13 @@ import { r as migrateFlueSqlSchema, s as createAttachmentRef } from "./format-ve
@@ -24,10 +24,12 @@ index 28be2fc98bba07dfc9628da831dbbe6a029ba970..0da740d0311ef75bad52c9ed93ea93ec
  			...options.rerender ? { prepareNextTurnWithContext: (turn) => this.prepareRerenderTurn(turn) } : {}
  		});
  		this.eventCallback = options.onAgentEvent;
-@@ -4091,10 +4099,36 @@ var Session = class {
+@@ -4091,10 +4099,38 @@ var Session = class {
  			if (options.signal.aborted) throw abortErrorFor(options.signal);
  			if (this.activeTimeoutAt !== void 0 && Date.now() >= this.activeTimeoutAt) throw new SubmissionTimeoutError();
  		};
++		// creche patch: compaction after an idle time, before the first model call.
++		await this.compactAfterIdle(throwIfHalted);
 +		// creche patch: compaction between tool calls, and continue after a length stop.
 +		this.midRunCompactionsLeft = CRECHE_MAX_MID_RUN_COMPACTIONS;
 +		this.midRunCompactionRequested = false;
@@ -64,7 +66,7 @@ index 28be2fc98bba07dfc9628da831dbbe6a029ba970..0da740d0311ef75bad52c9ed93ea93ec
  				const settledAssistant = assistant ?? this.agentLoop.state.messages.findLast((message) => message.role === "assistant");
  				if (settledAssistant !== void 0) await this.checkCompaction(settledAssistant);
  				if (assistant?.stopReason === "error" || assistant?.stopReason === "aborted") await this.rebuildCanonicalContext();
-@@ -4144,6 +4178,11 @@ var Session = class {
+@@ -4144,6 +4180,11 @@ var Session = class {
  			const latest = messages[messages.length - 1];
  			assistant = latest?.role === "assistant" ? latest : void 0;
  		}
@@ -76,7 +78,7 @@ index 28be2fc98bba07dfc9628da831dbbe6a029ba970..0da740d0311ef75bad52c9ed93ea93ec
  	}
  	async waitForTransientModelRetry(assistant, attempt) {
  		if (attempt > MAX_TRANSIENT_MODEL_RETRIES) {
-@@ -4170,6 +4209,41 @@ var Session = class {
+@@ -4170,6 +4211,72 @@ var Session = class {
  		}
  		return true;
  	}
@@ -106,6 +108,37 @@ index 28be2fc98bba07dfc9628da831dbbe6a029ba970..0da740d0311ef75bad52c9ed93ea93ec
 +		return { action: "end" };
 +	}
 +	/**
++	* creche patch. Compact before the first model call of this run when the
++	* last turn ended more than `idleAfterMs` ago and its context held at
++	* least `idleMinTokens`. After an idle time the provider's prompt cache
++	* is cold, so the next call sends the whole context at the full price.
++	* The compaction pays that price once, and each call after it is small.
++	*
++	* The last turn must have ended: its assistant message did not stop for
++	* a tool call. Only a new input may follow it. A run that continues a
++	* turn (a tool result, a steer, a resume of a tool call) never compacts
++	* here.
++	*/
++	async compactAfterIdle(throwIfHalted) {
++		const config = this.config.compaction;
++		if (!config || config.idleAfterMs === void 0) return;
++		const settings = this.resolveCompactionSettings(this.agentLoop.state.model);
++		if (!settings.enabled) return;
++		const messages = this.agentLoop.state.messages;
++		let index = messages.length - 1;
++		while (index >= 0 && messages[index]?.role === "user") index -= 1;
++		const last = messages[index];
++		if (last?.role !== "assistant" || last.stopReason === "toolUse" || !last.usage) return;
++		if (typeof last.timestamp !== "number" || Date.now() - last.timestamp <= config.idleAfterMs) return;
++		const contextTokens = calculateContextTokens(last.usage);
++		if (contextTokens < (config.idleMinTokens ?? 0)) return;
++		throwIfHalted();
++		this.internalLog("info", `[flue:compaction] Idle for ${Date.now() - last.timestamp} ms with ${contextTokens} tokens, compacting before the next model call`);
++		await this.rebuildCanonicalContext();
++		// The event type names three reasons, so the idle compaction reports `threshold`.
++		await this.runCompaction("threshold");
++	}
++	/**
 +	* creche patch. Resume a run that ended early. A transcript that ends in
 +	* a tool result continues as it is. One that ends in an assistant
 +	* message (a length stop) gets a short user prompt, as Flue's own result
@@ -119,59 +152,80 @@ index 28be2fc98bba07dfc9628da831dbbe6a029ba970..0da740d0311ef75bad52c9ed93ea93ec
  		if (assistantMessage.stopReason === "aborted" || assistantMessage.stopReason === "error") return;
  		const model = this.agentLoop.state.model;
 diff --git a/dist/dispatch-t-UmrrMW.mjs b/dist/dispatch-t-UmrrMW.mjs
-index 7274a8ed..00b5803b 100644
+index 7274a8e..7093175 100644
 --- a/dist/dispatch-t-UmrrMW.mjs
 +++ b/dist/dispatch-t-UmrrMW.mjs
-@@ -1408,16 +1408,20 @@
+@@ -1405,20 +1405,24 @@ async function seedReducedConversationState(store, path, atOrBefore) {
+ 	}
+ }
+ /** Encode and store one head checkpoint; failures warn once and never throw. */
 -function writeFoldCheckpoint(store, path, state, incarnation) {
--	if (!store.putFoldCheckpoint) return;
--	try {
++async function writeFoldCheckpoint(store, path, state, incarnation) {
+ 	if (!store.putFoldCheckpoint) return;
++	let checkpoint;
+ 	try {
 -		const checkpoint = {
--			offset: state.recordsThroughOffset,
--			incarnation,
--			formatVersion: 3,
--			data: encodeReducedInstanceState(state)
--		};
++		checkpoint = {
+ 			offset: state.recordsThroughOffset,
+ 			incarnation,
+ 			formatVersion: 3,
+ 			data: encodeReducedInstanceState(state)
+ 		};
 -		store.putFoldCheckpoint(path, checkpoint).catch((error) => {
 -			warnFoldCheckpoint(path, `could not be written (${error instanceof Error ? error.message : String(error)})`);
 -		});
--	} catch (error) {
--		warnFoldCheckpoint(path, `could not be encoded (${error instanceof Error ? error.message : String(error)})`);
--	}
--}
-+async function writeFoldCheckpoint(store, path, state, incarnation) {
-+	if (!store.putFoldCheckpoint) return;
-+	let checkpoint;
-+	try {
-+		checkpoint = {
-+			offset: state.recordsThroughOffset,
-+			incarnation,
-+			formatVersion: 3,
-+			data: encodeReducedInstanceState(state)
-+		};
-+	} catch (error) {
-+		warnFoldCheckpoint(path, `could not be encoded (${error instanceof Error ? error.message : String(error)})`);
+ 	} catch (error) {
+ 		warnFoldCheckpoint(path, `could not be encoded (${error instanceof Error ? error.message : String(error)})`);
 +		return;
 +	}
 +	try {
 +		await store.putFoldCheckpoint(path, checkpoint);
 +	} catch (error) {
 +		warnFoldCheckpoint(path, `could not be written (${error instanceof Error ? error.message : String(error)})`);
-+	}
-+}
-@@ -1549,7 +1553,8 @@
--		if (!this.state) {
--			this.state = await loadReducedConversationState({
--				store: this.store,
--				path: this.path
--			});
--			return this.state;
--		}
-+		if (!this.state) {
-+			this.state = await loadReducedConversationState({
-+				store: this.store,
-+				path: this.path
-+			});
+ 	}
+ }
+ //#endregion
+@@ -1551,6 +1555,7 @@ var ConversationFoldHost = class {
+ 				store: this.store,
+ 				path: this.path
+ 			});
 +			await writeFoldCheckpoint(this.store, this.path, this.state, meta.incarnation);
-+			return this.state;
-+		}
+ 			return this.state;
+ 		}
+ 		const base = this.state;
+@@ -3182,9 +3187,12 @@ function assertThinkingLevel(value, label) {
+ function assertCompaction(definition, label) {
+ 	if (definition === void 0 || definition === false) return;
+ 	if (typeof definition !== "object" || definition === null || Array.isArray(definition)) throw new Error(`[flue] ${label} compaction must be a configuration object or \`false\`.`);
+-	for (const key of Object.keys(definition)) if (key !== "reserveTokens" && key !== "keepRecentTokens" && key !== "model") throw new Error(`[flue] ${label} compaction received unknown field "${key}".`);
++	// creche patch: `idleAfterMs` and `idleMinTokens`, the compaction at the first submission after an idle time.
++	for (const key of Object.keys(definition)) if (key !== "reserveTokens" && key !== "keepRecentTokens" && key !== "model" && key !== "idleAfterMs" && key !== "idleMinTokens") throw new Error(`[flue] ${label} compaction received unknown field "${key}".`);
+ 	assertTokenCount(definition.reserveTokens, `${label} compaction.reserveTokens`);
+ 	assertTokenCount(definition.keepRecentTokens, `${label} compaction.keepRecentTokens`);
++	assertPositiveInteger(definition.idleAfterMs, `${label} compaction.idleAfterMs`);
++	assertTokenCount(definition.idleMinTokens, `${label} compaction.idleMinTokens`);
+ 	if (definition.model !== void 0 && typeof definition.model !== "string") throw new Error(`[flue] ${label} compaction.model must be a string.`);
+ }
+ function assertDurability(definition, label) {
+diff --git a/dist/types-B1PuLhZt.d.mts b/dist/types-B1PuLhZt.d.mts
+index 8c2299c..d479e2e 100644
+--- a/dist/types-B1PuLhZt.d.mts
++++ b/dist/types-B1PuLhZt.d.mts
+@@ -588,6 +588,17 @@ interface CompactionConfig {
+    * short-context session). Format: `'provider-id/model-id'`.
+    */
+   model?: string;
++  /**
++   * creche patch. Compact before the first model call of a submission when
++   * the last turn ended more than this many milliseconds ago. Unset: no
++   * compaction on an idle time.
++   */
++  idleAfterMs?: number;
++  /**
++   * creche patch. The idle compaction runs only when the context of the
++   * last turn holds at least this many tokens. Defaults to 0.
++   */
++  idleMinTokens?: number;
+ }
+ interface DurabilityConfig {
+   /**

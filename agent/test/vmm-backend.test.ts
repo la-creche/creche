@@ -14,7 +14,7 @@ import { validator } from "../src/wire-read.js";
 import { closeFakeVmms, CONFIG, CREDS, fakeVmm, replying, sayer, SKILL, socketPath, stateLine } from "./fake-vmm.js";
 import { FIXTURE_KEY, FIXTURE_TOKEN } from "./family.js";
 
-const START: LiveConfig = { modelAlias: "chat", instructions: null, systemPrompt: "append", sandboxTools: [], skills: [] };
+const START: LiveConfig = { modelAlias: "chat", contextWindow: null, instructions: null, systemPrompt: "append", sandboxTools: [], skills: [] };
 const SHORT_WAIT_MS = 200;
 
 afterEach(closeFakeVmms);
@@ -45,6 +45,7 @@ describe("pullState", () => {
     expect(vmm.links).toEqual([PULL_LINE]);
     expect(shown(pull)).toEqual({
       modelAlias: "chat",
+      contextWindow: 400000,
       instructions: "FIXTURE-INSTRUCTIONS",
       systemPrompt: "replace",
       sandboxTools: ["read", "bash"],

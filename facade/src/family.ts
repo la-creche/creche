@@ -12,7 +12,7 @@
 import { mkdirSync } from "node:fs";
 
 import { start } from "@flue/runtime/node";
-import { AGENT_NAME, composeAgent, FAMILY_STATE_SOCKET, readGuestStart, readKeySpend, readModelLimits, vmmBackend } from "agent/agent";
+import { AGENT_NAME, capped, composeAgent, FAMILY_STATE_SOCKET, readGuestStart, readKeySpend, readModelLimits, vmmBackend } from "agent/agent";
 import type { AgentStart, ComposedAgent, LimitsRead, StateBackend } from "agent/agent";
 import type { Wire } from "agent/wire-read";
 
@@ -55,8 +55,10 @@ export type FamilyRead =
 async function composeStart(start: AgentStart): Promise<{ readonly composed: ComposedAgent; readonly limits: LimitsRead }> {
   const { state } = start;
   const limits = await readModelLimits(start.planes, state.config.modelAlias, state.creds.litellmKey);
+  // The agent caps the window itself. The start line says the capped one.
+  const window = capped(limits.limits, state.config.contextWindow);
 
-  return { composed: composeAgent(start, limits.limits), limits };
+  return { composed: composeAgent(start, limits.limits), limits: { ...limits, limits: window } };
 }
 
 /**
@@ -121,8 +123,8 @@ function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refr
       return pulled.fault;
     }
 
-    const { modelAlias } = pulled.state.config;
-    const switched = await model.follow(modelAlias, pulled.state.creds.litellmKey);
+    const { modelAlias, contextWindow } = pulled.state.config;
+    const switched = await model.follow(modelAlias, contextWindow, pulled.state.creds.litellmKey);
     if (switched !== null) {
       say(limitsLine(switched, modelAlias));
     }

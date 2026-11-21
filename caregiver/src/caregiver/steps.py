@@ -248,6 +248,7 @@ def write_config(
         model_alias=alias,
         system_prompt=family.system_prompt,
         model_live_at=_live_at(read_model(target), alias),
+        context_window=family.model.context_window,
     )
     shape = _shape_of(family)
     if config_mount_matches(

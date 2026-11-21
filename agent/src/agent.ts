@@ -7,7 +7,7 @@
 //
 //   useModel          litellm/<model_alias> of the session's last pull,
 //                     with the session's thinking level  src/litellm.ts,
-//                                                      src/thinking.ts
+//                     and the compaction of its window   src/thinking.ts
 //   useMcpConnection  ch, <pep>/mcp, family bearer        src/chaperone.ts
 //   useTool           codemode                            src/codemode.ts
 //   useSandbox        local(workspace) with the granted tools, when the
@@ -36,7 +36,7 @@ import {
   useSkill,
   useTool,
 } from "@flue/runtime";
-import type { Agent, AgentProps } from "@flue/runtime";
+import type { Agent, AgentProps, CompactionConfig } from "@flue/runtime";
 import { sqlite } from "@flue/runtime/node";
 
 import { chaperoneConnection } from "./chaperone.js";
@@ -51,7 +51,7 @@ import { piLevelOf, ThinkingLevels } from "./thinking.js";
 import { CONTEXT_TOKENS_KEY, ContextTokens, THINKING_LEVEL_KEY } from "./usage.js";
 
 export { Earlier } from "./earlier.js";
-export { LiveModel, readKeySpend, readModelLimits } from "./litellm.js";
+export { capped, LiveModel, readKeySpend, readModelLimits } from "./litellm.js";
 export type { KeySpend, LimitsFault, LimitsRead, ModelLimits, SpendRead } from "./litellm.js";
 export { DEFAULT_THINKING, isThinkingChoice, THINKING_CHOICES, ThinkingLevels } from "./thinking.js";
 export type { ThinkingChoice } from "./thinking.js";
@@ -112,6 +112,33 @@ export interface ComposedAgent {
   readonly earlier: Earlier;
 }
 
+/**
+ * The share of the window that compaction keeps free. The context is
+ * compacted once it passes 90% of the window (contract 01 §3.2).
+ */
+export const RESERVE_SHARE = 0.1;
+
+/** The idle time after which the next prompt first compacts the context: one hour. */
+export const IDLE_COMPACT_AFTER_MS = 60 * 60 * 1000;
+
+/** The smallest context that an idle compaction compacts. Below it, a summary saves little. */
+export const IDLE_COMPACT_MIN_TOKENS = 50_000;
+
+/**
+ * Flue's compaction for a model of `window` tokens. Each model call sends
+ * the whole context, so the reserve bounds the cost of one call. After an
+ * idle hour the provider's prompt cache is cold, so the first call of the
+ * next prompt costs the whole context at the full price: the idle
+ * compaction pays that once (the Flue patch, `compactAfterIdle`).
+ */
+export function compactionOf(window: number): CompactionConfig {
+  return {
+    reserveTokens: Math.max(1, Math.floor(window * RESERVE_SHARE)),
+    idleAfterMs: IDLE_COMPACT_AFTER_MS,
+    idleMinTokens: IDLE_COMPACT_MIN_TOKENS,
+  };
+}
+
 /** The instance id, or null on a bare render, where `props.id` throws. */
 function instanceOf(props: AgentProps | undefined): string | null {
   try {
@@ -129,7 +156,7 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
   const { workspace, toolEnv } = start;
   const state = new StateHolder(start.state);
   // The provider reads `state` at each request.
-  const model = new LiveModel(start.planes, start.state.config.modelAlias, limits, () => state.creds);
+  const model = new LiveModel(start.planes, start.state.config.modelAlias, limits, start.state.config.contextWindow, () => state.creds);
   const ch = chaperoneConnection({ planes: start.planes, creds: start.state.creds }, () => state.creds);
   const codemode = codemodeTool(ch);
   const thinking = new ThinkingLevels();
@@ -144,7 +171,10 @@ export function composeAgent(start: AgentStart, limits: ModelLimits = FALLBACK_L
     // The `model` follow of the pull put this alias in Flue's provider.
     // Flue reads the level once, when a submission starts.
     const thinkingLevel = thinking.of(id);
-    useModel(specOf(live.modelAlias), { thinkingLevel: piLevelOf(thinkingLevel) });
+    useModel(specOf(live.modelAlias), {
+      thinkingLevel: piLevelOf(thinkingLevel),
+      compaction: compactionOf(model.limitsOf(live.modelAlias).contextWindow),
+    });
     // The metadata of the response keeps both values in `flue.db`, for a
     // later `session/load` (src/usage.ts).
     useResponseStart(() => ({ [THINKING_LEVEL_KEY]: thinkingLevel }));
