@@ -1,0 +1,45 @@
+# The Linux system calls that no safe wrapper offers. For the slot program
+# (docs/design.md, section 10.6): FS_IOC_FSGETXATTR, close_range, the
+# three Landlock calls, the seccomp filter of the tap guard and its probe
+# ioctl on no fd. For the peer check `ci-runner-peer` (section 6.3):
+# SO_PEERPIDFD and PIDFD_GET_INFO. It is the one crate of the workspace
+# with `unsafe`, so each other crate keeps `unsafe_code = "forbid"`. On
+# another OS the crate is empty.
+[package]
+name = "ci-runner-sys"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
+# The lint gate of the root Cargo.toml, with one change: `unsafe_code` is
+# `deny`, not `forbid`. Each unsafe item has
+# `#[expect(unsafe_code, reason = "...")]` and a SAFETY comment. Keep the
+# other lines equal to the root table.
+[lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+as_conversions = "deny"
+unwrap_in_result = "deny"
+panic_in_result_fn = "deny"
+dbg_macro = "deny"
+exit = "deny"
+mem_forget = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"

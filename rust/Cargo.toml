@@ -8,7 +8,11 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+# `vendor/ci-runner/crates/` holds two crates of the repository
+# infra/ci-runner, copied byte for byte (vendor/ci-runner/SOURCE.md). Each
+# file keeps its own path, so `edition.workspace`, `rustix.workspace` and
+# `[lints] workspace = true` of the copies read this file.
+members = ["crates/*", "vendor/ci-runner/crates/*"]
 
 # No `version` key: no number lives in a file (CONTRIBUTING.md). Cargo reads
 # a crate with no version as 0.0.0.
@@ -52,8 +56,17 @@ http-body-util = { version = "0.1.5", default-features = false }
 # which is less than two weeks old. `process`: PR_SET_PDEATHSIG, getppid,
 # setrlimit and kill (CH19 (3) and (4), CH8-5). `fs`: openat with
 # O_NOFOLLOW, fstatat and statvfs (CH23 (3), CH8-7). Decided by CH36 G3,
-# G14 and G27.
-rustix = { version = "=1.1.5", default-features = false, features = ["std", "process", "fs"] }
+# G14 and G27. `net` and `event`: SO_PEERCRED and the poll of a pidfd in
+# the vendored peer check `ci-runner-peer`, and the receive of each passed
+# fd by SCM_RIGHTS in ci-signer. Both add no crate, only parts of
+# linux-raw-sys, which Cargo.lock holds already.
+rustix = { version = "=1.1.5", default-features = false, features = ["std", "process", "fs", "net", "event"] }
+# The raw calls of the vendored `ci-runner-sys` (rust/vendor/ci-runner/):
+# SO_PEERPIDFD, PIDFD_GET_INFO and CGROUP2_SUPER_MAGIC for the peer check
+# of ci-signer. `=0.2.191` is the version that ci-runner pins and that
+# Cargo.lock already holds through rustix and nix, so it adds no crate.
+# No `std` feature: the calls need only the C types.
+libc = { version = "=0.2.191", default-features = false }
 # AF_VSOCK for guest-init (CH13, CH62 rule 1). rustix has no vsock address
 # type and its address trait is unsafe, so unsafe_code = forbid rules it out.
 # `=0.31.3` pins the reviewed release. `socket` is the only feature, so the
