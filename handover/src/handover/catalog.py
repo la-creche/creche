@@ -146,6 +146,14 @@ class CatalogRow:
 #: archive (CH7-5, CH9, item 12 (1)). Its manifest is `rust/component.toml`.
 #: It is the row before `disks`.
 #:
+#: `ci-signer` is the release signer of `docs/design/forgejo-release-path.md`
+#: (section 4.3, question 8): the program `ci-signer` of the crate at
+#: `rust/crates/ci-signer/`, a service on the attach interface of the CI
+#: runner. Its build installs the crate `creche-wire` of `rust/crates/wire`
+#: and the vendored peer check of `rust/vendor/ci-runner`, so the row
+#: bundles both. Each path of the row is also under `rust`, the path of
+#: `vmm`, so a change there moves both rows. It is the row before `disks`.
+#:
 #: `disks` is the set of signed disk files of this repository, at `disks/`:
 #: the guest kernel, one root disk for each flavor of `DISK_FLAVORS`, one
 #: for each service image of `SERVICE_IMAGES` and `digests.json` (CH7-2,
@@ -174,6 +182,14 @@ CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("host", Repo.CRECHE_RELEASE, ".", Kind.UNITS, Releases.YES),
     CatalogRow("memory", Repo.CRECHE, "memory", Kind.VENV, Releases.YES, (), Lock.OWN),
     CatalogRow("vmm", Repo.CRECHE, "rust", Kind.BINARY, Releases.YES),
+    CatalogRow(
+        "ci-signer",
+        Repo.CRECHE,
+        "rust/crates/ci-signer",
+        Kind.BINARY,
+        Releases.YES,
+        ("rust/crates/wire", "rust/vendor/ci-runner"),
+    ),
     CatalogRow(
         "disks",
         Repo.CRECHE,
@@ -230,12 +246,20 @@ BUNDLE_SUFFIX = ".sigstore.json"
 #: binary build. The build writes each program at `<this>/bin/<name>`.
 BINARY_INSTALL_ENV = "CARGO_INSTALL_ROOT"
 
-#: The workflow file that signs the archives of a repository. The identity
-#: of each signature names this file. A repository with no entry has no
-#: signer, so a binary component of that repository gets no tag.
+#: The release workflow of each repository whose components release. The
+#: identity of each GitHub signature and each release statement of the
+#: Forgejo path names this file. A repository with no entry has no signer,
+#: so a binary component of that repository gets no tag, and root refuses
+#: each release of it on the Forgejo path. `mcp` and `creche-release` joined
+#: for FR9 and FR29 of `docs/design/forgejo-release-path.md`: their
+#: components are `venv` and `units`, so no GitHub signature names them.
+#: `bin/tests/test_signing_pairs.py` holds the map equal to the signing
+#: pairs of the signer, `rust/crates/ci-signer/signing-pairs.tsv`.
 RELEASE_WORKFLOW: dict[Repo, str] = {
     Repo.CRECHE: "release.yml",
     Repo.CHAPERONE: "release.yml",
+    Repo.MCP: "rework-component-tags.yml",
+    Repo.CRECHE_RELEASE: "tags.yml",
 }
 
 #: The one branch that a release comes from. A signature names the ref of
@@ -255,9 +279,11 @@ RETIRING: frozenset[str] = frozenset()
 #: and both read. Discovery tolerates the absent file and the allocator tags
 #: none of them: a tag is a version somebody can release, and there is no
 #: tree to release yet. A name leaves this set in the commit that adds its
-#: directory. Empty now: `vmm` arrived with `rust/component.toml` and
-#: `disks` with `disks/component.toml` (CH7-5, CH76 rule 1).
-ARRIVING: frozenset[str] = frozenset()
+#: directory. `vmm` arrived with `rust/component.toml` and `disks` with
+#: `disks/component.toml` (CH7-5, CH76 rule 1). `ci-signer` arrives this
+#: way: the row first, then `rust/crates/ci-signer/component.toml`
+#: (`handover/AGENTS.md`, "Binary builds", rule 11a).
+ARRIVING: frozenset[str] = frozenset({"ci-signer"})
 
 #: Repositories that a host may not have cloned yet. Discovery tolerates the
 #: absent manifest of each component of such a repository, as it does for a
@@ -298,8 +324,8 @@ RELEASES_ALONE = "handover"
 LAST_IN_ORDER = RELEASES_ALONE
 
 #: spec §9: at most eleven entries (CH35 (1)). The catalog minus
-#: `registry-data`, which never releases, is ten rows, one under the cap,
-#: since `playpen` left. `tests/test_handover_catalog_cap.py` fails when a
+#: `registry-data`, which never releases, is eleven rows since `ci-signer`
+#: joined, at the cap. `tests/test_handover_catalog_cap.py` fails when a
 #: releasing row passes it.
 MAX_REQUEST_COMPONENTS = 11
 

@@ -169,10 +169,15 @@ def test_the_kinds_are_the_old_ones_binary_units_and_disk_image() -> None:
     assert {str(one) for one in Kind} == expected
 
 
-def test_the_binary_rows_are_chaperone_and_vmm() -> None:
-    """The Rust chaperone of the chaperone repository, and the `vmm` of this
-    repository's Rust workspace (CH7-5)."""
-    assert [row.name for row in CATALOG if row.kind is Kind.BINARY] == ["chaperone", "vmm"]
+def test_the_binary_rows_are_chaperone_vmm_and_ci_signer() -> None:
+    """The Rust chaperone of the chaperone repository, the `vmm` of this
+    repository's Rust workspace (CH7-5), and the release signer
+    `ci-signer` of `docs/design/forgejo-release-path.md` (question 8)."""
+    assert [row.name for row in CATALOG if row.kind is Kind.BINARY] == [
+        "chaperone",
+        "vmm",
+        "ci-signer",
+    ]
 
 
 def test_an_uninstalled_component_never_reads_as_binary() -> None:

@@ -304,10 +304,14 @@ def signer_policy(repo: Repo, owner: str, name: str, commit: str) -> SignerPolic
 
     The workflow file comes from `catalog.RELEASE_WORKFLOW`. A repository
     that the map does not hold refuses with the `catalog` code: no workflow
-    of it signs. The type checks the owner, the name and the commit.
+    of it signs. So does a repository with no row that ships signed assets:
+    `mcp` and `creche-release` joined the map for the release statement of
+    the Forgejo path (FR9), and no workflow of them signs an archive. The
+    type checks the owner, the name and the commit.
     """
     workflow = RELEASE_WORKFLOW.get(repo)
-    if workflow is None:
+    ships = any(row.repo is repo and assets_expected(row.kind) for row in CATALOG_BY_NAME.values())
+    if workflow is None or not ships:
         detail = "the catalog names no release workflow for this repository"
         raise Refusal(RefusalCode.CATALOG, str(repo), detail)
 

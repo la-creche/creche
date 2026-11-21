@@ -2,10 +2,9 @@
 
 Section 4.3 item 6 of `docs/design/forgejo-release-path.md` holds the list
 of `rust/crates/ci-signer/signing-pairs.tsv` equal to
-`catalog.RELEASE_WORKFLOW`. Until FR9 adds mcp and creche-release to
-`RELEASE_WORKFLOW`, the test holds each catalog row in the list with the same
-file. The test lives here, not in `handover/tests/`, so the change moves no
-`handover` tag.
+`catalog.RELEASE_WORKFLOW`. FR9 and FR29 added mcp and creche-release to
+`RELEASE_WORKFLOW`, so the two lists are equal. The test lives here, not in
+`handover/tests/`, so a change of the test moves no `handover` tag.
 """
 
 from pathlib import Path
@@ -25,10 +24,8 @@ def read_pairs() -> dict[str, str]:
     return pairs
 
 
-def test_each_catalog_row_is_a_signing_pair() -> None:
-    pairs = read_pairs()
-    for repo, workflow in RELEASE_WORKFLOW.items():
-        assert pairs.get(repo.value) == workflow, repo
+def test_the_signing_pairs_are_the_release_workflows() -> None:
+    assert read_pairs() == {repo.value: workflow for repo, workflow in RELEASE_WORKFLOW.items()}
 
 
 def test_registry_has_no_pair() -> None:

@@ -12,6 +12,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-memory.service` | user | no script yet. The memory component ships it |
 | `creche-door-trigger@.service` | user, templated | the cutover script, only when the host has none |
 | `creche-vmm.service` | user | no script yet. The operator installs it by hand once (design section 6.2 step 3). No agent installs it |
+| `creche-ci-signer.{socket,service}` | system, root. The service runs as the user `ci-signer` | the operator, by hand, once (`docs/design/forgejo-release-path.md` section 7, before the window, step 3). A release refreshes the service file only |
 The host's own units are not here: the watchdog, the registry sync, the
 corpus sync and follow. They are files of creche-release (`units/user/`),
 and a `host` release links each one into the operator's unit directory.

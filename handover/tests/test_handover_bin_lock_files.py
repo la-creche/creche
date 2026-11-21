@@ -58,10 +58,15 @@ def _moved(paths: tuple[str, ...]) -> set[str]:
     return {plan.component for plan in _plan(paths)}
 
 
-# -- the catalog as it is: `vmm` is the binary component of this repo -------
+# -- the catalog as it is: `vmm` and `ci-signer` are the binary rows ---------
 
-#: The one binary row of this repository, at `rust` (CH7-5).
+#: The binary row of this repository at `rust` (CH7-5).
 VMM = "vmm"
+
+#: The binary row of the release signer, at `rust/crates/ci-signer`. It is
+#: in `catalog.ARRIVING` until its manifest lands, so the allocator tags it
+#: not yet.
+SIGNER = "ci-signer"
 
 
 def test_the_workspace_files_are_the_three_under_rust() -> None:
@@ -72,11 +77,11 @@ def test_the_workspace_files_are_the_three_under_rust() -> None:
     )
 
 
-def test_the_workspace_files_reach_the_vmm_alone() -> None:
-    """`vmm` is the one binary row of this repository, so a change to the
-    Cargo workspace files reaches it and no other row, and the run tags
-    it."""
-    assert touched(WORKSPACE_FILES, Repo.CRECHE) == (VMM,)
+def test_the_workspace_files_reach_the_binary_rows_alone() -> None:
+    """`vmm` and `ci-signer` are the binary rows of this repository, so a
+    change to the Cargo workspace files reaches them and no other row. The
+    run tags `vmm` alone: `ci-signer` is arriving."""
+    assert touched(WORKSPACE_FILES, Repo.CRECHE) == (VMM, SIGNER)
     assert _moved(WORKSPACE_FILES) == {VMM}
 
 
@@ -123,7 +128,7 @@ def test_the_workspace_files_move_no_venv_component(monkeypatch: pytest.MonkeyPa
     venvs = {row.name for row in CATALOG if row.kind is Kind.VENV} - {BINARY_NAME}
 
     assert venvs
-    assert touched(WORKSPACE_FILES, Repo.CRECHE) == (BINARY_NAME, VMM)
+    assert touched(WORKSPACE_FILES, Repo.CRECHE) == (BINARY_NAME, VMM, SIGNER)
     assert not venvs & set(touched(WORKSPACE_FILES, Repo.CRECHE))
 
 

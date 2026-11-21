@@ -1,0 +1,37 @@
+# creche-ci-signer.socket: the socket of the release signer ci-signer on
+# the attach interface of the CI runner (docs/design/forgejo-release-path.md
+# section 4.3 item 5, and the runner design at commit 131ce43, section
+# 6.4). SYSTEM unit, root.
+#
+# The daemon of the runner connects here once for each matched [[attach]]
+# row of a job (section 4.4 of the note). The group `ci-runner` and the
+# mode 0660 keep each slot unit out: only the daemon runs as `ci-runner`,
+# and no slot unit has that group (the runner design, section 6.2).
+#
+# Installed by: the operator, by hand, once (section 7 of the note, before
+# the window, step 3). No release installs or changes it. The release of
+# the component refreshes `creche-ci-signer.service` only.
+[Unit]
+Description=creche ci-signer, the socket of the attach interface
+
+[Socket]
+ListenStream=/run/ci-signer/attach.sock
+# The user `ci-signer` owns the socket, and the group `ci-runner` may
+# connect (section 4.3 item 5). Each must exist, or the socket fails to
+# start (fail closed).
+SocketUser=ci-signer
+SocketGroup=ci-runner
+SocketMode=0660
+# The stop removes the socket file and its folder (the runner design,
+# section 6.4 item 1, measurement M4(f)).
+RemoveOnStop=yes
+RuntimeDirectory=ci-signer
+RuntimeDirectoryMode=0755
+# One service for all connections: it gets the listening socket as its
+# stdin and keys each session by its control connection (section 6.4,
+# items 2 and 8).
+Accept=no
+Service=creche-ci-signer.service
+
+[Install]
+WantedBy=sockets.target

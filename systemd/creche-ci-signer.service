@@ -1,0 +1,98 @@
+# creche-ci-signer.service: the release signer ci-signer
+# (docs/design/forgejo-release-path.md section 4.3, question 8). SYSTEM
+# unit, root. The service runs as the system user `ci-signer`.
+#
+# creche-ci-signer.socket starts it at the first connection of the daemon
+# of the runner, and passes the listening socket as stdin (the runner
+# design at commit 131ce43, section 6.4 item 2).
+#
+# The release tool installs the release archive at
+# /opt/components/ci-signer. It then copies this file over the installed
+# unit of the same name and restarts the unit. It installs no unit that is
+# not installed: the operator installs both units once (section 7 of the
+# note, before the window, step 3).
+#
+# Fail closed: without the user `ci-signer`, systemd refuses the start
+# (status 217/USER). Without one of the three files of `LoadCredential=`,
+# it refuses the start (status 243/CREDENTIALS). Without the host config,
+# or with a malformed config, token or journal, ci-signer exits 78 and
+# serves nothing. `ci-signer verify`, the verify hook of the component,
+# checks each of these before the restart of a release.
+[Unit]
+Description=creche ci-signer, the release signer on the attach interface
+Requires=creche-ci-signer.socket
+After=creche-ci-signer.socket
+
+[Service]
+Type=simple
+User=ci-signer
+Group=ci-signer
+ExecStart=/opt/components/ci-signer/bin/ci-signer serve --config /etc/creche/ci-signer/signer.conf
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal
+# A crash restarts the service. A restart reads the journal of the issued
+# runs again, so the rule of one statement for each run and each commit
+# holds across it (rule 3 of rust/crates/ci-signer/AGENTS.md).
+Restart=on-failure
+RestartSec=5s
+# 78 is a fault of the start: a config, a credential or a journal. A
+# restart cannot fix it, so systemd does not restart (owner item 86, as
+# creche-vmm.service).
+RestartPreventExitStatus=78
+TimeoutStopSec=15s
+
+# The key and the two tokens (section 4.3 items 3 and 4). systemd reads
+# each root-owned file and copies it into the credentials folder of this
+# service, which only the service reads. The user `ci-runner` cannot read
+# any of them. ci-signer verify checks the same three paths.
+LoadCredential=release-signing.key:/etc/creche/ci-signer/release-signing.key
+LoadCredential=release-reader.token:/etc/creche/ci-signer/release-reader.token
+LoadCredential=ci-signer.token:/etc/creche/ci-signer/ci-signer.token
+
+# /var/lib/ci-signer holds the journal issued.tsv (FR21). Only the user
+# ci-signer reads or writes it.
+StateDirectory=ci-signer
+StateDirectoryMode=0700
+# /run/ci-signer-work holds the empty signing config, the empty home of
+# cosign and each bundle file until its read.
+RuntimeDirectory=ci-signer-work
+RuntimeDirectoryMode=0700
+UMask=0077
+
+# The sandbox that the README of ci-runner-peer allows (measurement M2 of
+# the runner design, section 6.3). ProtectControlGroups=no: the peer check
+# reads the slice of the job VMs from the root of the cgroup hierarchy,
+# and `strict` or `private` make each check refuse. PrivateUsers= and
+# PrivatePIDs= stay off: a user namespace maps the uid of the peer of
+# check_daemon. Not measured: cosign v3.1.4 under ProcSubset=pid. The
+# rehearsal of section 7 of the note records it.
+ProtectControlGroups=no
+ProtectProc=invisible
+ProcSubset=pid
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+# AF_UNIX for the attach socket and each passed fd, AF_INET and AF_INET6
+# for the Forgejo API.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+# SystemCallFilter= and MemoryDenyWriteExecute= stay off. Neither one is
+# tested against cosign.
+
+[Install]
+# No line: the socket unit starts the service.

@@ -58,6 +58,7 @@ turn. The `attendance` service takes that call from three doors: ACP, dispatch a
 | `family/` | in `caregiver` | none, a library | The `family.toml` and `server.toml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
 | `memory/` | `memory` | `creche-memory.service`, user | The memory service: the store of the vault, its sync, the search and every agent write. | [memory/AGENTS.md](memory/AGENTS.md) |
 | `rust/crates/vmm/` | `vmm` | `creche-vmm.service`, user | Every Cloud Hypervisor VM of the playpen. | [rust/crates/vmm/AGENTS.md](rust/crates/vmm/AGENTS.md) |
+| `rust/crates/ci-signer/` | `ci-signer` (arriving) | `creche-ci-signer.{socket,service}`, system, as the user `ci-signer` | The release signer of the Forgejo release path: a service on the attach interface of the CI runner. | [rust/crates/ci-signer/AGENTS.md](rust/crates/ci-signer/AGENTS.md) |
 
 The chaperone is the Rust program of the `chaperone` repository. Its unit,
 `creche-chaperone.service`, ships from that repository.
