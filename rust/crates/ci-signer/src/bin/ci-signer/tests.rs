@@ -782,6 +782,31 @@ fn a_bad_request_leaves_the_run_to_the_next_fd() {
     });
 }
 
+/// A guest that holds its fd open with no request yet does not hold the
+/// run: a valid request on a later fd of the session gets the statement
+/// first. The silent guest then gets its refusal, and no statement.
+#[test]
+fn a_silent_fd_does_not_hold_the_run() {
+    runtime().block_on(async {
+        let (host, forgejo, signer, session) = session_48().await;
+
+        let (silent, theirs) = UnixStream::pair().unwrap();
+        let waiting = tokio::spawn(guest::serve(
+            theirs,
+            Arc::clone(&session),
+            Arc::clone(&signer),
+        ));
+        tokio::task::yield_now().await;
+
+        let answer = exchange(&signer, &session, REQUEST.as_bytes()).await;
+        assert_one_statement(&host, &forgejo, &answer);
+
+        let late = talk(silent, REQUEST.as_bytes(), waiting).await;
+        assert_eq!(late, already_issued());
+        assert_eq!(host.journal().lines().count(), 1);
+    });
+}
+
 /// Two valid requests on two fds of one session, one after the other: the
 /// first gets the statement, the second `already_issued`.
 #[test]

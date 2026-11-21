@@ -220,7 +220,9 @@ library. No other crate of this workspace calls the package.
   commit and the message of the request gives `fault` after one POST. A
   bad request gets its refusal. A guest that closes with no request, or a
   bad request, leaves the run to the next fd of the session, and that fd
-  gets the statement and the journal line. Two valid requests of one
+  gets the statement and the journal line. A guest that holds its fd open
+  with no request does not hold the run: a valid request on a later fd
+  gets the statement. Two valid requests of one
   session, in turn or at the same time on two threads, give one statement
   and one `already_issued`. A guest that sends nothing is refused at
   `REQUEST_WAIT`, in paused time. A guest that streams bytes with no LF
