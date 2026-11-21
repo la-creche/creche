@@ -5,6 +5,7 @@ use std::io::IoSlice;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, BorrowedFd};
 use std::sync::Arc;
+use std::time::Duration;
 
 use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags};
 use serde_json::Value;
@@ -35,15 +36,25 @@ fn close(session: &str) -> String {
     format!("{{\"v\":2,\"op\":\"close\",\"session\":\"{session}\"}}\n")
 }
 
+/// The most fds that `send_fds` passes with one line.
+const SEND_MAX: usize = 8;
+
 /// Writes `line` on the control connection, with `fd` by SCM_RIGHTS.
 async fn send(control: &UnixStream, line: &str, fd: Option<BorrowedFd<'_>>) {
     let fds: Vec<BorrowedFd<'_>> = fd.into_iter().collect();
+    send_fds(control, line, &fds).await;
+}
+
+/// Writes `line` on the control connection, with each of `fds` by
+/// SCM_RIGHTS.
+async fn send_fds(control: &UnixStream, line: &str, fds: &[BorrowedFd<'_>]) {
+    assert!(fds.len() <= SEND_MAX);
     control
         .async_io(Interest::WRITABLE, || {
-            let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
+            let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(SEND_MAX))];
             let mut ancillary = SendAncillaryBuffer::new(&mut space);
             if !fds.is_empty() {
-                assert!(ancillary.push(SendAncillaryMessage::ScmRights(&fds)));
+                assert!(ancillary.push(SendAncillaryMessage::ScmRights(fds)));
             }
             let sent = rustix::net::sendmsg(
                 control,
@@ -183,8 +194,8 @@ fn a_refused_open_answers_false_and_ends_the_session() {
     });
 }
 
-/// The close line ends the session, a conn line with no fd ends it, and an
-/// open line past 4 KiB is refused.
+/// The close line ends the session, a close line with an fd and a conn line
+/// with no fd end it, and an open line past 4 KiB is refused.
 #[test]
 fn close_no_fd_and_a_long_line_end_the_session() {
     runtime().block_on(async {
@@ -199,6 +210,17 @@ fn close_no_fd_and_a_long_line_end_the_session() {
         send(&daemon, &close(SESSION), None).await;
         assert!(matches!(task.await.unwrap(), End::Closed));
         assert_eq!(rest(daemon).await, crate::line::ACCEPT);
+
+        // A close line whose fd is still queued: an fd with no conn line.
+        let (daemon, service) = UnixStream::pair().unwrap();
+        let session_signer = Arc::clone(&signer);
+        let task = tokio::spawn(async move { session::serve(service, &session_signer).await });
+        send(&daemon, &open_48(), None).await;
+        let (_guest, passed) = UnixStream::pair().unwrap();
+        send(&daemon, &close(SESSION), Some(passed.as_fd())).await;
+        drop(passed);
+        let end = task.await.unwrap();
+        assert!(matches!(end, End::NoFd), "{end:?}");
 
         let (daemon, service) = UnixStream::pair().unwrap();
         let session_signer = Arc::clone(&signer);
@@ -221,8 +243,37 @@ fn close_no_fd_and_a_long_line_end_the_session() {
     });
 }
 
+/// A conn line with more fds than the control buffer of the signer holds:
+/// the kernel cuts the control data (`MSG_CTRUNC`), and the read of the
+/// line fails. The signer drops each fd that came, and checks none.
+#[test]
+fn a_cut_of_the_control_data_ends_the_session() {
+    runtime().block_on(async {
+        let host = Host::new(STAND_IN_COSIGN);
+        let (signer, forgejo) =
+            signer_48(&host, recorded("p1-run-push-main.json", running_release)).await;
+        let (mut daemon, service) = UnixStream::pair().unwrap();
+        let task = tokio::spawn(async move { session::serve(service, &signer).await });
+        send(&daemon, &open_48(), None).await;
+        let mut answer = [0_u8; 34];
+        daemon.read_exact(&mut answer).await.unwrap();
+        assert_eq!(&answer, crate::line::ACCEPT);
+
+        let pairs: Vec<(UnixStream, UnixStream)> =
+            (0..SEND_MAX).map(|_| UnixStream::pair().unwrap()).collect();
+        let fds: Vec<BorrowedFd<'_>> = pairs.iter().map(|(_, passed)| passed.as_fd()).collect();
+        send_fds(&daemon, &conn(SESSION), &fds).await;
+
+        let end = task.await.unwrap();
+        assert!(matches!(end, End::Read), "{end:?}");
+        assert!(rest(daemon).await.is_empty());
+        assert!(forgejo.posts().is_empty());
+        assert_eq!(host.journal(), "");
+    });
+}
+
 /// The bound of the open line: a daemon that sends nothing ends the
-/// session at `ANSWER_BOUND`, with no read of Forgejo.
+/// session at `ANSWER_BOUND`, not later, with no read of Forgejo.
 #[test]
 fn a_daemon_that_sends_nothing_is_dropped_at_the_bound() {
     paused().block_on(async {
@@ -234,6 +285,7 @@ fn a_daemon_that_sends_nothing_is_dropped_at_the_bound() {
         let end = session::serve(service, &signer).await;
         assert!(matches!(end, End::OpenTimeout), "{end:?}");
         assert!(started.elapsed() >= session::ANSWER_BOUND);
+        assert!(started.elapsed() < session::ANSWER_BOUND + Duration::from_secs(1));
         drop(daemon);
     });
 }

@@ -217,8 +217,10 @@ library. No other crate of this workspace calls the package.
   a stand-in daemon on a socketpair: open, accept, a conn line with an fd
   whose peer is the test process, which the peer check refuses before a
   byte is read. A conn or close line of another session or port, a
-  refused open, a close, a conn with no fd, a line past 4 KiB and a
-  daemon that sends nothing each end the session.
+  refused open, a close, a close with a queued fd, a conn with no fd, a
+  cut of the control data, a line past 4 KiB and a daemon that sends
+  nothing each end the session. The last one ends at `ANSWER_BOUND`, not
+  later.
 - `the_bundle_of_the_real_cosign_verifies` signs with the real cosign
   when the machine has one, and `cosign verify-blob --key
   --insecure-ignore-tlog` passes the bundle. With no cosign it prints
