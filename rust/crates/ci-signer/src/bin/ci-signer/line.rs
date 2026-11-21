@@ -441,6 +441,12 @@ pub(crate) mod tests {
         let mut long = Lines::default();
         long.push(&vec![b'x'; LINE_MAX]);
         assert_eq!(long.next_line(), Err(LineFault::TooLong));
+        // LINE_MAX bytes and the LF: one byte past the cap.
+        let mut past = Lines::default();
+        let mut line = vec![b'x'; LINE_MAX];
+        line.push(b'\n');
+        past.push(&line);
+        assert_eq!(past.next_line(), Err(LineFault::TooLong));
         let mut fits = Lines::default();
         let mut line = vec![b'x'; LINE_MAX - 1];
         line.push(b'\n');

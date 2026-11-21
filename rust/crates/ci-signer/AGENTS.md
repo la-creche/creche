@@ -211,8 +211,10 @@ library. No other crate of this workspace calls the package.
   gives no statement, no POST and no journal line. A failed sign keeps
   the run issued. A `POST /tags` reply that is not 201 with the name, the
   commit and the message of the request gives `fault` after one POST. A
-  bad request gets its refusal. A guest that sends
-  nothing is refused at `REQUEST_WAIT`, in paused time.
+  bad request gets its refusal. A guest that sends nothing is refused at
+  `REQUEST_WAIT`, in paused time. A guest that streams bytes with no LF
+  is cut off at the cap of the request line, and a run reply past
+  `REPLY_MAX_BYTES` gives `too_large`.
 - The session tests (`src/bin/ci-signer/tests/linux.rs`, Linux only) put
   a stand-in daemon on a socketpair: open, accept, a conn line with an fd
   whose peer is the test process, which the peer check refuses before a

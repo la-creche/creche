@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use creche_ci_signer::eligibility::{Eligible, RunKey, decide_merge, decide_run};
-use creche_ci_signer::forgejo::Reply;
+use creche_ci_signer::forgejo::{REPLY_MAX_BYTES, Reply};
 use creche_ci_signer::pairs::SigningPairs;
 use creche_ci_signer::statement::Statement;
 use http_body_util::{BodyExt, Full};
@@ -540,6 +540,16 @@ fn each_failed_check_gives_no_statement() {
             None,
             "fault",
         ),
+        // A body past the cap: the client stops its read at the cap.
+        (
+            48,
+            Reply {
+                status: 200,
+                body: vec![b' '; REPLY_MAX_BYTES + 1],
+            },
+            None,
+            "too_large",
+        ),
     ];
     runtime().block_on(async {
         for (run, reply, pull, code) in cases {
@@ -684,6 +694,41 @@ fn a_guest_that_sends_nothing_is_refused_at_the_bound() {
         assert!(started.elapsed() >= guest::REQUEST_WAIT);
         assert!(started.elapsed() < guest::REQUEST_WAIT + Duration::from_secs(1));
         assert_eq!(answer, b"{\"v\":1,\"refused\":\"grammar\"}\n");
+        assert_eq!(host.journal(), "");
+    });
+}
+
+/// The cap of the request line: a guest that streams bytes with no LF is
+/// cut off after `REQUEST_MAX_BYTES`, long before `REQUEST_WAIT`. So a
+/// guest cannot fill the memory of the signer.
+#[test]
+fn a_guest_that_streams_with_no_lf_is_cut_off_at_the_cap() {
+    runtime().block_on(async {
+        let host = Host::new(STAND_IN_COSIGN);
+        let config = host.config("http://127.0.0.1:9");
+        let signer = Arc::new(Signer::start(config, &host.paths).unwrap());
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let (_answer, mut writer) = ours.into_split();
+
+        // 64 MiB in chunks of 64 KiB, with no LF. The writer then keeps
+        // the connection open, so only the cap can end the read.
+        let flood = tokio::spawn(async move {
+            let chunk = vec![b'x'; 64 * 1024];
+            for _ in 0..1024 {
+                if writer.write_all(&chunk).await.is_err() {
+                    break;
+                }
+            }
+            std::future::pending::<()>().await;
+            drop(writer);
+        });
+        let served = tokio::time::timeout(
+            Duration::from_secs(1),
+            guest::serve(theirs, Some(eligible_48()), Arc::clone(&signer)),
+        )
+        .await;
+        flood.abort();
+        assert!(served.is_ok(), "the read passed the cap");
         assert_eq!(host.journal(), "");
     });
 }
