@@ -15,7 +15,8 @@
 //! at `session::serve`, after the daemon check, and each passed fd is
 //! refused by the peer check: the test process runs in no slot unit. The
 //! guest exchange that follows an accepted fd is tested on its own, from
-//! an `Eligible` run of the recordings.
+//! an `Eligible` run of the recordings in a `guest::SessionRun`, as the session
+//! holds it.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -364,16 +365,26 @@ fn eligible_48() -> Eligible {
 /// The request line of two tags: one with an asset, one with none.
 const REQUEST: &str = "{\"v\":1,\"tags\":[{\"tag\":\"vmm-v0.1.24\",\"assets\":[{\"name\":\"vmm-x86_64-unknown-linux-musl.tar.gz\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"}]},{\"tag\":\"handover-v0.1.96\",\"assets\":[]}]}\n";
 
-/// Sends `request` on a fresh guest connection of `held`, and gives the
-/// answer line.
-async fn exchange(signer: &Arc<Signer>, held: Option<Eligible>, request: &[u8]) -> Value {
+/// The run of one session, as `session.rs` holds it for its guest tasks.
+fn held(eligible: Eligible) -> guest::SessionRun {
+    Arc::new(Mutex::new(Some(eligible)))
+}
+
+/// Sends `request` on a fresh guest connection of the session of `held`,
+/// and gives the answer line.
+async fn exchange(signer: &Arc<Signer>, held: &guest::SessionRun, request: &[u8]) -> Value {
     let (ours, theirs) = UnixStream::pair().unwrap();
-    let task = tokio::spawn(guest::serve(theirs, held, Arc::clone(signer)));
-    let mut ours = ours;
+    let task = tokio::spawn(guest::serve(theirs, Arc::clone(held), Arc::clone(signer)));
+    talk(ours, request, task).await
+}
+
+/// The guest side of one exchange: `request` on `ours`, then the answer
+/// line, after the end of the task `served` of the signer.
+async fn talk(mut ours: UnixStream, request: &[u8], served: tokio::task::JoinHandle<()>) -> Value {
     ours.write_all(request).await.unwrap();
     let mut answer = Vec::new();
     ours.read_to_end(&mut answer).await.unwrap();
-    task.await.unwrap();
+    served.await.unwrap();
     assert_eq!(answer.last(), Some(&b'\n'), "{answer:?}");
     serde_json::from_slice(&answer).unwrap()
 }
@@ -394,7 +405,8 @@ fn the_eligible_run_gets_its_statement_its_journal_line_and_its_tags() {
 
         let eligible = signer.decide(&key(48)).await.unwrap();
         assert_eq!(eligible.commit().as_str(), MERGE_COMMIT);
-        let answer = exchange(&signer, Some(eligible), REQUEST.as_bytes()).await;
+        let session = held(eligible);
+        let answer = exchange(&signer, &session, REQUEST.as_bytes()).await;
         assert_eq!(answer["v"], 1, "{answer}");
 
         // The statement takes its facts from Forgejo, the tags from the
@@ -448,7 +460,7 @@ fn the_eligible_run_gets_its_statement_its_journal_line_and_its_tags() {
         assert!(messages[0].starts_with("release-statement-1\n"));
 
         // A second request of the same session has no eligible run left.
-        let again = exchange(&signer, None, REQUEST.as_bytes()).await;
+        let again = exchange(&signer, &session, REQUEST.as_bytes()).await;
         assert_eq!(
             again,
             serde_json::json!({"v": 1, "refused": "already_issued"})
@@ -604,7 +616,7 @@ fn a_failed_sign_keeps_the_run_issued_and_makes_no_tag() {
         let origin = forgejo.start().await;
         let signer = Arc::new(Signer::start(host.config(&origin), &host.paths).unwrap());
         let eligible = signer.decide(&key(48)).await.unwrap();
-        let answer = exchange(&signer, Some(eligible), REQUEST.as_bytes()).await;
+        let answer = exchange(&signer, &held(eligible), REQUEST.as_bytes()).await;
         assert_eq!(answer, serde_json::json!({"v": 1, "refused": "fault"}));
         assert!(forgejo.posts().is_empty());
         assert_eq!(host.journal().lines().count(), 1);
@@ -649,7 +661,7 @@ fn a_tag_reply_that_is_not_the_request_gives_fault() {
             let signer = Arc::new(Signer::start(host.config(&origin), &host.paths).unwrap());
             let eligible = signer.decide(&key(48)).await.unwrap();
 
-            let answer = exchange(&signer, Some(eligible), REQUEST.as_bytes()).await;
+            let answer = exchange(&signer, &held(eligible), REQUEST.as_bytes()).await;
             assert_eq!(
                 answer,
                 serde_json::json!({"v": 1, "refused": "fault"}),
@@ -683,7 +695,7 @@ fn a_bad_request_gets_its_refusal_and_no_statement() {
             let forgejo = Arc::new(Forgejo::default());
             let origin = forgejo.start().await;
             let signer = Arc::new(Signer::start(host.config(&origin), &host.paths).unwrap());
-            let answer = exchange(&signer, Some(eligible_48()), request).await;
+            let answer = exchange(&signer, &held(eligible_48()), request).await;
             assert_eq!(
                 answer,
                 serde_json::json!({"v": 1, "refused": word}),
@@ -691,6 +703,145 @@ fn a_bad_request_gets_its_refusal_and_no_statement() {
             );
             assert_eq!(host.journal(), "");
             assert!(forgejo.seen.lock().unwrap().is_empty());
+        }
+    });
+}
+
+/// The answer of an exchange that found no run left in its session.
+fn already_issued() -> Value {
+    serde_json::json!({"v": 1, "refused": "already_issued"})
+}
+
+/// A stand-in Forgejo with the running run 48, its signer, and the held
+/// run of one accepted session of run 48.
+async fn session_48() -> (Host, Arc<Forgejo>, Arc<Signer>, guest::SessionRun) {
+    let host = Host::new(STAND_IN_COSIGN);
+    let forgejo = Arc::new(Forgejo::with_run(
+        48,
+        recorded("p1-run-push-main.json", running_release),
+    ));
+    let origin = forgejo.start().await;
+    let signer = Arc::new(Signer::start(host.config(&origin), &host.paths).unwrap());
+    let session = held(signer.decide(&key(48)).await.unwrap());
+    (host, forgejo, signer, session)
+}
+
+/// The one statement of run 48: a signed answer, one journal line and the
+/// two tag creations.
+fn assert_one_statement(host: &Host, forgejo: &Forgejo, answer: &Value) {
+    assert!(answer["signed"]["statement"].is_string(), "{answer}");
+    let journal = host.journal();
+    assert_eq!(journal.lines().count(), 1, "{journal}");
+    assert!(
+        journal.starts_with(&format!("48\t{MERGE_COMMIT}\t")),
+        "{journal}"
+    );
+    assert_eq!(forgejo.posts().len(), 2);
+}
+
+/// A guest that closes with no request, as a guest helper that exits,
+/// leaves the run of its session to the next fd. That fd gets the
+/// statement and the journal line (FR22: `already_issued` only after the
+/// run took its statement).
+#[test]
+fn a_guest_with_no_request_leaves_the_run_to_the_next_fd() {
+    runtime().block_on(async {
+        let (host, forgejo, signer, session) = session_48().await;
+
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let served = tokio::spawn(guest::serve(
+            theirs,
+            Arc::clone(&session),
+            Arc::clone(&signer),
+        ));
+        drop(ours);
+        served.await.unwrap();
+        assert_eq!(host.journal(), "");
+
+        let answer = exchange(&signer, &session, REQUEST.as_bytes()).await;
+        assert_one_statement(&host, &forgejo, &answer);
+    });
+}
+
+/// A request that breaks the grammar or a limit leaves the run of its
+/// session to the next fd. That fd gets the statement and the journal
+/// line.
+#[test]
+fn a_bad_request_leaves_the_run_to_the_next_fd() {
+    runtime().block_on(async {
+        let (host, forgejo, signer, session) = session_48().await;
+
+        let grammar = exchange(&signer, &session, b"{\"v\":2,\"tags\":[]}\n").await;
+        assert_eq!(grammar, serde_json::json!({"v": 1, "refused": "grammar"}));
+        let limits = exchange(&signer, &session, b"{\"v\":1,\"tags\":[]}\n").await;
+        assert_eq!(limits, serde_json::json!({"v": 1, "refused": "limits"}));
+        assert_eq!(host.journal(), "");
+
+        let answer = exchange(&signer, &session, REQUEST.as_bytes()).await;
+        assert_one_statement(&host, &forgejo, &answer);
+    });
+}
+
+/// Two valid requests on two fds of one session, one after the other: the
+/// first gets the statement, the second `already_issued`.
+#[test]
+fn a_second_valid_request_gets_already_issued() {
+    runtime().block_on(async {
+        let (host, forgejo, signer, session) = session_48().await;
+        let first = exchange(&signer, &session, REQUEST.as_bytes()).await;
+        let second = exchange(&signer, &session, REQUEST.as_bytes()).await;
+        assert_one_statement(&host, &forgejo, &first);
+        assert_eq!(second, already_issued());
+    });
+}
+
+/// The rounds of the test of two requests at the same time.
+const RACE_ROUNDS: usize = 8;
+
+/// Two valid requests on two fds of one session, sent at the same time on
+/// two worker threads: exactly one gets the statement, the other
+/// `already_issued`.
+#[test]
+fn two_requests_at_once_get_exactly_one_statement() {
+    let threads = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    threads.block_on(async {
+        for round in 0..RACE_ROUNDS {
+            let (host, forgejo, signer, session) = session_48().await;
+            let barrier = Arc::new(tokio::sync::Barrier::new(2));
+            let mut guests = Vec::new();
+            for _ in 0..2 {
+                let (ours, theirs) = UnixStream::pair().unwrap();
+                let served = tokio::spawn(guest::serve(
+                    theirs,
+                    Arc::clone(&session),
+                    Arc::clone(&signer),
+                ));
+                let barrier = Arc::clone(&barrier);
+                guests.push(tokio::spawn(async move {
+                    barrier.wait().await;
+                    talk(ours, REQUEST.as_bytes(), served).await
+                }));
+            }
+            let mut answers = Vec::new();
+            for guest in guests {
+                answers.push(guest.await.unwrap());
+            }
+
+            let signed: Vec<&Value> = answers
+                .iter()
+                .filter(|answer| answer.get("signed").is_some())
+                .collect();
+            assert_eq!(signed.len(), 1, "round {round}: {answers:?}");
+            assert_one_statement(&host, &forgejo, signed[0]);
+            assert_eq!(
+                answers.iter().filter(|a| **a == already_issued()).count(),
+                1,
+                "round {round}: {answers:?}"
+            );
         }
     });
 }
@@ -707,7 +858,7 @@ fn a_guest_that_sends_nothing_is_refused_at_the_bound() {
         let started = tokio::time::Instant::now();
         let task = tokio::spawn(guest::serve(
             theirs,
-            Some(eligible_48()),
+            held(eligible_48()),
             Arc::clone(&signer),
         ));
         let mut answer = Vec::new();
@@ -746,7 +897,7 @@ fn a_guest_that_streams_with_no_lf_is_cut_off_at_the_cap() {
         });
         let served = tokio::time::timeout(
             Duration::from_secs(1),
-            guest::serve(theirs, Some(eligible_48()), Arc::clone(&signer)),
+            guest::serve(theirs, held(eligible_48()), Arc::clone(&signer)),
         )
         .await;
         flood.abort();

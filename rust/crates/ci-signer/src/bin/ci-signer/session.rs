@@ -13,7 +13,9 @@
 //!    slot of the `open` line before it reads a byte, and requires the
 //!    cgroup of the first accepted fd for each later fd (the README of
 //!    `ci-runner-peer`, items 3 and 4). Only then does `guest::serve` read
-//!    the fd, in a task of the session.
+//!    the fd, in a task of the session. Each task shares the one
+//!    `guest::SessionRun` of the session: the `Eligible` run of the `accept`.
+//!    The first exchange whose request parses takes it (`guest.rs`).
 //! 4. The session ends at its `close` line, at the end of the control
 //!    connection, at the exit of the first accepted peer (its pidfd polls
 //!    readable), at `SESSION_BOUND`, and at each fault: a line that breaks
@@ -32,7 +34,7 @@ use std::io::{self, IoSliceMut};
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, OwnedFd};
 use std::pin::pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::Duration;
 
@@ -293,7 +295,7 @@ pub async fn serve(control: UnixStream, signer: &Arc<Signer>) -> End {
 
 /// The state of an accepted session.
 struct Held {
-    eligible: Option<Eligible>,
+    eligible: guest::SessionRun,
     first: Option<CgroupId>,
     watch: Option<OwnedFd>,
     conns: usize,
@@ -308,7 +310,7 @@ async fn accepted(
     guests: &mut JoinSet<()>,
 ) -> End {
     let mut held = Held {
-        eligible: Some(eligible),
+        eligible: Arc::new(Mutex::new(Some(eligible))),
         first: None,
         watch: None,
         conns: 0,
@@ -389,7 +391,7 @@ fn conn(
     let guest = UnixStream::from_std(stream).map_err(|_| End::Peer)?;
     guests.spawn(guest::serve(
         guest,
-        held.eligible.take(),
+        Arc::clone(&held.eligible),
         Arc::clone(signer),
     ));
     Ok(())
