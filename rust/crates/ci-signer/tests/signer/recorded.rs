@@ -3,7 +3,7 @@
 
 use creche_ci_signer::forgejo::{
     CommitPull, Event, FullRef, REPLY_MAX_BYTES, Reply, ReplyFault, RunStatus, TriggerEvent,
-    parse_commit_pull, parse_run,
+    parse_commit_pull, parse_created_tag, parse_run,
 };
 use creche_ci_signer::limits::FORGEJO_TAG_MESSAGE_LIMIT;
 use creche_ci_signer::message::{MessageError, MessageSource, UnverifiedTagMessage};
@@ -265,5 +265,44 @@ fn recorded_version() {
     assert_eq!(
         json("version.json")["version"].as_str().unwrap(),
         "17.0.1+gitea-1.22.0"
+    );
+}
+
+/// The create reply of an annotated tag gives the name, the commit and the
+/// message with no final LF. Each other status and a missing field refuse.
+#[test]
+fn tag_create_replies() {
+    let created = parse_created_tag(&reply("p2-tag-create.json")).unwrap();
+    assert_eq!(created.name, "rec-ann");
+    assert_eq!(created.commit.as_str(), MERGE_COMMIT);
+    assert_eq!(created.message, "annotated probe\nline two");
+
+    // The recorded refusal of a message of 131072 bytes (section 4.5).
+    assert_eq!(
+        parse_created_tag(&reply("p2-tag-size-b131072.json")),
+        Err(ReplyFault::Status(500))
+    );
+    // A 200 is no create: a read of the tag answers 200.
+    assert_eq!(
+        parse_created_tag(&reply("p2-tags-get.json")),
+        Err(ReplyFault::Status(200))
+    );
+
+    for (field, fault) in [
+        ("name", ReplyFault::Shape("name")),
+        ("message", ReplyFault::Shape("message")),
+        ("commit", ReplyFault::Shape("commit.sha")),
+    ] {
+        let changed = mutated("p2-tag-create.json", |tag| {
+            tag.as_object_mut().unwrap().remove(field);
+        });
+        assert_eq!(parse_created_tag(&changed), Err(fault), "{field}");
+    }
+    let short = mutated("p2-tag-create.json", |tag| {
+        tag["commit"]["sha"] = Value::from("5791a8c");
+    });
+    assert_eq!(
+        parse_created_tag(&short),
+        Err(ReplyFault::Shape("commit.sha"))
     );
 }
