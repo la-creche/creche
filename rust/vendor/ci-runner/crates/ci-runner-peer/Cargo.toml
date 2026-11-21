@@ -1,0 +1,20 @@
+# The published peer check for a service on the attach interface of
+# ci-runner (docs/design.md, section 6.3). A service calls it on each fd
+# that the daemon passes, and on each control connection. It names no
+# consumer and depends on no crate of the runner but `ci-runner-sys`.
+[package]
+name = "ci-runner-peer"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The system calls of the check. Linux only. `ci-runner-sys` holds the two
+# calls with no safe wrapper (`SO_PEERPIDFD` and `PIDFD_GET_INFO`).
+# `rustix` gives the poll of the pidfd (`event`) and `SO_PEERCRED` (`net`).
+[target.'cfg(target_os = "linux")'.dependencies]
+ci-runner-sys = { path = "../ci-runner-sys" }
+rustix.workspace = true
+
+[lints]
+workspace = true

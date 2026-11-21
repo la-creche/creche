@@ -1,12 +1,26 @@
 # ci-signer
 
-The crate `creche-ci-signer`: the core of the release signer `ci-signer`
-(`docs/design/forgejo-release-path.md`, section 4). It is a library with no
-I/O. The root `AGENTS.md` applies here too.
+The package `creche-ci-signer`: the release signer `ci-signer`
+(`docs/design/forgejo-release-path.md`, section 4). The root `AGENTS.md`
+applies here too.
 
-The crate holds the decisions and the data formats. A later PR adds the
-program: the socket listener, the Forgejo client, the cosign call, the tag
-creation, the unit and the catalog row.
+1. The library is the core: the decisions and the data formats, with no
+   I/O.
+2. The program `ci-signer` (`src/bin/ci-signer/`) is a service on the
+   attach interface of the CI runner (the runner design at commit
+   `131ce43` of `infra/ci-runner`, section 6). It holds the I/O: the
+   socket, the peer check, the Forgejo client, the journal, the cosign
+   call and the tag creation.
+
+```text
+  ci-runner daemon ──open, conn + fd, close──► /run/ci-signer/attach.sock
+                                                 │ session.rs
+                 check_daemon, check(fd, slot) ──┤
+                                                 ▼
+  Forgejo ◄── GET runs, GET pull, POST tags ── signer.rs ──► cosign sign-blob
+                                                 │
+  job VM ◄──── one request line, one answer ── guest.rs
+```
 
 ## Modules
 
@@ -25,14 +39,140 @@ creation, the unit and the catalog row.
 | `issue.rs` | `IssuedRuns`, `IssuedLine`, `Signable` and `issue`: one statement for each run, and the one place that makes the bytes to sign. | 4.3 item 7, 4.5 step 6, 4.6 |
 | `schema.rs` | A test only: the committed JSON Schema `schema/release-statement.json`. | 5 |
 
+## The program
+
+Each file is a module of the binary target `ci-signer`.
+
+| File | What it holds | Note section |
+|---|---|---|
+| `main.rs` | The argv: `serve --config <path>` and `verify --json --config <path>`. The paths of the unit. The exit status 0, 1, 2 and 78. | 4.3 |
+| `config.rs` | The host config `/etc/creche/ci-signer/signer.conf` and its parse: `owner`, `forgejo` and `cosign`, each once. A fault names the line or the key, never a value. | 4.3 item 6 |
+| `credentials.rs` | The key path and the two tokens from `CREDENTIALS_DIRECTORY`. | 4.3 items 3 and 4 |
+| `forge.rs` | `ForgejoOrigin`, `Token` and the three calls: the run, the PR of a commit, the tag creation. The one module that holds a socket to Forgejo. | 4.4, 4.5 step 7 |
+| `ledger.rs` | `Ledger`: the one `IssuedRuns` and its journal `/var/lib/ci-signer/issued.tsv`. `issue` syncs the line before it gives the bytes to sign. | 4.3 item 7, FR21, FR22 |
+| `cosign.rs` | `Cosign`: the empty signing config, the empty home and one `sign-blob` child for each statement. | 4.5 step 5, M7 |
+| `signer.rs` | `Signer`: `decide` (the reads and the checks of section 4.4) and `sign` (the journal, cosign and each tag). | 4.4, 4.5 |
+| `line.rs` | Pure: the control lines of version 2 of the exchange and the two answers. | runner 6.2 |
+| `session.rs` | Linux only. One control connection: `check_daemon`, the `open` line, the answer, and `check` of each passed fd before a byte is read. | 4.3 item 5, runner 6.3 |
+| `guest.rs` | One guest connection: one request line, one answer line. | 4.5 steps 3, 4 and 6 |
+| `serve.rs` | Linux only. The listening socket of stdin and the accept loop. | runner 6.4 |
+| `verify.rs` | The verify hook: the config, cosign, the user, the group, the key and the two tokens of the host. | 7 |
+| `tests.rs`, `tests/linux.rs` | The stand-in Forgejo, the stand-in cosign and the stand-in daemon. | 8, PR 2 |
+
+### The bounds and the caps
+
+Each wait has a bound. Each value is a first value, a constant of its
+module.
+
+| Wait or cap | Value | Constant |
+|---|---|---|
+| From the accept of a control connection to the end of the answer | 9 s, inside the 10 s of the daemon | `session::ANSWER_BOUND` |
+| Each read of section 4.4 | 4 s | `signer::READ_WAIT` |
+| The TCP connect to Forgejo | 3 s | `forge::CONNECT_WAIT` |
+| A session after `accept` | 4 h, the wall clock of 180 minutes and a margin | `session::SESSION_BOUND` |
+| The poll of the pidfd of the first accepted peer | each 1 s | `session::PEER_POLL` |
+| The fds of one session | 8, the cap of the daemon for one port | `session::CONN_MAX` |
+| The sessions at once | 16 | `serve::SESSIONS_MAX` |
+| The request line, from the conn line | 30 s | `guest::REQUEST_WAIT` |
+| One whole guest exchange | 10 min | `guest::EXCHANGE_WAIT` |
+| The write of the answer | 10 s | `guest::ANSWER_WAIT` |
+| One cosign sign | 30 s, then the child is killed | `cosign::SIGN_WAIT` |
+| Each tag creation | 10 s | `signer::TAG_WAIT` |
+| A control line | 4 KiB with its LF | `line::LINE_MAX` |
+| A request line | `exchange::REQUEST_MAX_BYTES` and its LF | the core |
+| A reply body of Forgejo | `forgejo::REPLY_MAX_BYTES` | the core |
+| The journal | 16 MiB, else the start refuses | `ledger::JOURNAL_MAX_BYTES` |
+
+### The rules of the program
+
+1. The session checks the peer of each control connection with
+   `ci_runner_peer::check_daemon` before it reads a byte, and each passed
+   fd with `ci_runner_peer::check` and the slot of the `open` line before
+   it reads a byte (the README of `ci-runner-peer`). A refused fd ends the
+   session. A later fd must have the cgroup id of the first one.
+2. A session is keyed by its control connection. The `session` of the
+   line only matches the later lines. A `conn` or `close` line of another
+   session or port ends the session (section 8, PR 2).
+3. The signer takes only the repository and the run id from the facts of
+   the `open` line (section 4.4). It trusts no other fact.
+4. The signer answers `accept` only for a run that passes the five checks
+   of section 4.4 and that the ledger admits. The session then holds the
+   `Eligible` run in one `guest::SessionRun`, which each guest task of the
+   session shares. A guest exchange takes the run only after
+   `Request::parse` passes, and then signs. So a guest that sends no
+   request, or a request that breaks a rule, leaves the run to a later fd
+   of the session. An exchange that finds no run left answers
+   `already_issued`. Of two exchanges at the same time, exactly one takes
+   the run.
+5. The guest exchange reads the whole request line before it answers,
+   also for a refusal. A close with unread bytes resets the read of the
+   guest on Linux, and the answer is lost.
+6. `sign` runs in this order: the journal line, synced (FR21), then
+   cosign, then one `POST /tags` for each tag, then the answer. A failure
+   after the journal line leaves the run and the commit issued: no second
+   statement, also after a restart.
+7. The end of a session aborts its guest tasks and drops each fd that it
+   holds: the passed fds, the queue of fds, and the pidfd.
+8. No log line holds a byte of a guest, of a reply or of a secret. A
+   token prints as `Token(..)`.
+9. The program holds no test seam. The tests reach the layers below the
+   two kernel checks of `ci-runner-peer`, which pass only on a runner host
+   for a real slot unit and for the user `ci-runner`. `session::serve` is
+   the session after `check_daemon`, and `guest::serve` is the exchange
+   after `check`.
+
+### The units and the host
+
+`systemd/creche-ci-signer.socket` and `systemd/creche-ci-signer.service`
+are the units. `bin/tests/test_ci_signer_units.py` holds each decided line
+and each path that the program names. The operator makes the user, the
+key, the tokens and the config, and installs the two units once (section
+7 of the note, before the window, step 3).
+
+### The release row
+
+The catalog row is `CatalogRow("ci-signer", Repo.CRECHE,
+"rust/crates/ci-signer", Kind.BINARY, Releases.YES, ("rust/crates/wire",
+"rust/vendor/ci-runner"))`. It is in `catalog.ARRIVING`: the row lands
+first, and the manifest in the next PR (`handover/AGENTS.md`, "Binary
+builds", rule 11a). That PR adds this text as `component.toml` of this
+folder, takes the name out of `ARRIVING`, and teaches
+`test_each_component_bundles_what_its_build_installs` the Cargo path
+dependencies of a binary build:
+
+```toml
+manifest_version = "0.27"
+name = "ci-signer"
+repo = "creche"
+path = "rust/crates/ci-signer"
+kind = "binary"
+unit = "creche-ci-signer.service"
+runs_as = "root"
+build = [
+  ["cargo", "install", "--locked", "--no-track", "--path", "rust/crates/ci-signer", "--bin", "ci-signer"],
+]
+install.to = "/opt/components/ci-signer"
+install.prev = "/opt/components/ci-signer.prev"
+verify.command = ["/opt/components/ci-signer/bin/ci-signer", "verify", "--json", "--config", "/etc/creche/ci-signer/signer.conf"]
+verify.user = "root"
+verify.timeout_s = 60
+restore.mode = "automatic"
+restore.keep = 3
+release = true
+```
+
+Each path of the row is also under `rust`, the path of `vmm`. So each
+change of this package moves the `vmm` tag too.
+
 ## Crate calls
 
-| Crate | Calls |
+| Target | Calls |
 |---|---|
-| `creche-ci-signer` | `creche-wire` (only `creche_wire::strict`), `serde`, `serde_json`, `sha2` |
+| the library | `creche-wire` (only `creche_wire::strict`), `serde`, `serde_json`, `sha2` |
+| the program | the library, `ci-runner-peer` (Linux only, vendored at `rust/vendor/ci-runner/`), `rustix` (Linux only), `tokio`, `hyper`, `hyper-util`, `http-body-util`, `serde`, `serde_json` |
 
-The crate calls no other crate of this workspace. No crate of this workspace
-calls it yet.
+The library calls no I/O crate. The program is the one caller of the
+library. No other crate of this workspace calls the package.
 
 ## Rules
 
@@ -45,10 +185,10 @@ calls it yet.
 2. The statement takes the repository, the workflow, the commit and the run
    from `Eligible`. The request gives only the tags and the digests (FR7).
 3. `IssuedRuns` has no empty constructor and is not `Clone`, and `Eligible`
-   is not `Clone`. The program of the next PR must hold exactly one
-   `IssuedRuns`. It must read its journal with `IssuedRuns::from_journal`
-   once at each start. Only then does the rule of one statement for each
-   run and for each commit hold across a restart (section 4.7 step 1).
+   is not `Clone`. The program holds exactly one `IssuedRuns`, in its one
+   `Ledger`. It reads its journal with `IssuedRuns::from_journal` once at
+   each start. Only then does the rule of one statement for each run and
+   for each commit hold across a restart (section 4.7 step 1).
 4. `UnverifiedTagMessage::decode` does not parse the statement. Root gives
    the bytes to cosign first, then to its parser (section 5). Root's
    verifier is the Python reader of PR 4. The Rust reader
@@ -67,8 +207,39 @@ calls it yet.
   `tests/fixtures/forgejo-17.0.1/`. Each reply takes its status from the
   `index.tsv` of that directory. Its `README.md` lists each file.
 - `fixtures_are_sanitized` refuses a fixture that names a deployment.
-- `bin/tests/test_signing_pairs.py` holds each row of
-  `catalog.RELEASE_WORKFLOW` in `signing-pairs.tsv`.
+- `bin/tests/test_signing_pairs.py` holds `signing-pairs.tsv` equal to
+  `catalog.RELEASE_WORKFLOW`.
+- The program tests (`src/bin/ci-signer/tests.rs`) run the eligible run
+  48 of the recordings to its statement, its journal line and its two tag
+  creations, with a stand-in Forgejo of the recorded replies and a
+  stand-in cosign. The stand-in cosign requires the command line of
+  section 4.5 step 5, the empty signing config and an empty environment
+  with an empty `COSIGN_PASSWORD`. Each failed check of section 4.4 on the recordings
+  gives no statement, no POST and no journal line. A failed sign keeps
+  the run issued. A `POST /tags` reply that is not 201 with the name, the
+  commit and the message of the request gives `fault` after one POST. A
+  bad request gets its refusal. A guest that closes with no request, or a
+  bad request, leaves the run to the next fd of the session, and that fd
+  gets the statement and the journal line. A guest that holds its fd open
+  with no request does not hold the run: a valid request on a later fd
+  gets the statement. Two valid requests of one
+  session, in turn or at the same time on two threads, give one statement
+  and one `already_issued`. A guest that sends nothing is refused at
+  `REQUEST_WAIT`, in paused time. A guest that streams bytes with no LF
+  is cut off at the cap of the request line, and a run reply past
+  `REPLY_MAX_BYTES` gives `too_large`.
+- The session tests (`src/bin/ci-signer/tests/linux.rs`, Linux only) put
+  a stand-in daemon on a socketpair: open, accept, a conn line with an fd
+  whose peer is the test process, which the peer check refuses before a
+  byte is read. A conn or close line of another session or port, a
+  refused open, a close, a close with a queued fd, a conn with no fd, a
+  cut of the control data, a line past 4 KiB and a daemon that sends
+  nothing each end the session. The last one ends at `ANSWER_BOUND`, not
+  later.
+- `the_bundle_of_the_real_cosign_verifies` signs with the real cosign
+  when the machine has one, and `cosign verify-blob --key
+  --insecure-ignore-tlog` passes the bundle. With no cosign it prints
+  `not run`.
 
 ## Vectors
 
@@ -177,9 +348,9 @@ The operator decided these rules on 2026-11-16. Each was a
 9. `issue.rs`: one statement for each run and for each commit.
 10. `issue.rs`: the journal is the file `/var/lib/ci-signer/issued.tsv`,
     owned by the signer user. The signer writes and syncs the line before
-    cosign signs. This crate has no I/O and holds no path. The program of
-    the next PR holds the path as its constant. `IssuedLine` gives the
-    line its text form.
+    cosign signs. The library has no I/O and holds no path. The program
+    holds the path as `ledger::JOURNAL_PATH`. `IssuedLine` gives the line
+    its text form.
 
 ## Known gaps
 
@@ -189,3 +360,25 @@ Each item is a `CONTRACT-QUESTION:` in the code.
    measured").
 2. `names.rs`, `CommitSha`: a repository with the sha256 object format
    fails closed.
+3. `src/bin/ci-signer/forge.rs`, `ForgejoOrigin`: the program speaks plain
+   HTTP to an IP address on the LAN, as the runner does (the runner
+   design, section 14, question 1). Section 4.1 of the note draws HTTPS,
+   and HTTPS on the Forgejo host (question 4) comes after the install of
+   the signer. A change to HTTPS adds a TLS crate and a CA file, and
+   changes `ForgejoOrigin` and `exchange` only.
+
+## Not measured in the program
+
+Each case fails closed. The rehearsal of section 7 records it.
+
+1. An accepted peer check. It needs a real slot unit of a runner host.
+   The tests show only refusals: the test process runs in no slot unit,
+   and a CI container shows `NotCgroupRoot`.
+2. cosign v3.1.4 under `ProcSubset=pid` and the rest of the sandbox of
+   the unit. The test of the real cosign runs it with no sandbox.
+3. `systemd-analyze verify` of the two units. The job `systemd-proof` of
+   the gate runs it.
+4. The reply of `POST /tags` for a tag that exists, and for the tag
+   protection of `*-v*` with the bot `ci-signer` on its allowlist. The
+   signer requires 201 with the name, the commit and the message of its
+   request, and refuses each other reply.

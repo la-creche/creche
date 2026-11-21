@@ -140,6 +140,7 @@ ARGUMENT_SETS: tuple[tuple[str, dict[str, str]], ...] = (
     ("registry-data", {}),
     ("registry-data", {"release": "yes"}),
     ("vmm", {}),
+    ("ci-signer", {}),
     ("disks", {}),
 )
 

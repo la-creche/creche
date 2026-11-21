@@ -367,3 +367,56 @@ pub fn parse_commit_pull(reply: &Reply) -> Result<CommitPull, ReplyFault> {
         merge_commit,
     }))
 }
+
+/// The status of `POST /repos/{o}/{r}/tags` that made the tag (measured on
+/// a scratch repository on 2026-11-16, `p2-tag-create.json`).
+const STATUS_CREATED: u16 = 201;
+
+/// The facts of the reply of `POST /repos/{o}/{r}/tags` that the signer
+/// checks: the tag that Forgejo made, at which commit, with which message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreatedTag {
+    /// `name`.
+    pub name: String,
+    /// `commit.sha`: the commit that the tag names.
+    pub commit: CommitSha,
+    /// `message`: the message of the annotated tag. The create reply gives
+    /// it with no final LF (measured, `p2-tag-create.json`).
+    pub message: String,
+}
+
+#[derive(Deserialize)]
+struct RawTagCommit {
+    sha: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawCreatedTag {
+    name: Option<String>,
+    message: Option<String>,
+    commit: Option<RawTagCommit>,
+}
+
+/// The tag of a tag create reply. Only the status 201 passes. A tag that
+/// exists already, a refusal of the tag protection (422, measured in
+/// section 6) and a message past the limit of Forgejo (500, measured) are
+/// each `Status`.
+///
+/// # Errors
+///
+/// Each `ReplyFault`.
+pub fn parse_created_tag(reply: &Reply) -> Result<CreatedTag, ReplyFault> {
+    if reply.status != STATUS_CREATED {
+        return Err(ReplyFault::Status(reply.status));
+    }
+    let raw: RawCreatedTag = body_of(&reply.body, "tag")?;
+
+    let name = raw.name.ok_or(ReplyFault::Shape("name"))?;
+    let message = raw.message.ok_or(ReplyFault::Shape("message"))?;
+    let commit = field(raw.commit.and_then(|commit| commit.sha), "commit.sha")?;
+    Ok(CreatedTag {
+        name,
+        commit,
+        message,
+    })
+}

@@ -440,7 +440,9 @@ needs and the file does not hold (`executor/envfill.py`).
      second PR adds the manifest and takes the name out of `ARRIVING`.
      `vmm` came this way: the row first, then `rust/component.toml`
      (CH7-5, CH76 rule 1). `disks` came the same way, then
-     `disks/component.toml`.
+     `disks/component.toml`. `ci-signer` comes the same way: its row is in
+     `ARRIVING`, and `rust/crates/ci-signer/component.toml` follows
+     (`rust/crates/ci-signer/AGENTS.md`, "The release row").
 11b. A row leaves in two PRs, the opposite of rule 11a. The first PR puts
      its name in `catalog.RETIRING`. Discovery then reads a checkout with
      or without the manifest of that name, and the allocator tags no such
@@ -886,7 +888,10 @@ The operator decided these rules on 2026-11-16. Each was a
    `check_statement`).
 3. A release of mcp or of creche-release refuses with the code `catalog`
    until its row of `catalog.RELEASE_WORKFLOW` exists (FR9,
-   `forge_provenance.py`, `expected_origin`).
+   `forge_provenance.py`, `expected_origin`). Both rows exist since PR 2
+   of the note (2026-11-21): `rework-component-tags.yml` and `tags.yml`.
+   `artifacts.signer_policy` still refuses both repositories, because no
+   row of them ships signed assets.
 4. The repository name on the forge equals the catalog name. Only the
    owner comes from the site file (FR11, `forge_api.py`, `ForgeRepo`).
 5. No freshness check of `signed_at`. An old release stays installable

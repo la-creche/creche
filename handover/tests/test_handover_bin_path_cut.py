@@ -33,6 +33,10 @@ WORKSPACE_FILES = BINARY_BUILD_FILES[CONTROL]
 #: under `rust/` reaches it (CH7-5, item 12 (1)).
 VMM = "vmm"
 
+#: The binary row of the release signer. Its path and its two bundles are
+#: under `rust/`, so each workspace file reaches it too.
+SIGNER = "ci-signer"
+
 #: Changed paths of every shape a range can hold: under a component, under
 #: a bundle, under the Cargo workspace, a root file and a document.
 SAMPLES = (
@@ -64,7 +68,7 @@ def _reached(path: str) -> tuple[str, ...]:
 
 @pytest.mark.parametrize("path", SAMPLES)
 def test_todays_catalog_cuts_to_the_first_segment(path: str) -> None:
-    """No row of today's catalog names a nested directory, so the cut is
+    """No sample is under a nested path of today's catalog, so the cut is
     the one the script made before. The workspace files are the exception:
     `vmm` is a binary row, so each workspace file is a path of its own."""
     expected = path if path in WORKSPACE_FILES else path.split("/", 1)[0]
@@ -119,7 +123,7 @@ def test_a_workspace_file_is_not_cut(monkeypatch: pytest.MonkeyPatch, path: str)
     use_binary_catalog(monkeypatch)
 
     assert cut_path(path, CONTROL) == path
-    assert _reached(path) == (BINARY_NAME, VMM)
+    assert _reached(path) == (BINARY_NAME, VMM, SIGNER)
 
 
 def test_the_longest_holding_path_wins(monkeypatch: pytest.MonkeyPatch) -> None:

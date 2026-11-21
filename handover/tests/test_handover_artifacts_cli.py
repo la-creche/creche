@@ -165,7 +165,12 @@ def test_the_limits_and_the_names_of_the_catalog() -> None:
     assert BINARY_TARGET == "x86_64-unknown-linux-musl"
     assert BINARY_INSTALL_ENV == "CARGO_INSTALL_ROOT"
     assert MAIN_BRANCH == "main"
-    assert RELEASE_WORKFLOW == {Repo.CRECHE: "release.yml", Repo.CHAPERONE: "release.yml"}
+    assert RELEASE_WORKFLOW == {
+        Repo.CRECHE: "release.yml",
+        Repo.CHAPERONE: "release.yml",
+        Repo.MCP: "rework-component-tags.yml",
+        Repo.CRECHE_RELEASE: "tags.yml",
+    }
     assert ARCHIVE_MAX_BYTES == 256 * 1024 * 1024
     assert BUNDLE_MAX_BYTES == 1024 * 1024
     assert ARCHIVE_MAX_MEMBERS == 64
@@ -253,8 +258,11 @@ def test_the_policy_names_the_workflow_of_the_map_and_the_main_ref() -> None:
     )
 
 
-@pytest.mark.parametrize("repo", [Repo.MCP, Repo.REGISTRY])
+@pytest.mark.parametrize("repo", [Repo.MCP, Repo.CRECHE_RELEASE, Repo.REGISTRY])
 def test_a_repository_with_no_release_workflow_has_no_policy(repo: Repo) -> None:
+    """registry has no workflow. mcp and creche-release have one for the
+    statement of the Forgejo path (FR9), and no row of them ships signed
+    assets, so no GitHub signature of them exists."""
     refusal = _refusal(lambda: signer_policy(repo, OWNER, HOSTED, COMMIT))
 
     assert refusal.code is RefusalCode.CATALOG

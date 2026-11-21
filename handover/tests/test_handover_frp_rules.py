@@ -178,15 +178,26 @@ def test_p1_refuses_each_tag_outside_the_rules(
     assert refused.detail == expected.value
 
 
-@pytest.mark.parametrize("repo", [Repo.MCP, Repo.CRECHE_RELEASE, Repo.REGISTRY])
-def test_a_repository_with_no_release_workflow_refuses(repo: Repo) -> None:
-    """mcp and creche-release wait for FR9. registry has no release."""
-    refused = _refused(expected_origin, ForgeRepo(OWNER, repo), ObjectId(MERGE_COMMIT))
+def test_a_repository_with_no_release_workflow_refuses() -> None:
+    """registry has no release, so it has no release workflow."""
+    refused = _refused(expected_origin, ForgeRepo(OWNER, Repo.REGISTRY), ObjectId(MERGE_COMMIT))
 
     assert (refused.code, refused.detail) == (
         RefusalCode.CATALOG,
         ProvenanceReason.NO_RELEASE_WORKFLOW.value,
     )
+
+
+@pytest.mark.parametrize(
+    ("repo", "workflow"),
+    [(Repo.MCP, "rework-component-tags.yml"), (Repo.CRECHE_RELEASE, "tags.yml")],
+)
+def test_mcp_and_creche_release_have_their_release_workflow(repo: Repo, workflow: str) -> None:
+    """FR9 and FR29: their rows of `RELEASE_WORKFLOW` exist, so a statement
+    of them names that workflow."""
+    origin = expected_origin(ForgeRepo(OWNER, repo), ObjectId(MERGE_COMMIT))
+
+    assert origin.workflow == workflow
 
 
 # -- the repository on the forge ---------------------------------------------------
