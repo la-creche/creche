@@ -599,6 +599,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      # bin/vm-smoke-setup.sh runs rustup. The guest image of the VM runner
+      # has no rustup (.forgejo/actions/rustup).
+      - uses: ./.forgejo/actions/rustup
+
       - run: bin/vm-smoke-setup.sh
         env:
           CRECHE_KVM_DIR: ${{ runner.temp }}/kvm
