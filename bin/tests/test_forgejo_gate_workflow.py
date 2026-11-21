@@ -56,6 +56,13 @@ result with the Forgejo job. A difference that is not in this list fails.
     rootfs tar and the disks of each target. /tmp of the VM guest is on its
     small root disk, where the first disk stopped with "No space left on
     device".
+12. **Read token.** The test step of `proc` gets the secret
+    `CRECHE_READ_TOKEN`. The origin of the checkout is the forge, so the
+    suite reads the pinned chaperone from the same forge and owner, with
+    that token (`integration/proc/proc_chaperone_pin.py`). The token is the
+    read token of `release-reader` of `docs/design/forgejo-release-path.md`
+    section 9, answer 5. No other step of the gate and no local action
+    names a secret.
 
 The protection of `main` on Forgejo requires one status:
 `gate / gate (pull_request)`. The workflow name, the name of its last job
@@ -191,6 +198,13 @@ WORK_JOB = "playpen-image"
 WORK_RUN = "playpen/bin/playpen-ci"
 WORK_ENV = {"TMPDIR": "${{ runner.temp }}"}
 
+#: The job and the step that get the read token, and the env that the
+#: Forgejo gate adds to that step (difference 12).
+TOKEN_JOB = "proc"
+TOKEN_RUN = "uv run pytest integration/proc -m slow -n 4"
+TOKEN_ENV = {"CRECHE_READ_TOKEN": "${{ secrets.CRECHE_READ_TOKEN }}"}
+SECRETS = "secrets."
+
 #: The time limit of each job that has none in the GitHub file
 #: (difference 10).
 TIME_LIMITS = {
@@ -277,6 +291,10 @@ def _port_job(name: str, job: dict[str, Any]) -> dict[str, Any]:
         (step,) = [one for one in port["steps"] if "run" in one]
         assert step == {"run": WORK_RUN}, f"{name}: the GitHub step changed"
         step["env"] = dict(WORK_ENV)
+    if name == TOKEN_JOB:
+        (step,) = [one for one in port["steps"] if one.get("run") == TOKEN_RUN]
+        assert not set(TOKEN_ENV) & set(step["env"]), f"{name}: the GitHub step has the token"
+        step["env"] = {**step["env"], **TOKEN_ENV}
     if name in TIME_LIMITS:
         assert "timeout-minutes" not in port, f"{name}: the GitHub job has a limit"
         port["timeout-minutes"] = TIME_LIMITS[name]
@@ -384,6 +402,20 @@ def test_each_action_is_a_full_url_pinned_by_commit_or_local(path: Path) -> None
             continue
 
         assert FULL_URL.fullmatch(uses), uses
+
+
+def test_only_the_proc_test_step_gets_a_secret() -> None:
+    """Difference 12 names one secret for one step. The GitHub gate names none,
+    and so a second secret of the Forgejo gate has no GitHub job to match."""
+    (step,) = [one for one in FORGEJO_JOBS[TOKEN_JOB]["steps"] if one.get("run") == TOKEN_RUN]
+    texts = [
+        json.dumps(FORGEJO_JOBS),
+        *(one.read_text(encoding="utf-8") for one in _forgejo_files()[1:]),
+    ]
+
+    assert {key: step["env"][key] for key in TOKEN_ENV} == TOKEN_ENV
+    assert [one.count(SECRETS) for one in texts] == [len(TOKEN_ENV), *[0] * len(LOCAL_ACTIONS)]
+    assert SECRETS not in json.dumps(GITHUB_JOBS)
 
 
 def test_the_gate_uses_no_artifact_action() -> None:

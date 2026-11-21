@@ -15,7 +15,11 @@ from proc_board import verify_words
 from proc_caregiver import serve_words
 from proc_chaperone_pin import (
     PIN_FILE,
+    TOKEN_VAR,
     BuildError,
+    Source,
+    build_pinned,
+    chaperone_source,
     pinned_binary,
     pinned_commit,
     repository_url,
@@ -236,6 +240,181 @@ def test_the_chaperone_repository_is_beside_the_origin(origin: str) -> None:
 def test_an_origin_off_github_is_an_error() -> None:
     with pytest.raises(BuildError, match="CRECHE_PROC_CHAPERONE_RS"):
         repository_url("https://git.example.invalid/example-owner/creche.git")
+
+
+#: A read token of the form of a Forgejo access token. It reads nothing.
+READ_TOKEN = "0123456789abcdef0123456789abcdef01234567"
+READ_HEADER = f"Authorization: token {READ_TOKEN}"
+
+#: The origin that the checkout of a Forgejo runner writes, and the
+#: chaperone repository beside it.
+FORGE_ORIGIN = "http://forge.example.invalid:3500/example-owner/creche"
+FORGE_CHAPERONE = "http://forge.example.invalid:3500/example-owner/chaperone"
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://github.com/example-owner/creche",
+        "git@github.com:example-owner/creche.git",
+    ],
+)
+def test_a_github_origin_sends_no_token(origin: str) -> None:
+    """A GitHub origin fetches as before: the same address, and no header."""
+    source = chaperone_source(origin, {TOKEN_VAR: READ_TOKEN})
+
+    assert source == Source(url="https://github.com/example-owner/chaperone")
+    assert source.header is None
+
+
+@pytest.mark.parametrize(
+    ("origin", "url"),
+    [
+        (FORGE_ORIGIN, FORGE_CHAPERONE),
+        (f"{FORGE_ORIGIN}.git", FORGE_CHAPERONE),
+        (f"{FORGE_ORIGIN}/\n", FORGE_CHAPERONE),
+        (
+            "https://forge.example.invalid/example-owner/creche.git",
+            "https://forge.example.invalid/example-owner/chaperone",
+        ),
+        (
+            "http://192.0.2.17:3500/example-rehearsal/creche",
+            "http://192.0.2.17:3500/example-rehearsal/chaperone",
+        ),
+    ],
+)
+def test_a_forge_origin_reads_the_chaperone_of_the_same_forge(origin: str, url: str) -> None:
+    """The host, the port and the owner come from the origin, and the token
+    from the environment."""
+    assert chaperone_source(origin, {TOKEN_VAR: READ_TOKEN}) == Source(url=url, header=READ_HEADER)
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        {},
+        {TOKEN_VAR: ""},
+        {TOKEN_VAR: READ_TOKEN[:-1]},
+        {TOKEN_VAR: READ_TOKEN.upper()},
+        {TOKEN_VAR: f"{READ_TOKEN}\n"},
+        {TOKEN_VAR: f"{READ_TOKEN}\r\nX-Other: 1"},
+    ],
+    ids=["missing", "empty", "short", "upper-case", "newline", "second-header"],
+)
+def test_a_forge_origin_with_no_read_token_is_an_error(environ: dict[str, str]) -> None:
+    with pytest.raises(BuildError, match=TOKEN_VAR) as raised:
+        chaperone_source(FORGE_ORIGIN, environ)
+
+    assert READ_TOKEN not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "",
+        "ssh://git@forge.example.invalid:2222/example-owner/creche.git",
+        "git@forge.example.invalid:example-owner/creche.git",
+        "http://reader:secret@forge.example.invalid/example-owner/creche",
+        "http://forge.example.invalid/forge/example-owner/creche",
+        "http://github.com/example-owner/creche",
+        "https://www.github.com/example-owner/creche",
+        "file:///srv/git/example-owner/creche",
+    ],
+)
+def test_an_origin_of_neither_form_is_an_error(origin: str) -> None:
+    """No token goes to an address that is not the forge of the checkout."""
+    with pytest.raises(BuildError, match="CRECHE_PROC_CHAPERONE_RS"):
+        chaperone_source(origin, {TOKEN_VAR: READ_TOKEN})
+
+
+def test_no_repr_of_a_source_shows_the_token() -> None:
+    assert READ_TOKEN not in repr(chaperone_source(FORGE_ORIGIN, {TOKEN_VAR: READ_TOKEN}))
+
+
+#: Stand-ins for git, cargo and rustup. git writes each argv and, for a
+#: fetch, the header of its environment, to files below HOME: the build
+#: gives git no other variable. It answers `remote get-url` with the origin
+#: and `rev-parse` with the commit of the files below HOME.
+STUB_GIT = """#!/bin/bash
+printf '%s\\n' "$*" >> "$HOME/git.argv"
+case "$1" in
+  remote) cat "$HOME/origin" ;;
+  fetch)
+    printf '%s|%s\\n' "${GIT_CONFIG_VALUE_0:-}" "${GIT_CONFIG_VALUE_1:-}" >> "$HOME/git.header"
+    ;;
+  rev-parse) cat "$HOME/fetched" ;;
+esac
+"""
+STUB_CARGO = """#!/bin/bash
+while (( $# )); do
+  case "$1" in
+    --bin) program="$2"; shift ;;
+    --root) root="$2"; shift ;;
+  esac
+  shift
+done
+mkdir -p "$root/bin" && : > "$root/bin/$program" && chmod 0755 "$root/bin/$program"
+"""
+
+
+def _stub_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fetched: str) -> Path:
+    """A HOME and a PATH for one build of the forge origin, with stand-ins."""
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+
+    for name, text in {"git": STUB_GIT, "cargo": STUB_CARGO, "rustup": "#!/bin/sh\n"}.items():
+        (stubs / name).write_text(text, encoding="utf-8")
+        (stubs / name).chmod(0o755)
+
+    (tmp_path / "origin").write_text(f"{FORGE_ORIGIN}\n", encoding="utf-8")
+    (tmp_path / "fetched").write_text(f"{fetched}\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", f"{stubs}:/usr/bin:/bin")
+
+    return tmp_path
+
+
+def test_a_forge_build_sends_the_token_in_a_header_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The token is in no argv. git gets it in its environment, with no redirect."""
+    home = _stub_build(tmp_path, monkeypatch, pinned_commit())
+    monkeypatch.setenv(TOKEN_VAR, READ_TOKEN)
+
+    binary = build_pinned()
+
+    argv = (home / "git.argv").read_text(encoding="utf-8")
+    assert binary == pinned_binary()
+    assert binary.is_file()
+    assert f"fetch --quiet --depth 1 {FORGE_CHAPERONE} {pinned_commit()}\n" in argv
+    assert READ_TOKEN not in argv
+    assert (home / "git.header").read_text(encoding="utf-8") == f"{READ_HEADER}|false\n"
+
+
+def test_a_forge_build_of_another_commit_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail closed: a forge that answers with another commit leaves no entry."""
+    _stub_build(tmp_path, monkeypatch, "f" * 40)
+    monkeypatch.setenv(TOKEN_VAR, READ_TOKEN)
+
+    with pytest.raises(BuildError, match="the pin is"):
+        build_pinned()
+
+    assert not pinned_binary().parent.exists()
+
+
+def test_a_forge_build_with_no_token_fetches_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _stub_build(tmp_path, monkeypatch, pinned_commit())
+    monkeypatch.delenv(TOKEN_VAR, raising=False)
+
+    with pytest.raises(BuildError, match=TOKEN_VAR):
+        build_pinned()
+
+    assert (home / "git.argv").read_text(encoding="utf-8") == "remote get-url origin\n"
+    assert not (home / "git.header").exists()
 
 
 def test_every_switch_of_the_suite_is_known() -> None:

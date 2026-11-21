@@ -39,6 +39,12 @@
 #      main can pass here while the merge fails.
 #  11. Work folder: playpen-image runs playpen-ci with TMPDIR on the temp
 #      folder of the runner. /tmp of the VM guest is on its small root disk.
+#  12. Read token: the test step of proc gets the secret
+#      CRECHE_READ_TOKEN. The origin of the checkout is this forge, so the
+#      suite reads the pinned chaperone from the same forge and owner, with
+#      that token (integration/proc/proc_chaperone_pin.py). The token is
+#      the read token of release-reader of docs/design/forgejo-release-path.md
+#      section 9, answer 5. No other step gets a secret.
 #
 # Where each job runs today. One Docker runner serves `ubuntu-24.04`. The
 # VM runner serves `ci-vm` and `ci-vm-kvm`, with a new VM for each job:
@@ -289,9 +295,11 @@ jobs:
       # Difference 7: the run steps below run as a user that is not root.
       - uses: ./.forgejo/actions/runner-user
 
+      # Difference 12: the read token of the chaperone on this forge.
       - run: uv run pytest integration/proc -m slow -n 4
         env:
           CRECHE_PROC_NO_SKIP: "1"
+          CRECHE_READ_TOKEN: ${{ secrets.CRECHE_READ_TOKEN }}
 
   # The old suite of integration/ (integration/AGENTS.md):
   # integration/tests_manager. It runs the services inside the pytest
