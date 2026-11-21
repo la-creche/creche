@@ -48,7 +48,9 @@ result with the Forgejo job. A difference that is not in this list fails.
    and vitest to 6 workers each: 24 CPUs of the Docker runner for its 4
    jobs at once.
 10. **Time limits.** A job with no `timeout-minutes` in the GitHub file gets
-    the limit of `TIME_LIMITS`. A job with one keeps it.
+    the limit of `TIME_LIMITS`. A job with one keeps it, but for a job of
+    `RAISED_LIMITS`. `playpen-image` took about 18.5 of its 20 minutes in a
+    runner VM of 4 vCPUs, in two rehearsal runs.
 11. **Work folder.** `playpen-image` runs `playpen-ci` with `TMPDIR` on the
     temp folder of the runner. The work folder of `playpen-ci` holds a
     rootfs tar and the disks of each target. /tmp of the VM guest is on its
@@ -201,6 +203,10 @@ TIME_LIMITS = {
     "gate": 5,
 }
 
+#: The GitHub limit and the Forgejo limit of each job whose limit is higher
+#: here (difference 10).
+RAISED_LIMITS = {"playpen-image": (20, 30)}
+
 #: The job of the shards, and the shard command of each gate with its env
 #: (difference 5).
 SHARD_JOB = "tests"
@@ -274,6 +280,10 @@ def _port_job(name: str, job: dict[str, Any]) -> dict[str, Any]:
     if name in TIME_LIMITS:
         assert "timeout-minutes" not in port, f"{name}: the GitHub job has a limit"
         port["timeout-minutes"] = TIME_LIMITS[name]
+    if name in RAISED_LIMITS:
+        github, forgejo = RAISED_LIMITS[name]
+        assert port["timeout-minutes"] == github, f"{name}: the GitHub limit changed"
+        port["timeout-minutes"] = forgejo
     if name == SHARD_JOB:
         (step,) = [one for one in port["steps"] if "run" in one]
         assert (step["run"], step["env"]) == (SHARD_RUN[0], SHARD_ENV[0])

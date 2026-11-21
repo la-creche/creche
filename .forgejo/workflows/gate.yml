@@ -32,7 +32,8 @@
 #      that is not /tmp, as on the hosted GitHub runner.
 #   8. Load: the env block below holds each job to 6 CPUs.
 #   9. Time limits: each job has a `timeout-minutes`. A job of the GitHub
-#      file with a limit keeps it.
+#      file with a limit keeps it, but for playpen-image: 30 minutes, not
+#      20.
 #  10. Checkout: on a pull request, Forgejo checks out the head of the
 #      branch. GitHub checks out the merge with the base. A branch behind
 #      main can pass here while the merge fails.
@@ -413,13 +414,17 @@ jobs:
   # the image config env (CH7-7, CH49). The steps live in
   # playpen/bin/playpen-ci. This run also catches a missing source file and
   # an import that only the image sees.
+  #
+  # The time limit (difference 9): in a runner VM of 4 vCPUs the job took
+  # about 18.5 of its 20 minutes, in two rehearsal runs. The GitHub job
+  # keeps 20.
   playpen-image:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
     # `ci-vm`: `docker build` needs a Docker daemon, which the container
     # runner does not give a job.
     runs-on: ci-vm
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
