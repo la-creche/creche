@@ -173,7 +173,7 @@ def expected_origin(forge: ForgeRepo, commit: ObjectId) -> ExpectedOrigin:
     refuses with the `catalog` code, as `artifacts.signer_policy` does."""
     # Decided by the operator on 2026-11-16: a release of mcp or of
     # creche-release refuses here until its row of RELEASE_WORKFLOW exists
-    # (FR9). A change is two rows of the map and the pinned test.
+    # (FR9, FR29). Both rows exist since PR 2 of the note (2026-11-21).
     workflow = RELEASE_WORKFLOW.get(forge.repo)
     if workflow is None:
         raise _refuse(RefusalCode.CATALOG, str(forge.repo), ProvenanceReason.NO_RELEASE_WORKFLOW)

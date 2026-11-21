@@ -19,7 +19,7 @@
 //!                                          ▼       ▼
 //!                               IssuedRuns::issue ──► Signable
 //!                                                        │
-//!                               cosign (the program) ──► Bundle
+//!                                 cosign (the program) ──► Bundle
 //!                                                        │
 //!                                  TagMessage::new ◄─────┘
 //!                                        │

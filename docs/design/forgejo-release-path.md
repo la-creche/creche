@@ -1,6 +1,6 @@
 # The release path on Forgejo: design
 
-> Status as of 2026-11-16: The operator decided FR1 to FR4 on 2026-11-15, all as recommended, and FR16 on 2026-11-16. This note proposes FR5 to FR15. The core of PR 2 (#625) is merged. Nothing runs on the host. After FR16, the revision of 2026-11-16 proposes a signer that attaches to the generic runner from outside (FR5, FR6). Next: 4a (#626), then the rest of PR 2 of section 8. On 2026-11-16 most Forgejo replies that this note marked "not measured" were measured on a scratch repository. Four of them change the design: the secrets guards (M18), check 2 of the signer (section 4.4), the label read of the allocator (M11) and the size of the tag message (section 4.5). A line dated 2026-11-16 marks each change. Also on 2026-11-16, the builds of PR 2 and PR 4 of section 8 found two corrections: the control lines of the attachment are version 2 of the runner design (sections 4.3 and 4.5), and PR 4 splits into 4a and 4b (FR20). On 2026-11-16 the operator decided FR17 to FR32, and cosign v3.1.4 was measured for this path (M7, sections 4.2, 4.5 and 5).
+> Status as of 2026-11-16: The operator decided FR1 to FR4 on 2026-11-15, all as recommended, and FR16 on 2026-11-16. This note proposes FR5 to FR15. The core of PR 2 (#625) is merged. Nothing runs on the host. After FR16, the revision of 2026-11-16 proposes a signer that attaches to the generic runner from outside (FR5, FR6). Next: 4a (#626), then the rest of PR 2 of section 8. On 2026-11-16 most Forgejo replies that this note marked "not measured" were measured on a scratch repository. Four of them change the design: the secrets guards (M18), check 2 of the signer (section 4.4), the label read of the allocator (M11) and the size of the tag message (section 4.5). A line dated 2026-11-16 marks each change. Also on 2026-11-16, the builds of PR 2 and PR 4 of section 8 found two corrections: the control lines of the attachment are version 2 of the runner design (sections 4.3 and 4.5), and PR 4 splits into 4a and 4b (FR20). On 2026-11-16 the operator decided FR17 to FR32, and cosign v3.1.4 was measured for this path (M7, sections 4.2, 4.5 and 5). On 2026-11-21 the rest of PR 2 was built on the runner design at commit `131ce43` of `main`: the program `ci-signer`, its two units, its catalog row in `catalog.ARRIVING`, and the rows of mcp and creche-release of `catalog.RELEASE_WORKFLOW` (FR29). Three lines dated 2026-11-21 correct this note against that runner design, and one names the reading of plain HTTP.
 > Host names, addresses and accounts are placeholders. The operator's private notes hold the real values.
 
 Source: the operator's private migration plan (section 0c, the Actions facts measured on Forgejo 17.0.1 with runner v13.2.1, and the verification appendix), its raw inventory of GitHub dependencies, and the code of the five repositories. File evidence was checked at `origin/main` on 2026-11-15: creche `96fab11c`, chaperone `a3dd242`, mcp `dadfa2b`, registry `7673e0f`, creche-release `9f0ac54`. A "measured" fact comes from section 0c of the plan. A fact "measured on a scratch repository" on 2026-11-16 comes from the recorded replies of Forgejo 17.0.1 in the operator's private notes. Any other fact about Forgejo is marked "not measured". A fact "measured on a workstation with cosign v3.1.4, the version of the host" on 2026-11-16 comes from the recorded cosign transcripts in the operator's private notes. The verifier on the host itself is not measured.
@@ -8,6 +8,8 @@ Source: the operator's private migration plan (section 0c, the Actions facts mea
 "The runner design" in this note is `docs/design.md` of the repository `ci-runner` in the organization `infra` on the Forgejo instance, read at commit `7cdaa18` of its branch `import/standalone` on 2026-11-16. This note cites it by section title, not by section number.
 
 Changed on 2026-11-16: the attachment of the signer follows a newer runner design, at commit `3b9ce23` of its branch `spike/privilege-separation`. Its section 6 "Attachments of outside services" and its section 10 "Privilege separation" replace the attach text of `7cdaa18`. This note cites those two sections by number. As of 2026-11-16, that runner design is not yet implemented. Its mechanisms S1 to S13 (section 10.8 "Spike before the code") are not yet measured on a host.
+
+Changed on 2026-11-21: the runner design at commit `131ce43` of its branch `main` builds section 6: the match of section 6.1, version 2 of the exchange of section 6.2, the peer check `ci-runner-peer` of section 6.3 and the daemon side. Where this note and that design differ, that design is the reference, and a dated line here corrects this note. The daemon side and the peer check passed in a rehearsal VM on 2026-11-20 and 2026-11-21. They are not measured on the runner host.
 
 ## 1. Goal and non-goals
 
@@ -153,10 +155,16 @@ A password beside the key would add no protection, so the key has none. The file
    4. A `conn` line or a `close` line of a session that the signer did not accept is refused.
 
    Section 6.3 of the runner design says what these facts do not cover: which job runs in the slot. That rests on the daemon (section 4.10, item 3).
+
+   Changed on 2026-11-21: the runner design at commit `131ce43`, section 6.3, reads no cgroup path. Step 2 of its check reads the cgroup id of the peer with `PIDFD_GET_INFO`. It requires that `/sys/fs/cgroup` is the root of the cgroup v2 hierarchy, on one mount, and that the one folder of the slice of the job VMs with that id is `ci-runner-slot<n>@<instance>.service`, with `n` the slot of the `open` line. It reads no file of `/proc`. A service also requires the cgroup id of the first accepted fd of a session for each later fd, polls the pidfd of the peer while it serves, and keys a session by its control connection, not by its `session` field (section 6.4, item 8). The signer of PR 2 does each of these with the crate `ci-runner-peer`.
+
+   Changed on 2026-11-21: the runner design says that a service pins `ci-runner-peer` by a git `rev` of `main`. The CI of creche runs on GitHub, and the GitHub runner cannot reach the forge on the LAN. So creche holds a copy of `ci-runner-peer` and `ci-runner-sys` of commit `131ce43`, byte for byte, with their MIT licence (`rust/vendor/ci-runner/SOURCE.md`). A test holds the SHA-256 of each file.
+
+   Built on 2026-11-21 (PR 2): `creche-ci-signer.socket` listens on `/run/ci-signer/attach.sock` with `SocketUser=ci-signer`, `SocketGroup=ci-runner`, `SocketMode=0660` and `RemoveOnStop=yes`, the form of the runner design, section 6.4. `creche-ci-signer.service` runs as the user `ci-signer`, with `Accept=no`, `StandardInput=socket`, the three credentials of items 3 and 4, and `ProtectControlGroups=no`, `ProtectProc=invisible` and `ProcSubset=pid`. The host config `/etc/creche/ci-signer/signer.conf` names the owner, the origin of Forgejo and the cosign program. It holds no secret.
 6. The list of signing pairs is a file in the tree of the `ci-signer` component: each repository name with its release workflow file. A creche test holds the list equal to `catalog.RELEASE_WORKFLOW`. The owner comes from the host config of the signer, so a rehearsal names a shadow owner with no release. Decided on 2026-11-16:
    1. A workflow file name holds at most 64 bytes (FR18).
    2. The name of a repository on Forgejo is its catalog name. Only the owner comes from configuration (FR32).
-   3. The signer refuses mcp and creche-release until their rows of `catalog.RELEASE_WORKFLOW` exist (FR29).
+   3. The signer refuses mcp and creche-release until their rows of `catalog.RELEASE_WORKFLOW` exist (FR29). Done on 2026-11-21 (PR 2): both rows exist, and a test holds `signing-pairs.tsv` equal to the map.
 7. The signer writes one journal line for each statement: the run id, the commit and the SHA-256 of the statement. Decided on 2026-11-16 (FR21): the journal is `/var/lib/ci-signer/issued.tsv`, and the user `ci-signer` owns it. The signer writes and syncs the line before cosign signs.
 
 | Repository | Workflow file |
@@ -294,6 +302,8 @@ Decided on 2026-11-16 (FR24): the statement spells the ref as `main`. Check 3 of
 
 The signer writes each tag of the run as an annotated tag. Its message has three lines: the word `release-statement-1`, the statement in base64, and the bundle in base64. Base64 has no character that `git tag --cleanup=verbatim` changes.
 
+Changed on 2026-11-21: the signer of PR 2 speaks plain HTTP to an IP address on the LAN, as the runner does (the runner design, section 14, question 1). Section 4.1 draws HTTPS, and HTTPS on the Forgejo host (question 4) comes after the install of the signer (section 7, before the window, steps 3 and 6). So the two tokens of the signer travel on the LAN with no TLS, as the admin token of the runner does. A change to HTTPS is a later PR. A `CONTRACT-QUESTION:` in `rust/crates/ci-signer/src/bin/ci-signer/forge.rs` names it.
+
 Measured on a scratch repository on 2026-11-16: `POST /tags` takes a message of at most 131071 bytes. A message of 131072 bytes or more answers 500 with `argument list too long`, the Linux limit for one argument. The limits of step 4 are 32 tags with 16 assets each, and each tag message holds the whole statement. They set no length for a tag or an asset name. So a message may not fit. With 64 bytes for each tag and each asset name, and a bundle of at most 4096 bytes, the largest message is 113449 bytes.
 
 Measured on a workstation with cosign v3.1.4, the version of the host, on 2026-11-16: the bundle of a P-256 key with no log entry is 387 bytes. 50 signatures of one statement gave 387 bytes each time. A statement of 80972 bytes and a file of 1 byte also gave 387 bytes. So the largest message is 108501 bytes: 19 + 1 + 107964 (the statement in base64) + 1 + 516 (the bundle in base64). The bundle cap leaves 3709 bytes.
@@ -345,6 +355,8 @@ The operator put the fix for items 1 and 2 first on 2026-11-16. The runner desig
 1. **The runner user is trusted for the relayed bytes.** A CH escape in any VM of the instance gives code as `ci-runner`. The group `ci-runner` may connect to the socket of the signer. That code can read the run key of a real release run from the run folder or the daemon. It sends a `relay` line of version 1 of the exchange on the accepted session before the guest boots (about 17 s, the runner design, section "Measured numbers", fact 1). It then sends its own tags and SHA-256 values. The signer signs them under the real merge commit and creates the tags (section 4.5, step 7). The run passes section 4.4, but the signed digests are not the build of that run. The checks of the signer do not cover this case. The escape cannot read the key, and it cannot get a statement for a run that fails section 4.4. That is no full bound: for a run that passes, the escape picks the content of the statement.
 2. **The escape can complete the forged release.** The same escape may read the registration token of the runner, which has the admin scope of the instance (the runner design, section "Security"). With that token it creates the Releases of the signed tags and uploads assets that match its digests. Each release then carries a valid statement, so P1 to P6 pass on its binaries. An instance admin can also change the protection of `main` and of release tags, and merge into `main` past the allowlist of answer 7. That makes a fresh eligible run on demand. This case undercuts FR2, answer 1 and answer 7. It stays open.
 3. **What D9 closes and what stays.** Each job VM now runs as a throwaway dynamic user in its own systemd unit, with its own tap, AppArmor profile, Landlock and sandbox (the runner design, section 10 "Privilege separation"). The daemon stays under `ci-runner`, holds the admin token and reads no byte from any VM. An attachment passes the guest's connection to the service as a file descriptor (version 2 of the exchange, section 6.2). Version 2 replaces version 1, so no `relay` line exists any more. D9 closes this part: an escape from a job VM no longer reaches the socket of the signer, another VM or the admin token. So the escape cannot pick the content of a statement (item 1) and cannot finish a forged release (item 2). This part stays open: a compromise of the daemon still gets the admin token. It can also tell the signer that a session belongs to another slot, so it can make the VM of a branch job look like the accepted session of a release run. Root on the host gets everything. The signer uses the service-side check that the runner design offers. It checks that the peer of each passed connection runs in the unit of the slot that it accepted (section 6.3, and section 4.3, item 5 of this note). The runner design keeps that check as default. As of 2026-11-16 it is not yet built, and spikes S3 and S4 of section 10.8 are not yet measured on a host. Items 1 and 2 describe version 1 of the exchange, which never ships: runner PR 8 builds version 2 after the separation (the runner design, section 15). What stays is the daemon and root part above.
+
+   Changed on 2026-11-21: the service-side check is built in the crate `ci-runner-peer` (the runner design at commit `131ce43`, section 6.3). The signer of PR 2 calls `check_daemon` on each control connection and `check` on each passed fd, before it reads a byte. The check passed in a rehearsal VM. It is not measured on the runner host.
 4. A malicious change that a PR merges into a release workflow gets signed. That is row 10 of the threat table in creche-release `docs/releases.md` section 6, as today.
 
 ## 5. Provenance on Forgejo
@@ -438,6 +450,49 @@ Before the window:
 6. **HTTPS on the Forgejo host** (the operator, question 4). Rollback point: none needed. Nothing uses it yet.
 7. **Every pending GitHub tag installs or is dropped** (the operator). After the bridge, root refuses each GitHub Release (FR15).
 
+The signer on the host (added on 2026-11-21). These are the steps of the signer in step 3 above, the steps of map step 17. Each runs on the host, in a shell of the operator, from any folder. `<owner>` is the shadow owner in the rehearsal and the real owner after step 4. `<address>:<port>` is the address of Forgejo on the LAN that the policy file of the runner names. Steps 1 to 5 come before the first release of `ci-signer`. Without them its verify hook `ci-signer verify` exits 1, and the release fails. A first install has no previous tree, so the failed tree stays, no unit of it is installed, and nothing of it runs. After step 7, systemd refuses the start of the service with no user `ci-signer` (status 217/USER) and with no file of a credential (status 243/CREDENTIALS).
+
+1. **The user.** `sudo useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin ci-signer`. Then `getent passwd ci-signer` prints one line, and `getent group ci-runner` prints one line. The install of the runner made the group `ci-runner`. Rollback point: `sudo userdel ci-signer`.
+2. **The key pair** (section 4.2). Run each line:
+
+   ```
+   sudo install -d -m 0700 -o root -g root /root/ci-signer-key
+   sudo sh -c 'cd /root/ci-signer-key && COSIGN_PASSWORD= cosign generate-key-pair'
+   sudo install -d -m 0755 -o root -g root /etc/creche/ci-signer
+   sudo install -m 0400 -o root -g root /root/ci-signer-key/cosign.key /etc/creche/ci-signer/release-signing.key
+   sudo install -m 0644 -o root -g root /root/ci-signer-key/cosign.pub /etc/creche/release-signing.pub
+   sudo rm -r /root/ci-signer-key
+   ```
+
+   Give `/etc/creche/release-signing.pub` to the agent of PR 5 of section 8. Rollback point: delete the two key files.
+3. **The two tokens** (section 4.3 item 4). In the web UI of Forgejo, make one token as the bot `release-reader` with the scope `read:repository`, and one token as the bot `ci-signer` with the scope `write:repository`. For each token, run its line, paste the token and press Enter. `head` ends after the 40 digits and the line end:
+
+   ```
+   sudo sh -c 'umask 0377 && head -c 41 > /etc/creche/ci-signer/release-reader.token'
+   sudo sh -c 'umask 0377 && head -c 41 > /etc/creche/ci-signer/ci-signer.token'
+   ```
+
+   Each file then has the mode 0400 and the owner root. No token goes on a command line. Not measured: that these scopes are enough for the calls of sections 4.4 and 4.5. The recordings used an admin token. The rehearsal records it. Rollback point: delete the two files, and delete each token in Forgejo.
+4. **The host config.** Run `command -v cosign` and use its output as `<cosign>`. Then run:
+
+   ```
+   sudo sh -c 'umask 0022 && printf "owner=%s\nforgejo=%s\ncosign=%s\n" "<owner>" "http://<address>:<port>" "<cosign>" > /etc/creche/ci-signer/signer.conf'
+   ```
+
+   Rollback point: delete the file.
+5. **The check.** The first release runs `ci-signer verify` as its verify hook. Steps 1 to 4 make each of its six checks pass: `config`, `cosign`, `user`, `key`, `reader-token` and `tagger-token`.
+6. **The first release.** Release `handover` alone first, with the row of `ci-signer` (`handover/AGENTS.md`, "Binary builds", rules 10 and 11). Then file the first release of `ci-signer` by hand: `handover request ci-signer`. The follower files no first release (`handover/AGENTS.md`, `follow/` rule 1). Rollback point: none needed. No unit runs the tree yet.
+7. **The units, once.** Run each line:
+
+   ```
+   sudo install -m 0644 -o root -g root /opt/components/ci-signer/systemd/creche-ci-signer.service /etc/systemd/system/creche-ci-signer.service
+   git -C /srv/agents/code/creche show ci-signer-v0.1.0:systemd/creche-ci-signer.socket | sudo tee /etc/systemd/system/creche-ci-signer.socket > /dev/null
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now creche-ci-signer.socket
+   ```
+
+   Then `sudo ls -l /run/ci-signer/attach.sock` shows `srw-rw----` with the owner `ci-signer` and the group `ci-runner`. A later release refreshes the service file and restarts the service. It never changes the socket unit. Rollback point: `sudo systemctl disable --now creche-ci-signer.socket creche-ci-signer.service`, delete the two unit files, and run `sudo systemctl daemon-reload`.
+
 The window:
 
 1. **Freeze** (the operator). No merge on GitHub to the five repositories. Rollback point: lift the freeze.
@@ -455,6 +510,10 @@ Each PR holds one idea. "Before" means the PR merges before the window and works
 
 1. **This note** (creche, before). Proof: the operator merges it.
 2. **The signer** (creche, before, after PR 8 "Attachments" of the runner design, section 15 "Build plan"). The program `ci-signer`, in the form that question 8 decides (default: a binary component), its unit, its socket for the version-2 control lines of the runner design (section 6.2), the descriptor check of section 4.3 item 5, the checks of section 4.4, the exchange of section 4.5 and the list test of section 4.3. Proof: unit tests against Forgejo replies recorded in the rehearsal refuse each failed check. Unit tests refuse a `conn` line of a session that the signer did not accept, and a passed descriptor whose peer is not in the unit of the slot of its session. In the rehearsal of section 7, a release run of the shadow owner gets a statement, and each refused run of that step gets none.
+
+   Built on 2026-11-21. The core of #625, and then the program `ci-signer` of the package at `rust/crates/ci-signer/`, a binary component by the default of question 8. Its unit tests run the recorded replies: each failed check of section 4.4 gives no statement, a `conn` or `close` line of a session that the signer did not accept ends the session, and a passed descriptor whose peer is not in the unit of its slot is refused before the signer reads a byte. A full exchange with a stand-in daemon on a socketpair reaches that refusal, and the exchange after the check gives the statement of run 48 of the recordings, its journal line and its two tags. The real cosign v3.1.4 signs a statement with the command line of section 4.5, and `verify-blob` passes it. The rehearsal of section 7 is not done.
+
+   Changed on 2026-11-21: a new catalog row lands in two PRs (`handover/AGENTS.md`, "Binary builds", rule 11a). The installed `handover` must hold the row before a checkout of the host holds its manifest, or each request of the host refuses. So PR 2 adds the row `ci-signer` to `catalog.ARRIVING`. Its merge mints the next patch tag of `handover` and of `vmm` (each path of the package is also under `rust`, the path of `vmm`), and no tag of `ci-signer`. A second PR adds `rust/crates/ci-signer/component.toml` and takes the name out of `ARRIVING`. Its merge mints `ci-signer-v0.1.0`, the first tag of the component (`allocate.FIRST_VERSION`). The text of that manifest is in `rust/crates/ci-signer/AGENTS.md`.
 3. **The site keys and the secret** (creche-release, before, opened by the operator). Proof: the `host` release installs, and the current executor still passes a release.
 4. **The bridge executor** (creche). The API client of section 5, P1 to P6 on Forgejo, `ReleaseStatement`, the key file of FR10, the site keys of FR11. It removes the GitHub client. Decided on 2026-11-16 (FR20): PR 4 is two PRs. The build of PR 4 covered only its reading side, with no caller.
 
