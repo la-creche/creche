@@ -19,9 +19,10 @@
 #   4. Shard numbers: Forgejo sets no `strategy.job-index` and no
 #      `strategy.job-total`. The shard command reads K from the matrix and
 #      N from its env.
-#   5. rustup: the Docker runner image has no rustup and no cargo. The
-#      jobs that run cargo first run .forgejo/actions/rustup, which does
-#      nothing on a runner that has rustup.
+#   5. rustup: the Docker runner image and the guest image of the VM
+#      runner have no rustup and no cargo. Each job that runs cargo or
+#      rustup first runs .forgejo/actions/rustup: tests, proc, rust, kvm and
+#      vmm-archive. It does nothing on a runner that has rustup.
 #   6. No `permissions` key: Forgejo ignores it, and each job token can
 #      write its own repository.
 #   7. User: the Docker runner runs a step as root with the umask 0000.
@@ -31,15 +32,27 @@
 #      that is not /tmp, as on the hosted GitHub runner.
 #   8. Load: the env block below holds each job to 6 CPUs.
 #   9. Time limits: each job has a `timeout-minutes`. A job of the GitHub
-#      file with a limit keeps it.
+#      file with a limit keeps it, but for playpen-image: 30 minutes, not
+#      20.
 #  10. Checkout: on a pull request, Forgejo checks out the head of the
 #      branch. GitHub checks out the merge with the base. A branch behind
 #      main can pass here while the merge fails.
+#  11. Work folder: playpen-image runs playpen-ci with TMPDIR on the temp
+#      folder of the runner. /tmp of the VM guest is on its small root disk.
+#  12. Read token: the test step of proc gets the secret
+#      CRECHE_READ_TOKEN. The origin of the checkout is this forge, so the
+#      suite reads the pinned chaperone from the same forge and owner, with
+#      that token (integration/proc/proc_chaperone_pin.py). The token is
+#      the read token of release-reader of docs/design/forgejo-release-path.md
+#      section 9, answer 5. No other step gets a secret. A pull request
+#      from a fork gets no secret. Its proc job then fails, unless the
+#      cache already holds the pinned build.
 #
 # Where each job runs today. One Docker runner serves `ubuntu-24.04`. The
 # VM runner serves `ci-vm` and `ci-vm-kvm`, with a new VM for each job:
 # memory, playpen-image, rust, systemd-proof and the two kvm shards run
-# there. No run of this file has yet proved those jobs in a runner VM.
+# there. A rehearsal run of this file ran each of those jobs in a runner
+# VM.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
 #           ├── agent       code   the agent module's suite and types
@@ -284,9 +297,11 @@ jobs:
       # Difference 7: the run steps below run as a user that is not root.
       - uses: ./.forgejo/actions/runner-user
 
+      # Difference 12: the read token of the chaperone on this forge.
       - run: uv run pytest integration/proc -m slow -n 4
         env:
           CRECHE_PROC_NO_SKIP: "1"
+          CRECHE_READ_TOKEN: ${{ secrets.CRECHE_READ_TOKEN }}
 
   # The old suite of integration/ (integration/AGENTS.md):
   # integration/tests_manager. It runs the services inside the pytest
@@ -409,19 +424,29 @@ jobs:
   # the image config env (CH7-7, CH49). The steps live in
   # playpen/bin/playpen-ci. This run also catches a missing source file and
   # an import that only the image sees.
+  #
+  # The time limit (difference 9): in a runner VM of 4 vCPUs the job took
+  # about 18.5 of its 20 minutes, in two rehearsal runs. The GitHub job
+  # keeps 20.
   playpen-image:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
     # `ci-vm`: `docker build` needs a Docker daemon, which the container
     # runner does not give a job.
     runs-on: ci-vm
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
+      # The work folder of playpen-ci (mktemp -d) holds a rootfs tar and the
+      # disks of each target. /tmp of the VM guest is on its small root
+      # disk, where the first disk stopped with "No space left on device".
+      # The temp folder of the runner is on the data disk.
       - run: playpen/bin/playpen-ci
+        env:
+          TMPDIR: ${{ runner.temp }}
 
   # The Cargo workspace under rust/ (rust/Cargo.toml): the format check,
   # the lint gate and the tests. The local action rustup installs rustup
@@ -598,6 +623,10 @@ jobs:
       - uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      # bin/vm-smoke-setup.sh runs rustup. The guest image of the VM runner
+      # has no rustup (.forgejo/actions/rustup).
+      - uses: ./.forgejo/actions/rustup
 
       - run: bin/vm-smoke-setup.sh
         env:

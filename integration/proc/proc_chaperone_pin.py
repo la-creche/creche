@@ -24,8 +24,20 @@ An entry that lacks a program of `PROGRAMS` is from an older build of this
 file. The build builds again, and the new root takes the place of the old
 entry at step 4.
 
-The repository is `chaperone` beside this checkout on GitHub: the owner
-comes from the `origin` remote of this checkout, so no file here names it.
+The repository is `chaperone` beside this checkout: the owner comes from
+the `origin` remote of this checkout, so no file here names it. The origin
+has one of two forms:
+
+- A GitHub origin. The build fetches the commit from GitHub, with no token.
+- The HTTP(S) origin of a forge, as the checkout of a Forgejo runner writes
+  it: `http://<host>:<port>/<owner>/creche`. The build fetches the commit
+  from the same host and the same owner, with the token of
+  `CRECHE_READ_TOKEN`: the read token of `release-reader`
+  (`docs/design/forgejo-release-path.md` section 9, answer 5). git gets
+  the token in a header from its environment, never on argv or in a URL.
+  The build then holds the fetched commit to the pin.
+
+Any other origin is an error. So is a forge origin with no read token.
 """
 
 from __future__ import annotations
@@ -35,8 +47,9 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
@@ -64,6 +77,22 @@ _ORIGIN: Final = re.compile(
     r"(?P<owner>[A-Za-z0-9][A-Za-z0-9-]*)/[A-Za-z0-9._-]+?(?:\.git)?/?"
 )
 
+#: The variable that holds the read token for a forge origin.
+TOKEN_VAR: Final = "CRECHE_READ_TOKEN"
+
+#: The host of a GitHub origin. An origin of this host is never a forge.
+_GITHUB_HOST: Final = "github.com"
+
+#: The HTTP(S) origin of a forge: a scheme, a host, a port at most, an owner
+#: and a repository. No user and no password, and no path before the owner.
+_FORGE_ORIGIN: Final = re.compile(
+    r"(?P<base>https?://(?P<host>[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?)/"
+    r"(?P<owner>[A-Za-z0-9][A-Za-z0-9._-]*)/[A-Za-z0-9._-]+?(?:\.git)?/?"
+)
+
+#: A Forgejo access token: 40 lower-case hex characters.
+_TOKEN: Final = re.compile(r"[0-9a-f]{40}")
+
 #: A cold build takes about two minutes on a laptop.
 _BUILD_TIMEOUT_S: Final = 1800
 _GIT_TIMEOUT_S: Final = 300
@@ -75,6 +104,17 @@ class BuildError(Exception):
 
 class NoToolchain(BuildError):
     """`git` or `cargo` is not on PATH. A test then skips, or fails with no skip."""
+
+
+@dataclass(frozen=True)
+class Source:
+    """Where the build fetches the chaperone, and the header that git sends.
+
+    The header holds the read token, so no `repr` shows it.
+    """
+
+    url: str
+    header: str | None = field(default=None, repr=False)
 
 
 def pinned_commit(text: str | None = None) -> str:
@@ -112,6 +152,39 @@ def repository_url(origin: str) -> str:
     return f"https://github.com/{found['owner']}/{REPOSITORY}"
 
 
+def chaperone_source(origin: str, environ: Mapping[str, str]) -> Source:
+    """The chaperone repository beside the origin: on GitHub, or on the same forge."""
+    if _ORIGIN.fullmatch(origin.strip()) is not None:
+        return Source(url=repository_url(origin))
+
+    found = _FORGE_ORIGIN.fullmatch(origin.strip())
+
+    if found is None or _is_github(found["host"]):
+        raise BuildError(
+            "the origin of this checkout is no GitHub repository and no HTTP(S) "
+            "repository of a forge. Build chaperone yourself and set "
+            "CRECHE_PROC_CHAPERONE_RS."
+        )
+
+    token = environ.get(TOKEN_VAR, "")
+
+    if _TOKEN.fullmatch(token) is None:
+        raise BuildError(
+            f"the origin of this checkout is a forge, and {TOKEN_VAR} holds no "
+            "read token of 40 lower-case hex characters"
+        )
+
+    url = f"{found['base']}/{found['owner']}/{REPOSITORY}"
+
+    return Source(url=url, header=f"Authorization: token {token}")
+
+
+def _is_github(host: str) -> bool:
+    name = host.lower()
+
+    return name == _GITHUB_HOST or name.endswith(f".{_GITHUB_HOST}")
+
+
 def build_pinned() -> Path:
     """The program of the pinned commit. Builds it when the cache holds none."""
     commit = pinned_commit()
@@ -144,10 +217,19 @@ def _build(commit: str, entry: Path) -> None:
     for leftover in (source, staged, older):
         shutil.rmtree(leftover, ignore_errors=True)
 
-    url = repository_url(_git(Path(__file__).resolve().parent, "remote", "get-url", "origin"))
+    origin = _git(Path(__file__).resolve().parent, "remote", "get-url", "origin")
+    found = chaperone_source(origin, os.environ)
     source.mkdir(parents=True)
     _git(source, "init", "--quiet")
-    _git(source, "fetch", "--quiet", "--depth", "1", url, commit)
+    _git(source, "fetch", "--quiet", "--depth", "1", found.url, commit, header=found.header)
+
+    # A forge fetch is held to the pin: any other commit is an error.
+    if found.header is not None:
+        fetched = _git(source, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+
+        if fetched != commit:
+            raise BuildError(f"the forge sent the commit {fetched!r}, and the pin is {commit}")
+
     _git(source, "checkout", "--quiet", "--detach", "FETCH_HEAD")
 
     if shutil.which("rustup") is not None:
@@ -168,8 +250,12 @@ def _build(commit: str, entry: Path) -> None:
         shutil.rmtree(leftover, ignore_errors=True)
 
 
-def _git(cwd: Path, *args: str) -> str:
-    """One `git` command with no config file of a person, as `proc_registry.py` runs it."""
+def _git(cwd: Path, *args: str, header: str | None = None) -> str:
+    """One `git` command with no config file of a person, as `proc_registry.py` runs it.
+
+    A `header` goes to git in its environment (GIT_CONFIG_COUNT), never on
+    argv. git then follows no redirect, so the header reaches no other host.
+    """
     env = {
         "PATH": os.environ.get("PATH", os.defpath),
         "HOME": str(Path.home()),
@@ -177,6 +263,15 @@ def _git(cwd: Path, *args: str) -> str:
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_TERMINAL_PROMPT": "0",
     }
+
+    if header is not None:
+        env |= {
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "http.extraHeader",
+            "GIT_CONFIG_VALUE_0": header,
+            "GIT_CONFIG_KEY_1": "http.followRedirects",
+            "GIT_CONFIG_VALUE_1": "false",
+        }
 
     return _run(["git", *args], cwd, _GIT_TIMEOUT_S, env)
 

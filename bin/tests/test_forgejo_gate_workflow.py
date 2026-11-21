@@ -29,9 +29,10 @@ result with the Forgejo job. A difference that is not in this list fails.
    `strategy.job-total`. Its shard command reads K from `matrix.shard` and
    N from the step's `TOTAL`. A test holds the matrix to 1..N and `TOTAL`
    to N, so a shard cannot fall out.
-6. **rustup.** The image of the Docker runner has no rustup and no cargo.
-   Each job that runs cargo first runs `.forgejo/actions/rustup`, at a
-   stated place. That action does nothing on a runner with rustup.
+6. **rustup.** The image of the Docker runner and the guest image of the
+   VM runner have no rustup and no cargo. Each job that runs cargo or
+   rustup first runs `.forgejo/actions/rustup`, at a stated place. That
+   action does nothing on a runner with rustup.
 7. **File keys.** No `permissions` key. Forgejo ignores it, and a job token
    can write its own repository, so the key would claim a limit that does
    not hold. One `env` key: the load limits of difference 9.
@@ -47,7 +48,22 @@ result with the Forgejo job. A difference that is not in this list fails.
    and vitest to 6 workers each: 24 CPUs of the Docker runner for its 4
    jobs at once.
 10. **Time limits.** A job with no `timeout-minutes` in the GitHub file gets
-    the limit of `TIME_LIMITS`. A job with one keeps it.
+    the limit of `TIME_LIMITS`. A job with one keeps it, but for a job of
+    `RAISED_LIMITS`. `playpen-image` took about 18.5 of its 20 minutes in a
+    runner VM of 4 vCPUs, in two rehearsal runs.
+11. **Work folder.** `playpen-image` runs `playpen-ci` with `TMPDIR` on the
+    temp folder of the runner. The work folder of `playpen-ci` holds a
+    rootfs tar and the disks of each target. /tmp of the VM guest is on its
+    small root disk, where the first disk stopped with "No space left on
+    device".
+12. **Read token.** The test step of `proc` gets the secret
+    `CRECHE_READ_TOKEN`. The origin of the checkout is the forge, so the
+    suite reads the pinned chaperone from the same forge and owner, with
+    that token (`integration/proc/proc_chaperone_pin.py`). The token is the
+    read token of `release-reader` of `docs/design/forgejo-release-path.md`
+    section 9, answer 5. No other step of the gate and no local action
+    names a secret. A pull request from a fork gets no secret. Its `proc`
+    job then fails, unless the cache already holds the pinned build.
 
 The protection of `main` on Forgejo requires one status:
 `gate / gate (pull_request)`. The workflow name, the name of its last job
@@ -156,6 +172,7 @@ RUSTUP_STEPS: dict[str, tuple[int, dict[str, str]]] = {
     "tests": (2, {"uses": RUSTUP}),
     "proc": (2, {"uses": RUSTUP}),
     "rust": (1, {"uses": RUSTUP}),
+    "kvm": (1, {"uses": RUSTUP}),
     "vmm-archive": (2, {"uses": RUSTUP, "if": ONLY_VMM}),
 }
 
@@ -176,6 +193,19 @@ CACHE_JOB = "proc"
 CACHE_DIR = ".cache/creche-proc/chaperone-rs"
 CACHE_PATH = (f"~/{CACHE_DIR}", f"/home/ubuntu/{CACHE_DIR}")
 
+#: The job of the work folder, its one run step, and the env that the
+#: Forgejo gate gives that step (difference 11).
+WORK_JOB = "playpen-image"
+WORK_RUN = "playpen/bin/playpen-ci"
+WORK_ENV = {"TMPDIR": "${{ runner.temp }}"}
+
+#: The job and the step that get the read token, and the env that the
+#: Forgejo gate adds to that step (difference 12).
+TOKEN_JOB = "proc"
+TOKEN_RUN = "uv run pytest integration/proc -m slow -n 4"
+TOKEN_ENV = {"CRECHE_READ_TOKEN": "${{ secrets.CRECHE_READ_TOKEN }}"}
+SECRETS = re.compile(r"\bsecrets\b")
+
 #: The time limit of each job that has none in the GitHub file
 #: (difference 10).
 TIME_LIMITS = {
@@ -187,6 +217,10 @@ TIME_LIMITS = {
     "memory": 15,
     "gate": 5,
 }
+
+#: The GitHub limit and the Forgejo limit of each job whose limit is higher
+#: here (difference 10).
+RAISED_LIMITS = {"playpen-image": (20, 30)}
 
 #: The job of the shards, and the shard command of each gate with its env
 #: (difference 5).
@@ -254,9 +288,21 @@ def _port_job(name: str, job: dict[str, Any]) -> dict[str, Any]:
         (step,) = [one for one in port["steps"] if "cache@" in one.get("uses", "")]
         assert step["with"]["path"] == CACHE_PATH[0]
         step["with"]["path"] = CACHE_PATH[1]
+    if name == WORK_JOB:
+        (step,) = [one for one in port["steps"] if "run" in one]
+        assert step == {"run": WORK_RUN}, f"{name}: the GitHub step changed"
+        step["env"] = dict(WORK_ENV)
+    if name == TOKEN_JOB:
+        (step,) = [one for one in port["steps"] if one.get("run") == TOKEN_RUN]
+        assert not set(TOKEN_ENV) & set(step["env"]), f"{name}: the GitHub step has the token"
+        step["env"] = {**step["env"], **TOKEN_ENV}
     if name in TIME_LIMITS:
         assert "timeout-minutes" not in port, f"{name}: the GitHub job has a limit"
         port["timeout-minutes"] = TIME_LIMITS[name]
+    if name in RAISED_LIMITS:
+        github, forgejo = RAISED_LIMITS[name]
+        assert port["timeout-minutes"] == github, f"{name}: the GitHub limit changed"
+        port["timeout-minutes"] = forgejo
     if name == SHARD_JOB:
         (step,) = [one for one in port["steps"] if "run" in one]
         assert (step["run"], step["env"]) == (SHARD_RUN[0], SHARD_ENV[0])
@@ -359,6 +405,21 @@ def test_each_action_is_a_full_url_pinned_by_commit_or_local(path: Path) -> None
         assert FULL_URL.fullmatch(uses), uses
 
 
+def test_only_the_proc_test_step_gets_a_secret() -> None:
+    """Difference 12 names one secret for one step. The GitHub gate names none,
+    and so a second secret of the Forgejo gate has no GitHub job to match."""
+    (step,) = [one for one in FORGEJO_JOBS[TOKEN_JOB]["steps"] if one.get("run") == TOKEN_RUN]
+    texts = [
+        json.dumps(FORGEJO_JOBS),
+        *(one.read_text(encoding="utf-8") for one in _forgejo_files()[1:]),
+    ]
+
+    assert {key: step["env"][key] for key in TOKEN_ENV} == TOKEN_ENV
+    counts = [len(SECRETS.findall(one)) for one in texts]
+    assert counts == [len(TOKEN_ENV), *[0] * len(LOCAL_ACTIONS)]
+    assert not SECRETS.search(json.dumps(GITHUB_JOBS))
+
+
 def test_the_gate_uses_no_artifact_action() -> None:
     """Difference 4 has no line yet: neither gate moves a file between jobs."""
     for path in [GITHUB_DIR / "workflows" / "gate.yml", *_forgejo_files()]:
@@ -381,8 +442,9 @@ def test_the_scope_action_reads_no_merge_group() -> None:
 
 
 def test_the_rustup_action_installs_nothing_on_a_runner_with_rustup(tmp_path: Path) -> None:
-    """The hosted runner and the runner VMs have rustup. There the action must
-    not download a second one: a `curl` that fails proves no download ran."""
+    """The hosted GitHub runner has rustup, and the runner images may gain
+    one. There the action must not download a second one: a `curl` that
+    fails proves no download ran."""
     (step,) = _action(FORGEJO_DIR, "rustup")["runs"]["steps"]
     for tool in ("rustup", "curl"):
         stub = tmp_path / tool
